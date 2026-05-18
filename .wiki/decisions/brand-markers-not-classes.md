@@ -8,7 +8,7 @@ covers:
 edges:
   - { type: uses, target: ../modules/forms.md }
 last_verified: 2026-05-18
-confidence: high
+confidence: medium
 ---
 
 # Brand markers, not classes

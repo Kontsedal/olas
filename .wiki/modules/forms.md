@@ -18,7 +18,7 @@ edges:
   - { type: related, target: ../pitfalls/field-value-shape.md }
   - { type: related, target: ../pitfalls/fieldarray-factory-uses-initial.md }
 last_verified: 2026-05-18
-confidence: high
+confidence: medium
 ---
 
 # `packages/core/src/forms/`

@@ -11,7 +11,7 @@ edges:
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
 last_verified: 2026-05-18
-confidence: high
+confidence: medium
 ---
 
 # Flow: mutation concurrency
