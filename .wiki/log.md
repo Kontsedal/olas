@@ -95,3 +95,30 @@ Conventions decided here (for future reference):
 - Internal architecture knowledge stays in `.wiki/`.
 - Examples are typechecked but not built or run by CI.
 
+## [2026-05-18 21:10] ingest | Phase 13 — `@olas/devtools` (in-app variant)
+
+Spec §13 ships as an in-app `<DevtoolsPanel>` rather than a browser extension. The same `root.__debug` contract works for either; the extension is a future thin wrapper around the wire format.
+
+What shipped:
+
+- **New `@olas/devtools` package.** Drop-in React panel + lower-level `DevtoolsStore`. Four tabs: Tree (live controller tree from construct/suspend/resume/dispose events), Cache (fetch lifecycle + invalidate/gc), Mutations (run/success/error/rollback), Fields (validation outcomes — runtime not yet emitting these but the rendering is wired). Inline-scoped CSS so it's truly drop-in. Bounded logs (default 100/each); a Clear button empties them but preserves the live tree.
+- **Runtime devtools wiring.** Before this phase the runtime emitted only `controller:*` events; the `DebugEvent` union listed `cache:*` / `mutation:*` / `field:*` but nothing fired them. Now wired:
+  - `cache:fetch-start / fetch-success / fetch-error` — via a new `EntryEvents` callback bundle that `ClientEntry` constructs from `client.devtools` and passes into `Entry`. The bundle is `undefined` when no devtools, so the cost is one extra constructor field.
+  - `cache:invalidated / gc` — `QueryClient.invalidate / invalidateAll / dropEntry`.
+  - `mutation:run / success / error / rollback` — `MutationImpl`. Rollback uses a wrapped `Snapshot` so both auto-rollback (supersede/dispose) AND user-driven `snapshot.rollback()` inside `onError` fire the event once per snapshot.
+  - `cache:subscribed` and `field:validated` remain spec'd but unwired (would require threading subscriber/field paths into more types — moderate cost, low value vs the visibility we already get).
+
+What changed in the wiki:
+
+- `modules/devtools.md` — refreshed `covers:` to include the new wiring sites; replaced "what's emitted today" status table with the new reality; added a "how events reach the bus" section.
+- `modules/devtools-panel.md` (new, high) — covers the package architecture, the virtual-root tree trick, the bounded-log strategy, the four tabs, and what's deliberately NOT included (signal graph, subscription view, time-travel).
+- `index.md`, `overview.md` — devtools package added to status table; test count refreshed (205 → 232).
+- This log entry.
+
+Tests added: store.test.ts (13), panel.test.tsx (6), core/tests/devtools-events.test.ts (8). The third pins the runtime-emit contract so future refactors trip it before the panel does.
+
+Future stretch (NOT v1-blocking):
+- Browser extension wrapping `root.__debug` over `window.postMessage` → content script → background → DevTools panel.
+- `cache:subscribed` and `field:validated` emission (low priority).
+- Signal dependency graph view (spec §13 mentioned; needs additional plumbing inside `@olas/core/signals`).
+

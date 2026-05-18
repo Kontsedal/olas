@@ -45,8 +45,9 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 | `@olas/zod` | Implemented (phase 9) | `zodValidator` + `formFromZod` |
 | `@olas/persist` | Implemented (phase 11) | `usePersisted` + localStorage adapter |
 | `@olas/react` | Implemented (phase 10) | `OlasProvider`, `useRoot`, `use`/`useQuery`/`useField`, `KeepAlive` |
+| `@olas/devtools` | Implemented (phase 13, in-app variant) | `<DevtoolsPanel>` + `DevtoolsStore` over `root.__debug` |
 
-Phase 14 (polish & docs) has landed: per-package READMEs, `MIGRATING.md`, `RECIPES.md`, TSDoc on the public surface, and `examples/user-profile/` as a typechecked worked example. Phase 13 (devtools browser extension) is the only remaining v1 item.
+Phase 14 (polish & docs) landed: READMEs, `MIGRATING.md`, `RECIPES.md`, TSDoc, and `examples/user-profile/`. Phase 13 shipped as an in-app `<DevtoolsPanel>` plus the runtime wiring for cache + mutation devtools events. A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
 
 ## Core module map
 
@@ -87,4 +88,4 @@ See `modules/*.md` for per-directory details.
 
 ## Build & verify
 
-CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 205 tests pass. See `../CLAUDE.md` for the full command list.
+CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 232 tests pass. See `../CLAUDE.md` for the full command list.
