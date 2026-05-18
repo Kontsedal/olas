@@ -2,13 +2,16 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What this is
+## Read this first
 
-Olas is a controller-tree library for browser apps. **SPEC.md is the authoritative design document** — any ambiguity in architecture, naming, semantics, or API shape resolves against SPEC.md, not against existing code. The current implementation covers spec phases 0–9 and 11–12 (everything except the React adapter, devtools extension, and final polish). Per-section pointers in SPEC.md (e.g. "§6.1", "§5.7") are the canonical citations.
+Two artifacts in this repo are authoritative and outrank everything else:
+
+1. **`SPEC.md`** — the design specification. When code and spec disagree, the spec wins unless a test pins the current behavior on purpose. Section pointers (e.g. "§6.1", "§5.7") are canonical citations.
+2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how this code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
+
+Current implementation status: spec phases 0–9 and 11–12 are complete (187 tests). Phase 10 (scopes + React adapter), 13 (devtools extension), and 14 (polish/docs) are not implemented; types and structure already anticipate them in places, so don't tear down "unused" scaffolding without checking.
 
 ## Commands
-
-All commands run from the repo root and operate on all workspace packages.
 
 ```bash
 pnpm install                                       # link workspace + install deps
@@ -23,92 +26,164 @@ pnpm vitest run packages/core/tests/query.test.ts  # run one test file
 pnpm vitest run -t "race protection"               # run by test-name substring
 ```
 
-CI runs `install → typecheck → lint → test → build`; the same five steps reproduce the gate locally.
+CI = `install → typecheck → lint → test → build`. Reproducing CI locally is the five commands above in order.
 
 ## Workspace layout
 
 ```
 packages/
-  core/      # @olas/core   — everything: signals, controllers, queries, mutations, forms, SSR
-  react/     # @olas/react  — empty shell (Phase 10 not implemented)
+  core/      # @olas/core    — everything: signals, controllers, queries, mutations, forms, SSR
+  react/     # @olas/react   — empty shell (Phase 10 not implemented)
   persist/   # @olas/persist — usePersisted + localStorage adapter
-  zod/       # @olas/zod    — zodValidator, formFromZod
+  zod/       # @olas/zod     — zodValidator, formFromZod
 ```
 
-Tests import workspace packages via aliases declared in `vitest.config.ts` — those point straight at each package's `src/index.ts` (and `core/src/testing.ts`), so tests run without building `dist/`. The published `dist/` is what consumers see; the alias is dev-only.
+Tests import workspace packages via aliases declared in `vitest.config.ts` — pointed at each package's `src/index.ts` (and `core/src/testing.ts`), so tests run without building `dist/`. The published `dist/` is what consumers see; the alias is dev-only.
 
-`@olas/core` also publishes a `./testing` sub-path (`createTestController`). Keep test-only helpers there — its sub-path export makes "you imported testing utilities into production code" grep-able.
+`@olas/core/testing` is the only sub-path export — `createTestController` and other test-only helpers live there. Importing it in production code is a smell; the sub-path makes it grep-able.
 
-## Core architecture (the big picture)
+---
 
-### Controller tree
+# The wiki schema
 
-`defineController((ctx, props) => api)` produces a `ControllerDef`. A root is constructed with `createRoot(def, { deps, onError?, hydrate? })`, which returns `api & { dispose, suspend, resume, dehydrate, waitForIdle, __debug }` (the root controls are attached as non-enumerable properties on the api object). Internal `createRootWithProps(def, props, options)` powers both `createRoot` (props-less) and `createTestController` (props-allowing).
+This repo follows the **codebase wiki pattern** described in `WIKI_SPEC.md`. The pattern: instead of re-deriving understanding from raw files every session, maintain a persistent, agent-authored wiki that compounds across PRs. The rest of this CLAUDE.md is the **schema** — your operating manual for that wiki.
 
-Each controller is a `ControllerInstance` carrying a flat `entries: LifecycleEntry[]` list — every primitive created via `ctx` (effects, fields, forms, caches, mutations, child controllers, emitters, on-subscriptions, lifecycle hooks) appends to that list. The list drives:
-- **Dispose** — iterate reverse, dispatch by `entry.kind`. Children dispose first (recursive), then primitives, then `onDispose` hooks. Idempotent.
-- **Suspend** — iterate reverse: dispose user effects (storing their factory), recurse into children, fire `onSuspend` hooks.
-- **Resume** — iterate forward: re-instantiate effects from stored factories, recurse into children, fire `onResume` hooks.
-- **Construction rollback** — if the factory throws, the partially-built entries dispose in reverse and the error rethrows. Sibling controllers that already finished construction stay alive (spec §12.1).
+## Layout
 
-Three distinct `RootShared` references — `devtools`, `onError`, `queryClient` — propagate to every descendant via the instance constructor. Children inherit deps and may shadow via `ctx.child(def, props, { deps: override })` (the spread happens only when an override exists, preserving reference equality otherwise).
+```
+.wiki/
+├── index.md              # catalog — read this first on every session
+├── log.md                # chronological append-only record (ingests, decisions, lint passes)
+├── overview.md           # high-level architecture in prose
+├── glossary.md           # domain vocabulary
+├── modules/              # one page per significant package or subdirectory
+├── entities/             # important classes / types / functions referenced across modules
+├── flows/                # processes that span files (subscription, mutation, SSR, etc.)
+├── decisions/            # why-X-not-Y, with the reasoning preserved
+├── pitfalls/             # bug patterns, footguns, surprising behaviors
+└── candidates/           # staging for low-confidence inferences (NOT trusted)
+    ├── modules/
+    ├── entities/
+    ├── flows/
+    ├── decisions/
+    └── pitfalls/
+```
 
-### Signals
+## Page types
 
-`packages/core/src/signals/` is the only place that touches `@preact/signals-core`. Everything else uses the wrapper types (`Signal`, `ReadSignal`, `Computed`). If the underlying runtime ever swaps, only this module changes. The internal `readOnly(signal)` projection hides `set`/`update` at runtime — return that from public surfaces (e.g. cache subscriptions) so callers can't mutate.
+| Type | What it documents | Example |
+|------|-------------------|---------|
+| **module** | A significant package or subdirectory: purpose, public surface, key types, internal invariants | `modules/query.md` covers `packages/core/src/query/` |
+| **entity** | A class/type/function referenced across modules; what a new contributor needs before reading callers | `entities/entry.md` covers the `Entry<T>` state machine |
+| **flow** | A process that spans files — request lifecycles, lifecycle transitions, multi-step interactions | `flows/query-subscription.md` covers `ctx.use → bindEntry → Entry → AsyncState` |
+| **decision** | The *why* behind a non-obvious design choice. Code refactors don't invalidate these — that's the point | `decisions/per-root-query-client.md` |
+| **pitfall** | Bug patterns and surprising behaviors. Every "watch out for…" goes here | `pitfalls/callargs-vs-keyargs.md` |
+| **glossary** | Single page of domain vocabulary | `glossary.md` |
+| **overview** | Single page giving the current high-level understanding | `overview.md` |
 
-`Signal<T>` extends `ReadSignal<T>` structurally — assignable downward, never upward. `Field<T>` is `ReadSignal<T> & { ...form metadata }`, which means **`field.value` returns `T` directly** (via the ReadSignal getter), while `form.value` and `fieldArray.value` are `ReadSignal<...>` — so reading them is `form.value.value`. Form/FieldArray traversal code (`form.ts`) must handle both shapes; the field-vs-form check uses `Symbol.for('olas.form')` / `Symbol.for('olas.fieldArray')` brand markers on the impl classes.
+Use whichever type fits. If something doesn't fit, ask before inventing a new type.
 
-### Query system
+## Frontmatter — required on every wiki page
 
-One `QueryClient` per root. The client holds two maps:
-- `maps: Map<AnyQuery, Map<hash, ClientEntry<T>>>` — regular queries.
-- `infiniteMaps: Map<AnyInfiniteQuery, Map<hash, InfiniteClientEntry>>` — infinite queries.
+```markdown
+---
+name: short-kebab-case-slug
+description: One sentence — what this page is about. Read by the index.
+type: module | entity | flow | decision | pitfall | glossary | overview
+covers:
+  - packages/core/src/query/entry.ts
+  - packages/core/src/query/client.ts:50-150
+edges:
+  - { type: uses, target: entities/query-client.md }
+  - { type: tested-by, target: ../packages/core/tests/query.test.ts }
+last_verified: 2026-05-18
+confidence: high
+---
+```
 
-Queries (`defineQuery`, `defineInfiniteQuery`) are module-scoped values branded `__olas: 'query' | 'infiniteQuery'`. Each query carries a `__clients: Set<QueryClient>` so `query.invalidate()` / `invalidateAll()` / `setData()` reach every root that has bound an entry. When a root disposes it removes itself from all touched queries' sets — that's how test isolation works.
+- **`covers`** — file paths or `path:start-end` ranges this page documents. When those lines change, lint should flag the page for re-verification. Be specific: cite ranges, not whole files, when only part of a file matters.
+- **`edges`** — typed links to other pages. Types: `uses` / `tested-by` / `supersedes` / `contradicts` / `documented-in` / `related` (last one only when nothing else fits).
+- **`confidence`** — `high` (verified, multi-source), `medium` (inferred but consistent with code), `candidate` (low evidence, lives in `.wiki/candidates/`).
+- **`last_verified`** — ISO date. Update when you re-read the covered code and confirm the page is still accurate.
 
-`ClientEntry` distinguishes two argument arrays that look the same but aren't:
-- `callArgs` — the original args passed by the consumer; forwarded to `spec.fetcher(...args, signal)`.
-- `keyArgs` — `spec.key(...callArgs)` output, hashed via `stableHash` for entry identity.
+In page bodies, prefer **citations as `path:line` or `path:start-end`** over prose references. `query/entry.ts:47-62` beats "the fetch loop in the entry module". Citations are mechanically dereference-able.
 
-Forgetting this gave the "fetcher gets ['user', 'u1'] instead of 'u1'" bug — keep them separate.
+## Operations — when to do what
 
-`Entry<T>` (in `query/entry.ts`) is the underlying state machine: race-protected via a monotonic `currentFetchId`, AbortSignal plumbing, retry loop (`runWithRetry`), snapshot stack for optimistic updates (positional rollback per §6.4), staleness timer that flips `isStale` after `staleTime` (a `Date.now()`-based computed wouldn't update as time passes — must be timer-driven).
+### Ingest
 
-`ctx.use(queryOrInfiniteQuery, keyOrOptions?)` dispatches on the `__olas` brand and routes to `createUse` or `createInfiniteUse`. Subscriptions hold a `current$: Signal<ClientEntry | null>` and derive all AsyncState signals as computeds, so swapping the entry on key change is a single signal write that ripples through `data`, `error`, `status`, etc. `keepPreviousData` requires a separate `previousData$` because the computed needs a fallback when the new entry's data is still undefined.
+New information enters the wiki here.
 
-### Mutations
+- **Commit ingest** — when finishing a non-trivial change, read the diff, identify affected pages by `covers:`, update them, bump `last_verified`. Add new pages for new modules / entities. Add a `log.md` entry: `## [YYYY-MM-DD HH:MM] ingest | <short summary>`.
+- **Conversation ingest** — when the user explains *why* something is the way it is, or describes a bug / constraint / past attempt, file it. Usually a pitfall or decision page. Don't let context die in chat.
+- **External ingest** — bug reports, runtime issues, surprising library behavior. Same treatment.
 
-`MutationImpl` dispatches on `concurrency`:
-- `parallel` — every `run()` is independent; `isPending` is true while any inflight.
-- `latest-wins` — new `run()` aborts every inflight AND **rolls back their snapshots synchronously** before invoking the new `onMutate`. This is the order from §6.1; doing it after `onMutate` causes the stacked-snapshot bug where the new optimistic update gets clobbered.
-- `serial` — queue, process one at a time.
+### Query
 
-Every `executeRun` wraps the mutate promise in `raceAbort(promise, signal)` — if the user's mutate ignores its signal, we still reject with AbortError when superseded. Without this, misbehaving fetchers cause memory leaks.
+Before reading source code, read the wiki:
 
-Superseded runs (`isAbortError(err)` or `signal.aborted`) do **not** populate `error`, do **not** invoke `onError`, do **not** invoke `onSettled` — those are reserved for genuine failures. The supersede path rolls the snapshot back and rethrows AbortError.
+1. Read `.wiki/index.md`. Identify candidate pages.
+2. Read those pages.
+3. Follow `covers:` citations to specific file ranges.
+4. Read only the cited ranges, not whole files.
+5. Answer / act.
 
-Mutations increment `queryClient.mutationsInflight$` on start and decrement on settle. `root.waitForIdle()` waits on it plus per-entry `isFetching` signals.
+This inverts the normal "grep → read → synthesize" loop. The synthesis already exists; the wiki points you at the exact code.
 
-### SSR
+If a query produces a useful new synthesis (comparison, walk-through, inferred pattern), file it back as a page. The wiki compounds on use, not just on commits.
 
-`root.dehydrate()` walks the QueryClient's `maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'` only. Infinite queries and error/idle entries are intentionally skipped.
+### Lint
 
-`createRoot(def, { hydrate: state })` populates a `hydratedData: Map<hash, { data, lastUpdatedAt }>` inside the QueryClient. The first `bindEntry` for a matching key consumes the hydrated row and threads `initialData` + `initialUpdatedAt` into the new `Entry`. Each hydrated row is consumed once — subsequent rebinds re-fetch normally.
+Periodically (definitely before a big PR; ideally as a routine):
 
-### Forms
+- Pages whose covered files changed since `last_verified` → re-read and refresh.
+- Pages with no inbound `edges:` from `index.md` or other pages → orphans, probably stale.
+- Two pages making conflicting claims → flag for resolution, add `contradicts` edge.
+- Modules / public APIs without coverage → gap.
+- Candidates with accumulated evidence → promote to authoritative.
+- Pitfalls older than ~6 months without re-confirmation → downgrade confidence.
 
-`ctx.form(schema, options?)` and `ctx.fieldArray(itemFactory, options?)` produce aggregates. Aggregate signals (`value`, `errors`, `isValid`, `isDirty`, `touched`, `isValidating`) are computeds that traverse `this.fields` (or `this.items$.value`), branching on brand markers to read the right surface per child type.
+There is no automated linter yet (TODO: add `scripts/wiki-lint.ts`). For now, lint is "ask Claude to scan and report" before a release or after a refactor.
 
-Form-level and array-level validators run in an `effect` that tracks `this.value.value` and applies the same sync-short-circuit / async-await pattern as `FieldImpl`. They populate `topLevelErrors` (separate from per-field `errors`); `flatErrors` walks the entire tree and emits `[{ path, errors }]` entries — empty path means the form-level slot.
+## Candidate staging
 
-`FieldArray.add(initial?)` passes `initial` to the user's `itemFactory`. The factory **must** use it — there's no auto-set. For Form items, the canonical pattern is `(initial) => ctx.form(schema, { initial })`.
+The dangerous failure mode is **confident wrongness** — a page asserts something incorrect with `high` confidence and every query propagates the error.
 
-## Working with the codebase
+A page goes into `.wiki/candidates/<type>/` (mirroring the main layout) when:
 
-- **When the spec and the code disagree, the spec wins** unless a test pins the current behavior intentionally. Either fix the code or, if the spec needs updating, raise it explicitly.
-- **Phase ordering matters.** SPEC.md §22 lists the dependency DAG. Phase 10 (scopes + React adapter), 13 (devtools extension), and 14 (polish/docs) are the unimplemented pieces; lots of types and structure (e.g. `Ctx`, `RootShared`) already anticipate them, so don't tear down what looks vestigial without checking.
-- **Type inference quirks.** `ctx.field('')` infers `Field<''>` because of string literal narrowing. In tests that don't want that, annotate: `ctx.field<string>('')`. Same trap for `ctx.field(0)` → `Field<0>`.
-- **biome v1.9.4 config** is in `biome.json`. Two rules are explicitly relaxed: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't reinstate them.
-- **Don't commit dist/.** `tsup` cleans on every build and `.gitignore` excludes it. The `pnpm-lock.yaml` IS committed.
-- **`@preact/signals-core` is a peer dep on @olas/core**, declared both in `peerDependencies` and `devDependencies` so the workspace dev environment resolves it. Consumers must install it themselves; the library does not bundle it.
+- The agent inferred it from code rather than being told.
+- Evidence is thin: one file cited, no confirming test, no spec section.
+- Confidence is `candidate`.
+
+Candidates are **excluded from authoritative query** — read them when explicitly looking, but don't surface them as facts. Promote to the main wiki when:
+
+- The user confirms.
+- Independent evidence accumulates (same inference from N sources).
+- A test or spec section confirms.
+
+Move via `git mv`, change `confidence`, update incoming edges.
+
+## When to deviate
+
+This schema is a starting point, not a contract. If a page doesn't fit a type, ask. If the layout starts feeling wrong, raise it — the schema is iterable. The goal is a wiki that's useful to the next session, not bureaucratic compliance.
+
+---
+
+# Codebase-specific gotchas (the quick list — full details in `.wiki/pitfalls/`)
+
+- **`callArgs` vs `keyArgs` in `ClientEntry`** — original args go to the fetcher; `spec.key(...)` output goes to the hash. They are not the same. See `.wiki/pitfalls/callargs-vs-keyargs.md`.
+- **`Field<T>.value` returns `T`, but `Form.value` and `FieldArray.value` are `ReadSignal<...>`.** Form traversal code branches on this. See `.wiki/pitfalls/field-value-shape.md`.
+- **`latest-wins` mutations roll back the previous snapshot synchronously before calling the new `onMutate`** — not on the previous run's catch. Doing it later stacks snapshots wrong. See `.wiki/pitfalls/latest-wins-rollback-order.md`.
+- **`isStale` cannot be a `Date.now()` computed** — its deps don't change as time passes. Must be timer-driven. See `.wiki/pitfalls/isstale-needs-timer.md`.
+- **Mutations race against their abort signal** so misbehaving mutate fns can't block forever. See `.wiki/pitfalls/raceabort-for-misbehaving-mutate.md`.
+- **`ctx.field('')` infers `Field<''>`** because of literal narrowing. Annotate: `ctx.field<string>('')`. See `.wiki/pitfalls/literal-type-narrowing.md`.
+- **`@preact/signals-core`'s overloaded `signal()` gives `Signal<T | undefined>`** through `ReturnType` because the last overload wins. We use `PreactSignal<T>` directly to dodge it. See `.wiki/pitfalls/preact-signals-overload-return.md`.
+
+---
+
+# Conventions
+
+- **Don't commit `dist/`.** `tsup` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
+- **`@preact/signals-core` is a peer dep on `@olas/core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
+- **biome v1.9.4 config in `biome.json`** — two rules are intentionally off: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't re-enable them.
+- **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".
