@@ -1,0 +1,40 @@
+{
+  "name": "@olas/example-kanban",
+  "version": "0.0.0",
+  "private": true,
+  "description": "React example — Kanban board showcasing mutation concurrency modes, optimistic rollback, formFromZod, scopes, devtools",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@olas/core": "workspace:^",
+    "@olas/react": "workspace:^",
+    "@olas/zod": "workspace:^",
+    "@olas/devtools": "workspace:^",
+    "lucide-react": "^0.460.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@preact/signals-core": "^1.8.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "jsdom": "^25.0.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.8"
+  }
+}

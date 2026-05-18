@@ -1,0 +1,28 @@
+{
+  "name": "@olas/example-stock-ticker",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vanilla TS example — live stock ticker on signals + emitter + throttled, no UI framework",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@olas/core": "workspace:^",
+    "@olas/persist": "workspace:^"
+  },
+  "devDependencies": {
+    "@preact/signals-core": "^1.8.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/node": "^22.10.2",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.10",
+    "vitest": "^2.1.8"
+  }
+}

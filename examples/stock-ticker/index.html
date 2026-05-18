@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Olas stock ticker — vanilla</title>
+  </head>
+  <body class="m-0 px-6 pb-10 pt-6 max-w-5xl mx-auto">
+    <header class="flex items-baseline justify-between gap-4 pb-3 mb-5 border-b border-(--color-border) flex-wrap">
+      <div>
+        <h1 class="m-0 text-xl font-bold tracking-tight">Olas stock ticker</h1>
+        <p class="m-0 text-xs text-(--color-fg-mute)">
+          Vanilla TS · signals + emitter + throttled + persisted
+        </p>
+      </div>
+      <div class="font-mono text-xs text-(--color-fg-mute)">no react · no template engine</div>
+    </header>
+
+    <section class="rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-4 mb-4 shadow-[var(--shadow-card)]">
+      <h2 class="m-0 mb-3 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
+        Portfolio
+      </h2>
+      <div class="flex items-baseline gap-3">
+        <span class="text-[10.5px] text-(--color-fg-mute) uppercase">Total</span>
+        <span id="total" class="font-mono text-3xl font-bold tracking-tight tabular-nums">—</span>
+      </div>
+      <ul id="watchlist" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 list-none p-0 m-0 mt-3"></ul>
+    </section>
+
+    <section class="rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-4 mb-4 shadow-[var(--shadow-card)]">
+      <h2 class="m-0 mb-3 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
+        Search &amp; add symbols
+        <span class="ml-2 text-[10px] font-normal normal-case tracking-normal opacity-60">(debounced 200ms)</span>
+      </h2>
+      <div class="flex flex-col gap-2">
+        <input
+          id="search"
+          class="rounded-lg border border-(--color-border) bg-(--color-bg-sunk) px-3 py-2 text-sm placeholder:text-(--color-fg-mute) outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30"
+          placeholder="Search by symbol or name…"
+          autocomplete="off"
+        />
+        <ul id="results" class="m-0 p-0 list-none max-h-60 overflow-auto rounded-lg border border-(--color-border)"></ul>
+      </div>
+    </section>
+
+    <section class="rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-4 mb-4 shadow-[var(--shadow-card)]">
+      <h2 class="m-0 mb-3 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
+        Price alerts
+      </h2>
+      <div class="flex flex-col gap-2">
+        <div class="grid grid-cols-[110px_90px_1fr_auto] gap-2 items-center">
+          <select id="alert-symbol" class="rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-2 py-1.5 text-sm font-mono"></select>
+          <select id="alert-direction" class="rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-2 py-1.5 text-sm font-mono">
+            <option value="above">above</option>
+            <option value="below">below</option>
+          </select>
+          <input
+            id="alert-target"
+            class="rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-2 py-1.5 text-sm font-mono"
+            type="number"
+            step="0.01"
+            placeholder="target"
+          />
+          <button
+            id="alert-add"
+            type="button"
+            class="rounded-md bg-(--color-accent) px-3 py-1.5 text-sm font-medium text-white hover:brightness-110"
+          >
+            Add alert
+          </button>
+        </div>
+        <ul id="alerts" class="m-0 p-0 list-none flex flex-col gap-1"></ul>
+      </div>
+    </section>
+
+    <div id="toast-root"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
