@@ -70,6 +70,30 @@ importers:
         specifier: ^1.8.0
         version: 1.14.2
 
+  packages/devtools:
+    devDependencies:
+      '@olas/core':
+        specifier: workspace:^
+        version: link:../core
+      '@olas/react':
+        specifier: workspace:^
+        version: link:../react
+      '@testing-library/react':
+        specifier: ^16.1.0
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.28
+      '@types/react-dom':
+        specifier: ^18.3.1
+        version: 18.3.7(@types/react@18.3.28)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+
   packages/persist:
     devDependencies:
       '@olas/core':
