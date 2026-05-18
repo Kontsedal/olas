@@ -73,5 +73,9 @@ export type {
 } from './controller'
 export { createRoot, defineController } from './controller'
 
+// Scopes — typed cross-tree data (§10.3)
+export type { Scope, ScopeOptions } from './scope'
+export { defineScope } from './scope'
+
 // Utilities
 export { isAbortError } from './utils'
