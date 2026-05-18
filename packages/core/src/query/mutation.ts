@@ -21,6 +21,12 @@ export type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
  * `query.setData(...)`) to enable automatic rollback on error.
  */
 export type MutationSpec<V, R> = {
+  /**
+   * A short human-readable name. Surfaces in the devtools mutation log so the
+   * user sees `moveCard` instead of just the controller path. Strongly
+   * recommended in app code; cosmetic only — no runtime semantics depend on it.
+   */
+  name?: string
   /** The actual write. Receives the user-supplied vars and an `AbortSignal`. */
   mutate: (vars: V, signal: AbortSignal) => Promise<R>
   /**
@@ -100,9 +106,9 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       | { type: 'mutation:rollback' },
   ): void {
     if (this.devtools === undefined) return
-    this.devtools.emit({ ...event, path: this.controllerPath } as Parameters<
-      DevtoolsEmitter['emit']
-    >[0])
+    const out: Record<string, unknown> = { ...event, path: this.controllerPath }
+    if (this.spec.name !== undefined) out.name = this.spec.name
+    this.devtools.emit(out as Parameters<DevtoolsEmitter['emit']>[0])
   }
 
   run = (vars: V): Promise<R> => {

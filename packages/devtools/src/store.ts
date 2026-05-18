@@ -41,12 +41,13 @@ export type CacheEntry =
   | { id: number; t: number; kind: 'invalidated'; queryKey: readonly unknown[] }
   | { id: number; t: number; kind: 'gc'; queryKey: readonly unknown[] }
 
-/** One entry in the mutation log. */
+/** One entry in the mutation log. `durationMs` is set on success/error when
+ * the entry can be paired with a preceding `run` for the same path+name. */
 export type MutationEntry =
-  | { id: number; t: number; kind: 'run'; path: readonly string[]; vars: unknown }
-  | { id: number; t: number; kind: 'success'; path: readonly string[]; result: unknown }
-  | { id: number; t: number; kind: 'error'; path: readonly string[]; error: unknown }
-  | { id: number; t: number; kind: 'rollback'; path: readonly string[] }
+  | { id: number; t: number; kind: 'run'; path: readonly string[]; name?: string; vars: unknown }
+  | { id: number; t: number; kind: 'success'; path: readonly string[]; name?: string; result: unknown; durationMs?: number }
+  | { id: number; t: number; kind: 'error'; path: readonly string[]; name?: string; error: unknown; durationMs?: number }
+  | { id: number; t: number; kind: 'rollback'; path: readonly string[]; name?: string }
 
 /** One entry in the field validation log. */
 export type FieldEntry = {
@@ -84,6 +85,10 @@ export class DevtoolsStore {
   private readonly maxEntries: number
   private readonly now: () => number
   private nextId = 1
+
+  /** Keyed by `path|name` so a mutation:run can be paired with its
+   *  success/error to compute duration. Cleared after pairing. */
+  private mutationStarts = new Map<string, number>()
 
   constructor(options?: DevtoolsStoreOptions) {
     this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES
@@ -145,17 +150,35 @@ export class DevtoolsStore {
       case 'cache:gc':
         this.pushCache({ kind: 'gc', queryKey: event.queryKey })
         return
-      case 'mutation:run':
-        this.pushMutation({ kind: 'run', path: event.path, vars: event.vars })
+      case 'mutation:run': {
+        this.mutationStarts.set(mutationKey(event.path, event.name), this.now())
+        this.pushMutation({ kind: 'run', path: event.path, name: event.name, vars: event.vars })
         return
-      case 'mutation:success':
-        this.pushMutation({ kind: 'success', path: event.path, result: event.result })
+      }
+      case 'mutation:success': {
+        const durationMs = this.consumeStart(event.path, event.name)
+        this.pushMutation({
+          kind: 'success',
+          path: event.path,
+          name: event.name,
+          result: event.result,
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        })
         return
-      case 'mutation:error':
-        this.pushMutation({ kind: 'error', path: event.path, error: event.error })
+      }
+      case 'mutation:error': {
+        const durationMs = this.consumeStart(event.path, event.name)
+        this.pushMutation({
+          kind: 'error',
+          path: event.path,
+          name: event.name,
+          error: event.error,
+          ...(durationMs !== undefined ? { durationMs } : {}),
+        })
         return
+      }
       case 'mutation:rollback':
-        this.pushMutation({ kind: 'rollback', path: event.path })
+        this.pushMutation({ kind: 'rollback', path: event.path, name: event.name })
         return
       case 'field:validated':
         this.pushField({
@@ -193,6 +216,18 @@ export class DevtoolsStore {
     const full = { id: this.nextId++, t: this.now(), ...entry } as FieldEntry
     this.fields$.set(appendBounded(this.fields$.peek(), full, this.maxEntries))
   }
+
+  private consumeStart(path: readonly string[], name: string | undefined): number | undefined {
+    const key = mutationKey(path, name)
+    const startedAt = this.mutationStarts.get(key)
+    if (startedAt === undefined) return undefined
+    this.mutationStarts.delete(key)
+    return this.now() - startedAt
+  }
+}
+
+function mutationKey(path: readonly string[], name: string | undefined): string {
+  return `${path.join('>')}#${name ?? ''}`
 }
 
 /**

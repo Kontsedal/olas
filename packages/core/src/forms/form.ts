@@ -1,7 +1,7 @@
 import type { Field } from '../controller/types'
 import { type Signal, batch, computed, effect, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
-import { createField } from './field'
+import { bindFieldDevtoolsOwner, createField } from './field'
 import type {
   DeepPartial,
   FieldArray,
@@ -547,6 +547,43 @@ export function createFieldArray<I extends Field<any> | Form<any>>(
   options?: FieldArrayOptions<I>,
 ): FieldArray<I> {
   return new FieldArrayImpl<I>(itemFactory, options)
+}
+
+/**
+ * Recursively wire every leaf `Field` in a form / field-array tree to a
+ * devtools emitter. The supplied `pathBuilder` decides the field's display
+ * name within the form ("title" vs "subtasks[0].text"). Internal — called by
+ * `ctx.form` / `ctx.fieldArray` so the devtools panel knows what fields exist.
+ */
+export function bindTreeToDevtools(
+  node: Field<unknown> | Form<FormSchema> | FieldArray<Field<unknown> | Form<FormSchema>>,
+  prefix: string,
+  controllerPath: readonly string[],
+  emitter: import('../devtools').DevtoolsEmitter,
+): void {
+  if (isForm(node)) {
+    for (const [key, child] of Object.entries(node.fields)) {
+      bindTreeToDevtools(child, prefix === '' ? key : `${prefix}.${key}`, controllerPath, emitter)
+    }
+    return
+  }
+  if (isFieldArray(node)) {
+    // Re-bind on every items change so dynamically-added entries get tracked.
+    const arr = node as FieldArray<Field<unknown> | Form<FormSchema>>
+    effect(() => {
+      const items = arr.items.value
+      items.forEach((item, idx) => {
+        bindTreeToDevtools(item, `${prefix}[${idx}]`, controllerPath, emitter)
+      })
+    })
+    return
+  }
+  // Leaf Field.
+  bindFieldDevtoolsOwner(node as Field<unknown>, {
+    controllerPath,
+    fieldName: prefix,
+    emitter,
+  })
 }
 
 // Quiet unused-import linter without exporting these symbols publicly.

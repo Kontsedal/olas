@@ -1,4 +1,5 @@
 import type { Field } from '../controller/types'
+import type { DevtoolsEmitter } from '../devtools'
 import {
   type Computed,
   type ReadSignal,
@@ -10,6 +11,17 @@ import {
 } from '../signals'
 import { isAbortError } from '../utils'
 import type { Validator } from './types'
+
+/**
+ * Hook attached by `ctx.form` (or `createForm`) so a Field can publish
+ * `field:validated` devtools events with its owning controller path + the
+ * field's name within the form schema. See devtools §20.9 and FieldImpl.bind.
+ */
+export type FieldDevtoolsOwner = {
+  controllerPath: readonly string[]
+  fieldName: string
+  emitter: DevtoolsEmitter
+}
 
 class FieldImpl<T> implements Field<T> {
   private readonly value$: Signal<T>
@@ -26,6 +38,7 @@ class FieldImpl<T> implements Field<T> {
   private currentAbort: AbortController | null = null
   private runId = 0
   private disposed = false
+  private devtoolsOwner: FieldDevtoolsOwner | null = null
 
   constructor(initial: T, validators: ReadonlyArray<Validator<T>> = []) {
     this.initial = initial
@@ -119,6 +132,29 @@ class FieldImpl<T> implements Field<T> {
     this.validatorDispose = null
     this.currentAbort?.abort()
     this.currentAbort = null
+    this.devtoolsOwner = null
+  }
+
+  /**
+   * Bind this field to a devtools owner. Each subsequent validation pass
+   * publishes a `field:validated` event with the supplied path + name.
+   * Idempotent — calling again replaces the owner. Internal: called by
+   * `createForm` / `createFieldArray` so the form's keys reach the panel.
+   */
+  bindDevtoolsOwner(owner: FieldDevtoolsOwner | null): void {
+    this.devtoolsOwner = owner
+  }
+
+  private emitValidated(valid: boolean, errors: readonly string[]): void {
+    const owner = this.devtoolsOwner
+    if (owner === null) return
+    owner.emitter.emit({
+      type: 'field:validated',
+      path: owner.controllerPath,
+      field: owner.fieldName,
+      valid,
+      errors: [...errors],
+    })
   }
 
   // --- internal ---
@@ -165,6 +201,7 @@ class FieldImpl<T> implements Field<T> {
         this.errors$.set(syncErrors)
         this.validating$.set(false)
       })
+      this.emitValidated(false, syncErrors)
       return
     }
 
@@ -173,6 +210,7 @@ class FieldImpl<T> implements Field<T> {
         this.errors$.set([])
         this.validating$.set(false)
       })
+      this.emitValidated(true, [])
       return
     }
 
@@ -196,7 +234,23 @@ class FieldImpl<T> implements Field<T> {
         this.errors$.set(asyncErrors)
         this.validating$.set(false)
       })
+      this.emitValidated(asyncErrors.length === 0, asyncErrors)
     })
+  }
+}
+
+/**
+ * Internal — type guard / accessor for the binding hook. Avoids exposing
+ * `bindDevtoolsOwner` on the public `Field<T>` type while letting `createForm`
+ * call it via a structural check.
+ */
+export function bindFieldDevtoolsOwner<T>(
+  field: Field<T>,
+  owner: FieldDevtoolsOwner | null,
+): void {
+  const impl = field as { bindDevtoolsOwner?: (o: FieldDevtoolsOwner | null) => void }
+  if (typeof impl.bindDevtoolsOwner === 'function') {
+    impl.bindDevtoolsOwner(owner)
   }
 }
 
