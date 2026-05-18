@@ -2,6 +2,12 @@ import { type Signal, batch, signal } from '../signals'
 import { isAbortError } from '../utils'
 import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
+export type EntryEvents = {
+  onFetchStart?: () => void
+  onFetchSuccess?: (durationMs: number) => void
+  onFetchError?: (durationMs: number, error: unknown) => void
+}
+
 export type EntryOptions<T> = {
   fetcher: () => (signal: AbortSignal) => Promise<T>
   staleTime?: number
@@ -9,6 +15,7 @@ export type EntryOptions<T> = {
   initialUpdatedAt?: number | undefined
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  events?: EntryEvents
 }
 
 type SnapshotRecord<T> = {
@@ -43,12 +50,15 @@ export class Entry<T> {
   private snapshots: Array<SnapshotRecord<T>> = []
   private nextSnapshotId = 0
   private disposed = false
+  private readonly events: EntryEvents
+  private fetchStartTime = 0
 
   constructor(options: EntryOptions<T>) {
     this.fetcherProvider = options.fetcher
     this.staleTime = options.staleTime ?? 0
     this.retry = options.retry ?? 0
     this.retryDelay = options.retryDelay ?? 1000
+    this.events = options.events ?? {}
     this.data = signal<T | undefined>(options.initialData)
     if (options.initialData !== undefined) {
       this.status = signal<AsyncStatus>('success')
@@ -75,6 +85,13 @@ export class Entry<T> {
       this.isFetching.set(true)
       this.isLoading.set(!previouslyHadData)
     })
+
+    this.fetchStartTime = Date.now()
+    try {
+      this.events.onFetchStart?.()
+    } catch {
+      // devtools handlers must not break the program.
+    }
 
     return this.runWithRetry(myId, abort)
   }
@@ -129,6 +146,11 @@ export class Entry<T> {
       this.isStale.set(this.staleTime === 0)
     })
     if (this.staleTime > 0) this.scheduleStaleness()
+    try {
+      this.events.onFetchSuccess?.(Date.now() - this.fetchStartTime)
+    } catch {
+      // devtools handlers must not break the program.
+    }
     return result
   }
 
@@ -139,6 +161,11 @@ export class Entry<T> {
       this.isLoading.set(false)
       this.isFetching.set(false)
     })
+    try {
+      this.events.onFetchError?.(Date.now() - this.fetchStartTime, err)
+    } catch {
+      // devtools handlers must not break the program.
+    }
     throw err
   }
 

@@ -1,3 +1,4 @@
+import type { DevtoolsEmitter } from '../devtools'
 import { type ErrorHandler, dispatchError } from '../errors'
 import { type Signal, signal } from '../signals'
 import { Entry } from './entry'
@@ -46,6 +47,8 @@ export class ClientEntry<T> {
     this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
     this.refetchInterval = spec.refetchInterval
     const fetcherFn = spec.fetcher
+    const devtools = client.devtools
+    const queryKey = this.keyArgs
     this.entry = new Entry<T>({
       fetcher: () => (signal) => fetcherFn(...callArgs, signal),
       staleTime: spec.staleTime,
@@ -53,6 +56,21 @@ export class ClientEntry<T> {
       retryDelay: spec.retryDelay as RetryDelay | undefined,
       initialData: hydrated?.data,
       initialUpdatedAt: hydrated?.lastUpdatedAt,
+      events:
+        devtools !== undefined
+          ? {
+              onFetchStart: () => devtools.emit({ type: 'cache:fetch-start', queryKey }),
+              onFetchSuccess: (durationMs) =>
+                devtools.emit({ type: 'cache:fetch-success', queryKey, durationMs }),
+              onFetchError: (durationMs, error) =>
+                devtools.emit({
+                  type: 'cache:fetch-error',
+                  queryKey,
+                  durationMs,
+                  error,
+                }),
+            }
+          : undefined,
     })
   }
 
@@ -201,9 +219,16 @@ export class QueryClient {
   readonly mutationsInflight$: Signal<number> = signal(0)
   private onError: ErrorHandler | undefined
   private disposed = false
+  /** Devtools bus, if any — passed by `createRoot`. Used to emit cache events. */
+  readonly devtools: DevtoolsEmitter | undefined
 
-  constructor(opts?: { onError?: ErrorHandler; hydrate?: DehydratedState }) {
+  constructor(opts?: {
+    onError?: ErrorHandler
+    hydrate?: DehydratedState
+    devtools?: DevtoolsEmitter
+  }) {
     this.onError = opts?.onError
+    this.devtools = opts?.devtools
     if (opts?.hydrate) this.hydrate(opts.hydrate)
   }
 
@@ -299,6 +324,7 @@ export class QueryClient {
     if (map.size === 0) {
       this.maps.delete(entry.query)
     }
+    this.devtools?.emit({ type: 'cache:gc', queryKey: entry.keyArgs })
   }
 
   invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): void {
@@ -309,6 +335,7 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     const entry = map.get(hash)
     if (!entry) return
+    this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
     entry.entry.invalidate().catch((err) => {
       dispatchError(this.onError, err, {
         kind: 'cache',
@@ -324,6 +351,7 @@ export class QueryClient {
     if (!map) return
     for (const [hash, entry] of map) {
       void hash
+      this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
       entry.entry.invalidate().catch((err) => {
         dispatchError(this.onError, err, {
           kind: 'cache',
