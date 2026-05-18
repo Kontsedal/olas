@@ -9,10 +9,12 @@ export default defineConfig({
       '@olas/react': resolve(__dirname, 'packages/react/src/index.ts'),
       '@olas/persist': resolve(__dirname, 'packages/persist/src/index.ts'),
       '@olas/zod': resolve(__dirname, 'packages/zod/src/index.ts'),
+      '@olas/devtools': resolve(__dirname, 'packages/devtools/src/index.ts'),
     },
   },
   test: {
     include: ['packages/*/tests/**/*.test.ts', 'packages/*/tests/**/*.test.tsx'],
+    // Mocha-style: Devtools tests target jsdom, set per-file via @vitest-environment.
     environment: 'node',
     globals: false,
     pool: 'forks',
