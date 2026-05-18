@@ -286,6 +286,7 @@ export class ControllerInstance {
           self.rootShared.onError,
           self.path,
           self.rootShared.queryClient.mutationsInflight$,
+          self.rootShared.devtools,
         )
         self.entries.push({ kind: 'cleanup', dispose: () => m.dispose() })
         return m

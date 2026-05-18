@@ -1,3 +1,4 @@
+import type { DevtoolsEmitter } from '../devtools'
 import { type ErrorHandler, dispatchError } from '../errors'
 import { type Signal, batch, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
@@ -84,7 +85,25 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     private readonly inflightCounter?: {
       update(fn: (n: number) => number): void
     },
+    private readonly devtools?: DevtoolsEmitter,
   ) {}
+
+  private emit(event: { type: 'mutation:run'; vars: unknown }): void
+  private emit(event: { type: 'mutation:success'; result: unknown }): void
+  private emit(event: { type: 'mutation:error'; error: unknown }): void
+  private emit(event: { type: 'mutation:rollback' }): void
+  private emit(
+    event:
+      | { type: 'mutation:run'; vars: unknown }
+      | { type: 'mutation:success'; result: unknown }
+      | { type: 'mutation:error'; error: unknown }
+      | { type: 'mutation:rollback' },
+  ): void {
+    if (this.devtools === undefined) return
+    this.devtools.emit({ ...event, path: this.controllerPath } as Parameters<
+      DevtoolsEmitter['emit']
+    >[0])
+  }
 
   run = (vars: V): Promise<R> => {
     if (this.disposed) {
@@ -141,7 +160,8 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     const abort = new AbortController()
     let snapshot: Snapshot | undefined
     try {
-      snapshot = this.spec.onMutate?.(vars) ?? undefined
+      const raw = this.spec.onMutate?.(vars) ?? undefined
+      snapshot = raw === undefined ? undefined : this.wrapSnapshot(raw)
     } catch (err) {
       dispatchError(this.onError, err, {
         kind: 'mutation',
@@ -157,6 +177,8 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       this.lastVariables.set(vars)
     })
 
+    this.emit({ type: 'mutation:run', vars })
+
     try {
       const result = await raceAbort(this.runWithRetry(vars, abort.signal), abort.signal)
       if (abort.signal.aborted || this.disposed) {
@@ -167,6 +189,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         this.data.set(result)
         this.error.set(undefined)
       })
+      this.emit({ type: 'mutation:success', result })
       this.safeCall(() => this.spec.onSuccess?.(result, vars), 'mutation')
       this.safeCall(() => this.spec.onSettled?.(result, undefined, vars), 'mutation')
       return result
@@ -177,6 +200,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         throw err
       }
       this.error.set(err)
+      this.emit({ type: 'mutation:error', error: err })
       this.safeCall(() => this.spec.onError?.(err, vars, snapshot), 'mutation')
       this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
       throw err
@@ -186,6 +210,20 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       if (this.inflight.size === 0) {
         this.isPending.set(false)
       }
+    }
+  }
+
+  // Wrap so any rollback path — auto on supersede/dispose, or user-driven
+  // inside onError — emits a single mutation:rollback event.
+  private wrapSnapshot(raw: Snapshot): Snapshot {
+    let fired = false
+    return {
+      rollback: () => {
+        raw.rollback()
+        if (fired) return
+        fired = true
+        this.emit({ type: 'mutation:rollback' })
+      },
     }
   }
 
@@ -246,8 +284,9 @@ export function createMutation<V, R>(
   onError: ErrorHandler | undefined,
   controllerPath: readonly string[],
   inflightCounter?: { update(fn: (n: number) => number): void },
+  devtools?: DevtoolsEmitter,
 ): Mutation<V, R> {
-  return new MutationImpl<V, R>(spec, onError, controllerPath, inflightCounter)
+  return new MutationImpl<V, R>(spec, onError, controllerPath, inflightCounter, devtools)
 }
 
 /**

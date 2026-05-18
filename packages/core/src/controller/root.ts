@@ -28,6 +28,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
   const queryClient = new QueryClient({
     onError: options.onError,
     hydrate: options.hydrate,
+    devtools,
   })
   const rootShared: RootShared = {
     devtools,
