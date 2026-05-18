@@ -4,10 +4,28 @@ import type { ReadSignal } from '../signals/types'
 import { isAbortError } from '../utils'
 import type { RetryDelay, RetryPolicy, Snapshot } from './types'
 
+/**
+ * How concurrent calls to `mutation.run(...)` interact:
+ * - `parallel` (default): every call runs concurrently.
+ * - `latest-wins`: a new call aborts any in-flight previous call (`AbortSignal` fires).
+ * - `serial`: calls queue and run one at a time in order.
+ *
+ * Spec §6.3.
+ */
 export type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
 
+/**
+ * The configuration object passed to `ctx.mutation(spec)`. See spec §20.5 for
+ * the full lifecycle semantics. `onMutate` may return a `Snapshot` (from
+ * `query.setData(...)`) to enable automatic rollback on error.
+ */
 export type MutationSpec<V, R> = {
+  /** The actual write. Receives the user-supplied vars and an `AbortSignal`. */
   mutate: (vars: V, signal: AbortSignal) => Promise<R>
+  /**
+   * Runs before `mutate`. Return a `Snapshot` from `query.setData(...)` to
+   * apply an optimistic update; the snapshot is rolled back on error.
+   */
   onMutate?: (vars: V) => Snapshot | void
   onSuccess?: (result: R, vars: V) => void
   onError?: (err: unknown, vars: V, snapshot: Snapshot | undefined) => void
@@ -17,13 +35,23 @@ export type MutationSpec<V, R> = {
   retryDelay?: RetryDelay
 }
 
+/**
+ * A running mutation. Created via `ctx.mutation(spec)` — the controller owns
+ * its lifetime. Each `run(vars)` returns a Promise; the four signals reflect
+ * the last-resolved run for UI binding.
+ *
+ * Spec §6, §20.5.
+ */
 export type Mutation<V, R> = {
+  /** Trigger a run. Returns a Promise that resolves with the mutate result. */
   run: (vars: V) => Promise<R>
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
   isPending: ReadSignal<boolean>
   lastVariables: ReadSignal<V | undefined>
+  /** Clear `data` / `error` / `lastVariables` without aborting in-flight runs. */
   reset(): void
+  /** Abort in-flight runs and tear down. Idempotent. Called by the parent controller's dispose. */
   dispose(): void
 }
 

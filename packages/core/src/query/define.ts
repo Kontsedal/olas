@@ -66,6 +66,13 @@ type InfiniteQueryInternal<Args extends unknown[], TPage, TItem> = InfiniteQuery
   __clients: Set<QueryClient>
 }
 
+/**
+ * Define a paginated query (chat-style "load more", infinite scrolling). Pages
+ * are kept in order and concatenated via `getNextPageParam` /
+ * `getPreviousPageParam`. The returned handle is module-scoped — bind
+ * subscribers via `ctx.use(infiniteQuery, () => [...args])`. Spec §5.7,
+ * §20.4.
+ */
 export function defineInfiniteQuery<Args extends unknown[], PageParam, TPage, TItem = TPage>(
   spec: InfiniteQuerySpec<Args, PageParam, TPage, TItem>,
 ): InfiniteQuery<Args, TPage, TItem> {

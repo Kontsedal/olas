@@ -3,6 +3,15 @@ import type { ReadSignal } from '../signals/types'
 import { isAbortError } from '../utils'
 import type { AsyncState, AsyncStatus, RetryDelay, RetryPolicy } from './types'
 
+/**
+ * Configuration for `defineInfiniteQuery({ ... })`. Spec §5.7, §20.4.
+ *
+ * - `getNextPageParam(lastPage, allPages)` returns the param for the next
+ *   page, or `null` when there's no more.
+ * - `getPreviousPageParam` (optional) enables bidirectional infinite lists.
+ * - `itemsOf(page)` (optional) flattens pages into items for the
+ *   `subscription.flat` convenience signal.
+ */
 export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> = {
   key: (...args: Args) => unknown[]
   fetcher: (pageCtx: { pageParam: PageParam; signal: AbortSignal }, ...args: Args) => Promise<TPage>
@@ -18,6 +27,10 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
   retryDelay?: RetryDelay
 }
 
+/**
+ * Module-scoped handle for a paginated query. Mirrors `Query<Args, TPage[]>`
+ * with paginated `setData` semantics.
+ */
 export type InfiniteQuery<Args extends unknown[], TPage, TItem> = {
   readonly __olas: 'infiniteQuery'
   invalidate(...args: Args): void
@@ -28,6 +41,14 @@ export type InfiniteQuery<Args extends unknown[], TPage, TItem> = {
   prefetch(...args: Args): Promise<TPage>
 }
 
+/**
+ * What `ctx.use(infiniteQuery, ...)` returns. Extends `AsyncState<TPage[]>`
+ * with paginated controls: `fetchNextPage` / `fetchPreviousPage`,
+ * `hasNextPage` / `hasPreviousPage`, and per-direction `isFetching` signals.
+ *
+ * `flat` is a convenience: present when the query spec provides `itemsOf` —
+ * otherwise it's an empty array.
+ */
 export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
   pages: ReadSignal<TPage[]>
   flat: ReadSignal<TItem[]>

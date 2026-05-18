@@ -1,3 +1,8 @@
+/**
+ * Discriminated union of devtools events emitted by a root via
+ * `root.__debug.subscribe(handler)`. Spec §20.9. Adding new variants is
+ * non-breaking — consumers `switch` on `type` and ignore unknowns.
+ */
 export type DebugEvent =
   | { type: 'controller:constructed'; path: readonly string[]; props: unknown }
   | { type: 'controller:suspended'; path: readonly string[] }
@@ -30,6 +35,10 @@ export type DebugEvent =
       errors: string[]
     }
 
+/**
+ * The shape of `root.__debug`. Subscribe to receive every `DebugEvent` until
+ * the returned unsubscribe is called.
+ */
 export type DebugBus = {
   subscribe(handler: (event: DebugEvent) => void): () => void
 }

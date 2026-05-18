@@ -1,9 +1,16 @@
+/**
+ * Context passed to a root's `onError` handler. `kind` identifies where in
+ * the controller's surface the throw originated; `controllerPath` is the
+ * path from root to the controller that owned the failing code; `queryKey`
+ * is set for `cache` kinds. Spec §12, §20.9.
+ */
 export type ErrorContext = {
   kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction'
   controllerPath: readonly string[]
   queryKey?: readonly unknown[]
 }
 
+/** Signature of `RootOptions.onError`. */
 export type ErrorHandler = (err: unknown, context: ErrorContext) => void
 
 const defaultHandler: ErrorHandler = (err, context) => {

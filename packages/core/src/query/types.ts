@@ -1,7 +1,24 @@
 import type { ReadSignal } from '../signals/types'
 
+/** Lifecycle phase of an async resource. */
 export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
 
+/**
+ * The eight reactive signals + three actions a subscriber sees for any async
+ * resource (`LocalCache<T>` or a `Query` subscription). Spec §20.4.
+ *
+ * - `data` / `error` / `status` — current outcome.
+ * - `isLoading` — true only on the first pending fetch (no `data` yet).
+ * - `isFetching` — true on any pending fetch.
+ * - `isStale` — true when `staleTime` has elapsed since `lastUpdatedAt`.
+ * - `lastUpdatedAt` — epoch ms of last success.
+ * - `hasPendingMutations` — at least one mutation has a snapshot on this entry.
+ *
+ * Actions:
+ * - `refetch()` — force a fetch; resolves with the result.
+ * - `reset()` — clear `error` + `status` without re-fetching.
+ * - `firstValue()` — resolves on the first success after subscribe.
+ */
 export type AsyncState<T> = {
   data: ReadSignal<T | undefined>
   error: ReadSignal<unknown | undefined>
@@ -17,28 +34,56 @@ export type AsyncState<T> = {
   firstValue: () => Promise<T>
 }
 
+/**
+ * Returned by `query.setData(...)` or `localCache.setData(...)`. Calling
+ * `rollback()` restores the previous data state. Used by `mutation.onMutate`
+ * for optimistic-update rollback (spec §6.4).
+ */
 export type Snapshot = { rollback: () => void }
 
+/**
+ * A cache owned by one controller — no sharing across the tree. Returned by
+ * `ctx.cache(fetcher, options?)`. Disposed automatically with the controller.
+ */
 export type LocalCache<T> = AsyncState<T> & {
+  /** Mark stale and trigger an immediate refetch. */
   invalidate(): void
+  /** Patch the current data. Returns a `Snapshot` for rollback. */
   setData(updater: (prev: T | undefined) => T): Snapshot
+  /** Idempotent — also called when the owning controller disposes. */
   dispose(): void
 }
 
+/** One entry inside a `DehydratedState`. */
 export type DehydratedEntry = {
   key: readonly unknown[]
   data: unknown
   lastUpdatedAt: number
 }
 
+/**
+ * SSR-serializable snapshot of a root's `QueryClient`. Produced by
+ * `root.dehydrate()` on the server; consumed by
+ * `createRoot(def, { hydrate: state })` on the client. Spec §15, §20.9.
+ */
 export type DehydratedState = {
   version: 1
   entries: DehydratedEntry[]
 }
 
+/**
+ * Retry policy for queries and mutations. A number is a max-attempt count
+ * (default backoff). A function decides per-attempt (return `true` to retry).
+ */
 export type RetryPolicy = number | ((attempt: number, error: unknown) => boolean)
+
+/** Backoff in ms. A number is constant delay; a function computes per-attempt. */
 export type RetryDelay = number | ((attempt: number) => number)
 
+/**
+ * Configuration passed to `defineQuery({ ... })`. The `Args` tuple is what
+ * callers pass as cache keys and to the fetcher. Spec §20.4.
+ */
 export type QuerySpec<Args extends unknown[], T> = {
   key: (...args: Args) => unknown[]
   fetcher: (...args: [...Args, signal: AbortSignal]) => Promise<T>
@@ -52,16 +97,31 @@ export type QuerySpec<Args extends unknown[], T> = {
   retryDelay?: RetryDelay
 }
 
+/**
+ * A module-scoped shared query handle. Bind a subscriber via
+ * `ctx.use(query, () => [...args])`. The same `Query` value can be used by
+ * many controllers across many roots — each root has its own cache.
+ */
 export type Query<Args extends unknown[], T> = {
   readonly __olas: 'query'
+  /** Mark a specific keyed entry stale + trigger refetch if any subscribers. */
   invalidate(...args: Args): void
+  /** Mark every keyed entry stale + trigger refetch on all subscribers. */
   invalidateAll(): void
+  /** Patch the current data for a specific key. Returns a `Snapshot` for rollback. */
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
+  /** Eagerly fetch into the cache without subscribing. */
   prefetch(...args: Args): Promise<T>
 }
 
+/** What `ctx.use(query, ...)` returns. Alias of `AsyncState<T>`. */
 export type QuerySubscription<T> = AsyncState<T>
 
+/**
+ * Options passed to `ctx.use(query, opts)` to control the subscription
+ * (reactive key, enabled-gating). The `key` thunk reads signals — re-evaluating
+ * when they change re-keys the subscription.
+ */
 export type UseOptions<Args extends readonly unknown[]> = {
   key?: () => Args
   enabled?: () => boolean
