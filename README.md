@@ -90,6 +90,30 @@ Phases 0–14 are implemented. A standalone browser-extension wrapper around `ro
 
 ---
 
+## Examples
+
+Four runnable examples live in [`examples/`](examples), each with its own
+`package.json`, Vite dev server, and unit tests:
+
+| App | Stack | What it shows |
+|-----|-------|---------------|
+| [`examples/user-profile`](examples/user-profile) | React | The original walk-through: query + form + optimistic mutation. Typecheck-only. |
+| [`examples/stock-ticker`](examples/stock-ticker) | **Vanilla TS** | `signal`/`effect`/`emitter`/`throttled`/`debounced`/`usePersisted`. SVG sparklines, price alerts via emitter. No UI framework. 10 controller tests. |
+| [`examples/kanban`](examples/kanban) | React + Devtools | All three mutation concurrency modes (`parallel`/`latest-wins`/`serial`), optimistic snapshot rollback, `formFromZod` + `FieldArray`, `defineScope` (board + activity emitter), error-toast retry, activity feed, `<DevtoolsPanel>`. 9 tests. |
+| [`examples/reader-ssr`](examples/reader-ssr) | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery` with reactive key, `useSuspendOnHidden`, `usePersisted` × 3 (bookmarks, theme, reading progress), emitter analytics, `onError` root option. 8 tests including the SSR cache-hit contract. |
+
+```bash
+pnpm install
+pnpm --filter @olas/example-kanban dev    # or stock-ticker, reader-ssr
+pnpm --filter @olas/example-kanban test
+```
+
+The three new examples were added to make the testability claim concrete:
+every business-logic surface is covered by a controller test using
+`createTestController`, `fakeField`, and `fakeAsyncState` from `@olas/core/testing`.
+
+---
+
 ## Install
 
 ```bash

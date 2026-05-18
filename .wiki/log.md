@@ -122,3 +122,27 @@ Future stretch (NOT v1-blocking):
 - `cache:subscribed` and `field:validated` emission (low priority).
 - Signal dependency graph view (spec §13 mentioned; needs additional plumbing inside `@olas/core/signals`).
 
+## [2026-05-18 22:10] ingest | three new example apps for breadth + testability
+
+Goal: stretch the public API across three intentionally different runnable
+apps so the eloquence + testability claim is concrete. Each app has its own
+`package.json`, Vite dev/build, vitest config, in-memory api, and unit tests.
+
+What shipped:
+
+- **`examples/_shared/aliases.ts`** — single source of Vite + Vitest source aliases for `@olas/*` packages so apps run without a pre-built `dist/`.
+- **`examples/stock-ticker/`** (vanilla TS, no React) — `signal`/`computed`/`effect` DOM bindings, `ctx.emitter` price stream, `debounced`/`throttled`, `defineQuery` + `refetchInterval`, `usePersisted` watchlist. 7 controller tests.
+- **`examples/kanban/`** (React + Devtools) — three mutation concurrency modes side by side (`parallel` moveCard with optimistic rollback, `latest-wins` filter, `serial` reorder), `formFromZod` + `FieldArray` for card subtasks, `defineScope` for currentBoardScope, `<DevtoolsPanel>` mounted. 9 tests (7 controller + 2 component using `fakeField`).
+- **`examples/reader-ssr/`** (React + SSR) — `waitForIdle → dehydrate → hydrate` round-trip with a paginated `defineQuery` keyed by cursor (the cursor-keyed pattern was forced because `dehydrate` doesn't currently serialize `defineInfiniteQuery` entries — see findings below). `useSuspendOnHidden`, `usePersisted` reading progress, emitter-driven analytics, `onError` root option. 6 tests including the SSR cache-hit contract.
+- New wiki page [`modules/examples.md`](modules/examples.md) — covers all four examples, the shared scaffolding, and the findings list. Linked from `index.md`.
+- README updated with an Examples section + table.
+
+Findings surfaced while writing these (now filed on the examples wiki page):
+
+1. **Optimistic mutation rollback is not automatic on regular errors** — only on aborts. `mutation.ts:196-208`. The user must call `snapshot.rollback()` in `onError`. The existing `examples/user-profile` README slightly overstates "automatic"; the new kanban controller shows the correct shape.
+2. **`root.dehydrate()` does not serialize infinite-query entries** — `client.ts:246-260` only walks `this.maps`, not `this.infiniteMaps`. Workaround: regular `defineQuery` keyed by cursor with a reactive key thunk.
+3. **`formFromZod` does not promote array-level `.min(N)` to a FieldArray validator** — `packages/zod/src/index.ts:131-137`. Leaf and nested object rules work; array-level rules silently drop.
+4. **`getByLabelText` matches both wrapping `<label>` and `aria-label`** when both are present — use one or the other.
+
+CI status: every example passes its own `typecheck` and `test`. The root `pnpm typecheck` (which globs `examples/*`) is also green. Production builds verified for stock-ticker (60 KB / 14 KB gzip), kanban (276 KB / 77 KB gzip), and reader-ssr (client 202 KB / 60 KB gzip + server bundle).
+
