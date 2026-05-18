@@ -10,25 +10,28 @@ afterEach(() => {
 })
 
 describe('<DevtoolsPanel>', () => {
-  test('post-mount dynamic children appear in the tree', async () => {
-    // The panel can only observe events that fire AFTER it subscribes. So
-    // we drive construction post-mount by capturing ctx in the api (legal
-    // per spec §3.4 — ctx primitives are callable for the controller's
-    // entire active lifetime).
-    const leaf = defineController(() => ({}))
-    const def = defineController((ctx) => ({
-      addLeaf: () => ctx.child(leaf, undefined),
-    }))
+  test('tree shows the pre-existing controller snapshot on mount + dynamic children appear post-mount', async () => {
+    // The bus replays the live-controller snapshot to new subscribers, so the
+    // root constructed before mount IS visible immediately. Dynamic children
+    // added after mount also appear.
+    const leaf = defineController(() => ({}), { name: 'leaf' })
+    const def = defineController(
+      (ctx) => ({
+        addLeaf: () => ctx.child(leaf, undefined),
+      }),
+      { name: 'app' },
+    )
     const root = createRoot(def, { deps: {} })
 
     render(<DevtoolsPanel root={root} />)
-    expect(screen.getByRole('tabpanel').textContent).toContain('No controllers constructed yet')
+    // The root (path = ['root']) is already in the tree.
+    expect(screen.getByRole('tabpanel').textContent).toContain('root')
 
     await act(async () => {
       root.addLeaf()
     })
     const treePanel = await screen.findByRole('tabpanel')
-    expect(treePanel.textContent).toContain('root')
+    expect(treePanel.textContent).toMatch(/leaf/)
 
     root.dispose()
   })
@@ -96,6 +99,13 @@ describe('<DevtoolsPanel>', () => {
       fireEvent.click(screen.getByRole('tab', { name: 'Fields' }))
     })
     expect(screen.getByRole('tabpanel').textContent).toContain('No field validations yet')
+
+    // The Tree tab is populated via the snapshot replay — the root is
+    // already visible without waiting for the next event.
+    act(() => {
+      fireEvent.click(screen.getByRole('tab', { name: 'Tree' }))
+    })
+    expect(screen.getByRole('tabpanel').textContent).toContain('root')
 
     root.dispose()
   })

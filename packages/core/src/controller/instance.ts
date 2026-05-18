@@ -1,8 +1,8 @@
 import type { DevtoolsEmitter } from '../devtools'
 import { type Emitter, createEmitter } from '../emitter'
 import { type ErrorHandler, dispatchError } from '../errors'
-import { createField } from '../forms/field'
-import { createFieldArray, createForm } from '../forms/form'
+import { bindFieldDevtoolsOwner, createField } from '../forms/field'
+import { bindTreeToDevtools, createFieldArray, createForm } from '../forms/form'
 import type {
   FieldArray,
   FieldArrayOptions,
@@ -20,7 +20,7 @@ import type { LocalCache, Query } from '../query/types'
 import { createInfiniteUse, createUse } from '../query/use'
 import type { Scope } from '../scope'
 import { effect as standaloneEffect } from '../signals'
-import { getFactory } from './define'
+import { getFactory, getName } from './define'
 import type { ControllerDef, Ctx, Field } from './types'
 
 export type RootShared = {
@@ -301,12 +301,28 @@ export class ControllerInstance {
       field<T>(initial: T, validators?: ReadonlyArray<Validator<T>>): Field<T> {
         const f = createField(initial, validators)
         self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
+        // Standalone fields (not inside a form) still publish field:validated
+        // events. Use the controller path with field name "(field)" — the
+        // devtools panel groups by path so this is fine.
+        bindFieldDevtoolsOwner(f, {
+          controllerPath: self.path,
+          fieldName: '(field)',
+          emitter: self.rootShared.devtools,
+        })
         return f
       },
 
       form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S> {
         const f = createForm(schema, options)
         self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
+        // Make every leaf field publish `field:validated` to the devtools bus
+        // with its key path inside the form. See spec §20.9.
+        bindTreeToDevtools(
+          f as unknown as Form<FormSchema>,
+          '',
+          self.path,
+          self.rootShared.devtools,
+        )
         return f
       },
 
@@ -316,6 +332,12 @@ export class ControllerInstance {
       ): FieldArray<I> {
         const fa = createFieldArray<I>(itemFactory, options)
         self.entries.push({ kind: 'cleanup', dispose: () => fa.dispose() })
+        bindTreeToDevtools(
+          fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
+          '',
+          self.path,
+          self.rootShared.devtools,
+        )
         return fa
       },
 
@@ -360,7 +382,7 @@ export class ControllerInstance {
         props: Props,
         options?: { deps?: Partial<Record<string, unknown>> },
       ): Api {
-        const segment = self.makeChildSegment(getFactory(def))
+        const segment = self.makeChildSegment(getFactory(def), getName(def))
         const override = options?.deps
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
@@ -427,9 +449,9 @@ export class ControllerInstance {
   }
 
   // biome-ignore lint/complexity/noBannedTypes: Function is the precise type for "any function with a .name"
-  private makeChildSegment(factory: Function): string {
+  private makeChildSegment(factory: Function, explicitName: string | undefined): string {
     const idx = this.childCounter++
-    const base = factory.name || 'anonymous'
-    return `${base}[${idx}]`
+    const base = explicitName ?? factory.name ?? ''
+    return `${base !== '' ? base : 'anonymous'}[${idx}]`
   }
 }
