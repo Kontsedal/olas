@@ -1,0 +1,47 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg:        oklch(0.985 0.012 90);
+  --color-bg-elev:   oklch(1     0    0);
+  --color-bg-sunk:   oklch(0.96  0.012 90);
+  --color-border:    oklch(0.90  0.010 90);
+  --color-fg:        oklch(0.18  0.02  280);
+  --color-fg-mute:   oklch(0.50  0.02  280);
+  --color-accent:    oklch(0.51  0.16  17);   /* warm red accent */
+  --color-accent-bg: oklch(0.97  0.04  17);
+  --shadow-card:     0 1px 2px rgb(20 20 30 / 0.04), 0 4px 14px rgb(20 20 30 / 0.05);
+  --font-serif:      "Iowan Old Style", "Palatino Linotype", "Hoefler Text", Georgia, serif;
+  --font-sans:       ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+}
+
+[data-theme="dark"] {
+  --color-bg:        oklch(0.16 0.012 270);
+  --color-bg-elev:   oklch(0.22 0.012 270);
+  --color-bg-sunk:   oklch(0.13 0.012 270);
+  --color-border:    oklch(0.30 0.015 270);
+  --color-fg:        oklch(0.93 0.005 270);
+  --color-fg-mute:   oklch(0.65 0.015 270);
+  --color-accent:    oklch(0.72 0.13 17);
+  --color-accent-bg: oklch(0.25 0.06 17);
+  --shadow-card:     0 1px 2px rgb(0 0 0 / 0.5), 0 4px 14px rgb(0 0 0 / 0.35);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] {
+    --color-bg:        oklch(0.16 0.012 270);
+    --color-bg-elev:   oklch(0.22 0.012 270);
+    --color-bg-sunk:   oklch(0.13 0.012 270);
+    --color-border:    oklch(0.30 0.015 270);
+    --color-fg:        oklch(0.93 0.005 270);
+    --color-fg-mute:   oklch(0.65 0.015 270);
+    --color-accent:    oklch(0.72 0.13 17);
+    --color-accent-bg: oklch(0.25 0.06 17);
+    --shadow-card:     0 1px 2px rgb(0 0 0 / 0.5), 0 4px 14px rgb(0 0 0 / 0.35);
+  }
+}
+
+html, body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-serif);
+}
