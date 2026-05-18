@@ -63,6 +63,15 @@ export type FieldArrayOptions<I> = {
   validators?: FieldArrayValidator<I>[]
 }
 
+/**
+ * A nested form. Created via `ctx.form(schema, options?)`. `value` aggregates
+ * every leaf into the structurally-typed `FormValue<S>`; `errors` mirrors that
+ * shape with `string[] | undefined`. `flatErrors` is a flattened view useful
+ * for rendering a single error summary. Spec §8, §20.7.
+ *
+ * IMPORTANT: `Form.value` is a `ReadSignal<FormValue<S>>` while `Field.value`
+ * is `T` directly — different shapes. See `.wiki/pitfalls/field-value-shape.md`.
+ */
 export type Form<S extends FormSchema> = {
   readonly fields: { [K in keyof S]: S[K] }
   readonly value: ReadSignal<FormValue<S>>
@@ -74,13 +83,23 @@ export type Form<S extends FormSchema> = {
   readonly touched: ReadSignal<boolean>
   readonly isValidating: ReadSignal<boolean>
 
+  /** Deep-merge a partial value into the form, batched. */
   set(partial: DeepPartial<FormValue<S>>): void
+  /** Reset every leaf to its initial value. */
   reset(): void
+  /** Mark every leaf as touched (so error messages appear). */
   markAllTouched(): void
+  /** Re-run every leaf's validators. Resolves with true if all leaves are valid. */
   validate(): Promise<boolean>
+  /** Idempotent. Called by the owning controller's dispose. */
   dispose(): void
 }
 
+/**
+ * A dynamically-sized list of `Field` or `Form` items. Created via
+ * `ctx.fieldArray(itemFactory, options?)`. The factory is invoked per
+ * insertion. Spec §8, §20.7.
+ */
 export type FieldArray<I extends Field<any> | Form<any>> = {
   readonly items: ReadSignal<ReadonlyArray<I>>
   readonly value: ReadSignal<FieldArrayValue<I>>

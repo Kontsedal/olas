@@ -1,7 +1,20 @@
+/**
+ * Synchronous fan-out event bus. Handlers run in the order they subscribed.
+ * Handlers added during emit don't fire for the current emission; handlers
+ * removed during emit are skipped from that point in the iteration.
+ *
+ * `Emitter<void>` exposes `emit()` (no argument); other shapes expose
+ * `emit(value: T)`.
+ *
+ * Spec §7, §20.6.
+ */
 export type Emitter<T> = {
   emit: [T] extends [void] ? () => void : (value: T) => void
+  /** Subscribe to every emission. Returns the unsubscribe function. */
   on(handler: (value: T) => void): () => void
+  /** Subscribe to the next emission only. Auto-unsubscribes after firing. */
   once(handler: (value: T) => void): () => void
+  /** Tear down the emitter. Subsequent `emit` / `on` / `once` are no-ops. */
   dispose(): void
 }
 

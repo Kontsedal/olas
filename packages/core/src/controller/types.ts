@@ -34,6 +34,12 @@ export interface AmbientDeps {
   [key: string]: unknown
 }
 
+/**
+ * A reactive form field. Extends `ReadSignal<T>` for the current value, plus
+ * five signals for state (errors / isValid / isDirty / touched / isValidating)
+ * and four methods (`set`, `reset`, `markTouched`, `revalidate`). Created via
+ * `ctx.field(initial, validators?)`. Spec §8, §20.7.
+ */
 export type Field<T> = ReadSignal<T> & {
   errors: ReadSignal<string[]>
   isValid: ReadSignal<boolean>
@@ -44,9 +50,15 @@ export type Field<T> = ReadSignal<T> & {
   reset(): void
   markTouched(): void
   revalidate(): Promise<boolean>
+  /** Idempotent. Called by the owning controller's dispose. */
   dispose(): void
 }
 
+/**
+ * The handle returned by `defineController(...)`. Pass it to `createRoot(...)`
+ * or `ctx.child(...)` to instantiate. Phantom types preserve `Props` / `Api`
+ * for inference via `CtrlProps<C>` / `CtrlApi<C>`.
+ */
 export type ControllerDef<Props, Api> = {
   readonly __olas: 'controller'
   readonly __types?: { props: Props; api: Api }
@@ -123,12 +135,23 @@ export type Ctx<TDeps = AmbientDeps> = {
 import type { DebugBus } from '../devtools'
 import type { DehydratedState } from '../query/types'
 
+/**
+ * Configuration passed to `createRoot(def, options)`. `deps` is required and
+ * available everywhere as `ctx.deps`. `onError` receives errors from effects,
+ * mutations, caches, emitter handlers, and construction. `hydrate` replays a
+ * `DehydratedState` produced on the server. Spec §20.8.
+ */
 export type RootOptions<TDeps> = {
   deps: TDeps
   onError?: (err: unknown, context: ErrorContext) => void
   hydrate?: DehydratedState
 }
 
+/**
+ * The root's public surface: the controller's `Api` plus lifecycle controls
+ * (`dispose`, `suspend`, `resume`), SSR (`dehydrate`, `waitForIdle`), and
+ * devtools (`__debug`). Spec §20.8.
+ */
 export type Root<Api> = Api & {
   dispose(): void
   suspend(options?: { maxIdle?: number }): void
