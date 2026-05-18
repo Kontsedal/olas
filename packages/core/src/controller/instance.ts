@@ -18,6 +18,7 @@ import { type LocalCacheOptions, createLocalCache } from '../query/local'
 import { type Mutation, type MutationSpec, createMutation } from '../query/mutation'
 import type { LocalCache, Query } from '../query/types'
 import { createInfiniteUse, createUse } from '../query/use'
+import type { Scope } from '../scope'
 import { effect as standaloneEffect } from '../signals'
 import { getFactory } from './define'
 import type { ControllerDef, Ctx, Field } from './types'
@@ -52,6 +53,8 @@ export class ControllerInstance {
   private readonly rootShared: RootShared
   private readonly parent: ControllerInstance | null
   private childCounter = 0
+  /** Scope values provided on this instance, keyed by `Scope.__id`. */
+  private scopes: Map<symbol, unknown> | null = null
 
   constructor(
     parent: ControllerInstance | null,
@@ -120,6 +123,7 @@ export class ControllerInstance {
       }
     }
     this.entries.length = 0
+    this.scopes = null
 
     this.rootShared.devtools.emit({ type: 'controller:disposed', path: this.path })
     // Silence "unused" — `wasSuspended` may inform future logic; intentionally a no-op for now.
@@ -312,6 +316,27 @@ export class ControllerInstance {
         const fa = createFieldArray<I>(itemFactory, options)
         self.entries.push({ kind: 'cleanup', dispose: () => fa.dispose() })
         return fa
+      },
+
+      provide<T>(scope: Scope<T>, value: T): void {
+        if (self.scopes === null) self.scopes = new Map()
+        self.scopes.set(scope.__id, value)
+      },
+
+      inject<T>(scope: Scope<T>): T {
+        let node: ControllerInstance | null = self
+        while (node !== null) {
+          const map = node.scopes
+          if (map?.has(scope.__id)) {
+            return map.get(scope.__id) as T
+          }
+          node = node.parent
+        }
+        if (scope.hasDefault) return scope.default as T
+        const label = scope.name ?? scope.__id.description ?? 'unnamed'
+        throw new Error(
+          `[olas] ctx.inject(): no provider for scope '${label}' and no default. Provide it on an ancestor via ctx.provide(${label}, ...) or pass a default to defineScope.`,
+        )
       },
 
       on<T>(emitter: Emitter<T>, handler: (value: T) => void): void {

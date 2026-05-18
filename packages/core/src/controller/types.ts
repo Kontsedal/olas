@@ -12,6 +12,7 @@ import type { Validator } from '../forms/types'
 import type { InfiniteQuery, InfiniteQuerySubscription } from '../query/infinite'
 import type { Mutation, MutationSpec } from '../query/mutation'
 import type { LocalCache, Query, QuerySubscription, UseOptions } from '../query/types'
+import type { Scope } from '../scope'
 import type { ReadSignal } from '../signals/types'
 
 /**
@@ -107,6 +108,10 @@ export type Ctx<TDeps = AmbientDeps> = {
   effect(fn: () => void | (() => void)): void
 
   on<T>(emitter: Emitter<T>, handler: (value: T) => void): void
+
+  // scopes — typed cross-tree data (§10.3)
+  provide<T>(scope: Scope<T>, value: T): void
+  inject<T>(scope: Scope<T>): T
 
   onDispose(fn: () => void): void
   onSuspend(fn: () => void): void
