@@ -21,6 +21,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/errors.md](modules/errors.md) — `ErrorContext`, `dispatchError`
 - [modules/zod.md](modules/zod.md) — `@olas/zod`: `zodValidator`, `formFromZod`
 - [modules/persist.md](modules/persist.md) — `@olas/persist`: `usePersisted`
+- [modules/react.md](modules/react.md) — `@olas/react`: provider + `useSyncExternalStore`-backed hooks
 
 ## Entities
 
@@ -29,6 +30,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [entities/entry.md](entities/entry.md) — `Entry<T>` — race-protected state machine per cache key
 - [entities/query-client.md](entities/query-client.md) — per-root entry registry
 - [entities/mutation.md](entities/mutation.md) — `MutationImpl` — concurrency modes + abort-race
+- [entities/scope.md](entities/scope.md) — `Scope<T>` — typed cross-tree data slot (provide/inject)
 
 ## Flows
 
@@ -36,6 +38,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [flows/mutation-concurrency.md](flows/mutation-concurrency.md) — parallel / latest-wins / serial paths
 - [flows/ssr.md](flows/ssr.md) — `waitForIdle → dehydrate` (server) → `hydrate` (client)
 - [flows/construction-rollback.md](flows/construction-rollback.md) — factory throws → partial state torn down
+- [flows/use-root.md](flows/use-root.md) — `createRoot` → `<OlasProvider>` → `useRoot()` → `use(signal)` → DOM
 
 ## Decisions
 

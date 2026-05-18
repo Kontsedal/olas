@@ -3,8 +3,8 @@ name: ctx
 description: The lifecycle-bound primitive factory passed to every controller factory.
 type: entity
 covers:
-  - packages/core/src/controller/types.ts:64-110
-  - packages/core/src/controller/instance.ts:204-340
+  - packages/core/src/controller/types.ts:69-122
+  - packages/core/src/controller/instance.ts:223-422
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: controller-instance.md }
@@ -17,7 +17,7 @@ confidence: high
 
 The single argument to every controller factory: `(ctx, props) => api`. Every primitive constructed through `ctx` is owned by the controller and disposed when the controller disposes. Spec §3.2.
 
-## Surface (Phase 0–12)
+## Surface (Phases 0–12)
 
 ```ts
 type Ctx<TDeps = AmbientDeps> = {
@@ -30,6 +30,9 @@ type Ctx<TDeps = AmbientDeps> = {
   // composition
   child, effect, emitter, on
 
+  // scopes (Phase 10)
+  provide, inject
+
   // lifecycle
   onDispose, onSuspend, onResume
 
@@ -38,7 +41,7 @@ type Ctx<TDeps = AmbientDeps> = {
 }
 ```
 
-The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:204`). Each method has the same general shape:
+The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:223`). Each method has the same general shape:
 
 1. Create the primitive.
 2. Push a `LifecycleEntry` onto `self.entries`.
@@ -70,4 +73,4 @@ The TS overloads in `Ctx<TDeps>` declare two signatures: one for `Query`, one fo
 
 ## What's NOT yet on Ctx
 
-Per spec §20.2: `collection`, `dynamicCollection`, `session`, `lazyChild`, `provide`, `inject`. These need phases 10 and beyond.
+Per spec §20.2: `collection`, `dynamicCollection`, `session`, `lazyChild`. `provide` / `inject` landed in Phase 10 — see [`scope.md`](scope.md) for the semantics and [`modules/react.md`](../modules/react.md) for the React adapter that composes with them.
