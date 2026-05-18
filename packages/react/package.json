@@ -1,0 +1,32 @@
+{
+  "name": "@olas/react",
+  "version": "0.0.0",
+  "description": "Olas React adapter",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": ["dist", "src"],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@olas/core": "workspace:^",
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@olas/core": "workspace:^",
+    "@types/react": "^18.3.12",
+    "react": "^18.3.1"
+  }
+}
