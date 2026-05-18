@@ -23,6 +23,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/persist.md](modules/persist.md) — `@olas/persist`: `usePersisted`
 - [modules/react.md](modules/react.md) — `@olas/react`: provider + `useSyncExternalStore`-backed hooks
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@olas/devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
+- [modules/examples.md](modules/examples.md) — the four runnable example apps in `examples/`
 
 ## Entities
 
