@@ -24,6 +24,8 @@ pnpm build                                         # tsup per package → dist/{
 
 pnpm vitest run packages/core/tests/query.test.ts  # run one test file
 pnpm vitest run -t "race protection"               # run by test-name substring
+
+pnpm wiki:lint                                     # check .wiki/ for broken citations, orphans, stale pages
 ```
 
 CI = `install → typecheck → lint → test → build`. Reproducing CI locally is the five commands above in order.
@@ -103,8 +105,13 @@ confidence: high
 
 - **`covers`** — file paths or `path:start-end` ranges this page documents. When those lines change, lint should flag the page for re-verification. Be specific: cite ranges, not whole files, when only part of a file matters.
 - **`edges`** — typed links to other pages. Types: `uses` / `tested-by` / `supersedes` / `contradicts` / `documented-in` / `related` (last one only when nothing else fits).
-- **`confidence`** — `high` (verified, multi-source), `medium` (inferred but consistent with code), `candidate` (low evidence, lives in `.wiki/candidates/`).
-- **`last_verified`** — ISO date. Update when you re-read the covered code and confirm the page is still accurate.
+- **`confidence`** — three levels with concrete tests:
+  - `high` — page is verifiable against source AND has a referenced test (or spec section) pinning the behavior. Multi-source.
+  - `medium` — page is synthesis (a "how this works" narrative) derived from reading code, but no independent verification (peer review, separate test, spec § citation) has confirmed the synthesis. **Default for anything authored in the same session as the code it describes.**
+  - `candidate` — speculation. One file cited, no confirming test, no spec section. Lives in `.wiki/candidates/`. Excluded from authoritative queries.
+- **`last_verified`** — ISO date (YYYY-MM-DD). Update when you re-read the covered code and confirm the page is still accurate.
+
+**Bootstrap caveat.** Pages dated `2026-05-18` were authored by the same agent that wrote the implementation, in the same session. Even pages marked `high` haven't had independent review. When you encounter a `high`-confidence page from that date and your session is the next opportunity for verification, treat the page as `medium` for the purposes of trust — read the covered code, confirm the claims, and bump `last_verified` if they hold. If they don't, fix the page or demote it.
 
 In page bodies, prefer **citations as `path:line` or `path:start-end`** over prose references. `query/entry.ts:47-62` beats "the fetch loop in the entry module". Citations are mechanically dereference-able.
 
@@ -134,16 +141,29 @@ If a query produces a useful new synthesis (comparison, walk-through, inferred p
 
 ### Lint
 
-Periodically (definitely before a big PR; ideally as a routine):
+Run `pnpm wiki:lint`. The script in `scripts/wiki-lint.ts` checks:
 
-- Pages whose covered files changed since `last_verified` → re-read and refresh.
-- Pages with no inbound `edges:` from `index.md` or other pages → orphans, probably stale.
-- Two pages making conflicting claims → flag for resolution, add `contradicts` edge.
-- Modules / public APIs without coverage → gap.
-- Candidates with accumulated evidence → promote to authoritative.
-- Pitfalls older than ~6 months without re-confirmation → downgrade confidence.
+- Required frontmatter fields present (`name`, `description`, `type`, `last_verified`, `confidence`).
+- `confidence` is one of `high` / `medium` / `candidate`.
+- `last_verified` is a valid ISO date.
+- Every `covers:` path exists. If a line range is given (`path:start-end` or `path:N`), the file is long enough.
+- Every `edges:` target resolves to an existing file (path relative to the page).
+- Edge `type` is one of `uses` / `tested-by` / `supersedes` / `contradicts` / `documented-in` / `related`.
+- Orphans — pages not linked from `index.md` or any other page's edges/body.
+- Staleness — pages whose `last_verified` is older than 60 days.
+- Drift — covered files modified (per git log) after the page's `last_verified`.
 
-There is no automated linter yet (TODO: add `scripts/wiki-lint.ts`). For now, lint is "ask Claude to scan and report" before a release or after a refactor.
+Exit code: 0 on warnings only, 1 if any errors.
+
+Additionally, do passes that the linter can't automate:
+
+- Read covered code and confirm the page's claims still match.
+- Look for two pages making conflicting claims → flag via a `contradicts` edge.
+- Look for modules / public APIs without coverage.
+- Promote candidates with accumulated evidence to authoritative.
+- Re-confirm `high`-confidence pages dated before your session began (see bootstrap caveat above).
+
+Cadence: before a non-trivial PR; after a refactor that touches multiple modules; opportunistically when you notice drift.
 
 ## Candidate staging
 

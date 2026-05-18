@@ -25,7 +25,7 @@ edges:
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
 last_verified: 2026-05-18
-confidence: high
+confidence: medium
 ---
 
 # `packages/core/src/query/`

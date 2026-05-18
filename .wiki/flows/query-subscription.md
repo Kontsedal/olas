@@ -13,7 +13,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
 last_verified: 2026-05-18
-confidence: high
+confidence: medium
 ---
 
 # Flow: query subscription

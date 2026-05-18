@@ -17,7 +17,7 @@ edges:
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: uses, target: ../flows/construction-rollback.md }
 last_verified: 2026-05-18
-confidence: high
+confidence: medium
 ---
 
 # `packages/core/src/controller/`
