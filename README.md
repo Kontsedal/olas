@@ -84,8 +84,9 @@ function UserCard() {
 | [`@olas/react`](packages/react) | Phase 10 ✓ | React adapter — `OlasProvider`, `useRoot`, `use`, `useQuery`, `useField`, `KeepAlive` |
 | [`@olas/persist`](packages/persist) | Phase 11 ✓ | `usePersisted` + localStorage adapter |
 | [`@olas/zod`](packages/zod) | Phase 9 ✓ | `zodValidator` + `formFromZod` |
+| [`@olas/devtools`](packages/devtools) | Phase 13 ✓ | `<DevtoolsPanel>` over `root.__debug` |
 
-Unimplemented: Phase 13 (devtools browser extension), Phase 14 (polish in flight).
+Phases 0–14 are implemented. A standalone browser-extension wrapper around `root.__debug` is left as a future stretch.
 
 ---
 
@@ -113,7 +114,7 @@ pnpm build                                         # tsup per package → dist/{
 pnpm wiki:lint                                     # check .wiki/ for broken refs
 ```
 
-CI = `install → typecheck → lint → test → build`. 205 tests, all green.
+CI = `install → typecheck → lint → test → build`. 232 tests, all green.
 
 ---
 
