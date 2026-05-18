@@ -1,15 +1,18 @@
 ---
 name: no-react-adapter-yet
-description: Why @olas/react is an empty shell. What's deferred and what's already prepared for it.
+description: Historical — Phase 10 was deferred at v1 minimum; superseded when @olas/react landed.
 type: decision
 covers:
   - packages/react/src/index.ts
   - packages/react/package.json
 edges:
   - { type: documented-in, target: ../../SPEC.md }
+  - { type: supersedes, target: ../modules/react.md }
 last_verified: 2026-05-18
 confidence: high
 ---
+
+> **Superseded** — Phase 10 has landed. The current state of the adapter is documented in [`modules/react.md`](../modules/react.md); the entity for scopes is [`entities/scope.md`](../entities/scope.md); the end-to-end flow is in [`flows/use-root.md`](../flows/use-root.md). This page is kept for history — it captures *why* the adapter was originally deferred and what was prepared in advance.
 
 # `@olas/react` is empty (Phase 10 deferred)
 

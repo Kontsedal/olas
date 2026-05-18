@@ -41,10 +41,10 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 
 | Package | Status | Purpose |
 |---------|--------|---------|
-| `@olas/core` | Implemented (phases 0–9, 11–12) | Signals, controllers, queries, mutations, forms, SSR, devtools event bus |
+| `@olas/core` | Implemented (phases 0–12) | Signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus |
 | `@olas/zod` | Implemented (phase 9) | `zodValidator` + `formFromZod` |
 | `@olas/persist` | Implemented (phase 11) | `usePersisted` + localStorage adapter |
-| `@olas/react` | Empty shell (phase 10 not implemented) | Future React adapter |
+| `@olas/react` | Implemented (phase 10) | `OlasProvider`, `useRoot`, `use`/`useQuery`/`useField`, `KeepAlive` |
 
 ## Core module map
 
@@ -85,4 +85,4 @@ See `modules/*.md` for per-directory details.
 
 ## Build & verify
 
-CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 187 tests pass. See `../CLAUDE.md` for the full command list.
+CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 205 tests pass. See `../CLAUDE.md` for the full command list.

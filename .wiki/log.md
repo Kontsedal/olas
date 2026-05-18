@@ -43,3 +43,31 @@ What I considered but didn't change:
 - Modifying WIKI_SPEC.md to call out the "agent authors both code and wiki" antipattern. The Candidate-Staging section already implies the fix; my CLAUDE.md schema makes it explicit for this repo.
 
 Linter passes cleanly on the current wiki: 37 pages, 0 errors, 0 warnings.
+
+## [2026-05-18 19:30] ingest | Phase 10 — scopes + `@olas/react`
+
+Spec §10.3 + §16 + §20.10 land. Two pieces in one phase, per §22.
+
+What shipped:
+
+- **Scopes in `@olas/core`** — new `packages/core/src/scope.ts` (`defineScope`, `Scope<T>`). `Ctx` gains `provide<T>(scope, value)` and `inject<T>(scope): T`. `ControllerInstance` carries a lazy `scopes: Map<symbol, unknown> | null` and `inject` walks the parent chain. Throws synchronously during construction when no provider + no default. 11 new tests in `packages/core/tests/scope.test.ts` cover: distinct identity, hasDefault flag, shadow semantics, missing-provider error, default fallback, reactive scope value via embedded signal.
+- **`@olas/react`** — was empty shell; now ~230 LOC across `context.ts`, `hooks.ts`, `keep-alive.ts`. Built on `useSyncExternalStore`. Public surface matches §20.10 exactly: `OlasProvider`, `useRoot`, `useController` (alias), `use(signal)`, `useQuery(subscription)`, `useField(field)`, `<KeepAlive>`, `useSuspendOnHidden`. `useQuery`/`useField` batch N subscribes into one render trigger via a per-hook version counter. 7 new tests in `packages/react/tests/adapter.test.tsx` cover the four spec-required cases (signal re-render, query invalidation, StrictMode safety, field/`<input>` round-trip) plus provider edge cases.
+- **Testing helpers** — `fakeField<T>` and `fakeAsyncState<T>` added to `@olas/core/testing`, per §20.10.
+
+What changed in the wiki:
+
+- `entities/scope.md` (new, high) — Scope<T> shape, resolution algorithm, reactivity story, lifecycle.
+- `modules/react.md` (new, high) — public surface, subscription mechanism (incl. skip-first-fire), multi-signal batching pattern, StrictMode behavior, fakes.
+- `flows/use-root.md` (new, high) — end-to-end path from `createRoot` through Provider through hooks to DOM. Covers SSR snapshot, concurrent rendering, failure modes.
+- `decisions/no-react-adapter-yet.md` — kept for history, marked superseded, `supersedes` edge added (target: modules/react.md).
+- `entities/ctx.md` — surface diagram updated to include scopes; "What's NOT yet on Ctx" no longer lists provide/inject; `covers:` line ranges refreshed.
+- `overview.md` — package status table updated; test count bumped 187 → 205.
+- `index.md` — new pages added to module/entity/flow sections.
+
+Gates: typecheck/lint/test (205 passed)/build green. Wiki lint passes after this ingest.
+
+Unimplemented after Phase 10:
+- Phase 13 (devtools extension)
+- Phase 14 (polish & docs)
+- `ctx.collection` / `ctx.session` / `ctx.lazyChild` (deferred per §20.2 — listed under "What's NOT yet on Ctx" in `entities/ctx.md`).
+
