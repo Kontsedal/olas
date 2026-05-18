@@ -46,6 +46,8 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 | `@olas/persist` | Implemented (phase 11) | `usePersisted` + localStorage adapter |
 | `@olas/react` | Implemented (phase 10) | `OlasProvider`, `useRoot`, `use`/`useQuery`/`useField`, `KeepAlive` |
 
+Phase 14 (polish & docs) has landed: per-package READMEs, `MIGRATING.md`, `RECIPES.md`, TSDoc on the public surface, and `examples/user-profile/` as a typechecked worked example. Phase 13 (devtools browser extension) is the only remaining v1 item.
+
 ## Core module map
 
 ```
