@@ -1,12 +1,8 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import { required } from '../src/forms/validators'
 
 const emptyDeps = {}
-
-const flush = async () => {
-  for (let i = 0; i < 5; i++) await Promise.resolve()
-}
 
 describe('ctx.form — basic aggregation', () => {
   test('value aggregates leaf fields', () => {
@@ -180,13 +176,11 @@ describe('ctx.form — form-level validators', () => {
     }))
     const root = createRoot(def, { deps: emptyDeps })
     root.form.fields.password.set('abc')
-    await flush()
-    expect(root.form.topLevelErrors.value).toEqual(['Passwords must match'])
+    await vi.waitFor(() => expect(root.form.topLevelErrors.value).toEqual(['Passwords must match']))
     expect(root.form.isValid.value).toBe(false)
 
     root.form.fields.confirm.set('abc')
-    await flush()
-    expect(root.form.topLevelErrors.value).toEqual([])
+    await vi.waitFor(() => expect(root.form.topLevelErrors.value).toEqual([]))
     expect(root.form.isValid.value).toBe(true)
     root.dispose()
   })
@@ -208,10 +202,13 @@ describe('ctx.form — flatErrors', () => {
       ),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    // Wait for the always-wrong top-level + required leaf to land in flat.
+    await vi.waitFor(() => {
+      const f = root.form.flatErrors.value
+      expect(f).toContainEqual({ path: '', errors: ['always wrong'] })
+      expect(f).toContainEqual({ path: 'name', errors: ['Required'] })
+    })
     const flat = root.form.flatErrors.value
-    expect(flat).toContainEqual({ path: '', errors: ['always wrong'] })
-    expect(flat).toContainEqual({ path: 'name', errors: ['Required'] })
     expect(flat).toContainEqual({ path: 'address.city', errors: ['Required'] })
     root.dispose()
   })
@@ -277,13 +274,11 @@ describe('ctx.fieldArray', () => {
       }),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.tags.topLevelErrors.value).toEqual(['At least one'])
+    await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual(['At least one']))
     expect(root.tags.isValid.value).toBe(false)
 
     root.tags.add('hello')
-    await flush()
-    expect(root.tags.topLevelErrors.value).toEqual([])
+    await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual([]))
     expect(root.tags.isValid.value).toBe(true)
     root.dispose()
   })

@@ -6,10 +6,6 @@ import { isAbortError } from '../src/utils'
 
 const emptyDeps = {}
 
-const flush = async () => {
-  for (let i = 0; i < 10; i++) await Promise.resolve()
-}
-
 const deferred = <T>() => {
   let resolve: (v: T) => void = () => {}
   let reject: (err: unknown) => void = () => {}
@@ -91,9 +87,10 @@ describe('ctx.mutation — concurrency: parallel (default)', () => {
     expect(root.save.isPending.value).toBe(true)
 
     ds[1]!.resolve('b')
-    await flush()
-    expect(root.save.isPending.value).toBe(true) // still 0 and 2 in flight
-    expect(root.save.data.value).toBe('b')
+    // Wait for the resolved mutation's result to land into `data`. Other
+    // mutations are still in flight so `isPending` should stay true.
+    await vi.waitFor(() => expect(root.save.data.value).toBe('b'))
+    expect(root.save.isPending.value).toBe(true)
 
     ds[0]!.resolve('a')
     ds[2]!.resolve('c')
@@ -147,7 +144,9 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
       return { x, save }
     })
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    // Wait for the initial query fetch to land before kicking off mutations
+    // that touch the cache key.
+    await vi.waitFor(() => expect(root.x.data.value).toBe(1))
     initialFetchDone = true
     void initialFetchDone
 
@@ -264,8 +263,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, save }
     })
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.x.data.value).toBe(0)
+    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     await expect(root.save.run()).rejects.toThrow('server says no')
     expect(root.x.data.value).toBe(0)
@@ -299,7 +297,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, save }
     })
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     await expect(root.save.run()).rejects.toThrow('boom')
     expect(root.x.data.value).toBe(0)
@@ -326,8 +324,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, save }
     })
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.x.data.value).toBe(0)
+    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     await expect(root.save.run()).rejects.toThrow('server says no')
     expect(root.x.data.value).toBe(0)
@@ -351,7 +348,9 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, save }
     })
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    // Wait for initial fetch to settle. hasPendingMutations is the negative
+    // assertion under test post-mutation, so use data as the wait condition.
+    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
     expect(root.x.hasPendingMutations.value).toBe(false)
 
     await root.save.run()
@@ -391,8 +390,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, a, b }
     })
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.x.data.value).toBe(0)
+    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     const pA = root.a.run().catch(() => {})
     const pB = root.b.run().catch(() => {})

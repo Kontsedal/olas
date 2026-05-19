@@ -5,10 +5,6 @@ import { signal } from '../src/signals'
 
 const emptyDeps = {}
 
-const flush = async () => {
-  for (let i = 0; i < 10; i++) await Promise.resolve()
-}
-
 type Page = { items: string[]; next: number | null; prev: number | null }
 
 const makeFixture = () => {
@@ -43,10 +39,9 @@ describe('defineInfiniteQuery + ctx.use', () => {
     })
     const def = defineController((ctx) => ({ chat: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    await vi.waitFor(() => expect(root.chat.status.value).toBe('success'))
     expect(root.chat.pages.value).toEqual([fx.pages[0]])
     expect(root.chat.flat.value).toEqual(['a', 'b'])
-    expect(root.chat.status.value).toBe('success')
     expect(root.chat.hasNextPage.value).toBe(true)
     expect(root.chat.hasPreviousPage.value).toBe(false)
     root.dispose()
@@ -63,8 +58,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
     })
     const def = defineController((ctx) => ({ chat: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.chat.flat.value).toEqual(['a', 'b'])
+    await vi.waitFor(() => expect(root.chat.flat.value).toEqual(['a', 'b']))
 
     await root.chat.fetchNextPage()
     expect(root.chat.flat.value).toEqual(['a', 'b', 'c', 'd'])
@@ -88,8 +82,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
     })
     const def = defineController((ctx) => ({ chat: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.chat.flat.value).toEqual(['c', 'd'])
+    await vi.waitFor(() => expect(root.chat.flat.value).toEqual(['c', 'd']))
     expect(root.chat.hasPreviousPage.value).toBe(true)
 
     await root.chat.fetchPreviousPage()
@@ -109,14 +102,13 @@ describe('defineInfiniteQuery + ctx.use', () => {
     })
     const def = defineController((ctx) => ({ chat: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
     await root.chat.fetchNextPage()
     await root.chat.fetchNextPage()
     expect(root.chat.pages.value.length).toBe(3)
 
     q.invalidate()
-    await flush()
-    expect(root.chat.pages.value.length).toBe(1)
+    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
     expect(root.chat.pages.value[0]).toEqual(fx.pages[0])
     root.dispose()
   })
@@ -130,8 +122,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
     })
     const def = defineController((ctx) => ({ x: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.x.pages.value).toEqual(['page0'])
+    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['page0']))
     expect(root.x.flat.value).toEqual(['page0'])
     root.dispose()
   })
@@ -202,8 +193,7 @@ describe('infinite query: keepPreviousData', () => {
     }))
     const root = createRoot(def, { deps: emptyDeps })
     dKey1.resolve()
-    await flush()
-    expect(root.x.pages.value).toEqual(['first-key'])
+    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['first-key']))
 
     // Switch to key 2; the new fetch hasn't resolved yet — pages still expose
     // the previous key's data because keepPreviousData is on.
@@ -212,8 +202,7 @@ describe('infinite query: keepPreviousData', () => {
     expect(root.x.pages.value).toEqual(['first-key'])
 
     dKey2.resolve()
-    await flush()
-    expect(root.x.pages.value).toEqual(['second-key'])
+    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['second-key']))
     root.dispose()
   })
 })
