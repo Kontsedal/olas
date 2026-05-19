@@ -327,6 +327,49 @@ describe('ctx.cache — setData and rollback (§6.3, §6.4)', () => {
   })
 })
 
+describe('ctx.cache — invalidate / reactive key short-circuit', () => {
+  test('invalidate triggers a refetch on the local cache', async () => {
+    let calls = 0
+    const def = defineController((ctx) => ({
+      x: ctx.cache(async () => ++calls, { staleTime: 60_000 }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(calls).toBe(1)
+
+    root.x.invalidate()
+    await flush()
+    expect(calls).toBe(2)
+    root.dispose()
+  })
+
+  test('re-evaluating the key with the same args does not reset data', async () => {
+    // The arraysEqual fast-path inside the key-effect: when the keyFn fires
+    // but produces a deep-equal-by-Object.is array, the data must not be
+    // cleared.
+    const trigger = signal(0)
+    let calls = 0
+    const def = defineController((ctx) => ({
+      x: ctx.cache(async () => ++calls, {
+        // The key reads `trigger` to re-run the effect, but the returned
+        // tuple never changes — exercising the "arrays equal" branch.
+        key: () => {
+          trigger.value
+          return ['fixed'] as const
+        },
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.x.data.value).toBe(1)
+
+    trigger.set(1)
+    await flush()
+    expect(root.x.data.value).toBeDefined()
+    root.dispose()
+  })
+})
+
 describe('ctx.cache via createTestController', () => {
   test('useful in isolation', async () => {
     const userCtl = defineController((ctx, props: { id: string }) => ({

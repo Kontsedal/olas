@@ -1,7 +1,7 @@
 import { batch, computed, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
-import type { AsyncState, AsyncStatus, RetryDelay, RetryPolicy } from './types'
+import type { AsyncState, AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 /**
  * Configuration for `defineInfiniteQuery({ ... })`. Spec §5.7, §20.4.
@@ -58,9 +58,7 @@ export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
   readonly __olas: 'infiniteQuery'
   invalidate(...args: Args): void
   invalidateAll(): void
-  setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): {
-    rollback: () => void
-  }
+  setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot
   prefetch(...args: Args): Promise<TPage>
 }
 
@@ -82,8 +80,6 @@ export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
   fetchNextPage: () => Promise<void>
   fetchPreviousPage: () => Promise<void>
 }
-
-import type { Snapshot } from './types'
 
 /**
  * Holds an array of pages plus their pageParams. Supports fetchNextPage /

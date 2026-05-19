@@ -1,4 +1,4 @@
-import type { Ctx, Field, FieldArray, Form, FormOptions, Validator } from '@kontsedal/olas-core'
+import type { Ctx, Field, FieldArray, Form, Validator } from '@kontsedal/olas-core'
 import { z } from 'zod'
 
 /**
@@ -140,15 +140,10 @@ function buildForm(
     const initial = initials?.[key]
     fields[key] = buildLeaf(ctx, propSchema, initial)
   }
-  const formOpts: FormOptions<typeof fields> = {}
-  // If the schema has top-level refinements (z.object().refine(...)), Zod
-  // wraps it in ZodEffects. We expose those as form-level validators.
-  const topLevelValidators: Validator<unknown>[] = []
-  // Note: we received an unwrapped ZodObject here, so there's nothing extra.
-  if (topLevelValidators.length > 0) {
-    ;(formOpts as { validators: Validator<unknown>[] }).validators = topLevelValidators
-  }
-  return ctx.form(fields, formOpts) as AnyForm
+  // Root-level `.refine(...)` rules on the object are NOT lifted to a form
+  // validator today — see README "Limitation". Add it manually with
+  // `ctx.form(fields, { validators: [zodValidator(schema)] })` if needed.
+  return ctx.form(fields) as AnyForm
 }
 
 function buildLeaf(
