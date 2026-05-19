@@ -3,7 +3,7 @@
 // modal.
 
 import { OlasProvider } from '@olas/react'
-import { DevtoolsPanel } from '@olas/devtools'
+import { DevtoolsLauncher } from '@olas/devtools'
 import { useState, type ReactElement } from 'react'
 import { AlertTriangle, Sparkles } from 'lucide-react'
 import type { Api } from '../api'
@@ -20,7 +20,7 @@ export function App({ root, api }: { root: AppRoot; api: Api }): ReactElement {
 
   return (
     <OlasProvider root={root}>
-      <div className="grid grid-cols-1 gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_380px] min-h-screen">
+      <div className="grid grid-cols-1 gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_320px] min-h-screen">
         <main className="flex flex-col gap-4 min-w-0">
           <header className="flex items-center justify-between gap-3 flex-wrap">
             <div className="flex items-center gap-3">
@@ -44,14 +44,6 @@ export function App({ root, api }: { root: AppRoot; api: Api }): ReactElement {
         </main>
         <aside className="flex flex-col gap-4 lg:sticky lg:top-5 lg:max-h-[calc(100vh-2.5rem)] lg:overflow-auto">
           <Activity />
-          <div className="rounded-xl border border-(--color-border) bg-(--color-bg-elev) overflow-hidden shadow-[var(--shadow-card)]">
-            <div className="px-3 py-2 border-b border-(--color-border) text-[10px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
-              Devtools
-            </div>
-            <div className="h-[480px]">
-              <DevtoolsPanel root={root} defaultTab="tree" urlHashKey="kanban" />
-            </div>
-          </div>
         </aside>
         {editor !== null && (
           <CardEditor
@@ -61,6 +53,9 @@ export function App({ root, api }: { root: AppRoot; api: Api }): ReactElement {
           />
         )}
         <ErrorToast />
+        {/* Floating, draggable, resizable devtools window. Tap the
+            bottom-right launcher to open. Position + size persist. */}
+        <DevtoolsLauncher root={root} defaultTab="tree" urlHashKey="kanban" />
       </div>
     </OlasProvider>
   )
