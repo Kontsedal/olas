@@ -4,14 +4,16 @@ description: Per-root entry registry. Owns the maps, gcTime, mutationsInflight$,
 type: entity
 covers:
   - packages/core/src/query/client.ts
+  - packages/core/src/query/focus-online.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/query-focus-online.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
   - { type: uses, target: entry.md }
   - { type: uses, target: ../decisions/per-root-query-client.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-19
 confidence: high
 ---
 
@@ -35,6 +37,7 @@ Why two? Regular and infinite queries differ enough (single `data` vs array of `
 - `subscriberCount` — incremented by `acquire()`, decremented by `release()`.
 - `gcTimer` — started on `release()` when count hits zero; cleared on `acquire()`. Fires `client.dropEntry(this)`.
 - `intervalTimer` — runs `entry.startFetch()` every `refetchInterval` ms while subscribers exist.
+- `unsubFocus` / `unsubOnline` — `window` focus and `online` subscriptions, installed on the 0→1 acquire transition when `refetchOnWindowFocus` / `refetchOnReconnect` are set on the spec. Cleared on release-to-zero and on dispose. The handler skips refetch if `entry.isStaleNow()` is false, so a freshly-fetched query within `staleTime` ignores the focus event. The window/document listeners themselves live in `query/focus-online.ts` as a lazy single-listener pubsub, shared across all clients and SSR-safe.
 - `callArgs` and `keyArgs` — separately stored. `callArgs` is fed to the fetcher. `keyArgs = spec.key(...callArgs)` is hashed for identity. See `../pitfalls/callargs-vs-keyargs.md`.
 
 ## Cross-root query operation

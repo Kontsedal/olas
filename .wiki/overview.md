@@ -88,4 +88,4 @@ See `modules/*.md` for per-directory details.
 
 ## Build & verify
 
-CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 236 tests pass. See `../CLAUDE.md` for the full command list.
+CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 244 tests pass. See `../CLAUDE.md` for the full command list.
