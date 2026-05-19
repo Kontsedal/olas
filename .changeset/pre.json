@@ -15,6 +15,7 @@
     "@kontsedal/olas-zod": "0.0.0"
   },
   "changesets": [
-    "initial-release"
+    "initial-release",
+    "metadata-fill"
   ]
 }

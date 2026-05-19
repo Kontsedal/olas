@@ -1,5 +1,20 @@
 # @olas/persist
 
+## 0.0.1-rc.1
+
+### Patch Changes
+
+- Fill npm package metadata.
+
+  Every publishable package now has `repository` (linking npm → github source
+  directory), `homepage` (deep-linking the per-package README), `bugs.url`
+  (github issues), `author` (Bohdan Kontsedal), and a focused `keywords`
+  list. Descriptions tightened to one sentence each. No code change — purely
+  manifest metadata that surfaces on the npm package page.
+
+- Updated dependencies
+  - @kontsedal/olas-core@0.0.1-rc.1
+
 ## 0.0.1-rc.0
 
 ### Patch Changes
