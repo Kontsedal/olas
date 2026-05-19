@@ -8,6 +8,7 @@ export default defineConfig({
       '@olas/core': resolve(__dirname, 'packages/core/src/index.ts'),
       '@olas/react': resolve(__dirname, 'packages/react/src/index.ts'),
       '@olas/persist': resolve(__dirname, 'packages/persist/src/index.ts'),
+      '@olas/realtime': resolve(__dirname, 'packages/realtime/src/index.ts'),
       '@olas/zod': resolve(__dirname, 'packages/zod/src/index.ts'),
       '@olas/devtools': resolve(__dirname, 'packages/devtools/src/index.ts'),
     },

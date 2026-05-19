@@ -209,3 +209,20 @@ Test coverage adds (jsdom env):
 
 Lib test count 244 → 248. Status / README / overview counts bumped; the `entities/query-client.md` `unsubFocus`/`unsubOnline` paragraph updated to spell out the precedence rule.
 
+
+## [2026-05-19 14:58] ingest | @olas/realtime package landed
+
+New workspace package: thin wrappers around the SPEC §16.5 realtime → cache-patches
+pattern and the §16.5 tail-buffer pattern. Adds modules/realtime.md (medium
+confidence — same-session, per CLAUDE.md bootstrap caveat). Service interface
+is consumer-implemented via AmbientDeps augmentation; package ships no default.
+
+- `useRealtimePatcher(ctx, channel, handlers)` — dispatch realtime events by
+  `event.type`; handlers wrapped in `untracked(...)` to prevent re-subscribe
+  thrash when handlers read signals.
+- `defineLiveStream<TEvent>(ctx, channel, options?)` — `capacity` oldest-drop,
+  `flushMs` coalesced flush, `pause/resume/clear`. Buffer preserved across
+  pause; subscription cycled via `ctx.effect` reading `isPaused.value`.
+
+10 new tests (5 patcher, 5 live-stream). vitest alias added; biome / typecheck
+/ wiki-lint pass. BACKLOG entry flipped from `[idea]` to `[in-progress]`.
