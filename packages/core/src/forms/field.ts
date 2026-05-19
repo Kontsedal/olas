@@ -23,6 +23,17 @@ export type FieldDevtoolsOwner = {
   emitter: DevtoolsEmitter
 }
 
+/**
+ * Optional reporter for synchronous validator throws — wired in by `ctx.field`
+ * (and `createForm` for leaf fields inside a form) so a thrown validator
+ * doesn't escape the signal effect silently. Without this, a buggy validator
+ * just stops contributing to `errors` and the field reads as "valid" while
+ * silently broken. With it, the throw is routed through `root.onError` as
+ * `kind: 'effect'` AND the throw's message lands in the field's `errors`
+ * array so the UI surfaces the problem.
+ */
+export type ValidatorErrorReporter = (err: unknown) => void
+
 class FieldImpl<T> implements Field<T> {
   private readonly value$: Signal<T>
   private readonly errors$: Signal<string[]>
@@ -41,10 +52,20 @@ class FieldImpl<T> implements Field<T> {
   private runId = 0
   private disposed = false
   private devtoolsOwner: FieldDevtoolsOwner | null = null
+  private onValidatorError: ValidatorErrorReporter | null = null
 
-  constructor(initial: T, validators: ReadonlyArray<Validator<T>> = []) {
+  constructor(
+    initial: T,
+    validators: ReadonlyArray<Validator<T>> = [],
+    options?: { onValidatorError?: ValidatorErrorReporter },
+  ) {
     this.initial = initial
     this.validators = validators
+    // Capture the reporter BEFORE the validator effect kicks off so a sync
+    // throw on the very first pass routes through `onError` instead of
+    // disappearing into the effect (`bindValidatorErrorReporter` is a
+    // post-construct hook so it can't catch the first run).
+    this.onValidatorError = options?.onValidatorError ?? null
     this.value$ = signal(initial)
     this.errors$ = signal<string[]>([])
     this.touched$ = signal(false)
@@ -58,6 +79,14 @@ class FieldImpl<T> implements Field<T> {
         this.runValidators()
       })
     }
+  }
+
+  /**
+   * Internal hook for `ctx.field` / `createForm` to route synchronous
+   * validator throws through `root.onError`. See `ValidatorErrorReporter`.
+   */
+  bindValidatorErrorReporter(reporter: ValidatorErrorReporter | null): void {
+    this.onValidatorError = reporter
   }
 
   // --- ReadSignal<T> ---
@@ -207,11 +236,27 @@ class FieldImpl<T> implements Field<T> {
     const asyncPromises: Promise<string | null>[] = []
 
     for (const validator of this.validators) {
-      const result = validator(value, abort.signal)
-      if (result instanceof Promise) {
-        asyncPromises.push(result)
-      } else if (result != null) {
-        syncErrors.push(result)
+      try {
+        const result = validator(value, abort.signal)
+        if (result instanceof Promise) {
+          // Defend against the validator promise rejecting *synchronously*
+          // with a thrown error (rare but legal) — the catch-handler in
+          // `Promise.allSettled` covers true async rejection.
+          asyncPromises.push(result)
+        } else if (result != null) {
+          syncErrors.push(result)
+        }
+      } catch (err) {
+        // A buggy validator that throws synchronously: surface it twice.
+        // (1) Route through `onError` so the user knows something is wrong.
+        // (2) Convert to a validation error string so the field reads invalid
+        //     until the bug is fixed (don't pretend everything's OK).
+        try {
+          this.onValidatorError?.(err)
+        } catch {
+          // The reporter must not propagate.
+        }
+        syncErrors.push(err instanceof Error ? err.message : String(err))
       }
     }
 
@@ -270,8 +315,28 @@ export function bindFieldDevtoolsOwner<T>(field: Field<T>, owner: FieldDevtoolsO
   }
 }
 
-export function createField<T>(initial: T, validators?: ReadonlyArray<Validator<T>>): Field<T> {
-  return new FieldImpl(initial, validators)
+/**
+ * Internal — install a synchronous-validator-throw reporter on a `Field`
+ * (matched structurally to keep the public `Field<T>` surface stable).
+ * Called by `ctx.field` and `bindTreeToDevtools` so leaves inside a form/
+ * field-array tree get the same reporting as a standalone field.
+ */
+export function bindFieldValidatorErrorReporter<T>(
+  field: Field<T>,
+  reporter: ValidatorErrorReporter | null,
+): void {
+  const impl = field as { bindValidatorErrorReporter?: (r: ValidatorErrorReporter | null) => void }
+  if (typeof impl.bindValidatorErrorReporter === 'function') {
+    impl.bindValidatorErrorReporter(reporter)
+  }
+}
+
+export function createField<T>(
+  initial: T,
+  validators?: ReadonlyArray<Validator<T>>,
+  options?: { onValidatorError?: ValidatorErrorReporter },
+): Field<T> {
+  return new FieldImpl(initial, validators, options)
 }
 
 /**

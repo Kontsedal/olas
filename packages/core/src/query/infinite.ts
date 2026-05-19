@@ -1,6 +1,6 @@
 import { batch, computed, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
-import { isAbortError } from '../utils'
+import { abortableSleep, isAbortError } from '../utils'
 import type { AsyncState, AsyncStatus, RetryDelay, RetryPolicy } from './types'
 
 /**
@@ -116,6 +116,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private snapshots: Array<{ id: number; prev: TPage[]; live: boolean }> = []
   private nextSnapshotId = 0
   private disposed = false
+  /** Mirrors `Entry.pendingFirstValueRejects` — see that field for context. */
+  private pendingFirstValueRejects: Array<(err: unknown) => void> = []
 
   private readonly fetcher: (pageCtx: {
     pageParam: PageParam
@@ -297,38 +299,54 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     direction: 'initial' | 'next' | 'prev',
   ): Promise<TPage> {
     let attempt = 0
-    while (true) {
-      if (myId !== this.currentFetchId || this.disposed) {
-        throw new DOMException('Superseded', 'AbortError')
-      }
-      try {
-        const page = await this.fetcher({ pageParam, signal })
+    let succeeded = false
+    try {
+      while (true) {
         if (myId !== this.currentFetchId || this.disposed) {
           throw new DOMException('Superseded', 'AbortError')
         }
-        onSuccess(page, pageParam)
-        return page
-      } catch (err) {
-        if (myId !== this.currentFetchId || this.disposed || isAbortError(err)) {
-          throw err
+        try {
+          const page = await this.fetcher({ pageParam, signal })
+          if (myId !== this.currentFetchId || this.disposed) {
+            throw new DOMException('Superseded', 'AbortError')
+          }
+          onSuccess(page, pageParam)
+          succeeded = true
+          return page
+        } catch (err) {
+          if (myId !== this.currentFetchId || this.disposed || isAbortError(err)) {
+            throw err
+          }
+          const shouldRetry =
+            typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err)
+          if (!shouldRetry) {
+            batch(() => {
+              this.error.set(err)
+              this.status.set('error')
+              this.isLoading.set(false)
+              this.isFetching.set(false)
+              if (direction === 'next') this.isFetchingNextPage.set(false)
+              if (direction === 'prev') this.isFetchingPreviousPage.set(false)
+            })
+            throw err
+          }
+          const delay =
+            typeof this.retryDelay === 'function' ? this.retryDelay(attempt) : this.retryDelay
+          await abortableSleep(delay, signal)
+          attempt += 1
         }
-        const shouldRetry =
-          typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err)
-        if (!shouldRetry) {
-          batch(() => {
-            this.error.set(err)
-            this.status.set('error')
-            this.isLoading.set(false)
-            this.isFetching.set(false)
-            if (direction === 'next') this.isFetchingNextPage.set(false)
-            if (direction === 'prev') this.isFetchingPreviousPage.set(false)
-          })
-          throw err
-        }
-        const delay =
-          typeof this.retryDelay === 'function' ? this.retryDelay(attempt) : this.retryDelay
-        await abortableSleep(delay, signal)
-        attempt += 1
+      }
+    } finally {
+      // Catch-all reset for the supersede/abort path. The success and explicit
+      // failure paths already reset these via `onSuccess` and the
+      // `applyFailure`-equivalent branch above; this guarantees that an
+      // aborted-mid-flight `fetchNextPage` (e.g., user calls `invalidate()`
+      // while paging) doesn't wedge the spinner.
+      if (!succeeded) {
+        batch(() => {
+          if (direction === 'next') this.isFetchingNextPage.set(false)
+          if (direction === 'prev') this.isFetchingPreviousPage.set(false)
+        })
       }
     }
   }
@@ -395,6 +413,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }
 
   firstValue(): Promise<TPage[]> {
+    if (this.disposed) {
+      return Promise.reject(new DOMException('Entry disposed', 'AbortError'))
+    }
     if (this.status.peek() === 'success') {
       return Promise.resolve(this.pages.peek())
     }
@@ -402,13 +423,19 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       return Promise.reject(this.error.peek())
     }
     return new Promise<TPage[]>((resolve, reject) => {
+      const tracked = (err: unknown): void => {
+        this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+        reject(err)
+      }
+      this.pendingFirstValueRejects.push(tracked)
       const unsub = this.status.subscribe((s) => {
         if (s === 'success') {
           unsub()
+          this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
           resolve(this.pages.peek())
         } else if (s === 'error') {
           unsub()
-          reject(this.error.peek())
+          tracked(this.error.peek())
         }
       })
     })
@@ -439,24 +466,11 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     }
     this.currentAbort?.abort()
     this.currentAbort = null
+    if (this.pendingFirstValueRejects.length > 0) {
+      const disposed = new DOMException('Entry disposed', 'AbortError')
+      const rejects = this.pendingFirstValueRejects
+      this.pendingFirstValueRejects = []
+      for (const fn of rejects) fn(disposed)
+    }
   }
-}
-
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    const onAbort = () => {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', onAbort)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
 }

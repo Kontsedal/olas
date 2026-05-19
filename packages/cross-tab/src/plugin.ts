@@ -136,8 +136,20 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
     }
   }
 
+  let initialized = false
   return {
     init(a) {
+      // The plugin instance owns one `sourceId`, one channel, and one
+      // listener Map. Sharing it across two roots would clobber that state
+      // on the second `init` and leak the first channel. Construct a fresh
+      // `crossTabPlugin({ ... })` per root.
+      if (initialized) {
+        throw new Error(
+          '[olas/cross-tab] crossTabPlugin instance reused across multiple roots. ' +
+            'Each root must get its own `crossTabPlugin({ ... })`.',
+        )
+      }
+      initialized = true
       api = a
       channel = factory(channelName) ?? null
       channel?.addEventListener('message', listener)
@@ -188,6 +200,9 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
         channel = null
       }
       api = null
+      // Allow re-`init` only if a future runtime explicitly reattaches; today
+      // `QueryClient.dispose` is final, so this is mostly defensive.
+      initialized = false
     },
   }
 }

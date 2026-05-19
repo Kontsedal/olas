@@ -20,7 +20,8 @@ const COMMON_KEYWORDS = ['olas', 'controller-tree', 'signals', 'reactive', 'stat
 
 const PER_PACKAGE = {
   core: {
-    description: 'Olas core — controller-tree state management with signals, queries, mutations, and forms. Framework-agnostic.',
+    description:
+      'Olas core — controller-tree state management with signals, queries, mutations, and forms. Framework-agnostic.',
     keywords: [
       ...COMMON_KEYWORDS,
       'query-cache',
@@ -32,7 +33,8 @@ const PER_PACKAGE = {
     ],
   },
   react: {
-    description: 'Olas React adapter — OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.',
+    description:
+      'Olas React adapter — OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.',
     keywords: [...COMMON_KEYWORDS, 'react', 'hooks', 'keep-alive', 'concurrent-react'],
   },
   zod: {
@@ -44,15 +46,18 @@ const PER_PACKAGE = {
     keywords: [...COMMON_KEYWORDS, 'persistence', 'localStorage', 'cache-persistence'],
   },
   devtools: {
-    description: 'Olas in-app devtools — controller tree inspector, cache timeline, mutation log, signal graph.',
+    description:
+      'Olas in-app devtools — controller tree inspector, cache timeline, mutation log, signal graph.',
     keywords: [...COMMON_KEYWORDS, 'devtools', 'debugging', 'inspector'],
   },
   realtime: {
-    description: 'Olas realtime composables — useRealtimePatcher and defineLiveStream over a pluggable RealtimeService.',
+    description:
+      'Olas realtime composables — useRealtimePatcher and defineLiveStream over a pluggable RealtimeService.',
     keywords: [...COMMON_KEYWORDS, 'realtime', 'websocket', 'sse', 'cache-patching'],
   },
   'cross-tab': {
-    description: 'Olas cross-tab cache sync — BroadcastChannel-backed QueryClientPlugin keeping every browser tab in lockstep.',
+    description:
+      'Olas cross-tab cache sync — BroadcastChannel-backed QueryClientPlugin keeping every browser tab in lockstep.',
     keywords: [...COMMON_KEYWORDS, 'broadcast-channel', 'cross-tab', 'cache-sync'],
   },
 }
@@ -109,6 +114,6 @@ for (const [shortName, extras] of Object.entries(PER_PACKAGE)) {
   pkg.publishConfig = pkg.publishConfig ?? { access: 'public' }
 
   const ordered = reorder(pkg)
-  writeFileSync(path, JSON.stringify(ordered, null, 2) + '\n', 'utf8')
+  writeFileSync(path, `${JSON.stringify(ordered, null, 2)}\n`, 'utf8')
   console.log(`patched packages/${shortName}/package.json`)
 }

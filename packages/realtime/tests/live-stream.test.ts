@@ -1,10 +1,10 @@
 import { createRoot, defineController, effect } from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
-  defineLiveStream,
   type RealtimeHandler,
   type RealtimeService,
   type RealtimeSubscription,
+  useLiveStream,
 } from '../src'
 
 declare module '@kontsedal/olas-core' {
@@ -50,11 +50,11 @@ const fakeRealtime = () => {
   return service
 }
 
-describe('defineLiveStream', () => {
+describe('useLiveStream', () => {
   test('buffer caps at capacity, oldest events drop (flushMs=0)', () => {
     const realtime = fakeRealtime()
     const def = defineController((ctx) => {
-      const stream = defineLiveStream<string>(ctx, 'logs', {
+      const stream = useLiveStream<string>(ctx, 'logs', {
         capacity: 3,
         flushMs: 0,
       })
@@ -83,7 +83,7 @@ describe('defineLiveStream', () => {
     test('flushMs coalesces N emissions into one signal write', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = defineLiveStream<number>(ctx, 'logs', {
+        const stream = useLiveStream<number>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
@@ -116,7 +116,7 @@ describe('defineLiveStream', () => {
     test('pause stops buffering; resume continues; buffer survives the pause', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = defineLiveStream<string>(ctx, 'logs', {
+        const stream = useLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
@@ -147,7 +147,7 @@ describe('defineLiveStream', () => {
     test('dispose clears the pending flush timer and unsubscribes', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = defineLiveStream<string>(ctx, 'logs', {
+        const stream = useLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 100,
         })
@@ -175,7 +175,7 @@ describe('defineLiveStream', () => {
     test('clear() empties without killing the subscription', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = defineLiveStream<string>(ctx, 'logs', {
+        const stream = useLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })

@@ -436,7 +436,7 @@ Invalidation and write methods hang directly off the query value (no DI needed):
 
 ```ts
 userQuery.invalidate(id) // mark stale + refetch if subscribed
-userQuery.invalidateAll() // drop every entry for this query
+userQuery.invalidateAll() // mark stale + refetch every entry for this query (TanStack-style)
 userQuery.setData(id, (u) => ({ ...u, name: 'X' })) // optimistic write, returns snapshot
 userQuery.prefetch(id) // fire-and-forget warmup
 ```
@@ -540,9 +540,9 @@ A mutation is a controller-scoped async function with first-class loading state,
 ```ts
 type MutationSpec<V, R> = {
   mutate: (vars: V, signal: AbortSignal) => Promise<R>
-  onMutate?: (vars: V) => MutationSnapshot | void
+  onMutate?: (vars: V) => Snapshot | void
   onSuccess?: (result: R, vars: V) => void
-  onError?: (err: unknown, vars: V, snapshot: MutationSnapshot) => void
+  onError?: (err: unknown, vars: V, snapshot: Snapshot) => void
   onSettled?: (result: R | undefined, err: unknown | undefined, vars: V) => void
   concurrency?: 'parallel' | 'latest-wins' | 'serial' // default: 'parallel'
 }
@@ -593,7 +593,7 @@ Each `mutate` receives an `AbortSignal`. It's triggered when:
 
 ### 6.3 Optimistic updates
 
-`onMutate` returns a `MutationSnapshot`. Typical shape:
+`onMutate` returns a `Snapshot`. Typical shape:
 
 ```ts
 {
@@ -2078,7 +2078,17 @@ type AsyncState<T> = {
   firstValue: () => Promise<T>    // resolves on first success
 }
 
-type Snapshot = { rollback: () => void }
+type Snapshot = {
+  /** Restore the cache entry to its pre-`setData` value. Idempotent — once
+   *  consumed (by `rollback` or `finalize`), subsequent calls are no-ops. */
+  rollback: () => void
+  /** Mark the optimistic update as committed: clears the entry's
+   *  `hasPendingMutations` if no other snapshots remain live. Idempotent.
+   *  The mutation runtime auto-calls this on success, mirroring the
+   *  auto-`rollback` on error (spec §6.4). Consumers typically only call
+   *  `rollback`; `finalize` is exposed for completeness. */
+  finalize: () => void
+}
 
 // Local — anonymous, owned by one controller
 type LocalCache<T> = AsyncState<T> & {
@@ -2197,7 +2207,14 @@ type MutationSpec<V, R> = {
 }
 
 type Mutation<V, R> = {
-  run: (vars: V) => Promise<R>
+  /**
+   * Trigger a run. The signature uses a variadic tuple so:
+   *  - `V extends void` → no args. `mutation.run()`
+   *  - `V` defaulted to `unknown` (no constraint) → optional arg.
+   *  - otherwise → required arg. `mutation.run(vars)`
+   * Internally typed as `MutationRun<V, R>`; users see the natural shape.
+   */
+  run: MutationRun<V, R>
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
   isPending: ReadSignal<boolean>
@@ -2205,6 +2222,10 @@ type Mutation<V, R> = {
   reset(): void
   dispose(): void // idempotent; aborts in-flight; also called when controller disposes
 }
+
+type MutationRun<V, R> = (
+  ...args: unknown extends V ? [V?] : [V] extends [void] ? [] : [V]
+) => Promise<R>
 ```
 
 The `Snapshot` type is shared with caches' `setData` — a snapshot from `userQuery.setData(...)` plugs into `onMutate`'s return naturally.

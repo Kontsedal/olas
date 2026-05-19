@@ -1,5 +1,5 @@
 import { batch, type Signal, signal } from '../signals'
-import { isAbortError } from '../utils'
+import { abortableSleep, isAbortError } from '../utils'
 import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 export type EntryEvents = {
@@ -52,6 +52,12 @@ export class Entry<T> {
   private disposed = false
   private readonly events: EntryEvents
   private fetchStartTime = 0
+  /**
+   * Promises returned by `firstValue()` that haven't settled. Rejected on
+   * `dispose()` so awaiters (most notably `prefetch` and `subscription.firstValue`)
+   * don't hang when the controller tree is torn down mid-fetch.
+   */
+  private pendingFirstValueRejects: Array<(err: unknown) => void> = []
 
   constructor(options: EntryOptions<T>) {
     this.fetcherProvider = options.fetcher
@@ -62,8 +68,27 @@ export class Entry<T> {
     this.data = signal<T | undefined>(options.initialData)
     if (options.initialData !== undefined) {
       this.status = signal<AsyncStatus>('success')
-      this.scheduleStaleness()
-      this.isStale.set(this.staleTime === 0)
+      // For hydrated data, derive `isStale` from the *actual* age of the
+      // payload, not the timer alone — otherwise a payload older than
+      // `staleTime` would read `isStale === false` until the (fresh, full-
+      // length) timer fires. `isStaleNow()` already does this correctly for
+      // the subscribe-time refetch check; mirror that here for the signal.
+      if (this.staleTime === 0) {
+        this.isStale.set(true)
+      } else {
+        const last = options.initialUpdatedAt
+        const alreadyStale = last === undefined || Date.now() - last >= this.staleTime
+        this.isStale.set(alreadyStale)
+        // Only schedule a timer if the data isn't already stale. If it is,
+        // there's nothing to wait for.
+        if (!alreadyStale) {
+          const remaining = this.staleTime - (Date.now() - (last as number))
+          this.staleTimer = setTimeout(() => {
+            this.staleTimer = null
+            if (!this.disposed) this.isStale.set(true)
+          }, remaining)
+        }
+      }
     } else {
       this.status = signal<AsyncStatus>('idle')
     }
@@ -241,19 +266,10 @@ export class Entry<T> {
     }
   }
 
-  finalizeSnapshot(snapshot: Snapshot): void {
-    const id = snapshotIds.get(snapshot)
-    if (id === undefined) return
-    const record = this.snapshots.find((s) => s.live && s.id === id)
-    if (!record) return
-    record.live = false
-    this.snapshots = this.snapshots.filter((s) => s !== record)
-    if (!this.snapshots.some((s) => s.live)) {
-      this.hasPendingMutations.set(false)
-    }
-  }
-
   firstValue(): Promise<T> {
+    if (this.disposed) {
+      return Promise.reject(new DOMException('Entry disposed', 'AbortError'))
+    }
     if (this.status.peek() === 'success') {
       return Promise.resolve(this.data.peek() as T)
     }
@@ -261,13 +277,19 @@ export class Entry<T> {
       return Promise.reject(this.error.peek())
     }
     return new Promise<T>((resolve, reject) => {
+      const tracked = (err: unknown): void => {
+        this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+        reject(err)
+      }
+      this.pendingFirstValueRejects.push(tracked)
       const unsub = this.status.subscribe((s) => {
         if (s === 'success') {
           unsub()
+          this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
           resolve(this.data.peek() as T)
         } else if (s === 'error') {
           unsub()
-          reject(this.error.peek())
+          tracked(this.error.peek())
         }
       })
     })
@@ -292,31 +314,11 @@ export class Entry<T> {
     }
     this.currentAbort?.abort()
     this.currentAbort = null
+    if (this.pendingFirstValueRejects.length > 0) {
+      const disposed = new DOMException('Entry disposed', 'AbortError')
+      const rejects = this.pendingFirstValueRejects
+      this.pendingFirstValueRejects = []
+      for (const fn of rejects) fn(disposed)
+    }
   }
-}
-
-const snapshotIds = new WeakMap<Snapshot, number>()
-
-export function tagSnapshot(snapshot: Snapshot, id: number): Snapshot {
-  snapshotIds.set(snapshot, id)
-  return snapshot
-}
-
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    const onAbort = () => {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', onAbort)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
 }

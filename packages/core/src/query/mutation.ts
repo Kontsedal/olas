@@ -2,7 +2,7 @@ import type { DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { batch, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
-import { isAbortError } from '../utils'
+import { abortableSleep, isAbortError } from '../utils'
 import type { RetryDelay, RetryPolicy, Snapshot } from './types'
 
 /**
@@ -299,7 +299,16 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   reset(): void {
     if (this.disposed) return
     for (const handle of this.inflight) handle.abort.abort()
-    this.serialQueue.length = 0
+    // Reject queued serial runs so their awaiters don't hang — symmetric with
+    // `dispose()`. Without this, callers of `mutation.run(...)` on a serial
+    // mutation that get reset mid-queue wait forever.
+    if (this.serialQueue.length > 0) {
+      const aborted = new DOMException('Aborted', 'AbortError')
+      const queue = this.serialQueue
+      this.serialQueue = []
+      for (const queued of queue) queued.reject(aborted)
+    }
+    this.serialActive = false
     batch(() => {
       this.data.set(undefined)
       this.error.set(undefined)
@@ -361,24 +370,5 @@ function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
         reject(e)
       },
     )
-  })
-}
-
-function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
-      return
-    }
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort)
-      resolve()
-    }, ms)
-    const onAbort = () => {
-      clearTimeout(timer)
-      signal.removeEventListener('abort', onAbort)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
   })
 }

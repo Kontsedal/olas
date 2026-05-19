@@ -1,6 +1,6 @@
 # @kontsedal/olas-realtime
 
-Two composables over a consumer-supplied `RealtimeService`: `useRealtimePatcher` for the "WebSocket event → `query.setData(...)` cache patch" pattern, and `defineLiveStream` for tail-mode buffers (logs, metrics, presence) with capacity + coalesced flush. SPEC §16.5.
+Two composables over a consumer-supplied `RealtimeService`: `useRealtimePatcher` for the "WebSocket event → `query.setData(...)` cache patch" pattern, and `useLiveStream` for tail-mode buffers (logs, metrics, presence) with capacity + coalesced flush. SPEC §16.5.
 
 The package ships **no default transport**. Apps wire their own (WebSocket, Pusher, Supabase Realtime, Ably, …) and pass it through `ctx.deps.realtime` after augmenting `AmbientDeps`.
 
@@ -15,7 +15,7 @@ pnpm add @kontsedal/olas-realtime @kontsedal/olas-core @preact/signals-core
 ```ts
 import { defineController } from '@kontsedal/olas-core'
 import {
-  defineLiveStream,
+  useLiveStream,
   type RealtimeService,
   useRealtimePatcher,
 } from '@kontsedal/olas-realtime'
@@ -39,7 +39,7 @@ const feed = defineController((ctx) => {
   })
 
   // Or buffer a live tail with backpressure.
-  const logs = defineLiveStream<string>(ctx, 'logs', {
+  const logs = useLiveStream<string>(ctx, 'logs', {
     capacity: 1000,
     flushMs: 16,
   })
@@ -57,7 +57,7 @@ function useRealtimePatcher<TEvent extends { type: string }>(
   handlers: PatcherHandlers<TEvent>,
 ): void
 
-function defineLiveStream<TEvent>(
+function useLiveStream<TEvent>(
   ctx: Ctx<RealtimeDeps>,
   channel: string,
   options?: { capacity?: number; flushMs?: number },
@@ -75,7 +75,7 @@ type LiveStream<TEvent> = {
 | Name | What |
 |---|---|
 | `useRealtimePatcher` | Subscribe; dispatch by `event.type`. Handlers run inside `untracked`. Auto-unsubscribes on dispose. |
-| `defineLiveStream` | Tail buffer. `capacity` caps memory (oldest drops); `flushMs` coalesces bursts into one signal write; `flushMs <= 0` flushes synchronously. |
+| `useLiveStream` | Tail buffer. `capacity` caps memory (oldest drops); `flushMs` coalesces bursts into one signal write; `flushMs <= 0` flushes synchronously. |
 | `RealtimeService` | The consumer-implemented contract — `subscribe(channel, handler) → { unsubscribe }`. |
 
 ## `RealtimeService` contract
