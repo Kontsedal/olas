@@ -36,6 +36,18 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
   keepPreviousData?: boolean
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  /**
+   * Stable identifier used by `QueryClientPlugin`s (`@olas/cross-tab`,
+   * etc.). Infinite queries do NOT propagate cross-tab in v1 — the
+   * page-array payload is too heavy to be a safe default — but the field is
+   * accepted for forward compatibility. SPEC §13.2.
+   */
+  queryId?: string
+  /**
+   * Opt into cross-tab sync. No effect for infinite queries in v1 (see
+   * `queryId` doc above).
+   */
+  crossTab?: boolean
 }
 
 /**

@@ -5,6 +5,7 @@ type: entity
 covers:
   - packages/core/src/query/client.ts
   - packages/core/src/query/focus-online.ts
+  - packages/core/src/query/plugin.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
@@ -14,7 +15,7 @@ edges:
   - { type: uses, target: ../decisions/per-root-query-client.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
 last_verified: 2026-05-19
-confidence: high
+confidence: medium
 ---
 
 # `QueryClient`
@@ -54,4 +55,22 @@ A `Query` is module-scoped. When `bindEntry` runs on this client for that query,
 
 ## What `dispose()` does
 
-Disposes every `ClientEntry`/`InfiniteClientEntry` (clearing their timers and aborting their Entry). Clears both maps and `hydratedData`. Removes the client from every touched query's `__clients` set. Sets `disposed: true`.
+Disposes every `ClientEntry`/`InfiniteClientEntry` (clearing their timers and aborting their Entry). Clears both maps and `hydratedData`. Removes the client from every touched query's `__clients` set. Calls each plugin's `dispose()` (try/catch-wrapped). Sets `disposed: true`.
+
+## Plugins
+
+`QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`; spec §13.2). At construction, every plugin's `init(api)` is invoked with a `QueryClientPluginApi` view that closes over the client. The client then fires `onSetData` / `onInvalidate` / `onGc` for every cache mutation against a query with a `queryId` set:
+
+- `onSetData` — `setData` and `setInfiniteData`. `event.kind === 'data'` for regular queries; `'infinite'` for paginated. `event.isRemote === true` when the write was caused by `applyRemoteSetData` (so plugins skip rebroadcast).
+- `onInvalidate` — `invalidate`, `invalidateAll`, `invalidateInfinite`, `invalidateAllInfinite`. Same `isRemote` semantics.
+- `onGc` — `dropEntry`, `dropInfiniteEntry`. No `isRemote` (gc is local-only).
+
+Plugin api:
+
+- `applyRemoteSetData(queryId, keyArgs, data)` — resolves the query via the `queryId` registry in `plugin.ts`. No-op when no local entry exists for that key (no `callArgs` available to refetch later, and seeding rows the user never subscribed to would be leaky). Sets `applyingRemote = true` while the underlying `Entry.setData` runs; `emitSetData` reads the flag for the `isRemote` field.
+- `applyRemoteInvalidate(queryId, keyArgs)` — same shape, invalidates the local entry if present.
+- `subscribedKeys(queryId)` — walks the client's `maps` (or `infiniteMaps`) for the matching query and returns every bound entry's `keyArgs`. Used by cross-tab plugins to scope outbound traffic. Returns `[]` for unknown `queryId`s.
+
+Every plugin callback is wrapped in try/catch — exceptions go through `dispatchError(this.onError, err, { kind: 'plugin' })`. A plugin bug never tears down the cache. The `'plugin'` kind is new in `ErrorContext` (§20.9) — pre-existing `cache` / `mutation` semantics unchanged.
+
+Infinite-query plugin events fire with `kind: 'infinite'` for forward compatibility. The current `@olas/cross-tab` plugin filters them out (§13.2 v1 limitation).

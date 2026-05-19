@@ -32,6 +32,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     deps: options.deps as Record<string, unknown>,
     refetchOnWindowFocus: options.refetchOnWindowFocus,
     refetchOnReconnect: options.refetchOnReconnect,
+    plugins: options.plugins,
   })
   const rootShared: RootShared = {
     devtools,

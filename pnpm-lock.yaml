@@ -213,6 +213,12 @@ importers:
         specifier: ^1.14.2
         version: 1.14.2
 
+  packages/cross-tab:
+    devDependencies:
+      '@olas/core':
+        specifier: workspace:^
+        version: link:../core
+
   packages/devtools:
     devDependencies:
       '@olas/core':
@@ -266,6 +272,12 @@ importers:
       react-dom:
         specifier: ^19.2.6
         version: 19.2.6(react@19.2.6)
+
+  packages/realtime:
+    devDependencies:
+      '@olas/core':
+        specifier: workspace:^
+        version: link:../core
 
   packages/zod:
     devDependencies:

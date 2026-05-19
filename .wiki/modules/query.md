@@ -12,6 +12,7 @@ covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/mutation.ts
   - packages/core/src/query/infinite.ts
+  - packages/core/src/query/plugin.ts
   - packages/core/src/query/index.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
@@ -24,7 +25,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-19
 confidence: medium
 ---
 
@@ -45,6 +46,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 | `use.ts` | `createUse` and `createInfiniteUse`. Build a `SubscriptionImpl` that swaps entries reactively on key change. |
 | `mutation.ts` | `MutationImpl` — three concurrency modes, abort-race, snapshot rollback. |
 | `infinite.ts` | `InfiniteEntry<TPage, TItem, PageParam>` — paginated variant. Owns `pages`, `pageParams`, `fetchNextPage`, `fetchPreviousPage`. |
+| `plugin.ts` | `QueryClientPlugin` contract + the `queryId → Query` registry. Used by `@olas/cross-tab`. Spec §13.2. |
 | `index.ts` | re-exports |
 
 ## How a subscription is wired
@@ -81,6 +83,22 @@ A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it re
 ## SSR
 
 `root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`. Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map; the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry`. See `flows/ssr.md`.
+
+## Plugin slot
+
+The `QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`). Plugins observe `setData` / `invalidate` / `gc` and can push remote-originated writes back through the cache via `QueryClientPluginApi.applyRemoteSetData` / `applyRemoteInvalidate`. Spec §13.2. Surface:
+
+- **`init(api)`** — called once after construction. Wire transports here. The `api` is closed over the client; safe to retain.
+- **`onSetData(event)`** — every successful `setData` (regular queries only; infinite still fires with `kind: 'infinite'` but the cross-tab plugin filters those out in v1). `event.isRemote === true` when the write originated from `applyRemoteSetData` — plugins MUST skip rebroadcast.
+- **`onInvalidate(event)`** — every invalidate (regular + infinite). Same `isRemote` semantics.
+- **`onGc(event)`** — every entry drop. No `isRemote` (gc is local).
+- **`dispose()`** — called from `QueryClient.dispose`. Tear down transports.
+
+Plugin callbacks are wrapped in try/catch; exceptions route to the root's `onError` with `kind: 'plugin'`. The `queryId → Query` registry (`registerQueryById` / `lookupRegisteredQuery` in `plugin.ts`) routes inbound messages back to the right query value across module-graph boundaries (cross-tab, cross-process).
+
+Plugin events fire only for queries that have a `queryId`. Queries without one are silently invisible to plugins — a `crossTab: true` spec without a `queryId` triggers a one-time `console.warn` from `defineQuery` (dev only).
+
+See `modules/cross-tab.md` for the canonical consumer.
 
 ## Notable gotchas (full details in `../pitfalls/`)
 

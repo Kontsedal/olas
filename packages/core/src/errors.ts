@@ -3,9 +3,12 @@
  * the controller's surface the throw originated; `controllerPath` is the
  * path from root to the controller that owned the failing code; `queryKey`
  * is set for `cache` kinds. Spec §12, §20.9.
+ *
+ * `'plugin'` is used for exceptions raised by `QueryClientPlugin` callbacks
+ * (`@olas/cross-tab` and friends); SPEC §13.2.
  */
 export type ErrorContext = {
-  kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction'
+  kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction' | 'plugin'
   controllerPath: readonly string[]
   queryKey?: readonly unknown[]
 }

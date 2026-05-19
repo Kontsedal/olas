@@ -49,6 +49,16 @@ export type {
   MutationConcurrency,
   MutationSpec,
 } from './query/mutation'
+// Query-client plugins (§13.2)
+export type {
+  GcEvent,
+  InvalidateEvent,
+  QueryClientPlugin,
+  QueryClientPluginApi,
+  RegisteredQuery,
+  SetDataEvent,
+} from './query/plugin'
+export { lookupRegisteredQuery } from './query/plugin'
 // Query primitives
 export type {
   AsyncState,
