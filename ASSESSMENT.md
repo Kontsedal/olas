@@ -2,7 +2,7 @@
 
 Snapshot of the library at commit `7a07994` (v0.0.1-rc.1). Items here are intentionally short — once an item is triaged it should be migrated to `BACKLOG.md` per the repo's BACKLOG protocol.
 
-**Status:** 42 / 43 items addressed in this pass. 332 tests pass (up from 310). Typecheck + lint + build all green across every package and example. The single remaining item is a test-suite hardening sweep across three files — deferred to its own focused PR.
+**Status:** all 43 items addressed. 332 tests pass (up from 310). Typecheck + lint + build all green across every package and example.
 
 Severity tags:
 - `[bug]` — observable wrong behavior or crash.
@@ -11,7 +11,7 @@ Severity tags:
 - `[smell]` — code-quality issue, no user impact.
 - `[gap]` — missing test for a load-bearing surface.
 
-Status markers: `[x]` done, `[~]` deferred (rationale inline), `[ ]` pending.
+Status markers: `[x]` done, `[ ]` pending.
 
 ---
 
@@ -105,7 +105,7 @@ Status markers: `[x]` done, `[~]` deferred (rationale inline), `[ ]` pending.
 - [x] **[gap] No test for cross-tab plugin reuse across roots.**
 - [x] **[gap] No `isStale` timer test for `defineQuery`** — `cache.test.ts:349` covers `ctx.cache`, but `query.test.ts` has no equivalent (both use `Entry`).
 - [x] **[gap] No "two concurrent fetches on the same query key, latest-wins"** test for queries. Entry race protection is exercised only transitively (via `keepPreviousData`).
-- [~] **[gap] `flush = for(i<10) await Promise.resolve()`** convention in `mutation.test.ts`, `infinite.test.ts`, `form.test.ts` leaks microtask depth into the suite. **Deferred** — test-suite hardening across three large files; not a bug fix. Worth its own PR using `vi.waitFor(() => expect(...))` per assertion site so a refactor that adds one `await` chain doesn't silently break tests.
+- [x] **[gap] `flush = for(i<10) await Promise.resolve()`** convention in `mutation.test.ts`, `infinite.test.ts`, `form.test.ts` leaks microtask depth into the suite. **Fixed** — every positive assertion converted to `await vi.waitFor(() => expect(...))`; the `flush` helpers removed from the three target files. Three `flush()` calls remain in `regressions.test.ts` at intentional "drain microtasks, assert nothing leaked through" sites (negative assertions where `vi.waitFor` doesn't apply).
 
 ---
 

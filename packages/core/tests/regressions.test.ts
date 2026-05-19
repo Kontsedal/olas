@@ -9,6 +9,12 @@ import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { Entry } from '../src/query/entry'
 
 const emptyDeps = {}
+/**
+ * Generic microtask drain — kept for tests asserting "X did NOT happen
+ * after a settling pause". For positive "wait until X is true" assertions,
+ * use `await vi.waitFor(() => expect(...))` which polls and is resilient
+ * to implementation microtask-depth changes.
+ */
 const flush = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve()
 }
@@ -64,19 +70,15 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
 
     const def = defineController((ctx) => ({ chat: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.chat.pages.value.length).toBe(1)
+    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
 
     const nextPromise = root.chat.fetchNextPage()
-    await flush()
-    expect(root.chat.isFetchingNextPage.value).toBe(true)
+    await vi.waitFor(() => expect(root.chat.isFetchingNextPage.value).toBe(true))
 
     // Supersede — invalidate aborts the pending fetcher's signal.
     q.invalidate()
     await nextPromise.catch(() => {})
-    await flush()
-
-    expect(root.chat.isFetchingNextPage.value).toBe(false)
+    await vi.waitFor(() => expect(root.chat.isFetchingNextPage.value).toBe(false))
     // Silence the hanging promise (it would otherwise stay alive in the
     // event loop tail until vitest tears down).
     resolveSecond({ items: [], next: null, prev: null })
@@ -99,14 +101,12 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
     })
     const def = defineController((ctx) => ({ chat: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
     const prevPromise = root.chat.fetchPreviousPage()
-    await flush()
-    expect(root.chat.isFetchingPreviousPage.value).toBe(true)
+    await vi.waitFor(() => expect(root.chat.isFetchingPreviousPage.value).toBe(true))
     q.invalidate()
     await prevPromise.catch(() => {})
-    await flush()
-    expect(root.chat.isFetchingPreviousPage.value).toBe(false)
+    await vi.waitFor(() => expect(root.chat.isFetchingPreviousPage.value).toBe(false))
     resolvePrev({ items: [], next: null, prev: null })
     root.dispose()
   })
@@ -132,7 +132,8 @@ describe('regression: Mutation.reset rejects queued serial runs', () => {
     const p1 = root.save.run(1)
     const p2 = root.save.run(2)
     const p3 = root.save.run(3)
-    await flush()
+    // Let isPending flip + the runs settle into the serial queue.
+    await vi.waitFor(() => expect(root.save.isPending.value).toBe(true))
     // Reset — queued p2/p3 must reject; p1 must abort.
     root.save.reset()
     await expect(p2).rejects.toThrow()
@@ -216,14 +217,14 @@ describe('regression: invalidate AbortError does not reach onError', () => {
     })
     const def = defineController((ctx) => ({ x: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps, onError })
-    await flush()
-    expect(fetches.length).toBe(1)
+    await vi.waitFor(() => expect(fetches.length).toBe(1))
     // Resolve initial so a subsequent invalidate has something to supersede.
     fetches[0]!.resolve(1)
-    await flush()
+    await vi.waitFor(() => expect(root.x.data.value).toBe(1))
     q.invalidate()
     q.invalidate()
     q.invalidate()
+    // The supersedes are sync — let the rejection-handling microtasks drain.
     await flush()
     // None of the supersedes should reach onError as cache kind.
     const cacheErrs = onError.mock.calls.filter((c) => (c[1] as { kind: string }).kind === 'cache')
@@ -246,9 +247,8 @@ describe('regression: sync validator throws are surfaced', () => {
       ]),
     }))
     const root = createRoot(def, { deps: emptyDeps, onError })
-    await flush()
+    await vi.waitFor(() => expect(root.name.errors.value).toContain('validator-boom'))
     expect(root.name.isValid.value).toBe(false)
-    expect(root.name.errors.value).toContain('validator-boom')
     const eff = onError.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'effect')
     expect(eff).toBeTruthy()
     root.dispose()
@@ -319,17 +319,16 @@ describe('regression: invalidateAll re-runs every bound entry', () => {
       sub: ctx.use(q, () => [id.current] as const),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
+    await vi.waitFor(() => expect(counts.a).toBe(1))
     // Mount a second subscription via root re-creation to build a second entry.
     const def2 = defineController((ctx) => ({ sub: ctx.use(q, () => ['b'] as const) }))
     const root2 = createRoot(def2, { deps: emptyDeps })
-    await flush()
-    expect(counts.a).toBe(1)
-    expect(counts.b).toBe(1)
+    await vi.waitFor(() => expect(counts.b).toBe(1))
     q.invalidateAll()
-    await flush()
-    expect(counts.a).toBe(2)
-    expect(counts.b).toBe(2)
+    await vi.waitFor(() => {
+      expect(counts.a).toBe(2)
+      expect(counts.b).toBe(2)
+    })
     root.dispose()
     root2.dispose()
   })
@@ -456,11 +455,9 @@ describe('regression: Form.validate re-runs top-level validators', () => {
       ),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(lastSeen).toBe('')
+    await vi.waitFor(() => expect(lastSeen).toBe(''))
     root.form.fields.name.set('A')
-    await flush()
-    expect(lastSeen).toBe('A')
+    await vi.waitFor(() => expect(lastSeen).toBe('A'))
     // Now: clear lastSeen, set silently via direct signal-side; validate() should re-run.
     lastSeen = '__not-run__'
     await root.form.validate()
@@ -540,20 +537,18 @@ describe('gap: query latest-wins under concurrent fetches', () => {
     })
     const def = defineController((ctx) => ({ x: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(sequence.length).toBe(1)
+    await vi.waitFor(() => expect(sequence.length).toBe(1))
     // Trigger a second fetch via refetch — supersedes the first.
     const refetchPromise = root.x.refetch()
-    await flush()
-    expect(sequence.length).toBe(2)
+    await vi.waitFor(() => expect(sequence.length).toBe(2))
     // First's signal must have been aborted.
     expect(sequence[0]!.signal.aborted).toBe(true)
     // Resolve the second; it lands as data.
     sequence[1]!.resolve(99)
     await refetchPromise.catch(() => {})
-    await flush()
-    expect(root.x.data.value).toBe(99)
-    // Resolve the first (already superseded) — should NOT clobber.
+    await vi.waitFor(() => expect(root.x.data.value).toBe(99))
+    // Resolve the first (already superseded) — should NOT clobber. Drain a
+    // few microtasks to give the stale resolution a chance to leak through.
     sequence[0]!.resolve(1)
     await flush()
     expect(root.x.data.value).toBe(99)
@@ -582,21 +577,19 @@ describe('gap: dehydrate while a mutation is in flight', () => {
       return { user, save }
     })
     const root = createRoot(def, { deps: emptyDeps })
-    await flush()
-    expect(root.user.data.value).toEqual({ id: '1', name: 'initial' })
+    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'initial' }))
 
     // Kick off the mutation; optimistic state lands immediately.
     const runP = root.save.run()
-    await flush()
-    expect(root.user.data.value).toEqual({ id: '1', name: 'optimistic' })
+    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'optimistic' }))
 
-    // waitForIdle MUST wait for the inflight mutation. Race it against a
-    // short timer; expect the timer to win until we resolve the mutation.
+    // waitForIdle MUST wait for the inflight mutation.
     const idlePromise = root.waitForIdle()
     let idleSettled = false
     idlePromise.then(() => {
       idleSettled = true
     })
+    // Negative assertion ("did NOT settle yet") — drain microtasks.
     await flush()
     expect(idleSettled).toBe(false)
 
