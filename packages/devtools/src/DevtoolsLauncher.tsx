@@ -14,7 +14,7 @@
 
 import type { Root } from '@olas/core'
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
-import { DevtoolsPanel, type DevtoolsPanelProps, type DevtoolsTab } from './DevtoolsPanel'
+import { DevtoolsPanel, type DevtoolsTab } from './DevtoolsPanel'
 import { DEVTOOLS_CSS } from './styles'
 
 export type DevtoolsLauncherProps = {
@@ -100,10 +100,7 @@ export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
   )
 }
 
-function LauncherButton({
-  open,
-  onClick,
-}: { open: boolean; onClick: () => void }): ReactElement {
+function LauncherButton({ open, onClick }: { open: boolean; onClick: () => void }): ReactElement {
   return (
     <button
       type="button"
@@ -125,7 +122,15 @@ function FloatingWindow(props: {
   children: ReactElement | ReactElement[] | false
 }): ReactElement {
   const { state, setState, onClose, onMinimize } = props
-  const dragState = useRef<{ kind: 'move' | 'resize'; ox: number; oy: number; sx: number; sy: number; sw: number; sh: number } | null>(null)
+  const dragState = useRef<{
+    kind: 'move' | 'resize'
+    ox: number
+    oy: number
+    sx: number
+    sy: number
+    sw: number
+    sh: number
+  } | null>(null)
 
   const onPointerDown = (kind: 'move' | 'resize') => (e: React.PointerEvent) => {
     e.preventDefault()
@@ -171,7 +176,9 @@ function FloatingWindow(props: {
       onPointerCancel={onPointerUp}
     >
       <div className="olas-devtools-floating-header" onPointerDown={onPointerDown('move')}>
-        <span className="olas-devtools-floating-grip" aria-hidden="true">⠿</span>
+        <span className="olas-devtools-floating-grip" aria-hidden="true">
+          ⠿
+        </span>
         <span className="olas-devtools-floating-title">Olas devtools</span>
         <div className="olas-devtools-floating-actions">
           <button

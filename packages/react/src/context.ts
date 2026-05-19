@@ -1,5 +1,5 @@
 import type { Root } from '@olas/core'
-import { type ReactNode, createContext, createElement, useContext } from 'react'
+import { createContext, createElement, type ReactNode, useContext } from 'react'
 
 const OlasContext = createContext<Root<unknown> | null>(null)
 OlasContext.displayName = 'OlasContext'

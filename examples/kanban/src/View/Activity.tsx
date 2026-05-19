@@ -4,8 +4,8 @@
 // without prop-drilling. Spec §10.3.
 
 import { use } from '@olas/react'
-import type { ReactElement } from 'react'
 import { AlertCircle, ArrowRight, Check } from 'lucide-react'
+import type { ReactElement } from 'react'
 import { useApi } from './useApi'
 
 export function Activity(): ReactElement {
@@ -24,17 +24,16 @@ export function Activity(): ReactElement {
       ) : (
         <ul className="flex flex-col gap-1.5 max-h-72 overflow-auto pr-1">
           {events.map((ev, idx) => (
-            <li
-              key={`${ev.ts}-${idx}`}
-              className="flex items-start gap-2 text-xs leading-tight"
-            >
+            <li key={`${ev.ts}-${idx}`} className="flex items-start gap-2 text-xs leading-tight">
               <span className="mt-0.5 shrink-0">
                 {ev.kind === 'move' && <ArrowRight className="size-3 text-(--color-accent)" />}
                 {ev.kind === 'save' && <Check className="size-3 text-(--color-success)" />}
                 {ev.kind === 'error' && <AlertCircle className="size-3 text-(--color-danger)" />}
               </span>
               <span className="flex-1 text-(--color-fg)">{ev.text}</span>
-              <time className="shrink-0 text-(--color-fg-mute) tabular-nums">{formatTime(ev.ts)}</time>
+              <time className="shrink-0 text-(--color-fg-mute) tabular-nums">
+                {formatTime(ev.ts)}
+              </time>
             </li>
           ))}
         </ul>

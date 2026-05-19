@@ -10,8 +10,7 @@ import type { Api, Board } from './api'
 
 export const boardQuery = defineQuery({
   key: (id: string) => [id],
-  fetcher: ({ signal, deps }, id: string): Promise<Board> =>
-    deps.api.getBoard(id, signal),
+  fetcher: ({ signal, deps }, id: string): Promise<Board> => deps.api.getBoard(id, signal),
   staleTime: 10_000,
 })
 

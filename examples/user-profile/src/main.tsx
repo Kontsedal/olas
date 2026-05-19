@@ -2,9 +2,9 @@
 // file exists to show the canonical bootstrap.
 
 import { createRoot as createReactRoot } from 'react-dom/client'
-import { App } from './View'
 import { createFakeApi } from './api'
 import { createAppRoot } from './controller'
+import { App } from './View'
 
 const api = createFakeApi()
 const olasRoot = createAppRoot('1', api)

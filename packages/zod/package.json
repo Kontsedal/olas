@@ -14,7 +14,10 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": ["dist", "src"],
+  "files": [
+    "dist",
+    "src"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
@@ -26,6 +29,6 @@
   },
   "devDependencies": {
     "@olas/core": "workspace:^",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   }
 }

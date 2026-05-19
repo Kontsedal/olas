@@ -1,11 +1,11 @@
 import {
-  type ReadonlySignal as PreactReadonlySignal,
-  type Signal as PreactSignal,
   batch as _batch,
   computed as _computed,
   effect as _effect,
   signal as _signal,
   untracked as _untracked,
+  type ReadonlySignal as PreactReadonlySignal,
+  type Signal as PreactSignal,
 } from '@preact/signals-core'
 
 import type { Computed, Signal } from './types'

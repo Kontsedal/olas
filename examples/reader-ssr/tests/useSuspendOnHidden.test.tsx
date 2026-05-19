@@ -4,9 +4,9 @@
 // document `visibilitychange` events. We pass a tiny fake controller so we
 // can spy on the method calls without spinning up a real root.
 
+import { type SuspendableController, useSuspendOnHidden } from '@olas/react'
+import { act, render } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
-import { render, act } from '@testing-library/react'
-import { useSuspendOnHidden, type SuspendableController } from '@olas/react'
 
 function Probe({ controller }: { controller: SuspendableController }) {
   useSuspendOnHidden(controller)

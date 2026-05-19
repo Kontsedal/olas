@@ -35,7 +35,8 @@
   }
 }
 
-html, body {
+html,
+body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);
@@ -45,16 +46,16 @@ html, body {
    the `--olas-*` CSS custom properties from `.olas-devtools` and re-themes
    automatically. */
 .olas-devtools {
-  --olas-bg:           var(--color-bg-sunk);
-  --olas-fg:           var(--color-fg);
-  --olas-muted:        var(--color-fg-mute);
-  --olas-accent:       var(--color-accent);
-  --olas-border:       var(--color-border);
-  --olas-row:          var(--color-bg-elev);
-  --olas-row-alt:      var(--color-bg-sunk);
-  --olas-success:      var(--color-success);
-  --olas-warn:         var(--color-warning);
-  --olas-error:        var(--color-danger);
+  --olas-bg: var(--color-bg-sunk);
+  --olas-fg: var(--color-fg);
+  --olas-muted: var(--color-fg-mute);
+  --olas-accent: var(--color-accent);
+  --olas-border: var(--color-border);
+  --olas-row: var(--color-bg-elev);
+  --olas-row-alt: var(--color-bg-sunk);
+  --olas-success: var(--color-success);
+  --olas-warn: var(--color-warning);
+  --olas-error: var(--color-danger);
   border-radius: 0 !important;
   border: 0 !important;
 }

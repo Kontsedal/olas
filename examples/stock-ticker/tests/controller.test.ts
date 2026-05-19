@@ -5,9 +5,9 @@
 // `@olas/core/testing` helper to build an isolated root that wraps the
 // controller, then assert on signal values directly.
 
-import { describe, expect, test, vi } from 'vitest'
 import { createTestController } from '@olas/core/testing'
 import type { StorageAdapter } from '@olas/persist'
+import { describe, expect, test, vi } from 'vitest'
 import { createFakeMarket } from '../src/api'
 import { tickerController } from '../src/controller'
 

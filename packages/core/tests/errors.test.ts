@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { type ErrorContext, dispatchError } from '../src/errors'
+import { dispatchError, type ErrorContext } from '../src/errors'
 
 const ctx: ErrorContext = { kind: 'effect', controllerPath: ['root', 'feature'] }
 

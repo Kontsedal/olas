@@ -9,10 +9,10 @@
 // This skips the Vite dev-mode middleware to keep the example small. Use
 // `pnpm dev` for the regular SPA dev server (no SSR) during development.
 
-import express from 'express'
 import { readFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import express from 'express'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PORT = process.env.PORT ?? 5183

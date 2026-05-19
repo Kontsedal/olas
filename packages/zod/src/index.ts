@@ -28,7 +28,9 @@ export function zodValidatorAsync<T>(schema: z.ZodType<T>): Validator<T> {
   }
 }
 
-type AnyZodType = z.ZodTypeAny
+// Zod 4 typed every wrapper as `z.ZodType`-compatible; the public unwrap path
+// is `.unwrap()` for optional/nullable and `.def.innerType` for default.
+type AnyZodType = z.ZodType
 
 // Strip the outer optional/nullable/default wrappers to find the inner schema.
 function unwrap(schema: AnyZodType): AnyZodType {
@@ -36,11 +38,13 @@ function unwrap(schema: AnyZodType): AnyZodType {
   // Unwrap default + optional + nullable, in any combination.
   for (let i = 0; i < 5; i++) {
     if (s instanceof z.ZodDefault) {
-      s = (s as unknown as z.ZodDefault<AnyZodType>)._def.innerType
+      // ZodDefault stores the inner schema on `def.innerType`. The runtime
+      // shape is stable across 3.x and 4.x; the public type just shifts.
+      s = (s as unknown as { def: { innerType: AnyZodType } }).def.innerType
     } else if (s instanceof z.ZodOptional) {
-      s = (s as unknown as z.ZodOptional<AnyZodType>)._def.innerType
+      s = (s as z.ZodOptional<AnyZodType>).unwrap() as AnyZodType
     } else if (s instanceof z.ZodNullable) {
-      s = (s as unknown as z.ZodNullable<AnyZodType>)._def.innerType
+      s = (s as z.ZodNullable<AnyZodType>).unwrap() as AnyZodType
     } else {
       return s
     }
@@ -51,8 +55,8 @@ function unwrap(schema: AnyZodType): AnyZodType {
 function defaultInitial(schema: AnyZodType): unknown {
   // Honor Zod default if present.
   if (schema instanceof z.ZodDefault) {
-    const def = (schema as unknown as z.ZodDefault<AnyZodType>)._def.defaultValue
-    return typeof def === 'function' ? (def as () => unknown)() : def
+    const raw = (schema as unknown as { def: { defaultValue: unknown } }).def.defaultValue
+    return typeof raw === 'function' ? (raw as () => unknown)() : raw
   }
   const inner = unwrap(schema)
   if (inner instanceof z.ZodString) return ''
@@ -60,8 +64,11 @@ function defaultInitial(schema: AnyZodType): unknown {
   if (inner instanceof z.ZodBoolean) return false
   if (inner instanceof z.ZodArray) return []
   if (inner instanceof z.ZodEnum) {
-    const opts = (inner as z.ZodEnum<[string, ...string[]]>).options
-    return opts[0] ?? ''
+    // Zod 4 widened ZodEnum's options to support record-style enums. The
+    // runtime values are still iterable; pick the first.
+    const opts = (inner as unknown as { options: readonly unknown[] }).options
+    const first = opts[0]
+    return typeof first === 'string' ? first : ''
   }
   // For unknown/any/dates etc., undefined is the safest starting point.
   return undefined
@@ -70,13 +77,14 @@ function defaultInitial(schema: AnyZodType): unknown {
 type AnyForm = Form<Record<string, Field<any> | Form<any> | FieldArray<any>>>
 
 // Strip the same wrappers as the runtime `unwrap` helper, at the type level.
-type UnwrapZod<S> = S extends z.ZodDefault<infer Inner>
-  ? UnwrapZod<Inner>
-  : S extends z.ZodOptional<infer Inner>
+type UnwrapZod<S> =
+  S extends z.ZodDefault<infer Inner>
     ? UnwrapZod<Inner>
-    : S extends z.ZodNullable<infer Inner>
+    : S extends z.ZodOptional<infer Inner>
       ? UnwrapZod<Inner>
-      : S
+      : S extends z.ZodNullable<infer Inner>
+        ? UnwrapZod<Inner>
+        : S
 
 /**
  * Recursively map a Zod schema to its Olas form leaf:
@@ -89,13 +97,12 @@ type UnwrapZod<S> = S extends z.ZodDefault<infer Inner>
  * so the public `formFromZod<T>` can publish a precise structural type
  * without the consumer needing a hand-written `CardForm = Form<{...}>` cast.
  */
-export type ZodToLeaf<S> = UnwrapZod<S> extends z.ZodObject<infer RawShape>
-  ? Form<{ [K in keyof RawShape]: ZodToLeaf<RawShape[K]> }>
-  : UnwrapZod<S> extends z.ZodArray<infer Element>
-    ? FieldArray<
-        ZodToLeaf<Element> extends Form<any> | Field<any> ? ZodToLeaf<Element> : never
-      >
-    : Field<z.infer<UnwrapZod<S> & z.ZodTypeAny>>
+export type ZodToLeaf<S> =
+  UnwrapZod<S> extends z.ZodObject<infer RawShape>
+    ? Form<{ [K in keyof RawShape]: ZodToLeaf<RawShape[K]> }>
+    : UnwrapZod<S> extends z.ZodArray<infer Element>
+      ? FieldArray<ZodToLeaf<Element> extends Form<any> | Field<any> ? ZodToLeaf<Element> : never>
+      : Field<z.infer<UnwrapZod<S> & z.ZodType>>
 
 /**
  * Walk a Zod schema and emit the equivalent Olas Form / FieldArray / Field
@@ -129,7 +136,7 @@ function buildForm(
   const shape = schema.shape
   const fields: Record<string, Field<unknown> | Form<any> | FieldArray<any>> = {}
   for (const key of Object.keys(shape)) {
-    const propSchema = shape[key]!
+    const propSchema = shape[key] as AnyZodType
     const initial = initials?.[key]
     fields[key] = buildLeaf(ctx, propSchema, initial)
   }
@@ -160,7 +167,7 @@ function buildLeaf(
   }
 
   if (inner instanceof z.ZodArray) {
-    const elementSchema = (inner as z.ZodArray<AnyZodType>).element
+    const elementSchema = (inner as z.ZodArray<AnyZodType>).element as AnyZodType
     return ctx.fieldArray(
       (itemInitial) => buildLeaf(ctx, elementSchema, itemInitial) as Field<unknown> | Form<any>,
       initial !== undefined ? { initial: initial as Array<unknown> } : undefined,

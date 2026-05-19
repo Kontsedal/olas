@@ -9,12 +9,12 @@
 //  - cardEditor: formFromZod surfaces nested validation errors; valid forms
 //    submit; the subtasks min-length rule rejects empty arrays.
 
-import { describe, expect, test, vi } from 'vitest'
-import { createTestController } from '@olas/core/testing'
 import { defineController } from '@olas/core'
+import { createTestController } from '@olas/core/testing'
+import { describe, expect, test } from 'vitest'
+import { createFakeApi } from '../src/api'
 import { boardController, cardEditorController } from '../src/controller'
 import { activityScope, currentBoardScope } from '../src/scopes'
-import { createFakeApi } from '../src/api'
 
 const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
@@ -169,11 +169,7 @@ describe('boardController — reorderColumn (serial)', () => {
     await Promise.all([a, b, c])
 
     expect(maxActive).toBe(1) // never more than one concurrent api call
-    expect(callOrder).toEqual([
-      'c4,c1,c6',
-      'c1,c4,c6',
-      'c6,c1,c4',
-    ])
+    expect(callOrder).toEqual(['c4,c1,c6', 'c1,c4,c6', 'c6,c1,c4'])
 
     root.dispose()
   })
@@ -185,7 +181,11 @@ describe('cardEditorController — formFromZod', () => {
   const harness = () =>
     defineController((ctx) => {
       ctx.provide(currentBoardScope, { id: 'b1' })
-      const activityEmitter = ctx.emitter<{ ts: number; kind: 'move' | 'save' | 'error'; text: string }>()
+      const activityEmitter = ctx.emitter<{
+        ts: number
+        kind: 'move' | 'save' | 'error'
+        text: string
+      }>()
       ctx.provide(activityScope, activityEmitter)
       const editor = ctx.child(cardEditorController, {
         target: {
@@ -217,7 +217,9 @@ describe('cardEditorController — formFromZod', () => {
 
     const flat = root.editor.form.flatErrors.value
     // Title is required — surfaced at path 'title'.
-    expect(flat.some((e) => e.path === 'title' && e.errors.includes('Title is required'))).toBe(true)
+    expect(flat.some((e) => e.path === 'title' && e.errors.includes('Title is required'))).toBe(
+      true,
+    )
     // Note: the array-level `.min(1)` rule on `subtasks` is not currently
     // promoted by `formFromZod` (issue: it would need a FieldArray validator).
     // We sidestep that by asserting form.isValid is false overall — which it

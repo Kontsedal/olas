@@ -2,26 +2,26 @@
 // `query.ts`, `schema.ts`, `controllers/`, and `app.ts`. Tests + the existing
 // example doc can import from `./controller` unchanged.
 
-export { boardQuery } from './query'
+export type { Subtask } from './api'
+export { type AppApi, type AppRoot, createAppRoot } from './app'
 export {
-  cardSchema,
-  prioritySchema,
-  subtaskSchema,
-  buildCardForm,
-  type CardForm,
-  type CardFormValue,
-  type SubtaskForm,
-} from './schema'
-export {
-  boardController,
   applyMove,
   type BoardProps,
+  boardController,
   type MoveVars,
 } from './controllers/board'
 export {
-  cardEditorController,
-  type CardEditorTarget,
   type CardEditorProps,
+  type CardEditorTarget,
+  cardEditorController,
 } from './controllers/cardEditor'
-export { createAppRoot, type AppRoot, type AppApi } from './app'
-export type { Subtask } from './api'
+export { boardQuery } from './query'
+export {
+  buildCardForm,
+  type CardForm,
+  type CardFormValue,
+  cardSchema,
+  prioritySchema,
+  type SubtaskForm,
+  subtaskSchema,
+} from './schema'

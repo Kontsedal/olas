@@ -3,7 +3,7 @@
 // verifiable.
 
 import { describe, expect, test } from 'vitest'
-import { addAlert, evaluateAlerts, removeAlert, type Alert } from '../src/alerts'
+import { type Alert, addAlert, evaluateAlerts, removeAlert } from '../src/alerts'
 
 const tick = (symbol: string, price: number) => ({ symbol, price, ts: 0 })
 
@@ -32,21 +32,13 @@ describe('evaluateAlerts', () => {
   })
 
   test('fires "below" when crossing the target going down', () => {
-    const out = evaluateAlerts(
-      [armed({ target: 90, direction: 'below' })],
-      tick('AAPL', 80),
-      100,
-    )
+    const out = evaluateAlerts([armed({ target: 90, direction: 'below' })], tick('AAPL', 80), 100)
     expect(out.changed).toBe(true)
     expect(out.fired).toHaveLength(1)
   })
 
   test('does NOT re-fire an already-fired alert', () => {
-    const out = evaluateAlerts(
-      [armed({ target: 100, fired: true })],
-      tick('AAPL', 200),
-      50,
-    )
+    const out = evaluateAlerts([armed({ target: 100, fired: true })], tick('AAPL', 200), 50)
     expect(out.changed).toBe(false)
   })
 

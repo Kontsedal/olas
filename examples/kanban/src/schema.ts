@@ -23,7 +23,10 @@ export const cardSchema = z.object({
   description: z.string().max(500, 'Too long'),
   priority: prioritySchema,
   /** Empty string OR ISO date — empty is friendlier for the `<input type="date">`. */
-  dueDate: z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/, 'Use YYYY-MM-DD').optional(),
+  dueDate: z
+    .string()
+    .regex(/^(\d{4}-\d{2}-\d{2})?$/, 'Use YYYY-MM-DD')
+    .optional(),
   subtasks: z.array(subtaskSchema).min(1, 'Add at least one subtask'),
 })
 

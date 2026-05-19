@@ -3,8 +3,8 @@
 // memory; effects tear down; resumes on visible).
 
 import { OlasProvider, use, useRoot, useSuspendOnHidden } from '@olas/react'
-import { useEffect, useState, type ReactElement } from 'react'
 import { Bookmark, BookmarkPlus, Loader2, MessageCircle, Moon, Sun, SunMoon } from 'lucide-react'
+import { type ReactElement, useEffect, useState } from 'react'
 import type { Article } from './api'
 import { Composer } from './Composer'
 import type { AppApi, AppRoot, Theme } from './controller'
@@ -68,7 +68,10 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
       {continueAt && (
         <div className="mb-5 rounded-lg border border-dashed border-(--color-accent) bg-(--color-accent-bg) px-3 py-2 font-sans text-sm text-(--color-fg-mute)">
           Continue reading:{' '}
-          <a className="font-medium text-(--color-accent) hover:underline" href={`#${continueAt.id}`}>
+          <a
+            className="font-medium text-(--color-accent) hover:underline"
+            href={`#${continueAt.id}`}
+          >
             {continueAt.title}
           </a>{' '}
           by {continueAt.author}
@@ -94,13 +97,13 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
         </div>
       )}
 
-      {articles.map((article: Article, idx) => (
+      {articles.map((article: Article, _idx) => (
         <article
           key={article.id}
           id={article.id}
           className={`relative border-t border-(--color-border) py-5 first:border-t-0 first:pt-0 ${
             progress.lastArticleId === article.id
-              ? "before:absolute before:-left-4 before:top-5 before:bottom-5 before:w-[3px] before:rounded before:bg-(--color-accent)"
+              ? 'before:absolute before:-left-4 before:top-5 before:bottom-5 before:w-[3px] before:rounded before:bg-(--color-accent)'
               : ''
           }`}
         >
@@ -108,7 +111,9 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
             aria-label={api.reader.isBookmarked(article.id) ? 'Unbookmark' : 'Bookmark'}
             onClick={() => api.reader.toggleBookmark(article.id)}
             className={`absolute right-0 top-5 rounded p-1 hover:bg-(--color-bg-sunk) ${
-              api.reader.isBookmarked(article.id) ? 'text-(--color-accent)' : 'text-(--color-fg-mute)'
+              api.reader.isBookmarked(article.id)
+                ? 'text-(--color-accent)'
+                : 'text-(--color-fg-mute)'
             }`}
           >
             {api.reader.isBookmarked(article.id) ? (
@@ -140,9 +145,7 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
           <div className="mt-2">
             <button
               type="button"
-              onClick={() =>
-                setOpenComment((cur) => (cur === article.id ? null : article.id))
-              }
+              onClick={() => setOpenComment((cur) => (cur === article.id ? null : article.id))}
               className="inline-flex items-center gap-1.5 font-sans text-xs text-(--color-fg-mute) hover:text-(--color-accent)"
             >
               <MessageCircle className="size-3.5" />
@@ -150,11 +153,7 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
             </button>
           </div>
           {openComment === article.id && (
-            <Composer
-              api={api}
-              articleId={article.id}
-              onClose={() => setOpenComment(null)}
-            />
+            <Composer api={api} articleId={article.id} onClose={() => setOpenComment(null)} />
           )}
         </article>
       ))}

@@ -1,5 +1,5 @@
 import type { DevtoolsEmitter } from '../devtools'
-import { type ErrorHandler, dispatchError } from '../errors'
+import { dispatchError, type ErrorHandler } from '../errors'
 import { type Signal, signal } from '../signals'
 import { Entry } from './entry'
 import { InfiniteEntry, type InfiniteQuery, type InfiniteQuerySpec } from './infinite'

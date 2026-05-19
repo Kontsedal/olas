@@ -11,13 +11,9 @@
 //  - `ctx.emitter` + `ctx.on`                            → activity feed
 
 import { type Ctx, defineController, signal } from '@olas/core'
-import { boardQuery } from '../query'
-import {
-  type ActivityEvent,
-  activityScope,
-  currentBoardScope,
-} from '../scopes'
 import type { Board, SearchResults } from '../api'
+import { boardQuery } from '../query'
+import { type ActivityEvent, activityScope, currentBoardScope } from '../scopes'
 import { type CardEditorTarget, cardEditorController } from './cardEditor'
 
 export type BoardProps = { boardId: string }
@@ -31,8 +27,7 @@ export type MoveVars = {
 
 const ACTIVITY_CAP = 20
 
-const errorMessage = (err: unknown): string =>
-  err instanceof Error ? err.message : String(err)
+const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
 export const boardController = defineController(
   (ctx: Ctx, props: BoardProps) => {
@@ -160,8 +155,7 @@ export const boardController = defineController(
        * Must live here (not on the root) so the child sees
        * `currentBoardScope` + `activityScope`. Spec §10.3.
        */
-      openEditor: (target: CardEditorTarget) =>
-        ctx.attach(cardEditorController, { target }),
+      openEditor: (target: CardEditorTarget) => ctx.attach(cardEditorController, { target }),
     }
   },
   { name: 'board' },

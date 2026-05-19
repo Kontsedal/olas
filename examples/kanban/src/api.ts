@@ -58,12 +58,7 @@ export type Api = {
   ): Promise<void>
   saveCard(boardId: string, card: Card, signal?: AbortSignal): Promise<Card>
   /** Create a new card; the api mints its id and appends it to `columnId`. */
-  createCard(
-    boardId: string,
-    columnId: string,
-    card: NewCard,
-    signal?: AbortSignal,
-  ): Promise<Card>
+  createCard(boardId: string, columnId: string, card: NewCard, signal?: AbortSignal): Promise<Card>
   search(boardId: string, query: string, signal?: AbortSignal): Promise<SearchResults>
   /** Test hooks. */
   failNextWrite: boolean
@@ -72,21 +67,66 @@ export type Api = {
 
 export function createFakeApi(): Api {
   const cards: Record<string, Card> = {
-    c1: { id: 'c1', title: 'Write API spec',  description: '',                          subtasks: [{ text: 'draft routes', done: true }, { text: 'review', done: false }], priority: 'high', dueDate: '2026-05-22' },
-    c2: { id: 'c2', title: 'Set up CI',       description: 'GitHub Actions',            subtasks: [{ text: 'cache deps', done: true }],                                       priority: 'med',  dueDate: '2026-05-25' },
-    c3: { id: 'c3', title: 'Buy domain',      description: '',                          subtasks: [{ text: 'short and memorable', done: true }],                              priority: 'low',  dueDate: null },
-    c4: { id: 'c4', title: 'Migrate logs',    description: 'from CW to BigQuery',       subtasks: [{ text: 'export schema', done: false }],                                  priority: 'high', dueDate: '2026-05-19' },
-    c5: { id: 'c5', title: 'Wire metrics',    description: '',                          subtasks: [{ text: 'choose names', done: false }],                                   priority: 'med',  dueDate: '2026-06-01' },
-    c6: { id: 'c6', title: 'Onboarding doc',  description: '',                          subtasks: [{ text: 'rough outline', done: false }],                                  priority: 'low',  dueDate: null },
+    c1: {
+      id: 'c1',
+      title: 'Write API spec',
+      description: '',
+      subtasks: [
+        { text: 'draft routes', done: true },
+        { text: 'review', done: false },
+      ],
+      priority: 'high',
+      dueDate: '2026-05-22',
+    },
+    c2: {
+      id: 'c2',
+      title: 'Set up CI',
+      description: 'GitHub Actions',
+      subtasks: [{ text: 'cache deps', done: true }],
+      priority: 'med',
+      dueDate: '2026-05-25',
+    },
+    c3: {
+      id: 'c3',
+      title: 'Buy domain',
+      description: '',
+      subtasks: [{ text: 'short and memorable', done: true }],
+      priority: 'low',
+      dueDate: null,
+    },
+    c4: {
+      id: 'c4',
+      title: 'Migrate logs',
+      description: 'from CW to BigQuery',
+      subtasks: [{ text: 'export schema', done: false }],
+      priority: 'high',
+      dueDate: '2026-05-19',
+    },
+    c5: {
+      id: 'c5',
+      title: 'Wire metrics',
+      description: '',
+      subtasks: [{ text: 'choose names', done: false }],
+      priority: 'med',
+      dueDate: '2026-06-01',
+    },
+    c6: {
+      id: 'c6',
+      title: 'Onboarding doc',
+      description: '',
+      subtasks: [{ text: 'rough outline', done: false }],
+      priority: 'low',
+      dueDate: null,
+    },
   }
   const boards: Record<string, Board> = {
     b1: {
       id: 'b1',
       title: 'Q2 Roadmap',
       columns: [
-        { id: 'todo',    title: 'To do',       cardIds: ['c1', 'c4', 'c6'] },
-        { id: 'doing',   title: 'In progress', cardIds: ['c2', 'c5'] },
-        { id: 'done',    title: 'Done',        cardIds: ['c3'] },
+        { id: 'todo', title: 'To do', cardIds: ['c1', 'c4', 'c6'] },
+        { id: 'doing', title: 'In progress', cardIds: ['c2', 'c5'] },
+        { id: 'done', title: 'Done', cardIds: ['c3'] },
       ],
       cards,
     },
@@ -97,7 +137,9 @@ export function createFakeApi(): Api {
   let cardIdCounter = Object.keys(cards).length
   const api: Api = {
     failNextWrite: false,
-    setLatency(ms: number) { latency = ms },
+    setLatency(ms: number) {
+      latency = ms
+    },
 
     async getBoard(id, signal) {
       await delay(latency, signal)
@@ -171,11 +213,14 @@ export function createFakeApi(): Api {
       const board = boards[boardId]
       if (!board) throw new Error(`No board ${boardId}`)
       const q = query.trim().toLowerCase()
-      const matches = q === ''
-        ? Object.keys(board.cards)
-        : Object.values(board.cards)
-            .filter((c) => c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q))
-            .map((c) => c.id)
+      const matches =
+        q === ''
+          ? Object.keys(board.cards)
+          : Object.values(board.cards)
+              .filter(
+                (c) => c.title.toLowerCase().includes(q) || c.description.toLowerCase().includes(q),
+              )
+              .map((c) => c.id)
       return { query, matches }
     },
   }

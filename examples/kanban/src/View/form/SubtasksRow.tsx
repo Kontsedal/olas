@@ -4,16 +4,14 @@
 // items are added/removed. Individual fields inside each item use `useField`
 // for fine-grained subscriptions.
 
-import { use, useField } from '@olas/react'
-import type { ReactElement } from 'react'
-import { Plus, X } from 'lucide-react'
-import type { SubtaskForm } from '../../schema'
 import type { FieldArray } from '@olas/core'
+import { use, useField } from '@olas/react'
+import { Plus, X } from 'lucide-react'
+import type { ReactElement } from 'react'
+import type { SubtaskForm } from '../../schema'
 import { fieldInputClass } from './inputs'
 
-export function SubtasksRow({
-  array,
-}: { array: FieldArray<SubtaskForm> }): ReactElement {
+export function SubtasksRow({ array }: { array: FieldArray<SubtaskForm> }): ReactElement {
   const items = use(array.items)
   return (
     <div className="rounded-md border border-(--color-border) p-3">

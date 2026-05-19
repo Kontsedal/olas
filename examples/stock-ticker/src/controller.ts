@@ -11,12 +11,12 @@
 
 import {
   type Ctx,
-  type ReadSignal,
   computed,
   createRoot,
   debounced,
   defineController,
   defineQuery,
+  type ReadSignal,
   signal,
   throttled,
 } from '@olas/core'
@@ -179,8 +179,7 @@ export const tickerController = defineController(
      * early — closing the details panel disposes its cache + tick
      * subscription immediately, instead of waiting for the parent to dispose.
      */
-    const openDetails = (symbol: string) =>
-      ctx.attach(detailsController, { symbol })
+    const openDetails = (symbol: string) => ctx.attach(detailsController, { symbol })
 
     return {
       symbols,

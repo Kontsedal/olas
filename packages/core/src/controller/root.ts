@@ -105,7 +105,7 @@ function attachRootControls<Api>(
 
   const target = api as Record<string, unknown>
   for (const method of ROOT_METHODS) {
-    if (Object.prototype.hasOwnProperty.call(target, method)) {
+    if (Object.hasOwn(target, method)) {
       throw new Error(
         `[olas] Root controller api defines '${method}' which conflicts with the root controls.`,
       )

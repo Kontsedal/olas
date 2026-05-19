@@ -1,12 +1,12 @@
+export { defineController } from './define'
+export { createRoot, createRootWithProps } from './root'
 export type {
   AmbientDeps,
   ControllerDef,
-  Ctx,
   CtrlApi,
   CtrlProps,
+  Ctx,
   Field,
   Root,
   RootOptions,
 } from './types'
-export { defineController } from './define'
-export { createRoot, createRootWithProps } from './root'

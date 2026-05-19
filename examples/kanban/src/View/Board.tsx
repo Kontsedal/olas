@@ -12,10 +12,10 @@
 // Arrow buttons + → moves remain as an a11y fallback.
 
 import {
+  closestCenter,
   DndContext,
   type DragEndEvent,
   PointerSensor,
-  closestCenter,
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
@@ -92,12 +92,16 @@ export function Board(props: {
   }
   if (board.error !== undefined) {
     return (
-      <div role="alert" className="rounded-xl border border-(--color-danger) bg-(--color-bg-elev) p-4 text-sm text-(--color-danger)">
+      <div
+        role="alert"
+        className="rounded-xl border border-(--color-danger) bg-(--color-bg-elev) p-4 text-sm text-(--color-danger)"
+      >
         Failed: {String(board.error)}
       </div>
     )
   }
-  if (board.data === undefined) return <div className="text-sm text-(--color-fg-mute)">No board</div>
+  if (board.data === undefined)
+    return <div className="text-sm text-(--color-fg-mute)">No board</div>
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>

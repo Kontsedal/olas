@@ -1,8 +1,8 @@
 // Search bar — demonstrates LATEST-WINS by typing rapidly.
 
 import { use } from '@olas/react'
-import { useEffect, useState, type ReactElement } from 'react'
 import { Loader2, Search } from 'lucide-react'
+import { type ReactElement, useEffect, useState } from 'react'
 import { useApi } from './useApi'
 
 export function SearchBar(): ReactElement {
@@ -35,7 +35,7 @@ export function SearchBar(): ReactElement {
         ) : results ? (
           <>
             {results.matches.length} match{results.matches.length === 1 ? '' : 'es'}
-            {results.query && <span className="text-(--color-fg)">  “{results.query}”</span>}
+            {results.query && <span className="text-(--color-fg)"> “{results.query}”</span>}
           </>
         ) : (
           'idle'

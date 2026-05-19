@@ -4,8 +4,8 @@
 
 import type { DehydratedState } from '@olas/core'
 import { renderToString } from 'react-dom/server'
-import { createFakeApi } from './api'
 import { App } from './App'
+import { createFakeApi } from './api'
 import { createAppRoot } from './controller'
 
 export async function render(_url: string): Promise<{ html: string; state: DehydratedState }> {
