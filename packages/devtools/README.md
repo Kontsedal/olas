@@ -1,8 +1,8 @@
 # @olas/devtools
 
-In-app devtools panel for an Olas root. Drop in a React component, get a live view of the controller tree, cache events, mutation log, and field validations.
+In-app devtools UI for an Olas root. Two React components: `<DevtoolsLauncher>` (floating draggable window with a launcher button) and `<DevtoolsPanel>` (the panel itself, for embedding in your own chrome). Both read the same `root.__debug` event stream.
 
-This is the in-app variant — a real browser-extension version (spec Phase 13's stretch goal) can be built later as a thin wrapper that pipes the same `root.__debug` events into a separate panel UI.
+A standalone browser extension reading the same stream is tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
 
 ## Install
 
@@ -15,8 +15,8 @@ pnpm add @olas/devtools @olas/core @olas/react @preact/signals-core react
 ## 30-second example
 
 ```tsx
-import { OlasProvider, useRoot } from '@olas/react'
-import { DevtoolsPanel } from '@olas/devtools'
+import { OlasProvider } from '@olas/react'
+import { DevtoolsLauncher } from '@olas/devtools'
 import { createRoot } from '@olas/core'
 
 const root = createRoot(appController, { deps })
@@ -25,17 +25,15 @@ function AppShell() {
   return (
     <OlasProvider root={root}>
       <App />
-      {import.meta.env.DEV && (
-        <aside style={{ position: 'fixed', bottom: 0, right: 0, width: 480, height: 360 }}>
-          <DevtoolsPanel root={root} />
-        </aside>
-      )}
+      {import.meta.env.DEV && <DevtoolsLauncher root={root} />}
     </OlasProvider>
   )
 }
 ```
 
-The panel is just a React component — wrap it in your own container and size it however you like. Inline styles are scoped to the `.olas-devtools-*` class prefix; no CSS imports are needed.
+`DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open / minimized state persist to `localStorage`.
+
+If you'd rather host the panel yourself (e.g., fixed sidebar in a layout), import `DevtoolsPanel` directly and size it however you like. Styles are scoped to the `.olas-devtools-*` class prefix; no CSS imports needed.
 
 ## What you'll see
 
