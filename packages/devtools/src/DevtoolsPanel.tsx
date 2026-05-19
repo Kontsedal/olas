@@ -1,7 +1,8 @@
 import type { DebugCacheEntry, Root } from '@olas/core'
 import { use } from '@olas/react'
 import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react'
-import { formatPath, formatPayload, formatTime } from './format'
+import { formatPath, formatTime } from './format'
+import { JsonView } from './JsonView'
 import {
   type CacheEntry,
   type ControllerNode,
@@ -303,7 +304,7 @@ function InspectorView({
 }
 
 function inspectorHaystack(e: DebugCacheEntry): string {
-  return [...e.key.map(String), e.status, formatPayload(e.data, 9999)].join(' ')
+  return [...e.key.map(String), e.status, safeStringify(e.data)].join(' ')
 }
 
 function InspectorRow({ entry }: { entry: DebugCacheEntry }): ReactElement {
@@ -326,10 +327,18 @@ function InspectorRow({ entry }: { entry: DebugCacheEntry }): ReactElement {
       kindClass={kindClass}
       target={formatPath(entry.key)}
       t={entry.lastUpdatedAt ?? Date.now()}
-      payload={formatPayload(entry.error ?? entry.data, 9999)}
+      payload={entry.error ?? entry.data}
       suffix={[ageMs != null ? `${formatAge(ageMs)} ago` : '—', ...tags].join(' · ')}
     />
   )
+}
+
+function safeStringify(v: unknown): string {
+  try {
+    return JSON.stringify(v) ?? ''
+  } catch {
+    return String(v)
+  }
 }
 
 function formatAge(ms: number): string {
@@ -403,7 +412,7 @@ function CacheView({ entries, filter }: { entries: CacheEntry[]; filter: string 
 
 function cacheHaystack(e: CacheEntry): string {
   const parts: string[] = [e.kind, ...e.queryKey.map((p) => String(p))]
-  if (e.kind === 'fetch-error') parts.push(String(e.error))
+  if (e.kind === 'fetch-error') parts.push(safeStringify(e.error))
   if (e.kind === 'subscribed') parts.push(...e.subscriberPath)
   return parts.join(' ')
 }
@@ -418,10 +427,17 @@ function CacheRow({ entry }: { entry: CacheEntry }): ReactElement {
           ? 'olas-devtools-kind-warn'
           : ''
 
-  let payload: string | null = null
-  if (entry.kind === 'fetch-success') payload = `${entry.durationMs}ms`
-  else if (entry.kind === 'fetch-error') payload = `${entry.durationMs}ms · ${formatPayload(entry.error, 9999)}`
-  else if (entry.kind === 'subscribed') payload = `from ${formatPath(entry.subscriberPath)}`
+  let inline: string | null = null
+  let payload: unknown | undefined
+  let suffix: string | null = null
+  if (entry.kind === 'fetch-success') {
+    suffix = `${entry.durationMs}ms`
+  } else if (entry.kind === 'fetch-error') {
+    suffix = `${entry.durationMs}ms`
+    payload = entry.error
+  } else if (entry.kind === 'subscribed') {
+    inline = `from ${formatPath(entry.subscriberPath)}`
+  }
 
   return (
     <Row
@@ -429,7 +445,9 @@ function CacheRow({ entry }: { entry: CacheEntry }): ReactElement {
       kindClass={kindClass}
       target={formatPath(entry.queryKey)}
       t={entry.t}
+      inline={inline}
       payload={payload}
+      suffix={suffix}
     />
   )
 }
@@ -460,9 +478,9 @@ function MutationsView({
 
 function mutationHaystack(e: MutationEntry): string {
   const parts: string[] = [e.kind, ...e.path, e.name ?? '']
-  if (e.kind === 'run') parts.push(formatPayload(e.vars, 9999))
-  if (e.kind === 'success') parts.push(formatPayload(e.result, 9999))
-  if (e.kind === 'error') parts.push(formatPayload(e.error, 9999))
+  if (e.kind === 'run') parts.push(safeStringify(e.vars))
+  if (e.kind === 'success') parts.push(safeStringify(e.result))
+  if (e.kind === 'error') parts.push(safeStringify(e.error))
   return parts.join(' ')
 }
 
@@ -480,14 +498,14 @@ function MutationRow({ entry }: { entry: MutationEntry }): ReactElement {
     ? `${entry.name} · ${formatPath(entry.path)}`
     : formatPath(entry.path)
 
-  let payload: string | null = null
+  let payload: unknown | undefined
   let suffix: string | null = null
-  if (entry.kind === 'run') payload = formatPayload(entry.vars, 9999)
+  if (entry.kind === 'run') payload = entry.vars
   else if (entry.kind === 'success') {
-    payload = formatPayload(entry.result, 9999)
+    payload = entry.result
     if (entry.durationMs !== undefined) suffix = `${entry.durationMs}ms`
   } else if (entry.kind === 'error') {
-    payload = formatPayload(entry.error, 9999)
+    payload = entry.error
     if (entry.durationMs !== undefined) suffix = `${entry.durationMs}ms`
   }
 
@@ -544,7 +562,7 @@ function FieldRow({ entry }: { entry: FieldEntry }): ReactElement {
       kindClass={kindClass}
       target={`${formatPath(entry.path)} · ${entry.field}`}
       t={entry.t}
-      payload={entry.errors.length > 0 ? entry.errors.join(' · ') : null}
+      inline={entry.errors.length > 0 ? entry.errors.join(' · ') : null}
     />
   )
 }
@@ -553,34 +571,52 @@ function FieldRow({ entry }: { entry: FieldEntry }): ReactElement {
 // Shared row + helpers
 // ===========================================================================
 
-function Row(props: {
+type RowProps = {
   kind: string
   kindClass: string
   target: string
   t: number
-  payload: string | null
+  /** Either a tiny inline string (durations, urls) OR a structured payload. */
+  inline?: string | null
+  payload?: unknown
   suffix?: string | null
-}): ReactElement {
-  const { kind, kindClass, target, t, payload, suffix } = props
-  const PREVIEW_LEN = 120
-  const truncated = payload != null && payload.length > PREVIEW_LEN
+}
+
+function Row(props: RowProps): ReactElement {
+  const { kind, kindClass, target, t, inline, payload, suffix } = props
+  const hasPayload = payload !== undefined
   const [expanded, setExpanded] = useState(false)
-  const visible = !truncated || expanded ? payload : `${payload!.slice(0, PREVIEW_LEN)}…`
+  const togglable = hasPayload
 
   return (
-    <li
-      className={truncated ? 'olas-devtools-row-clickable' : ''}
-      onClick={truncated ? () => setExpanded((v) => !v) : undefined}
-    >
-      <div className="olas-devtools-row-top">
+    <li className={togglable ? 'olas-devtools-row-clickable' : ''}>
+      <div
+        className="olas-devtools-row-top"
+        onClick={togglable ? () => setExpanded((v) => !v) : undefined}
+      >
         <span className={`olas-devtools-kind ${kindClass}`}>{kind}</span>
         <span className="olas-devtools-target">{target}</span>
         {suffix !== undefined && suffix !== null && (
           <span className="olas-devtools-duration">{suffix}</span>
         )}
         <span className="olas-devtools-time">{formatTime(t)}</span>
+        {togglable && (
+          <span
+            aria-hidden="true"
+            className={`olas-devtools-chevron ${expanded ? 'olas-devtools-chevron-open' : ''}`}
+          >
+            ›
+          </span>
+        )}
       </div>
-      {visible !== null && <div className="olas-devtools-payload">{visible}</div>}
+      {inline != null && (
+        <div className="olas-devtools-payload olas-devtools-payload-inline">{inline}</div>
+      )}
+      {hasPayload && expanded && (
+        <div className="olas-devtools-payload olas-devtools-payload-json">
+          <JsonView value={payload} />
+        </div>
+      )}
     </li>
   )
 }
