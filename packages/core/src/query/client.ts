@@ -65,7 +65,7 @@ export class ClientEntry<T> {
       initialData: hydrated?.data,
       initialUpdatedAt: hydrated?.lastUpdatedAt,
       events:
-        devtools !== undefined
+        __DEV__ && devtools !== undefined
           ? {
               onFetchStart: () => devtools.emit({ type: 'cache:fetch-start', queryKey }),
               onFetchSuccess: (durationMs) =>
@@ -489,7 +489,9 @@ export class QueryClient {
     if (map.size === 0) {
       this.maps.delete(entry.query)
     }
-    this.devtools?.emit({ type: 'cache:gc', queryKey: entry.keyArgs })
+    if (__DEV__) {
+      this.devtools?.emit({ type: 'cache:gc', queryKey: entry.keyArgs })
+    }
   }
 
   invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): void {
@@ -500,7 +502,9 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     const entry = map.get(hash)
     if (!entry) return
-    this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
+    if (__DEV__) {
+      this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
+    }
     entry.entry.invalidate().catch((err) => {
       dispatchError(this.onError, err, {
         kind: 'cache',
@@ -516,7 +520,9 @@ export class QueryClient {
     if (!map) return
     for (const [hash, entry] of map) {
       void hash
-      this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
+      if (__DEV__) {
+        this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
+      }
       entry.entry.invalidate().catch((err) => {
         dispatchError(this.onError, err, {
           kind: 'cache',
@@ -584,7 +590,8 @@ export class QueryClient {
     const internal = query as AnyInfiniteQuery
     const map = this.infiniteMaps.get(internal)
     if (!map) return
-    const hash = stableHash(internal.__spec.key(...args))
+    const keyArgs = internal.__spec.key(...args)
+    const hash = stableHash(keyArgs)
     const entry = map.get(hash)
     if (!entry) return
     entry.entry.invalidate().catch((err) => {

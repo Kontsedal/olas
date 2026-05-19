@@ -82,11 +82,13 @@ export class ControllerInstance {
       throw err
     }
     this.state = 'active'
-    this.rootShared.devtools.emit({
-      type: 'controller:constructed',
-      path: this.path,
-      props: props as unknown,
-    })
+    if (__DEV__) {
+      this.rootShared.devtools.emit({
+        type: 'controller:constructed',
+        path: this.path,
+        props: props as unknown,
+      })
+    }
     return api
   }
 
@@ -125,7 +127,9 @@ export class ControllerInstance {
     this.entries.length = 0
     this.scopes = null
 
-    this.rootShared.devtools.emit({ type: 'controller:disposed', path: this.path })
+    if (__DEV__) {
+      this.rootShared.devtools.emit({ type: 'controller:disposed', path: this.path })
+    }
     // Silence "unused" — `wasSuspended` may inform future logic; intentionally a no-op for now.
     void wasSuspended
   }
@@ -185,7 +189,9 @@ export class ControllerInstance {
       }
     }
 
-    this.rootShared.devtools.emit({ type: 'controller:suspended', path: this.path })
+    if (__DEV__) {
+      this.rootShared.devtools.emit({ type: 'controller:suspended', path: this.path })
+    }
   }
 
   resume(): void {
@@ -215,7 +221,9 @@ export class ControllerInstance {
       }
     }
 
-    this.rootShared.devtools.emit({ type: 'controller:resumed', path: this.path })
+    if (__DEV__) {
+      this.rootShared.devtools.emit({ type: 'controller:resumed', path: this.path })
+    }
   }
 
   // --- Ctx surface --------------------------------------------------------

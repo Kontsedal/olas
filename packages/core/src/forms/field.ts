@@ -164,6 +164,7 @@ class FieldImpl<T> implements Field<T> {
   }
 
   private emitValidated(valid: boolean, errors: readonly string[]): void {
+    if (!__DEV__) return
     const owner = this.devtoolsOwner
     if (owner === null) return
     owner.emitter.emit({
