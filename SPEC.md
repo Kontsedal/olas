@@ -1274,9 +1274,7 @@ Event types:
 - `mutation:run | success | error | rollback` — `{ controllerPath, vars?, error? }`
 - `field:validated` — `{ controllerPath, fieldName, valid, errors }`
 
-The schema is stable enough to build a devtools extension on, but isn't a public API guarantee — internal events may be added.
-
-A browser extension consuming this stream is a future package, not part of v1.
+The schema is stable enough to build tooling on, but isn't a public API guarantee — internal events may be added. `@olas/devtools` consumes this stream as an in-app panel.
 
 ---
 
@@ -1390,7 +1388,7 @@ useRealtimePatcher(ctx, `feed-events`, {
 })
 ```
 
-Ship this composable in user code (or `@olas/realtime` future package). The framework primitive is `ctx.effect` + `setData`; this wraps the typical dispatching boilerplate.
+Ship this composable in user code. The framework primitive is `ctx.effect` + `setData`; this wraps the typical dispatching boilerplate.
 
 ### Gesture / transient UI state
 
@@ -1451,11 +1449,9 @@ type LazyChild<Api> = {
 
 Olas roots typically live at module scope. When HMR replaces a controller's module, the running root holds the *old* controller definition. Two options:
 
-1. **Full root rebuild on hot update (simplest, recommended for v1).** Treat the root as a "device" — on HMR boundary modules, `root.dispose()` and `createRoot(...)` again. UI state resets; cache survives because you can dehydrate-then-hydrate across the swap. Roughly 10 lines of Vite plugin glue.
+Treat the root as a "device" — on HMR boundary modules, `root.dispose()` and `createRoot(...)` again. UI state resets; cache survives because you can dehydrate-then-hydrate across the swap. Roughly 10 lines of Vite plugin glue.
 
-2. **In-place controller replacement (post-v1).** A future `root.replaceController(path, newDef)` API could surgically swap one controller while preserving siblings and cache subscriptions. Significant complexity; deferred.
-
-Document the rebuild pattern in your project's HMR setup. A future `@olas/vite-plugin` may automate it.
+Document the rebuild pattern in your project's HMR setup.
 
 ### Multi-select for large lists
 
@@ -1598,7 +1594,7 @@ Key points:
 - Pause/resume controls the subscription, not the buffer (buffer is preserved when paused).
 - For "merge with historical query" (load page-1 history then tail forward), compose with a `ctx.cache` and a `computed(() => [...history.data.value ?? [], ...buffer.value])`.
 
-This is a user composable today; a future `@olas/realtime` package may ship `defineLiveStream` as a typed primitive.
+Ship as a user composable.
 
 ---
 
@@ -1713,32 +1709,27 @@ Patterns this exercises:
 
 ---
 
-## 18. Non-goals & future work
+## 18. Non-goals
 
-**Non-goals for v1:**
+The following are deliberately out of scope. They aren't "we'll do them later" — they're not the kind of thing this design is for. (Ideas for additional optional packages live in `BACKLOG.md`; the items below are exclusions, not deferrals.)
 
 - Async controller factories. Setup is always sync.
 - A `command` primitive separate from mutations. Non-cache writes (analytics, navigation) go through `ctx.deps`.
 - Framework-specific SSR helpers. `dehydrate`/`hydrate` is the boundary.
-- Multi-framework adapters in v1. `@olas/react` ships; Vue and Svelte are post-v1.
+- Multi-framework adapters in core. `@olas/react` ships.
 - **React Server Components (RSC).** Controllers rely on signals and client-side lifecycle. They run in the browser — wrap any RSC tree in client components before reaching Olas.
 - **Built-in router.** Routing belongs in deps as a service (§16.5). Plug in `react-router`, TanStack Router, or your own.
 - **Gesture / transient UI state.** State whose lifetime equals a single interaction (in-progress drag rectangle, hover, focus) belongs in components, not controllers. See §16.5.
 - **Multi-item mutation orchestration.** The `Mutation` primitive tracks one logical operation. For "fire N mutations and track each result," compose them in a controller (§16.5).
-- **Offline-first sync / mutation queueing.** No persistent outbox, no conflict-resolution layer. Mutations are best-effort against the network; if you need a queue-then-sync model (Notion, Linear), build it as a layer over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@olas/persist`. A canonical `@olas/offline` package is post-v1.
+- **Offline-first sync / mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network; if you need a queue-then-sync model (Notion, Linear), build it as a layer over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@olas/persist`.
 
 ### 18.1 Entity normalization — the boundary statement
 
 When the same entity (a `Post`, a `User`) appears in many independent queries — `newsfeedQuery`, `userProfileQuery`, `searchQuery`, `notificationsQuery`, `commentsQuery` — updating that entity (e.g. liking the post) means patching every query that contains it. Olas core does **not** ship normalized storage; each query owns its own data. The implication: if you need cross-query entity propagation, you write N `setData` calls, or N `invalidate` calls, or build a userland normalizing layer that translates entity updates into per-query patches.
 
-This is a deliberate v1 choice. Normalization is large, opinionated, and best done as a separate package (Apollo and Relay are entire frameworks built around this question). The architecture cleanly supports a future `@olas/entities` package that:
+This is a deliberate choice. Normalization is large, opinionated, and best done as a separate package (Apollo and Relay are entire frameworks built around this question). The architecture is structured so that a normalization layer can be added later without touching core (see `BACKLOG.md` → `@olas/entities`).
 
-- Defines an entity (`defineEntity({ name: 'Post', idOf: p => p.id })`).
-- Hooks into `setData` and `fetcher.then` to extract entities into a normalized store.
-- Provides `entity.update(id, patch)` that diffs and patches every query holding that entity.
-- Provides `entity.subscribe(id): ReadSignal<Post | undefined>` for components reading a single entity reactively.
-
-Until then, the canonical pattern for cross-query updates is: write a small helper per entity that knows which queries it lives in.
+The canonical pattern for cross-query updates is: write a small helper per entity that knows which queries it lives in.
 
 ```ts
 const patchPostEverywhere = (id: string, patch: Partial<Post>) => {
@@ -1751,15 +1742,7 @@ const patchPostEverywhere = (id: string, patch: Partial<Post>) => {
 
 Verbose, but explicit and grep-able — every place a post lives is named in one file. For apps where this gets unwieldy, wait for `@olas/entities`.
 
-**Deferred to post-v1:**
-
-- `@olas/entities` — entity normalization layer (see §18.1).
-- Cross-tab cache sync via `BroadcastChannel` (as a query client plugin).
-- IndexedDB storage adapter for the persistence composable.
-- Devtools browser extension.
-- An offline / retry / backoff layer for fetchers (today: write your own in the fetcher).
-- `@olas/realtime` — a canonical realtime-to-cache patcher (today: write the composable in §16.5).
-- `@olas/eslint-plugin` — rules like "fetcher / mutate body must use the `signal` parameter," "controller factory must not be `async`," "do not import `@olas/core/testing` outside test files." Lints that catch correctness issues we can't enforce at the type level.
+Future-work ideas — additional packages, storage adapters, browser-extension devtools, cross-tab cache sync, normalization, lint rules — live in `BACKLOG.md`, not here. The spec describes what *is*.
 
 ---
 
@@ -1771,7 +1754,7 @@ Verbose, but explicit and grep-able — every place a post lives is named in one
 
 `pnpm` workspaces. One repo, multiple packages, shared TS config and tooling. Versioning via `changesets`.
 
-### 19.2 Packages in v1
+### 19.2 Packages
 
 | Package         | Purpose                                                                                                                             |
 | --------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
@@ -1779,16 +1762,11 @@ Verbose, but explicit and grep-able — every place a post lives is named in one
 | `@olas/react`   | React adapter: `useController`, `use`, `useQuery`, root provider. Built on `useSyncExternalStore`.                                  |
 | `@olas/persist` | `usePersisted` composable, localStorage adapter.                                                                                    |
 | `@olas/zod`     | `zodValidator(schema)` and `formFromZod(ctx, schema)` — Zod schemas as the single source of truth for form types + validation.       |
-| `@olas/devtools` | Browser extension consuming `root.__debug` — controller tree inspector, cache timeline, mutation log, signal dependency graph. **Adoption-critical at scale; no longer optional.** |
+| `@olas/devtools` | In-app `<DevtoolsPanel>` + floating launcher consuming `root.__debug` — controller tree inspector, cache timeline, mutation log. **Adoption-critical at scale; no longer optional.** |
 
 Vanilla "adapter" — no package needed. Signals already expose `.subscribe()` / `.peek()`.
 
-### 19.3 Packages deferred to post-v1
-
-- `@olas/vue` — Vue adapter (signal/ref interop).
-- `@olas/svelte` — Svelte adapter (signal-as-store).
-
-### 19.4 Why one core package, not several
+### 19.3 Why one core package, not several
 
 Splitting into `signals` / `runtime` / `query` / `forms` would give marginal bundle-size wins and real DX cost (more imports, version-sync issues, more changesets per release). Tree-shaking handles unused exports inside a single package. Estimated full-bundle size ~6–8 kb gzip with `@preact/signals-core` included.
 
@@ -1819,7 +1797,7 @@ Declared explicitly so users dedupe correctly:
 
 ### 19.8 Public entry per package
 
-Single `index.ts` entry per package, with one deliberate exception: `@olas/core/testing` exports `createTestController` and other test-only helpers. Splitting these into a sub-path makes "you imported testing utilities into production code" loud and grep-able. No other sub-paths in v1.
+Single `index.ts` entry per package, with one deliberate exception: `@olas/core/testing` exports `createTestController` and other test-only helpers. Splitting these into a sub-path makes "you imported testing utilities into production code" loud and grep-able.
 
 ### 19.9 Repo layout
 
@@ -2290,8 +2268,8 @@ type Form<S extends FormSchema> = {
   markAllTouched(): void
   validate(): Promise<boolean>
 
-  // Path-typed lookup is deferred to post-v1; v1 uses nested `form.fields.a.fields.b` access.
-  // fieldAt<P extends FormPath<S>>(path: P): FieldAt<S, P>
+  // Nested access only: `form.fields.a.fields.b.fields.c`. Path-typed
+  // `form.fieldAt('a.b.c')` is not provided.
 
   dispose(): void // idempotent; disposes all leaf fields/sub-forms/field-arrays
 }
@@ -2353,7 +2331,7 @@ type DeepPartial<T> = T extends object
 
 `Field<T>` *is* a `ReadSignal<T>` — `use(field)` in the UI works, `field.value` reads, `field.set(x)` writes. Direct `.value = ...` is not exposed; writes must go through `set` so dirty / touched / validation update.
 
-For v1, nested field access is via the `form.fields.address.fields.city`-style path. Path-typed lookup (`form.fieldAt('address.city')`) is deferred to post-v1 because the template-literal-type machinery is implementation-heavy and the nested access covers ~95% of cases.
+Nested field access is via the `form.fields.address.fields.city`-style path. Path-typed lookup (`form.fieldAt('address.city')`) is not part of the API — the template-literal-type machinery is implementation-heavy and the nested access covers ~95% of cases.
 
 ### 20.8 Root & options
 
@@ -2829,170 +2807,6 @@ Implementation: a signal `idleCount` that increments/decrements; `waitForIdle` r
 
 ---
 
-## 22. Implementation phases
-
-Each phase produces something tested and usable. Later phases never feed back into earlier ones. If you stop at any phase, what's already built is coherent.
-
-### Phase 0 — Repo scaffolding
-
-- `pnpm` workspaces, `tsconfig.base.json`, `biome.json`, `tsup` config, `vitest` config, GitHub Actions CI (typecheck + lint + test + build).
-- Empty `packages/core`, `packages/react`, `packages/persist` shells with package.json + tsup config.
-- Changesets initialized.
-- **Done when:** `pnpm install && pnpm build && pnpm test` works on empty packages and CI is green.
-
-### Phase 1 — Signals wrapper (`signals/`)
-
-- Wraps `@preact/signals-core` behind our types: `Signal`, `ReadSignal`, `Computed`, `signal()`, `computed()`, `effect()`, `batch()`.
-- `readOnly(signal)` projection (internal use).
-- Auto-tracking scope helpers used later by key functions.
-- **Done when:** Full test coverage of read/write, dependency tracking, batching, peek-vs-read, subscribe/unsubscribe, glitch-free updates.
-
-### Phase 2 — Standalone primitives (no controller knowledge)
-
-- `emitter.ts`: `emit / on / once`, returns unsubscribe.
-- `timing/`: `debounced(signal, ms)`, `throttled(signal, ms)` as signal projections.
-- `errors.ts`: `ErrorContext` type + tiny dispatcher.
-- `devtools.ts`: `DebugEvent` discriminated union + per-instance emitter class.
-- `forms/validators.ts`: stdlib validators (`required`, `minLength`, `maxLength`, `email`, `pattern`).
-- **Done when:** Each primitive has tests independent of any controller machinery.
-
-### Phase 3 — Controller container & lifecycle (no caches)
-
-- `defineController`, `createRoot`, `ControllerInstance`, `Ctx`.
-- Implements: `child`, `effect`, `emitter`, `field`, `on`, `onDispose`, `onSuspend`, `onResume`, `deps`.
-- Fields with sync + async validators integrate here.
-- Suspend / resume / dispose semantics, recursive disposal, deps inheritance.
-- Root-level `onError` wired up; error context populated.
-- **Done when:** Can build a 3-level controller tree (root → feature → leaf), inject deps, run effects, fire emitters, validate fields, suspend, resume, dispose — all with tests. Nothing async-data yet.
-
-### Phase 4 — Local cache (`ctx.cache`)
-
-- `Entry<T>` state machine with race-protected fetch-id counter.
-- `AbortSignal` plumbing into fetchers.
-- `LocalCache<T>` returned from `ctx.cache(fetcher, options)` — bound to its controller for cleanup.
-- `staleTime` honored on access.
-- **Done when:** Can write a controller that loads data on mount, refetches on key change, aborts on dispose, surfaces errors. No sharing yet.
-
-### Phase 5 — Query client + shared queries
-
-- `QueryClient` with keyed entry registry and `Map<string, Entry>`.
-- `keys.ts` — stable serialization (handles dates, undefined, objects, arrays).
-- `defineQuery`, `Query` value with `WeakMap<QueryClient, EntryRegistry>` for cross-root operation.
-- `ctx.use(query, keyFn)` with reactive key (auto-tracks signals inside `keyFn`).
-- `query.invalidate / invalidateAll / setData / prefetch`.
-- Subscriber-count + `gcTime` collection.
-- `refetchInterval`, `refetchOnWindowFocus`, `refetchOnReconnect` (the last two off by default).
-- **Done when:** Two controllers subscribing to the same query share one fetch; invalidation propagates; gc fires after subscribers leave; multi-root isolation works in tests.
-
-### Phase 6 — Mutations (`ctx.mutation`)
-
-- `MutationRunner` with `parallel` / `latest-wins` / `serial` concurrency.
-- `AbortSignal` triggers on supersede / reset / dispose.
-- Snapshot stack with positional rollback.
-- `onMutate` / `onSuccess` / `onError` / `onSettled` lifecycle.
-- Integration test: optimistic update on a shared query, error rolls back, subsequent invalidate sees server truth.
-- **Done when:** All three concurrency modes are verified; race conditions in parallel + optimistic update behave per §6.4.
-
-### Phase 7 — Infinite queries
-
-- `defineInfiniteQuery`, `InfiniteQuerySubscription` shape.
-- `fetchNextPage` / `fetchPreviousPage` with concurrency safety (no overlapping fetches per direction).
-- Cache invalidation drops all accumulated pages.
-- **Done when:** A chat-style "load more" pattern works end to end with stable pages on refetch.
-
-### Phase 8 — Forms (`ctx.form`, `ctx.fieldArray`)
-
-- `ctx.form(schema, options)` — aggregate value / errors / isValid / isDirty / touched / isValidating across nested schemas.
-- Form-level validators + `form.topLevelErrors`; same for `FieldArray`.
-- `form.set(partial)` (batched) deep merge, `form.reset()`, `form.markAllTouched()`, `form.validate()`, `form.flatErrors`.
-- Reactive `initial` option with no-clobber-while-dirty behavior.
-- Path-typed `form.fieldAt('a.b.c')` is **deferred to post-v1**; for v1 use the nested `form.fields.a.fields.b.fields.c` access only.
-- `ctx.fieldArray(factory, options)` — add / remove / move / insert / clear, item factory invoked per insertion.
-- `debouncedValidator(fn, ms)` helper.
-- **Done when:** A nested form with a field array, reactive initial from a query, and Zod-free validators round-trips through validate / submit / reset.
-
-### Phase 9 — Zod adapter (`@olas/zod`)
-
-- `zodValidator(schema)` wraps a Zod schema into our `Validator<T>`.
-- `formFromZod(ctx, schema, options?)` walks a Zod `z.object` / `z.array` / leaf tree and emits the corresponding `Form` / `FieldArray` / `Field` structure with validators auto-attached, including `z.object(...).refine(...)` as form-level validators.
-- Inferred type matches `z.infer<typeof schema>` exactly.
-- **Done when:** A nested Zod schema produces a typed form whose `value` matches `z.infer<typeof schema>` and whose validation runs only Zod's checks.
-
-### Phase 10 — Scopes & React adapter (`@olas/react`)
-
-- `defineScope`, `ctx.provide`, `ctx.inject` for typed cross-tree data.
-- `useRoot()` and `use(signal)` on `useSyncExternalStore`; `useController(root)` exported as a back-compat alias.
-- `useField(field)` and `useQuery(subscription)` ergonomic adapters.
-- `<KeepAlive>` and `useSuspendOnHidden(controller)` for opt-in suspension.
-- `OlasProvider` for context.
-- StrictMode-safe (double-mount doesn't double-construct controllers — adapter resolves against an externally-created root).
-- **Done when:** A small React component subscribing to a query re-renders on invalidation; signals re-render on `.set()`; works under React 18 concurrent mode and StrictMode.
-
-### Phase 11 — Persistence (`@olas/persist`)
-
-- `usePersisted(ctx, key, source: PersistableSource<T>, options?)`.
-- `localStorage` storage adapter (default).
-- JSON serialize/deserialize defaults, overridable.
-- `crossTab: true` wires `storage` event.
-- Async-storage-friendly `ready` signal.
-- **Done when:** A persisted draft survives page reload; cross-tab edits propagate when enabled.
-
-### Phase 12 — SSR (`ssr.ts`)
-
-- `root.dehydrate(): DehydratedState`.
-- `createRoot(def, { hydrate })` replays cache entries.
-- `root.waitForIdle()`.
-- **Done when:** A round-trip test (dehydrate on a fake "server" root, hydrate on a fresh root) reproduces cached data without re-fetching.
-
-### Phase 13 — `@olas/devtools` (v1, ships with 1.0)
-
-Adoption-critical at scale. Without devtools, large signal graphs become opaque; with devtools, the architecture's strengths are visible to the user.
-
-- Browser extension consuming `root.__debug.subscribe(...)`.
-- Controller tree inspector (live, with collapse/expand, props/api snapshots).
-- Cache timeline (fetch start/success/error/invalidate/gc events per query key).
-- Mutation log with input/output/snapshot/rollback.
-- Signal dependency graph (which signals feed which computeds and effects).
-- Subscription view (who's subscribed to each cache entry).
-- **Done when:** Loading a non-trivial app reveals the controller tree, every cache event is traceable, and "why did this re-render" can be answered in under 30 seconds.
-
-### Phase 14 — Polish & docs
-
-- README per package.
-- Inline TSDoc on all exported types.
-- Migration notes for users coming from TanStack / Redux Toolkit.
-- Stdlib of common composables documented (`useDebounced`, `usePagination`, `useSubmit`).
-- `examples/` directory with the worked example (deferred per current task scope, but lands here when done).
-- **Done when:** Ready for a `1.0.0-rc.0` changeset release.
-
-### Critical-path dependencies
-
-```
-Phase 0 (scaffolding)
-   └─► Phase 1 (signals)
-         └─► Phase 2 (standalone: emitter, timing, errors, devtools, validators)
-               └─► Phase 3 (controller container, ctx, lifecycle, fields)
-                     ├─► Phase 4 (local cache)
-                     │     └─► Phase 5 (query client + shared queries)
-                     │           ├─► Phase 6 (paramCache)
-                     │           ├─► Phase 7 (mutations — needs 5 for setData integration)
-                     │           └─► Phase 8 (infinite queries — extends QueryClient)
-                     └─► Phase 9 (forms — needs 3 for fields)
-                           └─► Phase 10 (Zod — needs 9 + zod peer dep)
-   Phase 11 (React adapter + scopes) — needs 3, 5, 9
-   Phase 12 (persistence) — needs 3
-   Phase 13 (SSR) — needs 5
-   Phase 14 (polish & docs) — last
-```
-
-Phases 5 and 9 are the highest-risk slices. Phase 5 has key serialization, multi-client query binding, and subscriber lifecycle (lots of edge cases). Phase 9 has heavy TS inference (nested generics, template-literal paths) and the reactive-initial semantics — easy to get path typing right for shallow forms and wrong for deep ones.
-
-### What's a v1 minimum?
-
-Phases 0–7, 9, 11, 12. Infinite queries (8), Zod adapter (10), and SSR (13) are valuable but droppable for an initial release — the architecture supports adding them later without breaking changes.
-
----
-
 ## 23. Performance characteristics
 
 Honest estimates so users know what they're paying for. All numbers are order-of-magnitude — actual perf depends on platform, payload size, and usage pattern.
@@ -3068,4 +2882,4 @@ Recommendation in §5.7: use Immer for any non-trivial nested update.
 
 ### Devtools / `__debug` and production builds
 
-The devtools machinery is always present in `@olas/core`. To strip it from production builds, gate `root.__debug.subscribe(...)` calls behind `process.env.NODE_ENV !== 'production'`. The events themselves still fire (a no-op Set walk); a future build flag may strip emission entirely.
+The devtools machinery is always present in `@olas/core`. To strip it from production builds, gate `root.__debug.subscribe(...)` calls behind `process.env.NODE_ENV !== 'production'`. The events themselves still fire (a no-op `Set` walk).
