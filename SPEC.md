@@ -321,6 +321,10 @@ export const userQuery = defineQuery({
   // retry on failure
   retry: 3,                             // number | (attempt, err) => boolean; default 0
   retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000),  // exponential, capped; default 1000
+
+  // optional plugin fields — only matter when a QueryClientPlugin is installed
+  queryId: 'user',                      // stable identifier for cross-tab sync (§13.2)
+  crossTab: true,                       // opt this query into cross-tab cache sync (§13.2)
 })
 ```
 
@@ -1255,6 +1259,31 @@ usePersisted(ctx, 'draft', draft, {
 
 Cross-tab sync is opt-in and only supported by storages that emit change events (localStorage via `storage` event).
 
+### 13.2 Cross-tab in-memory cache sync
+
+A separate composable (`@olas/cross-tab`) layers over `QueryClient` to mirror `setData` / `invalidate` events across browser tabs of the same origin via `BroadcastChannel`. Persistence (§13 / `@olas/persist`) syncs *persisted* signals on the `storage` event; this syncs *in-memory* query cache entries that never touch disk. Both are opt-in and independently configurable; combining them for the same logical state is supported but redundant.
+
+The plugin requires a stable `queryId` per query to route messages across tabs. Set it on `defineQuery({ queryId, ... })`. Opt a query in with `crossTab: true`. See `@olas/cross-tab` README and §5.2 for the query-spec fields.
+
+```ts
+import { crossTabPlugin } from '@olas/cross-tab'
+
+createRoot(appController, {
+  deps,
+  plugins: [crossTabPlugin({ channelName: 'my-app/cache/v1' })],
+})
+```
+
+In v1, only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) do not propagate cross-tab — the page-array payload is too heavy to be a safe default. Plugin events still fire with `kind: 'infinite'` for forward compatibility; the cross-tab plugin filters them out.
+
+**Echo prevention is layered:** (1) the `QueryClient` marks remote-applied writes with `isRemote: true` on `SetDataEvent` / `InvalidateEvent`, and plugins skip rebroadcast in that case; (2) messages carry a `sourceId`, and the plugin filters its own; (3) messages carry a monotonic `msgId`, and out-of-order or duplicate messages are dropped.
+
+**Channel-name versioning.** Channel names are user-supplied. Receivers drop messages whose protocol `v` they don't understand; users who want clean cross-deploy isolation should include a version suffix in their `channelName` (e.g. `'my-app/cache/v2'`).
+
+**Non-cloneable values.** `BroadcastChannel` uses structured clone. Cache data carrying functions, class instances, or symbols cannot cross the boundary. The plugin catches the `DataCloneError`, calls `onWarn(...)`, and drops the message; the sender's cache is unaffected. Consumers should ensure their fetcher results are structured-cloneable when `crossTab: true`.
+
+**Plugin contract.** The same `QueryClientPlugin` slot accepts other layered concerns — see §20.8 for the type.
+
 ---
 
 ## 14. Devtools
@@ -2081,6 +2110,8 @@ type QuerySpec<Args extends unknown[], T> = {
   keepPreviousData?: boolean // default false; see §5.2
   retry?: RetryPolicy        // default 0 (no retry)
   retryDelay?: RetryDelay    // default 1000
+  queryId?: string           // stable identifier for cross-tab sync (§13.2)
+  crossTab?: boolean         // opt into cross-tab cache sync (§13.2)
 }
 
 function defineQuery<Args extends unknown[], T>(
@@ -2111,6 +2142,8 @@ type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> 
   gcTime?: number
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  queryId?: string           // forward-compat (infinite cross-tab is deferred); see §13.2
+  crossTab?: boolean         // no-op for infinite queries in v1; see §13.2
 }
 
 type InfiniteQuery<Args extends unknown[], TPage, TItem> = {
@@ -2355,6 +2388,49 @@ type RootOptions<TDeps> = {
   refetchOnWindowFocus?: boolean
   /** Default for queries that don't set `refetchOnReconnect` on their spec (§5.9). */
   refetchOnReconnect?: boolean
+  /** Query-client plugins — cross-tab sync, server-push patches, etc. (§13.2). */
+  plugins?: QueryClientPlugin[]
+}
+
+type QueryClientPlugin = {
+  /** Called once after the QueryClient is constructed. */
+  init?(api: QueryClientPluginApi): void
+  onSetData?(event: SetDataEvent): void
+  onInvalidate?(event: InvalidateEvent): void
+  onGc?(event: GcEvent): void
+  /** Called from QueryClient.dispose. */
+  dispose?(): void
+}
+
+type QueryClientPluginApi = {
+  /**
+   * Apply a remote snapshot. The plugin's own `onSetData` IS fired for the
+   * resulting write — but with `isRemote: true` so plugins skip rebroadcast.
+   */
+  applyRemoteSetData(queryId: string, keyArgs: readonly unknown[], data: unknown): void
+  applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void
+  subscribedKeys(queryId: string): readonly (readonly unknown[])[]
+}
+
+type SetDataEvent = {
+  queryId: string
+  keyArgs: readonly unknown[]
+  data: unknown
+  kind: 'data' | 'infinite'
+  isRemote: boolean
+}
+
+type InvalidateEvent = {
+  queryId: string
+  keyArgs: readonly unknown[]
+  kind: 'data' | 'infinite'
+  isRemote: boolean
+}
+
+type GcEvent = {
+  queryId: string
+  keyArgs: readonly unknown[]
+  kind: 'data' | 'infinite'
 }
 
 function createRoot<Api, TDeps = AmbientDeps>(
@@ -2369,7 +2445,7 @@ function createRoot<Api, TDeps = AmbientDeps>(
 
 ```ts
 type ErrorContext = {
-  kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction'
+  kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction' | 'plugin'
   controllerPath: readonly string[]
   queryKey?: readonly unknown[]
 }

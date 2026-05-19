@@ -226,3 +226,108 @@ is consumer-implemented via AmbientDeps augmentation; package ships no default.
 
 10 new tests (5 patcher, 5 live-stream). vitest alias added; biome / typecheck
 / wiki-lint pass. BACKLOG entry flipped from `[idea]` to `[in-progress]`.
+
+## [2026-05-19 15:50] ingest | @olas/cross-tab package + QueryClientPlugin surface landed
+
+Two-part change: (1) a new pluggable surface on the core `QueryClient`,
+(2) `@olas/cross-tab` — the first consumer — as a workspace package. Spec
+amendment lands at §13.2 (sibling to §13.1 persist), plus updates to
+§5.2, §20.4, §20.8, §20.9.
+
+### Core surface (`packages/core/src/query/plugin.ts`)
+
+New types exported from `@olas/core`:
+
+- `QueryClientPlugin` — `init` / `onSetData` / `onInvalidate` / `onGc` /
+  `dispose`. All optional; wrapped in try/catch by `QueryClient`.
+- `QueryClientPluginApi` — `applyRemoteSetData(queryId, keyArgs, data)`,
+  `applyRemoteInvalidate(queryId, keyArgs)`, `subscribedKeys(queryId)`.
+- `SetDataEvent` / `InvalidateEvent` / `GcEvent` — discriminated by
+  `kind: 'data' | 'infinite'`. `SetDataEvent` and `InvalidateEvent`
+  carry `isRemote: boolean` — `true` when the write came in via
+  `applyRemote*`, so plugins know to skip rebroadcast.
+
+`QuerySpec` and `InfiniteQuerySpec` gain two optional fields:
+`queryId?: string` (stable identifier used by plugins for routing) and
+`crossTab?: boolean` (per-query opt-in). `defineQuery` registers the
+query under its `queryId` in a module-level `Map`; a `crossTab: true`
+spec without a `queryId` logs a one-time dev warning.
+
+`RootOptions` gains `plugins?: QueryClientPlugin[]`; forwarded into
+`new QueryClient({ plugins })`. `ErrorContext.kind` adds `'plugin'`
+for plugin-callback exceptions.
+
+`QueryClient.applyRemoteSetData/Invalidate` apply only to entries that
+already exist locally (matched by `stableHash(keyArgs)`). Otherwise the
+message is dropped silently — without `callArgs` the receiver couldn't
+refetch later, and seeding rows the user never subscribed to is leaky.
+
+### `@olas/cross-tab` package
+
+`crossTabPlugin({ channelName, onWarn?, channelFactory? })`. Three echo-
+prevention layers: (1) sender-side `isRemote` skip in core, (2) own-
+source drop via random `sourceId`, (3) `(sourceId, msgId)` dedup against
+out-of-order / duplicate delivery. Non-cloneable payloads trigger
+`onWarn` and drop. Channel name versioning is user-supplied — `v` field
+on the wire protocol is for protocol-shape evolution.
+
+SSR-safe: when `BroadcastChannel === undefined` and no `channelFactory`
+override is supplied, returns a no-op plugin. Roots boot cleanly.
+
+Per-query gate: the plugin checks `crossTab === true` on the spec via
+`lookupRegisteredQuery(queryId)` before broadcasting.
+
+### Tests
+
+- `packages/core/tests/plugin.test.ts` — 9 tests pinning the core surface
+  (init, onSetData fires + isRemote, anonymous-query skip, apply remote +
+  dedup, applyRemote no-op for unknown id, onInvalidate, dispose,
+  exception routing, subscribedKeys).
+- `packages/cross-tab/tests/plugin.test.ts` — 10 end-to-end tests with a
+  fake `BroadcastChannel` bus shared across two `QueryClient`s. Covers
+  the plan's tests 1-10 (data sync, no echo, crossTab: false isolation,
+  missing-queryId warn, invalidation propagation, non-cloneable warn,
+  SSR no-op, dispose teardown, channel-name isolation, msgId dedup).
+- `packages/cross-tab/tests/ssr.test.ts` — 2 tests on the no-op-when-
+  unsupported path.
+- `packages/cross-tab/tests/non-cloneable.test.ts` — 1 test pinning the
+  sender-unaffected + onWarn-called behaviour with a structured-clone
+  check in the fake channel.
+
+Total: 22 new tests. Lib total 266 → 288.
+
+### Module-graph caveat (test harness)
+
+In real life each tab is its own process, so `Query.__clients` only
+contains the local client. In a single-process test harness, two
+`createRoot` calls share one `defineQuery` value and `Query.setData(...)`
+writes to both clients synchronously — masking the cross-tab path. The
+cross-tab test harness mints separate `defineQuery({ queryId: '...' })`
+values per "tab" with shared `queryId`s. The registry's "last write wins"
+semantics mean the most-recent definition is the routing target — fine
+because every tab's `applyRemoteSetData` only applies if the LOCAL
+client has an entry, and each tab's local entries are bound against its
+own query value. Documented in `modules/cross-tab.md`.
+
+### Wiki & SPEC
+
+- New `modules/cross-tab.md` (medium — same-session, per CLAUDE.md
+  bootstrap caveat).
+- `modules/query.md` — added `plugin.ts` to covers; new "Plugin slot"
+  body section; `last_verified` bumped.
+- `entities/query-client.md` — added `plugin.ts` to covers; new "Plugins"
+  body section; confidence demoted high → medium because of the new
+  same-session synthesis.
+- `index.md` — module entry for cross-tab.
+- SPEC §13.2 added (sibling to §13.1 persist). §5.2 example QuerySpec
+  gains the two new fields. §20.4 type definitions for `QuerySpec` and
+  `InfiniteQuerySpec` updated. §20.8 adds `plugins?`, plus the
+  `QueryClientPlugin` / `QueryClientPluginApi` / `SetDataEvent` /
+  `InvalidateEvent` / `GcEvent` type listings. §20.9 `ErrorContext.kind`
+  adds `'plugin'`.
+
+### Gates
+
+typecheck (10 projects, packages + examples) clean. Biome check clean.
+288/288 tests pass. All 6 package builds clean. BACKLOG flipped from
+`[idea]` to `[in-progress]`.

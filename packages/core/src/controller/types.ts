@@ -11,6 +11,7 @@ import type {
 import type { Validator } from '../forms/types'
 import type { InfiniteQuery, InfiniteQuerySubscription } from '../query/infinite'
 import type { Mutation, MutationSpec } from '../query/mutation'
+import type { QueryClientPlugin } from '../query/plugin'
 import type { LocalCache, Query, QuerySubscription, UseOptions } from '../query/types'
 import type { Scope } from '../scope'
 import type { ReadSignal } from '../signals/types'
@@ -171,6 +172,12 @@ export type RootOptions<TDeps> = {
   refetchOnWindowFocus?: boolean
   /** Default for queries that don't set `refetchOnReconnect` on their spec (§5.9). */
   refetchOnReconnect?: boolean
+  /**
+   * `QueryClientPlugin`s — cross-tab sync, server-push patches, etc.
+   * Installed when the root's `QueryClient` is constructed; disposed when
+   * the root disposes. SPEC §13.2.
+   */
+  plugins?: QueryClientPlugin[]
 }
 
 /**

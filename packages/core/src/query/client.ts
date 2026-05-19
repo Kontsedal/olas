@@ -5,6 +5,14 @@ import { Entry } from './entry'
 import { subscribeReconnect, subscribeWindowFocus } from './focus-online'
 import { InfiniteEntry, type InfiniteQuery, type InfiniteQuerySpec } from './infinite'
 import { stableHash } from './keys'
+import {
+  type GcEvent,
+  type InvalidateEvent,
+  lookupRegisteredQuery,
+  type QueryClientPlugin,
+  type QueryClientPluginApi,
+  type SetDataEvent,
+} from './plugin'
 import type { DehydratedState, Query, QuerySpec, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 const DEFAULT_GC_TIME = 5 * 60_000
@@ -337,6 +345,19 @@ export class QueryClient {
   readonly refetchOnWindowFocus: boolean
   readonly refetchOnReconnect: boolean
 
+  /**
+   * Installed plugins. Fired on every `setData` / `invalidate` / `gc` so
+   * cross-tab / persistence-like layers can observe and react. SPEC §13.2.
+   */
+  private readonly plugins: QueryClientPlugin[]
+  /**
+   * Flipped to `true` while a remote-originated write (via
+   * `applyRemoteSetData` / `applyRemoteInvalidate`) is being applied. The
+   * resulting plugin events carry `isRemote: true` so plugins know to skip
+   * rebroadcast.
+   */
+  private applyingRemote = false
+
   constructor(opts?: {
     onError?: ErrorHandler
     hydrate?: DehydratedState
@@ -344,13 +365,193 @@ export class QueryClient {
     deps?: Record<string, unknown>
     refetchOnWindowFocus?: boolean
     refetchOnReconnect?: boolean
+    plugins?: QueryClientPlugin[]
   }) {
     this.onError = opts?.onError
     this.devtools = opts?.devtools
     this.deps = opts?.deps ?? {}
     this.refetchOnWindowFocus = opts?.refetchOnWindowFocus ?? false
     this.refetchOnReconnect = opts?.refetchOnReconnect ?? false
+    this.plugins = opts?.plugins ?? []
     if (opts?.hydrate) this.hydrate(opts.hydrate)
+    const api = this.makePluginApi()
+    for (const plugin of this.plugins) {
+      this.callPlugin(() => plugin.init?.(api))
+    }
+  }
+
+  /**
+   * Build the `QueryClientPluginApi` view that plugins receive at `init`
+   * time. Closes over `this`; safe to hand out — plugins call back through
+   * these methods to push remote-originated writes into the local cache.
+   */
+  private makePluginApi(): QueryClientPluginApi {
+    const self = this
+    return {
+      applyRemoteSetData(queryId, keyArgs, data) {
+        self.applyRemoteSetData(queryId, keyArgs, data)
+      },
+      applyRemoteInvalidate(queryId, keyArgs) {
+        self.applyRemoteInvalidate(queryId, keyArgs)
+      },
+      subscribedKeys(queryId) {
+        return self.subscribedKeysFor(queryId)
+      },
+    }
+  }
+
+  /** Invoke a plugin callback; route exceptions through `onError`. */
+  private callPlugin(fn: () => void): void {
+    try {
+      fn()
+    } catch (err) {
+      dispatchError(this.onError, err, {
+        kind: 'plugin',
+        controllerPath: [],
+      })
+    }
+  }
+
+  private emitSetData(
+    query: AnyQuery | AnyInfiniteQuery,
+    keyArgs: readonly unknown[],
+    data: unknown,
+    kind: 'data' | 'infinite',
+  ): void {
+    if (this.plugins.length === 0) return
+    const queryId = query.__spec.queryId
+    if (queryId == null) return
+    const event: SetDataEvent = {
+      queryId,
+      keyArgs,
+      data,
+      kind,
+      isRemote: this.applyingRemote,
+    }
+    for (const plugin of this.plugins) {
+      if (plugin.onSetData) {
+        const cb = plugin.onSetData
+        this.callPlugin(() => cb.call(plugin, event))
+      }
+    }
+  }
+
+  private emitInvalidate(
+    query: AnyQuery | AnyInfiniteQuery,
+    keyArgs: readonly unknown[],
+    kind: 'data' | 'infinite',
+  ): void {
+    if (this.plugins.length === 0) return
+    const queryId = query.__spec.queryId
+    if (queryId == null) return
+    const event: InvalidateEvent = {
+      queryId,
+      keyArgs,
+      kind,
+      isRemote: this.applyingRemote,
+    }
+    for (const plugin of this.plugins) {
+      if (plugin.onInvalidate) {
+        const cb = plugin.onInvalidate
+        this.callPlugin(() => cb.call(plugin, event))
+      }
+    }
+  }
+
+  private emitGc(
+    query: AnyQuery | AnyInfiniteQuery,
+    keyArgs: readonly unknown[],
+    kind: 'data' | 'infinite',
+  ): void {
+    if (this.plugins.length === 0) return
+    const queryId = query.__spec.queryId
+    if (queryId == null) return
+    const event: GcEvent = { queryId, keyArgs, kind }
+    for (const plugin of this.plugins) {
+      if (plugin.onGc) {
+        const cb = plugin.onGc
+        this.callPlugin(() => cb.call(plugin, event))
+      }
+    }
+  }
+
+  /** Resolve `queryId → live entry-map keys`. Empty array when unknown. */
+  private subscribedKeysFor(queryId: string): readonly (readonly unknown[])[] {
+    // Defer the registry lookup to avoid an eager circular import — `define.ts`
+    // imports `QueryClient` as a type, and we import the registry helper here
+    // for runtime use only.
+    const query = lookupRegisteredQuery(queryId)
+    if (!query) return []
+    const out: (readonly unknown[])[] = []
+    if (query.__olas === 'query') {
+      const map = this.maps.get(query as unknown as AnyQuery)
+      if (map) for (const ce of map.values()) out.push(ce.keyArgs)
+    } else {
+      const map = this.infiniteMaps.get(query as unknown as AnyInfiniteQuery)
+      if (map) for (const ce of map.values()) out.push(ce.keyArgs)
+    }
+    return out
+  }
+
+  /**
+   * Apply a remote-originated `setData` for the query identified by
+   * `queryId`, scoped to the entry already keyed by `keyArgs` in this
+   * client. Goes through the underlying `Entry.setData` so subscribers see
+   * the write; plugin `onSetData` fires with `isRemote: true`.
+   *
+   * Drops silently when:
+   * - No query with that id is registered (the receiving tab hasn't
+   *   imported the module that defined it).
+   * - The registered query is an infinite query (cross-tab infinite sync
+   *   is deferred — see `plugin.ts` `SetDataEvent.kind`).
+   * - No local entry exists for that key (the receiving tab isn't
+   *   subscribed; nothing useful to write to without callArgs for a
+   *   future refetch).
+   */
+  applyRemoteSetData(queryId: string, keyArgs: readonly unknown[], data: unknown): void {
+    const query = lookupRegisteredQuery(queryId)
+    if (!query) return
+    if (query.__olas !== 'query') return // infinite — deferred for v1
+    const internal = query as unknown as AnyQuery
+    const map = this.maps.get(internal)
+    if (!map) return
+    const hash = stableHash(keyArgs)
+    const entry = map.get(hash)
+    if (!entry) return
+    this.applyingRemote = true
+    try {
+      entry.entry.setData(() => data as never)
+      this.emitSetData(internal, entry.keyArgs, data, 'data')
+    } finally {
+      this.applyingRemote = false
+    }
+  }
+
+  applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void {
+    const query = lookupRegisteredQuery(queryId)
+    if (!query) return
+    if (query.__olas !== 'query') return // infinite — deferred for v1
+    const internal = query as unknown as AnyQuery
+    const map = this.maps.get(internal)
+    if (!map) return
+    const hash = stableHash(keyArgs)
+    const entry = map.get(hash)
+    if (!entry) return
+    this.applyingRemote = true
+    try {
+      // Emit AFTER kicking off invalidate so plugins reading entry state see
+      // post-invalidation values, mirroring setData's emit-after-write order.
+      entry.entry.invalidate().catch((err) => {
+        dispatchError(this.onError, err, {
+          kind: 'cache',
+          controllerPath: [],
+          queryKey: entry.keyArgs,
+        })
+      })
+      this.emitInvalidate(internal, entry.keyArgs, 'data')
+    } finally {
+      this.applyingRemote = false
+    }
   }
 
   hydrate(state: DehydratedState): void {
@@ -492,6 +693,7 @@ export class QueryClient {
     if (__DEV__) {
       this.devtools?.emit({ type: 'cache:gc', queryKey: entry.keyArgs })
     }
+    this.emitGc(entry.query, entry.keyArgs, 'data')
   }
 
   invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): void {
@@ -512,6 +714,7 @@ export class QueryClient {
         queryKey: keyArgs,
       })
     })
+    this.emitInvalidate(internal, keyArgs, 'data')
   }
 
   invalidateAll(query: Query<any, any>): void {
@@ -530,6 +733,7 @@ export class QueryClient {
           queryKey: entry.keyArgs,
         })
       })
+      this.emitInvalidate(internal, entry.keyArgs, 'data')
     }
   }
 
@@ -539,7 +743,12 @@ export class QueryClient {
     updater: (prev: T | undefined) => T,
   ): Snapshot {
     const entry = this.bindEntry(query, args)
-    return entry.entry.setData(updater)
+    const snapshot = entry.entry.setData(updater)
+    // Read the post-update value to broadcast — plugins want the new state,
+    // not the updater function (which would be uncloneable across
+    // BroadcastChannel).
+    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data')
+    return snapshot
   }
 
   bindInfiniteEntry<Args extends unknown[], TPage, TItem>(
@@ -581,6 +790,7 @@ export class QueryClient {
     if (map.size === 0) {
       this.infiniteMaps.delete(entry.query)
     }
+    this.emitGc(entry.query, entry.keyArgs, 'infinite')
   }
 
   invalidateInfinite<Args extends unknown[]>(
@@ -601,6 +811,7 @@ export class QueryClient {
         queryKey: entry.keyArgs,
       })
     })
+    this.emitInvalidate(internal, keyArgs, 'infinite')
   }
 
   invalidateAllInfinite(query: InfiniteQuery<any, any, any>): void {
@@ -615,6 +826,7 @@ export class QueryClient {
           queryKey: entry.keyArgs,
         })
       })
+      this.emitInvalidate(internal, entry.keyArgs, 'infinite')
     }
   }
 
@@ -624,7 +836,9 @@ export class QueryClient {
     updater: (prev: TPage[] | undefined) => TPage[],
   ): Snapshot {
     const entry = this.bindInfiniteEntry(query, args)
-    return entry.entry.setData(updater)
+    const snapshot = entry.entry.setData(updater)
+    this.emitSetData(entry.query, entry.keyArgs, entry.entry.pages.peek(), 'infinite')
+    return snapshot
   }
 
   prefetchInfinite<Args extends unknown[], TPage>(
@@ -695,6 +909,12 @@ export class QueryClient {
     }
     this.touchedInfiniteQueries.clear()
     this.hydratedData.clear()
+    for (const plugin of this.plugins) {
+      if (plugin.dispose) {
+        const cb = plugin.dispose
+        this.callPlugin(() => cb.call(plugin))
+      }
+    }
   }
 }
 

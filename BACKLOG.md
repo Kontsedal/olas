@@ -75,9 +75,9 @@ Examples:
 
 `@olas/persist` ships a `localStorage` adapter today. IndexedDB is a natural next adapter for larger payloads or async-friendly storage.
 
-### [idea] Cross-tab cache sync via `BroadcastChannel`
+### [in-progress] Cross-tab cache sync via `BroadcastChannel`
 
-A query-client plugin: when an entry's data changes in one tab, broadcast a patch; subscribing tabs apply it. Today `@olas/persist`'s `crossTab: true` covers persisted state; this would cover the (much larger) in-memory query cache.
+Lives in `@olas/cross-tab` (new package). `QueryClientPlugin` surface added to core. SPEC amendment at §13.2; new query-spec fields `crossTab` and `queryId` (§5.2). See `.wiki/modules/cross-tab.md`.
 
 ### [idea] Offline / retry / backoff layer for fetchers
 

@@ -12,6 +12,7 @@ export default defineConfig({
       '@olas/react': resolve(__dirname, 'packages/react/src/index.ts'),
       '@olas/persist': resolve(__dirname, 'packages/persist/src/index.ts'),
       '@olas/realtime': resolve(__dirname, 'packages/realtime/src/index.ts'),
+      '@olas/cross-tab': resolve(__dirname, 'packages/cross-tab/src/index.ts'),
       '@olas/zod': resolve(__dirname, 'packages/zod/src/index.ts'),
       '@olas/devtools': resolve(__dirname, 'packages/devtools/src/index.ts'),
     },

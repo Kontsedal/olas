@@ -121,6 +121,20 @@ export type QuerySpec<Args extends unknown[], T> = {
   keepPreviousData?: boolean
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  /**
+   * Stable identifier used by `QueryClientPlugin`s (e.g. `@olas/cross-tab`)
+   * to locate the same query across tabs / processes / persistence layers.
+   * REQUIRED for queries with `crossTab: true`. SPEC §13.2.
+   *
+   * Don't auto-derive from `fetcher.name` or argument hashing — both are
+   * fragile under minification.
+   */
+  queryId?: string
+  /**
+   * Opt this query into cross-tab cache sync (`@olas/cross-tab`). No effect
+   * without a `queryId` and without a plugin installed. SPEC §13.2.
+   */
+  crossTab?: boolean
 }
 
 /**
