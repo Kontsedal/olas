@@ -1006,6 +1006,11 @@ type DebugBus = {
 
 Subscribe to a structured event stream — controller lifecycle, cache events, mutation events, field validations. Used by `@olas/devtools`.
 
+**Production behaviour.** In `@olas/core`'s production build, the emission
+sites are removed by the bundler. `subscribe` accepts and returns a no-op
+unsub; no events fire. Use the devtools subscription in dev only — see
+SPEC §23 *Devtools / `__debug` and production builds*.
+
 ### Type: `DebugEvent` (discriminated union)
 
 ```ts

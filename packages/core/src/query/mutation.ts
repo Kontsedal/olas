@@ -120,6 +120,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       | { type: 'mutation:error'; error: unknown }
       | { type: 'mutation:rollback' },
   ): void {
+    if (!__DEV__) return
     if (this.devtools === undefined) return
     const out: Record<string, unknown> = { ...event, path: this.controllerPath }
     if (this.spec.name !== undefined) out.name = this.spec.name
@@ -201,7 +202,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       this.lastVariables.set(vars)
     })
 
-    this.emit({ type: 'mutation:run', vars })
+    if (__DEV__) this.emit({ type: 'mutation:run', vars })
 
     try {
       const result = await raceAbort(this.runWithRetry(vars, abort.signal), abort.signal)
@@ -213,7 +214,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         this.data.set(result)
         this.error.set(undefined)
       })
-      this.emit({ type: 'mutation:success', result })
+      if (__DEV__) this.emit({ type: 'mutation:success', result })
       this.safeCall(() => this.spec.onSuccess?.(result, vars), 'mutation')
       // Commit the optimistic snapshot so `hasPendingMutations` clears on the
       // affected entry. Symmetric to the auto-rollback in the error path.
@@ -228,7 +229,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         throw err
       }
       this.error.set(err)
-      this.emit({ type: 'mutation:error', error: err })
+      if (__DEV__) this.emit({ type: 'mutation:error', error: err })
       this.safeCall(() => this.spec.onError?.(err, vars, snapshot), 'mutation')
       // Auto-rollback after the user's onError. The wrapped snapshot is
       // single-consume, so an `onError` that already called `snapshot.rollback()`
@@ -256,7 +257,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         if (consumed) return
         consumed = true
         raw.rollback()
-        this.emit({ type: 'mutation:rollback' })
+        if (__DEV__) this.emit({ type: 'mutation:rollback' })
       },
       finalize: () => {
         if (consumed) return

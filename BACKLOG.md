@@ -85,7 +85,7 @@ Today users write their own retry logic inside the fetcher (or use the existing 
 
 ## Devtools
 
-### [idea] Production build flag to strip `__debug` emission entirely
+### [in-progress] Production build flag to strip `__debug` emission entirely
 
 [from SPEC §23] The devtools machinery is always present in `@olas/core`. `process.env.NODE_ENV !== 'production'` gating already turns subscribers off; the events themselves still fire (a no-op `Set` walk). A compile-time flag (`__DEV__`-style or a tsdown plugin) could elide the emission sites in prod builds.
 

@@ -9,5 +9,8 @@ export default defineConfig({
   treeshake: true,
   target: 'es2022',
   deps: { neverBundle: ['react', '@olas/core'] },
+  define: {
+    __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
+  },
   outExtensions: ({ format }) => ({ js: format === 'es' ? '.mjs' : '.cjs' }),
 })

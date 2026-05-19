@@ -2394,6 +2394,10 @@ type DebugEvent =
 
 Discriminated union keyed by `type` — devtools consumers `switch` on it. Adding new event variants is non-breaking; consumers ignore unknown types.
 
+> Production note: emission sites are elided from the production build of
+> `@olas/core` — see §23 *Devtools / `__debug` and production builds*.
+> Subscribers attach but receive no events.
+
 ```ts
 type DehydratedState = {
   version: 1
@@ -2882,4 +2886,29 @@ Recommendation in §5.7: use Immer for any non-trivial nested update.
 
 ### Devtools / `__debug` and production builds
 
-The devtools machinery is always present in `@olas/core`. To strip it from production builds, gate `root.__debug.subscribe(...)` calls behind `process.env.NODE_ENV !== 'production'`. The events themselves still fire (a no-op `Set` walk).
+`@olas/core` ships two builds, gated by `process.env.NODE_ENV` at bundle time.
+In the production build, every `bus.emit(...)` site inside core is removed
+(tsdown `define: { __DEV__: 'false' }` + dead-code elimination). The
+substitution covers all sibling packages too (`@olas/persist`, `@olas/zod`,
+`@olas/react`, `@olas/realtime`, `@olas/devtools`), though emission lives
+only in core today.
+
+What this means for consumers:
+
+- `root.__debug.subscribe(handler)` still exists and accepts the handler, but
+  the handler will never be called in a production build. The snapshot replay
+  (live controllers at subscribe time) is also empty, because the
+  `controller:constructed` and `controller:suspended/resumed/disposed`
+  emission sites that feed the `DevtoolsEmitter`'s `liveControllers` map are
+  inside the same guard — the bus's internal snapshot machinery is inert.
+- `root.__debug.queryEntries()` still returns the live cache inspector
+  snapshot — that data path doesn't depend on emission and remains useful for
+  in-prod cache introspection.
+- `@olas/devtools` is a dev-time tool. Mounting `DevtoolsPanel` against a
+  production build of core renders an empty tree.
+
+The substitution is keyed on `process.env.NODE_ENV !== 'production'` at the
+moment tsdown runs. Consumers do not need to define `__DEV__` themselves — it
+is already inlined into the published `.mjs` / `.cjs` artefacts. To produce a
+dev-flavoured build of the workspace, use the root `build:dev` script (no
+`NODE_ENV` prefix) instead of `build`.
