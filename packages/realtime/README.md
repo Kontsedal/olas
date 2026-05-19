@@ -1,4 +1,4 @@
-# @olas/realtime
+# @kontsedal/olas-realtime
 
 Two composables over a consumer-supplied `RealtimeService`: `useRealtimePatcher` for the "WebSocket event → `query.setData(...)` cache patch" pattern, and `defineLiveStream` for tail-mode buffers (logs, metrics, presence) with capacity + coalesced flush. SPEC §16.5.
 
@@ -7,21 +7,21 @@ The package ships **no default transport**. Apps wire their own (WebSocket, Push
 ## Install
 
 ```bash
-pnpm add @olas/realtime @olas/core @preact/signals-core
+pnpm add @kontsedal/olas-realtime @kontsedal/olas-core @preact/signals-core
 ```
 
 ## 30-second example
 
 ```ts
-import { defineController } from '@olas/core'
+import { defineController } from '@kontsedal/olas-core'
 import {
   defineLiveStream,
   type RealtimeService,
   useRealtimePatcher,
-} from '@olas/realtime'
+} from '@kontsedal/olas-realtime'
 
 // Augment AmbientDeps once in your app's top-level types.
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     realtime: RealtimeService
   }

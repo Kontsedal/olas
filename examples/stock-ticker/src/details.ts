@@ -16,7 +16,7 @@
 // two symbols can either dispose-and-recreate, OR suspend/resume to preserve
 // the recent-trades cache. The example uses suspend/resume.
 
-import { type Ctx, computed, defineController, signal } from '@olas/core'
+import { type Ctx, computed, defineController, signal } from '@kontsedal/olas-core'
 import type { Tick, Trade } from './api'
 
 export type DetailsProps = { symbol: string }

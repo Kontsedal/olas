@@ -1,6 +1,6 @@
 ---
 name: realtime
-description: "@olas/realtime — useRealtimePatcher + defineLiveStream over a consumer-supplied RealtimeService dep."
+description: "@kontsedal/olas-realtime — useRealtimePatcher + defineLiveStream over a consumer-supplied RealtimeService dep."
 type: module
 covers:
   - packages/realtime/src/index.ts
@@ -15,7 +15,7 @@ last_verified: 2026-05-19
 confidence: medium
 ---
 
-# `@olas/realtime`
+# `@kontsedal/olas-realtime`
 
 Two thin composables over a consumer-supplied `RealtimeService` (`ctx.deps.realtime`):
 
@@ -45,7 +45,7 @@ type RealtimeService = {
 }
 
 // In the app's top-level types:
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     realtime: RealtimeService
   }

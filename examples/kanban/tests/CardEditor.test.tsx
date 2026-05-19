@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 //
-// Component test using `fakeField` from @olas/core/testing. We render the
+// Component test using `fakeField` from @kontsedal/olas-core/testing. We render the
 // `<FieldRow>` cell in isolation against a fake Field, then assert that typing
 // into the input updates the field's value and that an error message renders
 // when the field has errors.
 
-import type { Field } from '@olas/core'
-import { fakeField } from '@olas/core/testing'
-import { useField } from '@olas/react'
+import type { Field } from '@kontsedal/olas-core'
+import { fakeField } from '@kontsedal/olas-core/testing'
+import { useField } from '@kontsedal/olas-react'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'

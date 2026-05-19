@@ -1,5 +1,5 @@
-import type { Ctx, ReadSignal } from '@olas/core'
-import { signal, untracked } from '@olas/core'
+import type { Ctx, ReadSignal } from '@kontsedal/olas-core'
+import { signal, untracked } from '@kontsedal/olas-core'
 
 /**
  * A handle returned by `RealtimeService.subscribe(...)`. Matches the shape
@@ -18,7 +18,7 @@ export type RealtimeHandler<TEvent> = (event: TEvent) => void
  * `AmbientDeps`:
  *
  * ```ts
- * declare module '@olas/core' {
+ * declare module '@kontsedal/olas-core' {
  *   interface AmbientDeps {
  *     realtime: RealtimeService
  *   }

@@ -1,6 +1,6 @@
 ---
 name: persist
-description: "@olas/persist — usePersisted composable, localStorage adapter, optional cross-tab sync."
+description: "@kontsedal/olas-persist — usePersisted composable, localStorage adapter, optional cross-tab sync."
 type: module
 covers:
   - packages/persist/src/index.ts
@@ -13,7 +13,7 @@ last_verified: 2026-05-18
 confidence: high
 ---
 
-# `@olas/persist`
+# `@kontsedal/olas-persist`
 
 Single composable: `usePersisted(ctx, key, source, options?)`. Plus the `localStorageAdapter` default. Spec §13, §20.11.
 

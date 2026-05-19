@@ -1,7 +1,7 @@
 // Mutation error toast — surfaces failures from moveCard / reorderColumn and
 // offers a one-click retry using the mutation's `lastVariables` signal.
 
-import { use } from '@olas/react'
+import { use } from '@kontsedal/olas-react'
 import { AlertTriangle, X } from 'lucide-react'
 import { type ReactElement, useEffect, useState } from 'react'
 import { useApi } from './useApi'

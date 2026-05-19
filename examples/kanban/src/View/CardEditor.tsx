@@ -4,7 +4,7 @@
 // difference is the `target` we open the editor with. The editor controller
 // branches on `mode` internally to choose `api.saveCard` vs `api.createCard`.
 
-import { use } from '@olas/react'
+import { use } from '@kontsedal/olas-react'
 import { X } from 'lucide-react'
 import { type ReactElement, useEffect, useMemo } from 'react'
 import type { CardEditorTarget } from '../controllers/cardEditor'

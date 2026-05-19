@@ -16,7 +16,7 @@ confidence: high
 
 ## The choice
 
-`packages/core/src/signals/runtime.ts` exposes `SignalImpl` and `ComputedImpl` classes that wrap `@preact/signals-core`. The rest of `@olas/core` never imports from `@preact/signals-core` directly — only through this module.
+`packages/core/src/signals/runtime.ts` exposes `SignalImpl` and `ComputedImpl` classes that wrap `@preact/signals-core`. The rest of `@kontsedal/olas-core` never imports from `@preact/signals-core` directly — only through this module.
 
 ## Why not re-export?
 

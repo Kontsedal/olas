@@ -9,7 +9,7 @@
 // that scopes can carry rich values (emitters, signals, services), not just
 // strings.
 
-import { defineScope, type Emitter } from '@olas/core'
+import { defineScope, type Emitter } from '@kontsedal/olas-core'
 
 export const currentBoardScope = defineScope<{ id: string }>({ name: 'currentBoard' })
 

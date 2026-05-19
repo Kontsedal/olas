@@ -41,11 +41,11 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 
 | Package | Status | Purpose |
 |---------|--------|---------|
-| `@olas/core` | Implemented (phases 0–12) | Signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus |
-| `@olas/zod` | Implemented (phase 9) | `zodValidator` + `formFromZod` |
-| `@olas/persist` | Implemented (phase 11) | `usePersisted` + localStorage adapter |
-| `@olas/react` | Implemented (phase 10) | `OlasProvider`, `useRoot`, `use`/`useQuery`/`useField`, `KeepAlive` |
-| `@olas/devtools` | Implemented (phase 13, in-app variant) | `<DevtoolsPanel>` + `DevtoolsStore` over `root.__debug` |
+| `@kontsedal/olas-core` | Implemented (phases 0–12) | Signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus |
+| `@kontsedal/olas-zod` | Implemented (phase 9) | `zodValidator` + `formFromZod` |
+| `@kontsedal/olas-persist` | Implemented (phase 11) | `usePersisted` + localStorage adapter |
+| `@kontsedal/olas-react` | Implemented (phase 10) | `OlasProvider`, `useRoot`, `use`/`useQuery`/`useField`, `KeepAlive` |
+| `@kontsedal/olas-devtools` | Implemented (phase 13, in-app variant) | `<DevtoolsPanel>` + `DevtoolsStore` over `root.__debug` |
 
 Phase 14 (polish & docs) landed: READMEs, `MIGRATING.md`, `RECIPES.md`, TSDoc, and `examples/user-profile/`. Phase 13 shipped as an in-app `<DevtoolsPanel>` plus the runtime wiring for cache + mutation devtools events. A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
 

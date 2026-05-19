@@ -73,4 +73,4 @@ Plugin api:
 
 Every plugin callback is wrapped in try/catch — exceptions go through `dispatchError(this.onError, err, { kind: 'plugin' })`. A plugin bug never tears down the cache. The `'plugin'` kind is new in `ErrorContext` (§20.9) — pre-existing `cache` / `mutation` semantics unchanged.
 
-Infinite-query plugin events fire with `kind: 'infinite'` for forward compatibility. The current `@olas/cross-tab` plugin filters them out (§13.2 v1 limitation).
+Infinite-query plugin events fire with `kind: 'infinite'` for forward compatibility. The current `@kontsedal/olas-cross-tab` plugin filters them out (§13.2 v1 limitation).

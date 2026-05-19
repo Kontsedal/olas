@@ -1,4 +1,4 @@
-import type { Ctx, Field, FieldArray, Form, FormOptions, Validator } from '@olas/core'
+import type { Ctx, Field, FieldArray, Form, FormOptions, Validator } from '@kontsedal/olas-core'
 import { z } from 'zod'
 
 /**

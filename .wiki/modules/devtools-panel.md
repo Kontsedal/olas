@@ -1,6 +1,6 @@
 ---
 name: devtools-panel
-description: "@olas/devtools — in-app DevtoolsPanel subscribed to root.__debug. Renders tree, cache, mutations, fields tabs."
+description: "@kontsedal/olas-devtools — in-app DevtoolsPanel subscribed to root.__debug. Renders tree, cache, mutations, fields tabs."
 type: module
 covers:
   - packages/devtools/src/index.ts
@@ -18,7 +18,7 @@ last_verified: 2026-05-18
 confidence: high
 ---
 
-# `@olas/devtools`
+# `@kontsedal/olas-devtools`
 
 Drop-in React panel that subscribes to a root's `__debug` bus and renders four live views: controller Tree, Cache, Mutations, Fields. Phase 13 in-app variant; spec §13.
 
@@ -54,7 +54,7 @@ function formatTime(t: number): string
 The package splits into three pieces:
 
 1. **`store.ts`** — pure logic. A `DevtoolsStore` exposes four `Signal`s (one per view). `handle(event)` is the dispatcher; it routes a `DebugEvent` to either `tree$.set(insertNode(...))` / `tree$.set(setNodeState(...))` or one of the bounded-log pushers. Tested in isolation; no React.
-2. **`DevtoolsPanel.tsx`** — React component. `useMemo(() => new DevtoolsStore(...), [maxEntries])`, then `useEffect(() => store.attach(root), [root, store])`. Tabs are local React state. Each view reads its signal via `@olas/react`'s `use()` and renders.
+2. **`DevtoolsPanel.tsx`** — React component. `useMemo(() => new DevtoolsStore(...), [maxEntries])`, then `useEffect(() => store.attach(root), [root, store])`. Tabs are local React state. Each view reads its signal via `@kontsedal/olas-react`'s `use()` and renders.
 3. **`format.ts` / `styles.ts`** — tiny helpers. `styles.ts` is a hard-coded CSS string injected via `<style>` inside the panel — no build-time CSS extraction needed.
 
 ## Why the tree has a virtual empty root
@@ -94,6 +94,6 @@ For full history, build a `DevtoolsStore` next to `createRoot` (before any contr
 
 ## What's NOT included
 
-- Signal dependency graph view (spec §13 mentions it). Would require additional plumbing inside `@olas/core/signals` to expose dependencies.
+- Signal dependency graph view (spec §13 mentions it). Would require additional plumbing inside `@kontsedal/olas-core/signals` to expose dependencies.
 - Subscription view (spec §13 mentions). Would need `cache:subscribed` wiring + per-entry subscriber lists in the store.
 - Time-travel / replay. Probably never — events are unidirectional.

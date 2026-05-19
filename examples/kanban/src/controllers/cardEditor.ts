@@ -11,7 +11,7 @@
 // In both cases the editor injects `currentBoardScope` + `activityScope` from
 // its parent (the board controller) — neither flows in via props. Spec §10.3.
 
-import { type Ctx, defineController } from '@olas/core'
+import { type Ctx, defineController } from '@kontsedal/olas-core'
 import type { Card, NewCard } from '../api'
 import { boardQuery } from '../query'
 import { buildCardForm, type CardFormValue, cardToFormInitials, NEW_CARD_INITIALS } from '../schema'

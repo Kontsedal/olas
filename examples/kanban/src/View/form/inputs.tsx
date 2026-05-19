@@ -1,9 +1,9 @@
 // Generic form-field wrappers. Each takes a `Field<T>` and renders a labeled
 // row with the appropriate input. `useField` batches the field's six signals
-// into a single re-render — see @olas/react § useField.
+// into a single re-render — see @kontsedal/olas-react § useField.
 
-import type { Field } from '@olas/core'
-import { useField } from '@olas/react'
+import type { Field } from '@kontsedal/olas-core'
+import { useField } from '@kontsedal/olas-react'
 import type { ReactElement } from 'react'
 import type { Priority } from '../../api'
 

@@ -2,11 +2,11 @@
 //
 // These run in plain Node (no jsdom), illustrating that everything important
 // about an Olas controller is unit-testable without a DOM. We use the official
-// `@olas/core/testing` helper to build an isolated root that wraps the
+// `@kontsedal/olas-core/testing` helper to build an isolated root that wraps the
 // controller, then assert on signal values directly.
 
-import { createTestController } from '@olas/core/testing'
-import type { StorageAdapter } from '@olas/persist'
+import { createTestController } from '@kontsedal/olas-core/testing'
+import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { describe, expect, test, vi } from 'vitest'
 import { createFakeMarket } from '../src/api'
 import { tickerController } from '../src/controller'
@@ -15,7 +15,7 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
-// In-memory storage adapter — same shape as @olas/persist's localStorageAdapter
+// In-memory storage adapter — same shape as @kontsedal/olas-persist's localStorageAdapter
 // but synchronous and assertable.
 const memoryStorage = (
   initial: Record<string, string> = {},

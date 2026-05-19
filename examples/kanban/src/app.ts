@@ -4,7 +4,7 @@
 // `boardQuery`'s fetcher pulls `api` from `ctx.deps`, so handing the api into
 // `createRoot({ deps })` is all the wiring needed — no module-level state.
 
-import { createRoot, defineController } from '@olas/core'
+import { createRoot, defineController } from '@kontsedal/olas-core'
 import type { Api } from './api'
 import { boardController } from './controllers/board'
 

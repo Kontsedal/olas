@@ -23,7 +23,7 @@ import type { ReadSignal } from '../signals/types'
  * `unknown`). Users augment this interface in their app to add typed services:
  *
  * ```ts
- * declare module '@olas/core' {
+ * declare module '@kontsedal/olas-core' {
  *   interface AmbientDeps {
  *     api: ApiClient
  *     session: SessionStore

@@ -3,7 +3,7 @@
 // field shows `isValidating` while the server thinks, then either
 // `errors[0]` or "ready to post".
 
-import { use, useField } from '@olas/react'
+import { use, useField } from '@kontsedal/olas-react'
 import { Loader2, MessageCircle, Send, X } from 'lucide-react'
 import { type ReactElement, useEffect, useMemo } from 'react'
 import type { AppApi } from './controller'

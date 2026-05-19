@@ -1,5 +1,5 @@
-import type { Ctx, ReadSignal } from '@olas/core'
-import { signal } from '@olas/core'
+import type { Ctx, ReadSignal } from '@kontsedal/olas-core'
+import { signal } from '@kontsedal/olas-core'
 
 export type StorageAdapter = {
   get(key: string): string | null | Promise<string | null>

@@ -1,7 +1,7 @@
 // Tiny DOM-binding helpers — adapters from `signal.value` to DOM mutations.
 // The whole point of this example is that Olas works without React.
 
-import { effect, type ReadSignal } from '@olas/core'
+import { effect, type ReadSignal } from '@kontsedal/olas-core'
 
 /** Reflect a signal into an element's textContent. */
 export function bindText(el: HTMLElement, src: ReadSignal<string | number>): void {

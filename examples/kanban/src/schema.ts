@@ -1,13 +1,13 @@
 // Card form — Zod schema + a thin wrapper around `formFromZod`.
 //
-// As of the typed-formFromZod change in @olas/zod, `formFromZod(ctx, schema)`
+// As of the typed-formFromZod change in @kontsedal/olas-zod, `formFromZod(ctx, schema)`
 // returns a *structurally-precise* Form whose leaves match the schema —
 // `form.fields.title.value` is `string`, `form.fields.subtasks.add({ … })`
 // accepts the exact item shape. The hand-rolled `CardForm = Form<{…}>` type
 // is no longer needed.
 
-import type { Ctx } from '@olas/core'
-import { formFromZod, type ZodToLeaf } from '@olas/zod'
+import type { Ctx } from '@kontsedal/olas-core'
+import { formFromZod, type ZodToLeaf } from '@kontsedal/olas-zod'
 import { z } from 'zod'
 import type { Card } from './api'
 

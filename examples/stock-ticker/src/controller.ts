@@ -19,8 +19,8 @@ import {
   type ReadSignal,
   signal,
   throttled,
-} from '@olas/core'
-import { type StorageAdapter, usePersisted } from '@olas/persist'
+} from '@kontsedal/olas-core'
+import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
 import {
   type Alert,
   type AlertFiredEvent,
@@ -31,7 +31,7 @@ import {
 import type { Market, SymbolMeta, Tick } from './api'
 import { detailsController } from './details'
 
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     market: Market
     storage?: StorageAdapter

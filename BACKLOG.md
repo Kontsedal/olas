@@ -26,7 +26,7 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 ## Packages
 
-### [planned] `@olas/entities` — entity normalization layer
+### [planned] `@kontsedal/olas-entities` — entity normalization layer
 
 [SPEC §18.1] When the same entity (a `Post`, a `User`) appears in many queries — newsfeed, profile, search, notifications — updating that entity means patching every query that contains it. Olas core does **not** ship normalized storage; each query owns its own data. The architecture cleanly supports a future entity-normalization package:
 
@@ -37,47 +37,47 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 Until this lands, the canonical pattern is one tiny `patchPostEverywhere`-style helper per entity that enumerates the touch sites — verbose but grep-able. See SPEC §18.1 for the worked example.
 
-### [in-progress] `@olas/realtime` — realtime-to-cache patcher
+### [done] `@kontsedal/olas-realtime` — realtime-to-cache patcher
 
-[from SPEC §16.5] The recurring shape "WebSocket / SSE event arrives → patch some queries". The framework primitive (`ctx.effect` + `setData`) is enough; the package would just wrap the typical dispatching boilerplate (`useRealtimePatcher`, `defineLiveStream` for tail/log buffers, etc.). Today these live as user composables; SPEC §16.5 has the reference implementations.
+[from SPEC §16.5] The recurring shape "WebSocket / SSE event arrives → patch some queries". The framework primitive (`ctx.effect` + `setData`) is enough; the package wraps the typical dispatching boilerplate. Shipped as `@kontsedal/olas-realtime` (commit `38e2859`, `packages/realtime/src/index.ts`) with both helpers from SPEC §16.5: `useRealtimePatcher<TEvent>(ctx, channel, handlers)` (typed by `event.type` discriminant) and `defineLiveStream<TEvent>(ctx, channel, { capacity, flushMs })` (capped tail buffer + coalesced writes for high-rate streams). Consumers register a `RealtimeService` on `ctx.deps`; the package ships no default transport.
 
-### [idea] `@olas/offline` — offline-first sync / mutation queueing
+### [idea] `@kontsedal/olas-offline` — offline-first sync / mutation queueing
 
-Persistent outbox + conflict-resolution + retry-on-reconnect for mutations. Today users can layer this themselves over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@olas/persist`. A canonical package would standardize the queue / merge / retry semantics for apps that want a Notion / Linear-style sync model.
+Persistent outbox + conflict-resolution + retry-on-reconnect for mutations. Today users can layer this themselves over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`. A canonical package would standardize the queue / merge / retry semantics for apps that want a Notion / Linear-style sync model.
 
-### [idea] `@olas/vue` — Vue adapter
+### [idea] `@kontsedal/olas-vue` — Vue adapter
 
 Signal/ref interop. Out of scope for v1; the architecture is framework-neutral, so it's additive.
 
-### [idea] `@olas/svelte` — Svelte adapter
+### [idea] `@kontsedal/olas-svelte` — Svelte adapter
 
 Signal-as-store. Same scoping as Vue.
 
-### [idea] `@olas/eslint-plugin` — lint rules that catch correctness issues we can't enforce at the type level
+### [idea] `@kontsedal/olas-eslint-plugin` — lint rules that catch correctness issues we can't enforce at the type level
 
 Examples:
 
 - fetcher / `mutate` body must use the `signal` parameter.
 - Controller factory must not be `async`.
-- Do not import `@olas/core/testing` outside test files.
+- Do not import `@kontsedal/olas-core/testing` outside test files.
 
-### [idea] `@olas/vite-plugin` — HMR automation
+### [idea] `@kontsedal/olas-vite-plugin` — HMR automation
 
 [from SPEC §16.5] Today's recommended HMR shape is "full root rebuild on hot update" (`root.dispose()` then `createRoot(...)` again, ~10 lines of Vite plugin glue). A first-party plugin would automate this.
 
 ### [idea] Devtools browser extension
 
-[SPEC §14] An out-of-page extension that consumes `root.__debug.subscribe(...)` — controller tree inspector, cache timeline, mutation log, signal dependency graph, subscription view. The in-app `@olas/devtools` panel already covers the same surfaces; the extension would make them available without instrumenting the page.
+[SPEC §14] An out-of-page extension that consumes `root.__debug.subscribe(...)` — controller tree inspector, cache timeline, mutation log, signal dependency graph, subscription view. The in-app `@kontsedal/olas-devtools` panel already covers the same surfaces; the extension would make them available without instrumenting the page.
 
 ## Storage / sync
 
-### [idea] IndexedDB storage adapter for `@olas/persist`
+### [idea] IndexedDB storage adapter for `@kontsedal/olas-persist`
 
-`@olas/persist` ships a `localStorage` adapter today. IndexedDB is a natural next adapter for larger payloads or async-friendly storage.
+`@kontsedal/olas-persist` ships a `localStorage` adapter today. IndexedDB is a natural next adapter for larger payloads or async-friendly storage.
 
 ### [in-progress] Cross-tab cache sync via `BroadcastChannel`
 
-Lives in `@olas/cross-tab` (new package). `QueryClientPlugin` surface added to core. SPEC amendment at §13.2; new query-spec fields `crossTab` and `queryId` (§5.2). See `.wiki/modules/cross-tab.md`.
+Lives in `@kontsedal/olas-cross-tab` (new package). `QueryClientPlugin` surface added to core. SPEC amendment at §13.2; new query-spec fields `crossTab` and `queryId` (§5.2). See `.wiki/modules/cross-tab.md`.
 
 ### [idea] Offline / retry / backoff layer for fetchers
 
@@ -87,7 +87,7 @@ Today users write their own retry logic inside the fetcher (or use the existing 
 
 ### [in-progress] Production build flag to strip `__debug` emission entirely
 
-[from SPEC §23] The devtools machinery is always present in `@olas/core`. `process.env.NODE_ENV !== 'production'` gating already turns subscribers off; the events themselves still fire (a no-op `Set` walk). A compile-time flag (`__DEV__`-style or a tsdown plugin) could elide the emission sites in prod builds.
+[from SPEC §23] The devtools machinery is always present in `@kontsedal/olas-core`. `process.env.NODE_ENV !== 'production'` gating already turns subscribers off; the events themselves still fire (a no-op `Set` walk). A compile-time flag (`__DEV__`-style or a tsdown plugin) could elide the emission sites in prod builds.
 
 ## Forms
 

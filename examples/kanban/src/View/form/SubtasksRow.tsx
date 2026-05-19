@@ -4,8 +4,8 @@
 // items are added/removed. Individual fields inside each item use `useField`
 // for fine-grained subscriptions.
 
-import type { FieldArray } from '@olas/core'
-import { use, useField } from '@olas/react'
+import type { FieldArray } from '@kontsedal/olas-core'
+import { use, useField } from '@kontsedal/olas-react'
 import { Plus, X } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { SubtaskForm } from '../../schema'

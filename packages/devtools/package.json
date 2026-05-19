@@ -1,6 +1,6 @@
 {
-  "name": "@olas/devtools",
-  "version": "0.0.0",
+  "name": "@kontsedal/olas-devtools",
+  "version": "0.0.1-rc.0",
   "description": "Olas in-app devtools panel — controller tree, cache timeline, mutation log",
   "license": "MIT",
   "type": "module",
@@ -29,13 +29,13 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@olas/core": "workspace:^",
-    "@olas/react": "workspace:^",
+    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-react": "workspace:^",
     "react": ">=18"
   },
   "devDependencies": {
-    "@olas/core": "workspace:^",
-    "@olas/react": "workspace:^",
+    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-react": "workspace:^",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

@@ -128,7 +128,7 @@ export function lookupRegisteredQuery(queryId: string): RegisteredQuery | undefi
 
 /**
  * Test-only — drop a registered entry. Lets tests defining the same
- * `queryId` across cases avoid bleed. Not exported from `@olas/core`.
+ * `queryId` across cases avoid bleed. Not exported from `@kontsedal/olas-core`.
  */
 export function _unregisterQueryById(queryId: string): void {
   queryRegistry.delete(queryId)

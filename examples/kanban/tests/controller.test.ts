@@ -9,8 +9,8 @@
 //  - cardEditor: formFromZod surfaces nested validation errors; valid forms
 //    submit; the subtasks min-length rule rejects empty arrays.
 
-import { defineController } from '@olas/core'
-import { createTestController } from '@olas/core/testing'
+import { defineController } from '@kontsedal/olas-core'
+import { createTestController } from '@kontsedal/olas-core/testing'
 import { describe, expect, test } from 'vitest'
 import { createFakeApi } from '../src/api'
 import { boardController, cardEditorController } from '../src/controller'

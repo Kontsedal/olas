@@ -1,6 +1,6 @@
 // Controller-level tests — pagination accumulator and analytics emitter.
 
-import { createTestController } from '@olas/core/testing'
+import { createTestController } from '@kontsedal/olas-core/testing'
 import { describe, expect, test, vi } from 'vitest'
 import { createFakeApi } from '../src/api'
 import { readerController } from '../src/controller'

@@ -62,6 +62,8 @@ export type Api = {
   search(boardId: string, query: string, signal?: AbortSignal): Promise<SearchResults>
   /** Test hooks. */
   failNextWrite: boolean
+  /** Arm `n` consecutive write failures. Convenience for the devtools demo. */
+  failNextNWrites(n: number): void
   setLatency(ms: number): void
 }
 
@@ -135,8 +137,23 @@ export function createFakeApi(): Api {
   let latency = 60
   // Continue ids from the seeded fixture so dev session ids stay readable.
   let cardIdCounter = Object.keys(cards).length
+  let armedFailures = 0
+  const shouldFail = (): boolean => {
+    if (api.failNextWrite) {
+      api.failNextWrite = false
+      return true
+    }
+    if (armedFailures > 0) {
+      armedFailures -= 1
+      return true
+    }
+    return false
+  }
   const api: Api = {
     failNextWrite: false,
+    failNextNWrites(n: number) {
+      armedFailures = Math.max(0, Math.floor(n))
+    },
     setLatency(ms: number) {
       latency = ms
     },
@@ -150,8 +167,7 @@ export function createFakeApi(): Api {
 
     async moveCard(boardId, cardId, fromColumnId, toColumnId, toIndex, signal) {
       await delay(latency, signal)
-      if (api.failNextWrite) {
-        api.failNextWrite = false
+      if (shouldFail()) {
         throw new Error('moveCard failed (simulated)')
       }
       const board = boards[boardId]
@@ -166,8 +182,7 @@ export function createFakeApi(): Api {
 
     async reorderColumn(boardId, columnId, cardIds, signal) {
       await delay(latency, signal)
-      if (api.failNextWrite) {
-        api.failNextWrite = false
+      if (shouldFail()) {
         throw new Error('reorderColumn failed (simulated)')
       }
       const board = boards[boardId]
@@ -179,8 +194,7 @@ export function createFakeApi(): Api {
 
     async saveCard(boardId, card, signal) {
       await delay(latency, signal)
-      if (api.failNextWrite) {
-        api.failNextWrite = false
+      if (shouldFail()) {
         throw new Error('saveCard failed (simulated)')
       }
       const board = boards[boardId]
@@ -191,8 +205,7 @@ export function createFakeApi(): Api {
 
     async createCard(boardId, columnId, card, signal) {
       await delay(latency, signal)
-      if (api.failNextWrite) {
-        api.failNextWrite = false
+      if (shouldFail()) {
         throw new Error('createCard failed (simulated)')
       }
       const board = boards[boardId]

@@ -2,9 +2,9 @@
 // activity feed, the error toast, the devtools panel, and the card editor
 // modal.
 
-import { DevtoolsLauncher } from '@olas/devtools'
-import { OlasProvider } from '@olas/react'
-import { AlertTriangle, Sparkles } from 'lucide-react'
+import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
+import { OlasProvider } from '@kontsedal/olas-react'
+import { AlertTriangle, Sparkles, Zap } from 'lucide-react'
 import { type ReactElement, useState } from 'react'
 import type { Api } from '../api'
 import type { AppRoot } from '../app'
@@ -14,6 +14,7 @@ import { Board } from './Board'
 import { CardEditor } from './CardEditor'
 import { ErrorToast } from './ErrorToast'
 import { SearchBar } from './SearchBar'
+import { useApi } from './useApi'
 
 export function App({ root, api }: { root: AppRoot; api: Api }): ReactElement {
   const [editor, setEditor] = useState<CardEditorTarget | null>(null)
@@ -34,7 +35,10 @@ export function App({ root, api }: { root: AppRoot; api: Api }): ReactElement {
                 </p>
               </div>
             </div>
-            <FailureToggle api={api} />
+            <div className="flex items-center gap-2">
+              <DemoStorm api={api} />
+              <FailureToggle api={api} />
+            </div>
           </header>
           <SearchBar />
           <Board
@@ -58,6 +62,55 @@ export function App({ root, api }: { root: AppRoot; api: Api }): ReactElement {
         <DevtoolsLauncher root={root} defaultTab="tree" urlHashKey="kanban" />
       </div>
     </OlasProvider>
+  )
+}
+
+/**
+ * Demo Storm — fires 5 parallel moveCards with 3 server-side failures armed.
+ * The user sees optimistic moves flash, then 3 of them snap back when the
+ * fake API rejects. Devtools tree/timeline shows the cascade — that's the
+ * teaching moment. Spec §6.4 (auto-rollback on non-abort failure).
+ */
+function DemoStorm({ api }: { api: Api }): ReactElement {
+  const ctlApi = useApi()
+  const onClick = (): void => {
+    const board = ctlApi.board.board.data.peek()
+    if (board === undefined) return
+
+    const moves: { cardId: string; fromColumnId: string; toColumnId: string }[] = []
+    for (const col of board.columns) {
+      const targets = board.columns.filter((c) => c.id !== col.id)
+      if (targets.length === 0) continue
+      for (const cardId of col.cardIds) {
+        const toCol = targets[Math.floor(Math.random() * targets.length)]
+        if (toCol === undefined) continue
+        moves.push({ cardId, fromColumnId: col.id, toColumnId: toCol.id })
+      }
+    }
+    for (let i = moves.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      const a = moves[i]!
+      const b = moves[j]!
+      moves[i] = b
+      moves[j] = a
+    }
+    const five = moves.slice(0, 5)
+    if (five.length === 0) return
+
+    api.failNextNWrites(3)
+    for (const m of five) {
+      ctlApi.board.moveCard.run({ ...m, toIndex: 0 }).catch(() => {})
+    }
+  }
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-2 rounded-lg border border-(--color-border) bg-(--color-bg-elev) px-3 py-1.5 text-xs font-medium text-(--color-fg) shadow-[var(--shadow-card)] hover:border-(--color-accent) hover:text-(--color-accent)"
+      title="Fires 5 parallel moveCards; 3 are armed to fail. Open the devtools (↘ corner) to watch each one optimistically apply, then roll back."
+    >
+      <Zap className="size-3.5" /> Demo storm
+    </button>
   )
 }
 

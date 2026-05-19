@@ -10,11 +10,12 @@
 //                                                          activityScope
 //  - `ctx.emitter` + `ctx.on`                            → activity feed
 
-import { type Ctx, defineController, signal } from '@olas/core'
-import type { Board, SearchResults } from '../api'
+import { type Ctx, defineController, selection, signal } from '@kontsedal/olas-core'
+import type { Board, Card, SearchResults } from '../api'
 import { boardQuery } from '../query'
 import { type ActivityEvent, activityScope, currentBoardScope } from '../scopes'
 import { type CardEditorTarget, cardEditorController } from './cardEditor'
+import { inlineTitleEditorController } from './inlineTitleEditor'
 
 export type BoardProps = { boardId: string }
 
@@ -43,6 +44,10 @@ export const boardController = defineController(
     })
 
     const board = ctx.use(boardQuery, () => [props.boardId])
+
+    // Multi-select for bulk operations — shift-click range, meta-click toggle.
+    // `selection` is a plain function (spec §17.5); it dies with this closure.
+    const sel = selection<string>()
 
     // ----- Mutation 1: moveCard, parallel + optimistic + manual rollback -----
     //
@@ -140,6 +145,28 @@ export const boardController = defineController(
       },
     })
 
+    // Bulk move every selected card into `toColumnId`. Each sub-move is its
+    // own `moveCard` run, so optimistic snapshots + per-card rollback stay
+    // intact — failures don't block the rest of the batch. Spec §6.3.
+    const bulkMoveSelected = async (toColumnId: string): Promise<void> => {
+      const ids = [...sel.selectedIds.peek()]
+      const current = board.data.peek()
+      if (current === undefined || ids.length === 0) return
+      await Promise.allSettled(
+        ids.map((cardId) => {
+          const from = current.columns.find((c) => c.cardIds.includes(cardId))
+          if (from === undefined || from.id === toColumnId) return Promise.resolve()
+          return moveCard.run({
+            cardId,
+            fromColumnId: from.id,
+            toColumnId,
+            toIndex: 0,
+          })
+        }),
+      )
+      sel.clear()
+    }
+
     return {
       board,
       moveCard,
@@ -147,6 +174,8 @@ export const boardController = defineController(
       filterResults,
       reorderColumn,
       recentActivity,
+      selection: sel,
+      bulkMoveSelected,
       boardId: props.boardId,
       /**
        * Open a card editor. Returns `{ api, dispose }` (via `ctx.attach`) so
@@ -156,6 +185,14 @@ export const boardController = defineController(
        * `currentBoardScope` + `activityScope`. Spec §10.3.
        */
       openEditor: (target: CardEditorTarget) => ctx.attach(cardEditorController, { target }),
+      /**
+       * Spawn an ephemeral inline-title editor for one card. The caller
+       * (a React row) holds the `{ api, dispose }` handle and disposes on
+       * save / cancel / blur — the ephemeral controller pattern from spec
+       * §11.1 (the spec calls it `ctx.session`; this codebase exposes the
+       * same semantics through `ctx.attach`).
+       */
+      openInlineTitleEditor: (card: Card) => ctx.attach(inlineTitleEditorController, { card }),
     }
   },
   { name: 'board' },

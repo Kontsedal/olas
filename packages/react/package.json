@@ -1,6 +1,6 @@
 {
-  "name": "@olas/react",
-  "version": "0.0.0",
+  "name": "@kontsedal/olas-react",
+  "version": "0.0.1-rc.0",
   "description": "Olas React adapter",
   "license": "MIT",
   "type": "module",
@@ -29,11 +29,11 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@olas/core": "workspace:^",
+    "@kontsedal/olas-core": "workspace:^",
     "react": ">=18"
   },
   "devDependencies": {
-    "@olas/core": "workspace:^",
+    "@kontsedal/olas-core": "workspace:^",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

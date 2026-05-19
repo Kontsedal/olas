@@ -1,6 +1,6 @@
 ---
 name: examples
-description: Four runnable example apps demonstrating Olas's API breadth (vanilla + React + SSR) and testability via `@olas/core/testing`.
+description: Four runnable example apps demonstrating Olas's API breadth (vanilla + React + SSR) and testability via `@kontsedal/olas-core/testing`.
 type: module
 covers:
   - examples/stock-ticker
@@ -25,7 +25,7 @@ confidence: high
 (`user-profile`); the remaining three were added to **spread API coverage** and
 make the testability claim concrete — every controller-level surface is covered
 by a test using `createTestController` / `fakeField` / `fakeAsyncState` from
-`@olas/core/testing`.
+`@kontsedal/olas-core/testing`.
 
 The intent is not novelty per-app; it's that a reader of any one app sees a
 coherent program, and a reader of all four sees the whole library.
@@ -43,7 +43,7 @@ coherent program, and a reader of all four sees the whole library.
 
 Each example's `vite.config.ts` and `vitest.config.ts` imports from
 [`examples/_shared/aliases.ts`](../../examples/_shared/aliases.ts), which maps
-`@olas/*` package names to source paths. Without this, examples would require
+`@kontsedal/olas-*` package names to source paths. Without this, examples would require
 running `pnpm build` first to populate `packages/*/dist/`. Vite resolves the
 aliases at module-graph build time, so dev / test / SSR all see source.
 
@@ -68,7 +68,7 @@ and `vite build --ssr src/entry-server.tsx --outDir dist/server`, and adds
 - `pnpm-workspace.yaml` already globs `examples/*`, so new apps are auto-discovered.
 - Root `package.json:13` runs `typecheck` across `examples/*`.
 - Root `vitest.config.ts:16` only scans `packages/*/tests/`, so each example
-  runs its own `pnpm --filter @olas/example-X test`.
+  runs its own `pnpm --filter @kontsedal/olas-example-X test`.
 
 ## Findings surfaced by writing the examples
 
@@ -105,14 +105,14 @@ lives here as a reading aid:
 ```bash
 pnpm install
 
-pnpm --filter @olas/example-stock-ticker dev    # http://localhost:5180
-pnpm --filter @olas/example-kanban dev          # http://localhost:5181
-pnpm --filter @olas/example-reader-ssr dev      # http://localhost:5182 (SPA)
-pnpm --filter @olas/example-reader-ssr preview  # http://localhost:5183 (SSR)
+pnpm --filter @kontsedal/olas-example-stock-ticker dev    # http://localhost:5180
+pnpm --filter @kontsedal/olas-example-kanban dev          # http://localhost:5181
+pnpm --filter @kontsedal/olas-example-reader-ssr dev      # http://localhost:5182 (SPA)
+pnpm --filter @kontsedal/olas-example-reader-ssr preview  # http://localhost:5183 (SSR)
 
-pnpm --filter @olas/example-stock-ticker test
-pnpm --filter @olas/example-kanban test
-pnpm --filter @olas/example-reader-ssr test
+pnpm --filter @kontsedal/olas-example-stock-ticker test
+pnpm --filter @kontsedal/olas-example-kanban test
+pnpm --filter @kontsedal/olas-example-reader-ssr test
 ```
 
 All tests pass and all builds produce a green `dist/`.

@@ -3,7 +3,7 @@
 // boardController and cardEditorController publish into the same stream
 // without prop-drilling. Spec §10.3.
 
-import { use } from '@olas/react'
+import { use } from '@kontsedal/olas-react'
 import { AlertCircle, ArrowRight, Check } from 'lucide-react'
 import type { ReactElement } from 'react'
 import { useApi } from './useApi'

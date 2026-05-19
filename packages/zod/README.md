@@ -1,4 +1,4 @@
-# @olas/zod
+# @kontsedal/olas-zod
 
 Zod ↔ Olas forms adapter. Two helpers — `zodValidator` (single field) and `formFromZod` (whole form, inferred from schema).
 
@@ -7,7 +7,7 @@ Olas core stays Zod-free. This package has a peer dep on `zod ^3`.
 ## Install
 
 ```bash
-pnpm add @olas/zod @olas/core zod
+pnpm add @kontsedal/olas-zod @kontsedal/olas-core zod
 ```
 
 ## 30-second example
@@ -15,8 +15,8 @@ pnpm add @olas/zod @olas/core zod
 ### Single-field validator
 
 ```ts
-import { defineController } from '@olas/core'
-import { zodValidator } from '@olas/zod'
+import { defineController } from '@kontsedal/olas-core'
+import { zodValidator } from '@kontsedal/olas-zod'
 import { z } from 'zod'
 
 const signup = defineController((ctx) => ({
@@ -27,7 +27,7 @@ const signup = defineController((ctx) => ({
 ### Whole form inferred from schema
 
 ```ts
-import { formFromZod } from '@olas/zod'
+import { formFromZod } from '@kontsedal/olas-zod'
 import { z } from 'zod'
 
 const schema = z.object({

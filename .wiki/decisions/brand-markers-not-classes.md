@@ -31,7 +31,7 @@ Predicates: `isForm(x)`, `isFieldArray(x)`, `isField(x)` (defaults when neither 
 
 ### `Symbol.for(...)` survives bundling
 
-If two copies of `@olas/core` end up in a bundle (a dependency upgrade gone wrong), `instanceof` against a class from copy A fails on instances from copy B. `Symbol.for('olas.form')` resolves to the same symbol across realms.
+If two copies of `@kontsedal/olas-core` end up in a bundle (a dependency upgrade gone wrong), `instanceof` against a class from copy A fails on instances from copy B. `Symbol.for('olas.form')` resolves to the same symbol across realms.
 
 ### Brands compose with mocks
 

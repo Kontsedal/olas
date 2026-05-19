@@ -4,14 +4,14 @@ import {
   defineQuery,
   type Query,
   type QuerySubscription,
-} from '@olas/core'
+} from '@kontsedal/olas-core'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ChannelLike } from '../src/channel'
 import { crossTabPlugin } from '../src/plugin'
 import { type Message, PROTOCOL_VERSION } from '../src/protocol'
 
 /**
- * Two-tab end-to-end coverage for `@olas/cross-tab`. SPEC §13.2.
+ * Two-tab end-to-end coverage for `@kontsedal/olas-cross-tab`. SPEC §13.2.
  *
  * Strategy: a fake `BroadcastChannel` bus shared across two `QueryClient`s
  * — same channelName routes to the same bus.

@@ -9,7 +9,7 @@ import type { QuerySubscription } from '../src/query/types'
  * `onSetData`, `onInvalidate`, `onGc`, `applyRemoteSetData` &
  * `applyRemoteInvalidate` round-trips, `isRemote` flag). SPEC §13.2.
  *
- * The cross-tab end-to-end coverage lives in `@olas/cross-tab` tests; this
+ * The cross-tab end-to-end coverage lives in `@kontsedal/olas-cross-tab` tests; this
  * file pins the core hooks the plugin builds on.
  *
  * Note: `query.setData(...)` is a no-op until the query has been bound by
