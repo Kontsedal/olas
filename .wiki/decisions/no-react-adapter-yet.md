@@ -18,7 +18,7 @@ confidence: high
 
 ## The choice
 
-The user scoped the initial implementation to phases 0–9 and 11–12 (per spec §22's "v1 minimum"). Phase 10 (scopes + React adapter) was explicitly out of scope. `packages/react/` exists with `package.json`, `tsconfig.json`, `tsup.config.ts`, and a stub `src/index.ts` that exports `{}`.
+The user scoped the initial implementation to phases 0–9 and 11–12 (per spec §22's "v1 minimum"). Phase 10 (scopes + React adapter) was explicitly out of scope. `packages/react/` exists with `package.json`, `tsconfig.json`, `tsdown.config.ts`, and a stub `src/index.ts` that exports `{}`.
 
 ## What Phase 10 needs to deliver
 

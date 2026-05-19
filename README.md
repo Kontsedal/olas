@@ -133,7 +133,7 @@ pnpm install                                       # link workspace + install
 pnpm typecheck                                     # tsc --noEmit per package
 pnpm lint                                          # biome check .
 pnpm test                                          # vitest run (all packages)
-pnpm build                                         # tsup per package → dist/{mjs,cjs,d.ts}
+pnpm build                                         # tsdown per package → dist/{mjs,cjs,d.mts,d.cts}
 
 pnpm wiki:lint                                     # check .wiki/ for broken refs
 ```
