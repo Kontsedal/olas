@@ -152,6 +152,7 @@ type InfiniteQueryInternal<Args extends unknown[], TPage, TItem> = InfiniteQuery
 class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscription<TPage, TItem> {
   private readonly current$: Signal<InfiniteClientEntry<TPage, TItem, unknown> | null> =
     signal(null)
+  private readonly previousPages$: Signal<TPage[] | undefined> = signal(undefined)
 
   readonly data: ReadSignal<TPage[] | undefined>
   readonly pages: ReadSignal<TPage[]>
@@ -168,18 +169,36 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   readonly isFetchingNextPage: ReadSignal<boolean>
   readonly isFetchingPreviousPage: ReadSignal<boolean>
 
-  constructor() {
-    this.pages = computed(() => this.current$.value?.entry.pages.value ?? [])
+  constructor(private readonly keepPreviousData: boolean) {
+    this.pages = computed(() => {
+      const cur = this.current$.value
+      const ps = cur?.entry.pages.value
+      if (ps && ps.length > 0) return ps
+      if (keepPreviousData) return this.previousPages$.value ?? []
+      return ps ?? []
+    })
     this.data = computed(() => {
       const cur = this.current$.value
       const ps = cur?.entry.pages.value
-      if (!ps || ps.length === 0) return undefined
-      return ps
+      if (ps && ps.length > 0) return ps
+      if (keepPreviousData) {
+        const prev = this.previousPages$.value
+        if (prev && prev.length > 0) return prev
+      }
+      return undefined
     })
     this.flat = computed(() => this.current$.value?.entry.flat.value ?? [])
     this.error = computed(() => this.current$.value?.entry.error.value)
     this.status = computed<AsyncStatus>(() => this.current$.value?.entry.status.value ?? 'idle')
-    this.isLoading = computed(() => this.current$.value?.entry.isLoading.value ?? false)
+    this.isLoading = computed(() => {
+      const cur = this.current$.value
+      if (!cur) return false
+      if (keepPreviousData) {
+        const prev = this.previousPages$.value
+        if (prev && prev.length > 0) return false
+      }
+      return cur.entry.isLoading.value
+    })
     this.isFetching = computed(() => this.current$.value?.entry.isFetching.value ?? false)
     this.isStale = computed(() => this.current$.value?.entry.isStale.value ?? true)
     this.lastUpdatedAt = computed(() => this.current$.value?.entry.lastUpdatedAt.value)
@@ -197,6 +216,12 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   }
 
   attach(entry: InfiniteClientEntry<TPage, TItem, unknown>): void {
+    const prev = this.current$.peek()
+    if (prev === entry) return
+    if (prev && this.keepPreviousData) {
+      const prevPages = prev.entry.pages.peek()
+      if (prevPages.length > 0) this.previousPages$.set(prevPages)
+    }
     this.current$.set(entry)
   }
 
@@ -241,12 +266,13 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
   subscription: InfiniteQuerySubscription<TPage, TItem>
   dispose: () => void
 } {
-  void (query as unknown as InfiniteQueryInternal<Args, TPage, TItem>).__spec
+  const spec = (query as unknown as InfiniteQueryInternal<Args, TPage, TItem>).__spec
+  const keepPreviousData = spec.keepPreviousData ?? false
   const keyFn = typeof keyOrOptions === 'function' ? keyOrOptions : keyOrOptions?.key
   const enabledFn =
     typeof keyOrOptions === 'object' && keyOrOptions !== null ? keyOrOptions.enabled : undefined
 
-  const sub = new InfiniteSubscriptionImpl<TPage, TItem>()
+  const sub = new InfiniteSubscriptionImpl<TPage, TItem>(keepPreviousData)
   let currentEntry: InfiniteClientEntry<TPage, TItem, unknown> | null = null
 
   const effectDispose = effect(() => {

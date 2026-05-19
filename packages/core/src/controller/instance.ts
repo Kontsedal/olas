@@ -317,12 +317,13 @@ export class ControllerInstance {
         self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
         // Make every leaf field publish `field:validated` to the devtools bus
         // with its key path inside the form. See spec §20.9.
-        bindTreeToDevtools(
+        const stop = bindTreeToDevtools(
           f as unknown as Form<FormSchema>,
           '',
           self.path,
           self.rootShared.devtools,
         )
+        self.entries.push({ kind: 'cleanup', dispose: stop })
         return f
       },
 
@@ -332,12 +333,13 @@ export class ControllerInstance {
       ): FieldArray<I> {
         const fa = createFieldArray<I>(itemFactory, options)
         self.entries.push({ kind: 'cleanup', dispose: () => fa.dispose() })
-        bindTreeToDevtools(
+        const stop = bindTreeToDevtools(
           fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
           '',
           self.path,
           self.rootShared.devtools,
         )
+        self.entries.push({ kind: 'cleanup', dispose: stop })
         return fa
       },
 

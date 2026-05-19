@@ -147,6 +147,32 @@ export class ClientEntry<T> {
     }
   }
 
+  /**
+   * Schedule a gc timer for an entry that was just created via a non-subscribing
+   * path (`prefetch`, `setData`, `invalidate`). Without this, those entries
+   * never trigger `release()` and would live until root dispose. Called by
+   * `QueryClient.bindEntry` right after creating a fresh entry; `acquire()`
+   * (e.g., from a subscriber that arrives shortly after a prefetch) clears it.
+   * No-op if the entry already has subscribers or a gc timer pending.
+   */
+  scheduleGcIfOrphan(): void {
+    if (this.subscriberCount > 0 || this.gcTimer != null) return
+    if (this.gcTime === 0) {
+      // Defer one microtask so the current caller (e.g. a `setData` that
+      // writes then expects to read back in the same tick) sees the entry.
+      queueMicrotask(() => {
+        if (this.subscriberCount === 0 && this.gcTimer == null) {
+          this.client.dropEntry(this)
+        }
+      })
+      return
+    }
+    this.gcTimer = setTimeout(() => {
+      this.gcTimer = null
+      this.client.dropEntry(this)
+    }, this.gcTime)
+  }
+
   /** Refetch on focus / reconnect, but only if the data is actually stale. */
   private triggerEventRefetch(): void {
     if (!this.entry.isStaleNow()) return
@@ -174,7 +200,9 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   readonly query: AnyInfiniteQuery
   private subscriberCount = 0
   private gcTimer: ReturnType<typeof setTimeout> | null = null
+  private intervalTimer: ReturnType<typeof setInterval> | null = null
   private gcTime: number
+  private refetchInterval: number | undefined
 
   constructor(
     client: QueryClient,
@@ -188,6 +216,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     this.callArgs = callArgs
     this.keyArgs = keyArgs
     this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
+    this.refetchInterval = spec.refetchInterval
     const fetcherFn = spec.fetcher
     const deps = client.deps as import('../controller/types').AmbientDeps
     this.entry = new InfiniteEntry<TPage, TItem, PageParam>({
@@ -209,11 +238,15 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       clearTimeout(this.gcTimer)
       this.gcTimer = null
     }
+    if (this.subscriberCount === 1 && this.refetchInterval != null) {
+      this.startIntervalTimer()
+    }
   }
 
   release(): void {
     this.subscriberCount -= 1
     if (this.subscriberCount <= 0) {
+      this.stopIntervalTimer()
       if (this.gcTime === 0) {
         this.client.dropInfiniteEntry(
           this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
@@ -229,11 +262,49 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     }
   }
 
+  private startIntervalTimer(): void {
+    if (this.refetchInterval == null || this.intervalTimer != null) return
+    this.intervalTimer = setInterval(() => {
+      this.entry.startFetch().catch(() => {
+        /* error captured on entry */
+      })
+    }, this.refetchInterval)
+  }
+
+  private stopIntervalTimer(): void {
+    if (this.intervalTimer != null) {
+      clearInterval(this.intervalTimer)
+      this.intervalTimer = null
+    }
+  }
+
+  /** See `ClientEntry.scheduleGcIfOrphan`. */
+  scheduleGcIfOrphan(): void {
+    if (this.subscriberCount > 0 || this.gcTimer != null) return
+    if (this.gcTime === 0) {
+      queueMicrotask(() => {
+        if (this.subscriberCount === 0 && this.gcTimer == null) {
+          this.client.dropInfiniteEntry(
+            this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
+          )
+        }
+      })
+      return
+    }
+    this.gcTimer = setTimeout(() => {
+      this.gcTimer = null
+      this.client.dropInfiniteEntry(
+        this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
+      )
+    }, this.gcTime)
+  }
+
   dispose(): void {
     if (this.gcTimer != null) {
       clearTimeout(this.gcTimer)
       this.gcTimer = null
     }
+    this.stopIntervalTimer()
     this.entry.dispose()
   }
 }
@@ -400,6 +471,10 @@ export class QueryClient {
       if (hydrated) this.hydratedData.delete(hash)
       entry = new ClientEntry<T>(this, internal, args, keyArgs, internal.__spec, hydrated)
       map.set(hash, entry as ClientEntry<unknown>)
+      // The entry is created without an immediate subscriber (callers like
+      // `prefetch`/`setData`/`invalidate` reach `bindEntry` first; subscribing
+      // callers then call `acquire()` right after, which clears the gc timer).
+      entry.scheduleGcIfOrphan()
     }
     return entry
   }
@@ -485,6 +560,7 @@ export class QueryClient {
         internal.__spec,
       )
       map.set(hash, entry as InfiniteClientEntry<unknown, unknown, unknown>)
+      entry.scheduleGcIfOrphan()
     }
     return entry
   }
@@ -549,24 +625,33 @@ export class QueryClient {
     args: Args,
   ): Promise<TPage> {
     const entry = this.bindInfiniteEntry(query, args)
-    const status = entry.entry.status.peek()
-    if (status === 'success' && !entry.entry.isStaleNow()) {
-      const pages = entry.entry.pages.peek()
-      return Promise.resolve(pages[0] as TPage)
-    }
-    return entry.entry.startFetch()
+    // Acquire/release wraps the fetch so the entry isn't gc'd mid-flight by
+    // the orphan-gc timer scheduled in `bindInfiniteEntry`.
+    entry.acquire()
+    const promise = (async () => {
+      const status = entry.entry.status.peek()
+      if (status === 'success' && !entry.entry.isStaleNow()) {
+        return entry.entry.pages.peek()[0] as TPage
+      }
+      return entry.entry.startFetch()
+    })()
+    return promise.finally(() => entry.release())
   }
 
   prefetch<Args extends unknown[], T>(query: Query<Args, T>, args: Args): Promise<T> {
     const entry = this.bindEntry(query, args)
-    const status = entry.entry.status.peek()
-    if (status === 'success' && !entry.entry.isStaleNow()) {
-      return Promise.resolve(entry.entry.data.peek() as T)
-    }
-    if (entry.entry.isFetching.peek()) {
-      return entry.entry.firstValue()
-    }
-    return entry.entry.startFetch()
+    entry.acquire()
+    const promise = (async () => {
+      const status = entry.entry.status.peek()
+      if (status === 'success' && !entry.entry.isStaleNow()) {
+        return entry.entry.data.peek() as T
+      }
+      if (entry.entry.isFetching.peek()) {
+        return entry.entry.firstValue()
+      }
+      return entry.entry.startFetch()
+    })()
+    return promise.finally(() => entry.release())
   }
 
   inflightCount(): number {
