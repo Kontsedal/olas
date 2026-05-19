@@ -172,3 +172,24 @@ Pages touched: `decisions/no-react-adapter-yet.md` (mentioned `tsup.config.ts`).
 
 Wiki-lint after this change reports 1 pre-existing error (`modules/examples.md` covers a deleted `examples/user-profile`) and 67 pre-existing drift warnings (covered files modified by the `09cd034` deps-bump without bumping `last_verified` on the wiki pages). Both predate this change and are out of scope for this ingest.
 
+## [2026-05-19 12:40] ingest | wire refetchOnWindowFocus + refetchOnReconnect
+
+Both flags were declared in `QuerySpec` (spec §5.9) but the runtime ignored them — a pure-types gap a code review flagged. Now wired.
+
+Design:
+
+- New module `packages/core/src/query/focus-online.ts` — lazy single window/document listener per event (`focus` + `visibilitychange` for focus; `online` for reconnect). Lazy install on first subscriber; subscribers form a `Set<() => void>` and the listener fans out. `typeof window === 'undefined'` guard makes it SSR-safe (no-op subscribe/unsubscribe).
+- `ClientEntry` (in `client.ts`) stores `refetchOnWindowFocus` / `refetchOnReconnect` from the spec. On the 0→1 subscriber transition (alongside the existing `refetchInterval` start), it subscribes; on release-to-0 and on dispose, it unsubscribes. On event fire, the handler calls `entry.isStaleNow()` first and skips the refetch if the data is still inside `staleTime`. This matches TanStack-style behavior: focus is a *hint*, not an unconditional refetch.
+
+Why a separate module (not inline in `client.ts`):
+
+- The window/document listener is global, not per-client. Putting the registry next to `ClientEntry` would have either created one listener per entry (wasteful and an event-storm risk) or a hidden module-singleton inside `client.ts`. A dedicated file makes the singleton visible and the SSR guard reviewable in isolation.
+
+Coverage:
+
+- 8 new tests in `packages/core/tests/query-focus-online.test.ts` (jsdom env). Cover: focus refetch when stale; skip when fresh (within `staleTime`); default-off behavior when flag is unset; unsubscribe on dispose (event after `root.dispose()` does not refetch); `document.visibilitychange` → `visible` also triggers; reconnect refetch on `online`; both flags coexisting on one query.
+
+Lib test count 236 → 244. Wiki: `entities/query-client.md` covers updated (now includes `focus-online.ts`), `last_verified` bumped, body block on `ClientEntry`'s per-root fields adds an `unsubFocus` / `unsubOnline` entry. Status sentence in CLAUDE.md and the test count in README / `.wiki/overview.md` bumped accordingly.
+
+Spec impact: none — this is implementing already-spec'd behavior. The `RootOptions` root-wide override mentioned by spec §5.9 ("opt-in per query or root-wide") is still not implemented; only per-query opt-in is wired. Filing as a separate follow-up if needed.
+

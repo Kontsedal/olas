@@ -2,6 +2,7 @@ import type { DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { type Signal, signal } from '../signals'
 import { Entry } from './entry'
+import { subscribeReconnect, subscribeWindowFocus } from './focus-online'
 import { InfiniteEntry, type InfiniteQuery, type InfiniteQuerySpec } from './infinite'
 import { stableHash } from './keys'
 import type { DehydratedState, Query, QuerySpec, RetryDelay, RetryPolicy, Snapshot } from './types'
@@ -29,8 +30,12 @@ export class ClientEntry<T> {
   private subscriberCount = 0
   private gcTimer: ReturnType<typeof setTimeout> | null = null
   private intervalTimer: ReturnType<typeof setInterval> | null = null
+  private unsubFocus: (() => void) | null = null
+  private unsubOnline: (() => void) | null = null
   private gcTime: number
   private refetchInterval: number | undefined
+  private refetchOnWindowFocus: boolean
+  private refetchOnReconnect: boolean
 
   constructor(
     client: QueryClient,
@@ -46,6 +51,8 @@ export class ClientEntry<T> {
     this.keyArgs = keyArgs
     this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
     this.refetchInterval = spec.refetchInterval
+    this.refetchOnWindowFocus = spec.refetchOnWindowFocus ?? false
+    this.refetchOnReconnect = spec.refetchOnReconnect ?? false
     const fetcherFn = spec.fetcher
     const deps = client.deps as import('../controller/types').AmbientDeps
     const devtools = client.devtools
@@ -81,8 +88,14 @@ export class ClientEntry<T> {
       clearTimeout(this.gcTimer)
       this.gcTimer = null
     }
-    if (this.subscriberCount === 1 && this.refetchInterval != null) {
-      this.startIntervalTimer()
+    if (this.subscriberCount === 1) {
+      if (this.refetchInterval != null) this.startIntervalTimer()
+      if (this.refetchOnWindowFocus) {
+        this.unsubFocus = subscribeWindowFocus(() => this.triggerEventRefetch())
+      }
+      if (this.refetchOnReconnect) {
+        this.unsubOnline = subscribeReconnect(() => this.triggerEventRefetch())
+      }
     }
   }
 
@@ -90,6 +103,7 @@ export class ClientEntry<T> {
     this.subscriberCount -= 1
     if (this.subscriberCount <= 0) {
       this.stopIntervalTimer()
+      this.stopEventSubscriptions()
       if (this.gcTime === 0) {
         this.client.dropEntry(this)
       } else {
@@ -122,12 +136,32 @@ export class ClientEntry<T> {
     }
   }
 
+  stopEventSubscriptions(): void {
+    if (this.unsubFocus != null) {
+      this.unsubFocus()
+      this.unsubFocus = null
+    }
+    if (this.unsubOnline != null) {
+      this.unsubOnline()
+      this.unsubOnline = null
+    }
+  }
+
+  /** Refetch on focus / reconnect, but only if the data is actually stale. */
+  private triggerEventRefetch(): void {
+    if (!this.entry.isStaleNow()) return
+    this.entry.startFetch().catch(() => {
+      /* error already captured on entry */
+    })
+  }
+
   dispose(): void {
     if (this.gcTimer != null) {
       clearTimeout(this.gcTimer)
       this.gcTimer = null
     }
     this.stopIntervalTimer()
+    this.stopEventSubscriptions()
     this.entry.dispose()
   }
 }
