@@ -5,6 +5,7 @@
  */
 export const DEVTOOLS_CSS = `
 .olas-devtools {
+  container-type: inline-size;
   --olas-bg:           #ffffff;
   --olas-fg:           #1f2330;
   --olas-muted:        #6b7280;
@@ -87,12 +88,15 @@ export const DEVTOOLS_CSS = `
   background: var(--olas-soft);
   padding: 0 8px;
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.olas-devtools-tabs::-webkit-scrollbar { display: none; }
 .olas-devtools-tab {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 9px 12px 8px;
+  padding: 9px 10px 8px;
   background: transparent;
   color: var(--olas-muted);
   border: 0;
@@ -102,7 +106,18 @@ export const DEVTOOLS_CSS = `
   font: inherit;
   font-weight: 500;
   font-size: 12px;
+  white-space: nowrap;
+  flex-shrink: 0;
   transition: color 80ms, border-color 80ms;
+}
+.olas-devtools-tab-label-full { display: inline; }
+.olas-devtools-tab-label-short { display: none; }
+@container (max-width: 480px) {
+  .olas-devtools-tab { padding: 9px 8px 8px; font-size: 11.5px; gap: 4px; }
+  .olas-devtools-tab-label-full { display: none; }
+  .olas-devtools-tab-label-short { display: inline; }
+  .olas-devtools-pause-text,
+  .olas-devtools-clear-text { display: none; }
 }
 .olas-devtools-tab:hover { color: var(--olas-fg); }
 .olas-devtools-tab[aria-selected="true"] {
@@ -148,6 +163,12 @@ export const DEVTOOLS_CSS = `
 }
 .olas-devtools-pause-on { color: var(--olas-warn); background: var(--olas-warn-soft); }
 .olas-devtools-pause-on:hover { color: var(--olas-warn); }
+.olas-devtools-clear-icon { display: none; }
+@container (max-width: 480px) {
+  .olas-devtools-clear-text { display: none; }
+  .olas-devtools-clear-icon { display: inline; }
+  .olas-devtools-pause, .olas-devtools-clear { padding: 4px 8px; }
+}
 
 /* ---- filter ---------------------------------------------------------- */
 .olas-devtools-filter {
@@ -410,10 +431,164 @@ export const DEVTOOLS_CSS = `
   font-weight: 600;
   letter-spacing: 0.02em;
 }
+.olas-devtools-tree-props-toggle {
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--olas-muted);
+  padding: 0 4px;
+  border-radius: 4px;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+.olas-devtools-tree-props-toggle:hover {
+  color: var(--olas-fg);
+  background: var(--olas-soft);
+}
+.olas-devtools-tree-props {
+  margin: 4px 0 6px 8px;
+  padding: 6px 10px;
+  background: var(--olas-soft);
+  border: 1px solid var(--olas-border-soft);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow-x: auto;
+}
 .olas-devtools-tree-children {
   margin-left: 8px;
   border-left: 1px dashed var(--olas-border);
   padding-left: 10px;
   margin-top: 2px;
 }
+
+/* ---- floating window + launcher ------------------------------------- */
+.olas-devtools-launcher {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 2147483645;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px 7px 11px;
+  background: #1f2330;
+  color: #e8ebf2;
+  border: 1px solid #2a2e3a;
+  border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15), 0 8px 24px rgba(0,0,0,0.18);
+  cursor: pointer;
+  font: inherit;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+}
+.olas-devtools-launcher:hover { filter: brightness(1.1); }
+.olas-devtools-launcher-active { box-shadow: 0 0 0 2px rgba(139,134,240,0.5), 0 8px 24px rgba(0,0,0,0.18); }
+.olas-devtools-launcher-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4ade80;
+  box-shadow: 0 0 6px rgba(74,222,128,0.7);
+}
+.olas-devtools-launcher-label { letter-spacing: 0.01em; }
+
+.olas-devtools-floating {
+  position: fixed;
+  z-index: 2147483646;
+  display: flex;
+  flex-direction: column;
+  background: var(--olas-bg, #ffffff);
+  color: var(--olas-fg, #1f2330);
+  border: 1px solid var(--olas-border, #e6e6ea);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.18), 0 24px 64px rgba(0,0,0,0.18);
+  overflow: hidden;
+  /* Inherit the panel's own CSS vars when DevtoolsPanel is mounted inside. */
+}
+@media (prefers-color-scheme: dark) {
+  .olas-devtools-floating {
+    background: #15171e;
+    color: #e8ebf2;
+    border-color: #2a2e3a;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 24px 64px rgba(0,0,0,0.5);
+  }
+}
+.olas-devtools-floating-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 8px 0 10px;
+  background: var(--olas-soft, #f5f6f9);
+  border-bottom: 1px solid var(--olas-border, #e6e6ea);
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+}
+.olas-devtools-floating-header:active { cursor: grabbing; }
+.olas-devtools-floating-grip {
+  color: var(--olas-muted, #6b7280);
+  font-size: 14px;
+  line-height: 1;
+}
+.olas-devtools-floating-title {
+  flex: 1;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--olas-fg, #1f2330);
+  letter-spacing: 0.01em;
+}
+.olas-devtools-floating-actions { display: inline-flex; gap: 2px; }
+.olas-devtools-floating-action {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--olas-muted, #6b7280);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+.olas-devtools-floating-action:hover {
+  color: var(--olas-fg, #1f2330);
+  background: color-mix(in oklch, currentColor 14%, transparent);
+}
+.olas-devtools-floating-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.olas-devtools-floating-body > .olas-devtools {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  min-height: 0;
+}
+.olas-devtools-floating-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 0 7px, var(--olas-muted, #6b7280) 7px 8px, transparent 8px 10px,
+                            var(--olas-muted, #6b7280) 10px 11px, transparent 11px 100%);
+  opacity: 0.6;
+}
+.olas-devtools-floating-resize:hover { opacity: 1; }
 `

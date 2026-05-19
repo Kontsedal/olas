@@ -119,11 +119,11 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
     <div className="olas-devtools" data-testid="olas-devtools">
       <style>{DEVTOOLS_CSS}</style>
       <div className="olas-devtools-tabs" role="tablist">
-        <Tab name="tree" current={tab} setTab={setTab} label="Tree" count={countLiveControllers(liveTree)} />
-        <Tab name="cache" current={tab} setTab={setTab} label="Cache" count={liveCache.length} />
-        <Tab name="inspector" current={tab} setTab={setTab} label="Inspector" count={cacheEntries.length} />
-        <Tab name="mutations" current={tab} setTab={setTab} label="Mutations" count={liveMutations.length} />
-        <Tab name="fields" current={tab} setTab={setTab} label="Fields" count={liveFields.length} />
+        <Tab name="tree" current={tab} setTab={setTab} label="Tree" short="Tree" count={countLiveControllers(liveTree)} />
+        <Tab name="cache" current={tab} setTab={setTab} label="Cache" short="Cache" count={liveCache.length} />
+        <Tab name="inspector" current={tab} setTab={setTab} label="Inspector" short="Insp" count={cacheEntries.length} />
+        <Tab name="mutations" current={tab} setTab={setTab} label="Mutations" short="Mut" count={liveMutations.length} />
+        <Tab name="fields" current={tab} setTab={setTab} label="Fields" short="Fld" count={liveFields.length} />
         <button
           type="button"
           aria-pressed={paused}
@@ -131,10 +131,17 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
           onClick={() => setPaused(!paused)}
           title={paused ? 'Resume live updates' : 'Pause live updates'}
         >
-          {paused ? '▶ Resume' : '⏸ Pause'}
+          <span aria-hidden="true">{paused ? '▶' : '⏸'}</span>
+          <span className="olas-devtools-pause-text">{paused ? ' Resume' : ' Pause'}</span>
         </button>
-        <button className="olas-devtools-clear" type="button" onClick={() => store.clearLogs()}>
-          Clear
+        <button
+          className="olas-devtools-clear"
+          type="button"
+          onClick={() => store.clearLogs()}
+          title="Clear logs"
+        >
+          <span className="olas-devtools-clear-text">Clear</span>
+          <span className="olas-devtools-clear-icon" aria-hidden="true">✕</span>
         </button>
       </div>
 
@@ -170,6 +177,7 @@ function Tab(props: {
   current: DevtoolsTab
   setTab: (t: DevtoolsTab) => void
   label: string
+  short: string
   count: number
 }): ReactElement {
   const selected = props.current === props.name
@@ -178,10 +186,14 @@ function Tab(props: {
       role="tab"
       type="button"
       aria-selected={selected}
+      title={props.label}
       className="olas-devtools-tab"
       onClick={() => props.setTab(props.name)}
     >
-      {props.label}
+      <span className="olas-devtools-tab-label-full">{props.label}</span>
+      <span className="olas-devtools-tab-label-short" aria-hidden="true">
+        {props.short}
+      </span>
       {props.count > 0 && (
         <span className="olas-devtools-tab-count" aria-hidden="true">
           {props.count}
@@ -252,6 +264,10 @@ function TreeNode({
         ? 'olas-devtools-tree-state-disposed'
         : 'olas-devtools-tree-state-active'
   const pendingCount = pending.get(node.path.join('>')) ?? 0
+  const propsPreview = useMemo(() => summarizeProps(node.props), [node.props])
+  const [propsOpen, setPropsOpen] = useState(false)
+  const canExpandProps = node.props !== undefined && node.props !== null
+
   return (
     <div className="olas-devtools-tree-node">
       <span className="olas-devtools-tree-row">
@@ -262,7 +278,23 @@ function TreeNode({
             {pendingCount} pending
           </span>
         )}
+        {canExpandProps && (
+          <button
+            type="button"
+            className="olas-devtools-tree-props-toggle"
+            aria-expanded={propsOpen}
+            onClick={() => setPropsOpen((v) => !v)}
+            title={propsOpen ? 'Hide props' : 'Show full props'}
+          >
+            {propsPreview}
+          </button>
+        )}
       </span>
+      {propsOpen && canExpandProps && (
+        <div className="olas-devtools-tree-props">
+          <JsonView value={node.props} />
+        </div>
+      )}
       {node.children.length > 0 && (
         <div className="olas-devtools-tree-children">
           {node.children.map((child) => (
@@ -272,6 +304,38 @@ function TreeNode({
       )}
     </div>
   )
+}
+
+/** Build a one-line props summary for the tree row. */
+function summarizeProps(props: unknown): string {
+  if (props === null || props === undefined) return ''
+  if (typeof props === 'string') return `"${truncate(props, 24)}"`
+  if (typeof props === 'number' || typeof props === 'boolean') return String(props)
+  if (Array.isArray(props)) return `[${props.length}]`
+  if (typeof props === 'object') {
+    const keys = Object.keys(props as Record<string, unknown>)
+    if (keys.length === 0) return '{}'
+    const parts = keys.slice(0, 2).map((k) => {
+      const v = (props as Record<string, unknown>)[k]
+      return `${k}: ${shortValue(v)}`
+    })
+    return `{ ${parts.join(', ')}${keys.length > 2 ? `, +${keys.length - 2}` : ''} }`
+  }
+  return String(props)
+}
+
+function shortValue(v: unknown): string {
+  if (v === null) return 'null'
+  if (v === undefined) return 'undefined'
+  if (typeof v === 'string') return `"${truncate(v, 16)}"`
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  if (Array.isArray(v)) return `[${v.length}]`
+  if (typeof v === 'object') return `{${Object.keys(v as object).length}}`
+  return String(v)
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`
 }
 
 // ===========================================================================
