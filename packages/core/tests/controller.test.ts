@@ -523,3 +523,56 @@ describe('three-level tree (root → feature → leaf)', () => {
     expect(log).toContain('leaf:b:disposed')
   })
 })
+
+describe('ctx.attach — early-dispose child handle', () => {
+  test('dispose() tears down the child early; parent survives', () => {
+    const teardownLog: string[] = []
+    const leaf = defineController(
+      (ctx) => {
+        ctx.onDispose(() => teardownLog.push('leaf:disposed'))
+        return { mark: 'leaf' as const }
+      },
+      { name: 'leaf' },
+    )
+
+    let attached: { api: { mark: 'leaf' }; dispose: () => void } | undefined
+    const root = createRoot(
+      defineController(
+        (ctx) => {
+          attached = ctx.attach(leaf, undefined)
+          return {}
+        },
+        { name: 'parent' },
+      ),
+      { deps: {} },
+    )
+
+    expect(attached!.api.mark).toBe('leaf')
+    attached!.dispose()
+    expect(teardownLog).toEqual(['leaf:disposed'])
+
+    // Re-disposing is idempotent.
+    attached!.dispose()
+    expect(teardownLog).toEqual(['leaf:disposed'])
+
+    root.dispose()
+  })
+
+  test('child still disposes via parent dispose when never explicitly disposed', () => {
+    const teardownLog: string[] = []
+    const leaf = defineController((ctx) => {
+      ctx.onDispose(() => teardownLog.push('leaf:disposed'))
+      return {}
+    })
+    const root = createRoot(
+      defineController((ctx) => {
+        ctx.attach(leaf, undefined)
+        return {}
+      }),
+      { deps: {} },
+    )
+
+    root.dispose()
+    expect(teardownLog).toEqual(['leaf:disposed'])
+  })
+})

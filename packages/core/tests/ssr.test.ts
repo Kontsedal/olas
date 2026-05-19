@@ -13,7 +13,7 @@ describe('dehydrate / hydrate', () => {
     let fetchCount = 0
     const userQuery = defineQuery({
       key: (id: string) => ['user', id],
-      fetcher: async (id: string) => {
+      fetcher: async (_ctx, id: string) => {
         fetchCount++
         return { id, name: `User ${id}` }
       },

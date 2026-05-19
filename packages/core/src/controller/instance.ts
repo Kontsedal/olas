@@ -393,6 +393,38 @@ export class ControllerInstance {
         return api
       },
 
+      attach<Props, Api>(
+        def: ControllerDef<Props, Api>,
+        props: Props,
+        options?: { deps?: Partial<Record<string, unknown>> },
+      ): { api: Api; dispose: () => void } {
+        const segment = self.makeChildSegment(getFactory(def), getName(def))
+        const override = options?.deps
+        const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
+        const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
+        const api = childInstance.construct(getFactory(def), props)
+        const entry: LifecycleEntry = { kind: 'child', instance: childInstance }
+        self.entries.push(entry)
+        let disposed = false
+        return {
+          api,
+          dispose: () => {
+            if (disposed) return
+            disposed = true
+            const idx = self.entries.indexOf(entry)
+            if (idx >= 0) self.entries.splice(idx, 1)
+            try {
+              childInstance.dispose()
+            } catch (err) {
+              dispatchError(self.rootShared.onError, err, {
+                kind: 'effect',
+                controllerPath: self.path,
+              })
+            }
+          },
+        }
+      },
+
       onDispose(fn) {
         self.entries.push({
           kind: 'onDispose',

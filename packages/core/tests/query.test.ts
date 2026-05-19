@@ -48,7 +48,7 @@ describe('defineQuery + ctx.use', () => {
   test('subscribing fetches; data lands on success', async () => {
     const userQuery = defineQuery({
       key: (id: string) => ['user', id],
-      fetcher: async (id: string) => ({ id, name: `User ${id}` }),
+      fetcher: async (_ctx, id: string) => ({ id, name: `User ${id}` }),
     })
     const def = defineController((ctx) => ({
       user: ctx.use(userQuery, () => ['u1']),
@@ -88,7 +88,7 @@ describe('defineQuery + ctx.use', () => {
     const fetchedFor: string[] = []
     const userQuery = defineQuery({
       key: (id: string) => ['user', id],
-      fetcher: async (id: string) => {
+      fetcher: async (_ctx, id: string) => {
         fetchedFor.push(id)
         return { id, name: id }
       },
@@ -197,7 +197,7 @@ describe('defineQuery + ctx.use', () => {
     const session = signal<{ id: string } | undefined>(undefined)
     const q = defineQuery({
       key: (id: string) => ['session', id],
-      fetcher: async (id: string) => {
+      fetcher: async (_ctx, id: string) => {
         fetchCount++
         return `feed-${id}`
       },

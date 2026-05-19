@@ -81,12 +81,26 @@ export type RetryPolicy = number | ((attempt: number, error: unknown) => boolean
 export type RetryDelay = number | ((attempt: number) => number)
 
 /**
+ * Per-fetch context: the `AbortSignal` to honor + the root's `deps`. Passed
+ * as the first argument to every `QuerySpec.fetcher` invocation so module-
+ * level queries can reach their dependencies without resorting to globals.
+ */
+export type FetchCtx = {
+  signal: AbortSignal
+  deps: import('../controller/types').AmbientDeps
+}
+
+/**
  * Configuration passed to `defineQuery({ ... })`. The `Args` tuple is what
  * callers pass as cache keys and to the fetcher. Spec §20.4.
+ *
+ * The fetcher's first argument is a `FetchCtx` (signal + deps); positional
+ * cache args come after. This shape lets module-scoped queries read
+ * `ctx.deps.api` etc. — no `setApiForQuery(api)` module-level capture needed.
  */
 export type QuerySpec<Args extends unknown[], T> = {
   key: (...args: Args) => unknown[]
-  fetcher: (...args: [...Args, signal: AbortSignal]) => Promise<T>
+  fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>
   staleTime?: number
   gcTime?: number
   refetchInterval?: number

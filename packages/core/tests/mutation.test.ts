@@ -48,7 +48,7 @@ describe('ctx.mutation — happy paths', () => {
       }),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    await expect(root.save.run(undefined)).rejects.toThrow('save failed')
+    await expect(root.save.run()).rejects.toThrow('save failed')
     expect((root.save.error.value as Error).message).toBe('save failed')
     expect(root.save.isPending.value).toBe(false)
     root.dispose()
@@ -62,7 +62,7 @@ describe('ctx.mutation — happy paths', () => {
       }),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    const promise = root.save.run(undefined).catch((e) => e)
+    const promise = root.save.run().catch((e) => e)
     expect(root.save.isPending.value).toBe(true)
     root.save.reset()
     expect(root.save.isPending.value).toBe(false)
@@ -84,9 +84,9 @@ describe('ctx.mutation — concurrency: parallel (default)', () => {
       }),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    const p1 = root.save.run(undefined)
-    const p2 = root.save.run(undefined)
-    const p3 = root.save.run(undefined)
+    const p1 = root.save.run()
+    const p2 = root.save.run()
+    const p3 = root.save.run()
     expect(root.save.isPending.value).toBe(true)
 
     ds[1]!.resolve('b')
@@ -117,8 +117,8 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
       }),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    const p1 = root.save.run(undefined).catch((e) => e)
-    const p2 = root.save.run(undefined)
+    const p1 = root.save.run().catch((e) => e)
+    const p2 = root.save.run()
 
     ds[1]!.resolve('second')
     expect(await p2).toBe('second')
@@ -235,8 +235,8 @@ describe('ctx.mutation — concurrency: serial', () => {
       }),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    const p1 = root.save.run(undefined).catch((e) => e)
-    const p2 = root.save.run(undefined).catch((e) => e)
+    const p1 = root.save.run().catch((e) => e)
+    const p2 = root.save.run().catch((e) => e)
     root.dispose()
     d.resolve(1) // unblock the in-flight one
     void p1 // we don't assert here; whether it resolves or rejects depends on exact ordering
@@ -246,6 +246,67 @@ describe('ctx.mutation — concurrency: serial', () => {
 })
 
 describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
+  test('snapshot returned from onMutate auto-rolls back on error without an explicit onError', async () => {
+    const q = defineQuery({
+      key: () => ['n'],
+      fetcher: async () => 0,
+    })
+    const def = defineController((ctx) => {
+      const x = ctx.use(q)
+      const save = ctx.mutation({
+        mutate: async () => {
+          throw new Error('server says no')
+        },
+        onMutate: () => q.setData(() => 99),
+        // NO onError — the default behavior should still restore the cache.
+      })
+      return { x, save }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.x.data.value).toBe(0)
+
+    await expect(root.save.run()).rejects.toThrow('server says no')
+    expect(root.x.data.value).toBe(0)
+    root.dispose()
+  })
+
+  test('onError calling snapshot.rollback() is idempotent with the auto-rollback', async () => {
+    const q = defineQuery({
+      key: () => ['n'],
+      fetcher: async () => 0,
+    })
+    let rollbackCalls = 0
+    const def = defineController((ctx) => {
+      const x = ctx.use(q)
+      const save = ctx.mutation({
+        mutate: async () => {
+          throw new Error('boom')
+        },
+        onMutate: () => {
+          const snap = q.setData(() => 99)
+          return {
+            rollback: () => {
+              rollbackCalls++
+              snap.rollback()
+            },
+          }
+        },
+        onError: (_e, _v, snap) => snap?.rollback(),
+      })
+      return { x, save }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    await expect(root.save.run()).rejects.toThrow('boom')
+    expect(root.x.data.value).toBe(0)
+    // Both the user's onError-call AND the implicit auto-call would have
+    // tried to run rollback; the wrapped snapshot dedupes to exactly one.
+    expect(rollbackCalls).toBe(1)
+    root.dispose()
+  })
+
   test('onMutate captures snapshot; rollback restores on error', async () => {
     const q = defineQuery({
       key: () => ['n'],
@@ -266,7 +327,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     await flush()
     expect(root.x.data.value).toBe(0)
 
-    await expect(root.save.run(undefined)).rejects.toThrow('server says no')
+    await expect(root.save.run()).rejects.toThrow('server says no')
     expect(root.x.data.value).toBe(0)
     root.dispose()
   })
@@ -305,8 +366,8 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     await flush()
     expect(root.x.data.value).toBe(0)
 
-    const pA = root.a.run(undefined).catch(() => {})
-    const pB = root.b.run(undefined).catch(() => {})
+    const pA = root.a.run().catch(() => {})
+    const pB = root.b.run().catch(() => {})
     expect(root.x.data.value).toBe(11)
 
     // B fails first — should land on the post-A intermediate state.
@@ -339,7 +400,7 @@ describe('ctx.mutation — retry', () => {
       }),
     }))
     const root = createRoot(def, { deps: emptyDeps })
-    const p = root.save.run(undefined).catch((e) => e as Error)
+    const p = root.save.run().catch((e) => e as Error)
     // initial attempt (0ms) + 2 retries (10ms each)
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(10)
