@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery, signal } from '@olas/core'
+import { createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode, useEffect } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'

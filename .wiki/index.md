@@ -19,12 +19,12 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/timing.md](modules/timing.md) — `debounced` / `throttled` signal projections
 - [modules/devtools.md](modules/devtools.md) — `DebugEvent` bus
 - [modules/errors.md](modules/errors.md) — `ErrorContext`, `dispatchError`
-- [modules/zod.md](modules/zod.md) — `@olas/zod`: `zodValidator`, `formFromZod`
-- [modules/persist.md](modules/persist.md) — `@olas/persist`: `usePersisted`
-- [modules/realtime.md](modules/realtime.md) — `@olas/realtime`: `useRealtimePatcher` + `defineLiveStream` over a consumer-supplied `RealtimeService`
-- [modules/cross-tab.md](modules/cross-tab.md) — `@olas/cross-tab`: `BroadcastChannel`-backed cross-tab in-memory query cache sync
-- [modules/react.md](modules/react.md) — `@olas/react`: provider + `useSyncExternalStore`-backed hooks
-- [modules/devtools-panel.md](modules/devtools-panel.md) — `@olas/devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
+- [modules/zod.md](modules/zod.md) — `@kontsedal/olas-zod`: `zodValidator`, `formFromZod`
+- [modules/persist.md](modules/persist.md) — `@kontsedal/olas-persist`: `usePersisted`
+- [modules/realtime.md](modules/realtime.md) — `@kontsedal/olas-realtime`: `useRealtimePatcher` + `defineLiveStream` over a consumer-supplied `RealtimeService`
+- [modules/cross-tab.md](modules/cross-tab.md) — `@kontsedal/olas-cross-tab`: `BroadcastChannel`-backed cross-tab in-memory query cache sync
+- [modules/react.md](modules/react.md) — `@kontsedal/olas-react`: provider + `useSyncExternalStore`-backed hooks
+- [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
 - [modules/examples.md](modules/examples.md) — the four runnable example apps in `examples/`
 
 ## Entities
@@ -50,7 +50,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/signals-runtime-wrapped.md](decisions/signals-runtime-wrapped.md) — why `@preact/signals-core` is hidden behind our types
 - [decisions/per-root-query-client.md](decisions/per-root-query-client.md) — why each root has its own client, not a singleton
 - [decisions/brand-markers-not-classes.md](decisions/brand-markers-not-classes.md) — why `Symbol.for(...)` over `instanceof`
-- [decisions/no-react-adapter-yet.md](decisions/no-react-adapter-yet.md) — why `@olas/react` is an empty shell
+- [decisions/no-react-adapter-yet.md](decisions/no-react-adapter-yet.md) — why `@kontsedal/olas-react` is an empty shell
 
 ## Pitfalls
 

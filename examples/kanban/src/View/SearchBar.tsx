@@ -1,6 +1,6 @@
 // Search bar — demonstrates LATEST-WINS by typing rapidly.
 
-import { use } from '@olas/react'
+import { use } from '@kontsedal/olas-react'
 import { Loader2, Search } from 'lucide-react'
 import { type ReactElement, useEffect, useState } from 'react'
 import { useApi } from './useApi'

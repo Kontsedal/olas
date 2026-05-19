@@ -1,13 +1,14 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { olasAliases } from '../_shared/aliases'
+import { olasAliases, olasDefine } from '../_shared/aliases'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss()],
   resolve: { alias: olasAliases },
+  define: olasDefine(mode),
   server: { port: 5182 },
   ssr: {
-    noExternal: ['@olas/core', '@olas/react', '@olas/persist'],
+    noExternal: ['@kontsedal/olas-core', '@kontsedal/olas-react', '@kontsedal/olas-persist'],
   },
-})
+}))

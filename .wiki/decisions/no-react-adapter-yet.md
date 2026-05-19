@@ -1,6 +1,6 @@
 ---
 name: no-react-adapter-yet
-description: Historical — Phase 10 was deferred at v1 minimum; superseded when @olas/react landed.
+description: Historical — Phase 10 was deferred at v1 minimum; superseded when @kontsedal/olas-react landed.
 type: decision
 covers:
   - packages/react/src/index.ts
@@ -14,7 +14,7 @@ confidence: high
 
 > **Superseded** — Phase 10 has landed. The current state of the adapter is documented in [`modules/react.md`](../modules/react.md); the entity for scopes is [`entities/scope.md`](../entities/scope.md); the end-to-end flow is in [`flows/use-root.md`](../flows/use-root.md). This page is kept for history — it captures *why* the adapter was originally deferred and what was prepared in advance.
 
-# `@olas/react` is empty (Phase 10 deferred)
+# `@kontsedal/olas-react` is empty (Phase 10 deferred)
 
 ## The choice
 
@@ -59,4 +59,4 @@ When Phase 10 lands, add:
 - `.wiki/entities/scope.md`
 - `.wiki/flows/use-root.md` (provider → context → hook)
 
-Test ordering: drive scopes in `@olas/core` first (which needs `ctx.provide` / `ctx.inject` + `ControllerInstance` parent-chain walks). Then add the React adapter as a thin layer on top.
+Test ordering: drive scopes in `@kontsedal/olas-core` first (which needs `ctx.provide` / `ctx.inject` + `ControllerInstance` parent-chain walks). Then add the React adapter as a thin layer on top.

@@ -1,4 +1,4 @@
-import { createRoot, defineController, signal } from '@olas/core'
+import { createRoot, defineController, signal } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import {
   type RealtimeHandler,
@@ -7,7 +7,7 @@ import {
   useRealtimePatcher,
 } from '../src'
 
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     realtime: RealtimeService
   }

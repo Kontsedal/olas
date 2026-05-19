@@ -5,7 +5,7 @@
  * is set for `cache` kinds. Spec §12, §20.9.
  *
  * `'plugin'` is used for exceptions raised by `QueryClientPlugin` callbacks
- * (`@olas/cross-tab` and friends); SPEC §13.2.
+ * (`@kontsedal/olas-cross-tab` and friends); SPEC §13.2.
  */
 export type ErrorContext = {
   kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction' | 'plugin'

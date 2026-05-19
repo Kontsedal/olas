@@ -1,4 +1,4 @@
-import { createRoot, defineController, effect } from '@olas/core'
+import { createRoot, defineController, effect } from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   defineLiveStream,
@@ -7,7 +7,7 @@ import {
   type RealtimeSubscription,
 } from '../src'
 
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     realtime: RealtimeService
   }

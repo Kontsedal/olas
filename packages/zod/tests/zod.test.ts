@@ -1,4 +1,4 @@
-import { createRoot, defineController } from '@olas/core'
+import { createRoot, defineController } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
 import { z } from 'zod'
 import { formFromZod, zodValidator, zodValidatorAsync } from '../src'

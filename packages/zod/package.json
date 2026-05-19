@@ -1,6 +1,6 @@
 {
-  "name": "@olas/zod",
-  "version": "0.0.0",
+  "name": "@kontsedal/olas-zod",
+  "version": "0.0.1-rc.0",
   "description": "Olas Zod adapter — zodValidator + formFromZod",
   "license": "MIT",
   "type": "module",
@@ -29,11 +29,11 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@olas/core": "workspace:^",
+    "@kontsedal/olas-core": "workspace:^",
     "zod": "^4.0.0"
   },
   "devDependencies": {
-    "@olas/core": "workspace:^",
+    "@kontsedal/olas-core": "workspace:^",
     "zod": "^4.4.3"
   }
 }

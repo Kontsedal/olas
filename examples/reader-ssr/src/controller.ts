@@ -18,9 +18,9 @@
 // included. Modeling pagination as "regular query + reactive key" gives us
 // SSR-ready entries (one per cursor) while still demonstrating accumulation.
 
-import type { Ctx, DehydratedState, ErrorContext } from '@olas/core'
-import { computed, createRoot, defineController, defineQuery, signal } from '@olas/core'
-import { type StorageAdapter, usePersisted } from '@olas/persist'
+import type { Ctx, DehydratedState, ErrorContext } from '@kontsedal/olas-core'
+import { computed, createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
+import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
 import type { Api, Article, Page } from './api'
 import { composerController } from './composer-controller'
 
@@ -37,7 +37,7 @@ export type ReaderDeps = {
   logger?: Logger
 }
 
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     api: Api
     storage?: StorageAdapter

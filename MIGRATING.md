@@ -56,7 +56,7 @@ The Olas root owns its own QueryClient (one per root). Two roots have isolated c
 
 - **TanStack `useQuery` returns the same `data | undefined` and you handle both.** Olas `ctx.use(q)` returns an `AsyncState<T>` with eight signals (`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`) plus `refetch` / `reset` / `firstValue`. In React, `useQuery(subscription)` bundles them into one render trigger.
 - **Suspense.** TanStack has `useSuspenseQuery`. Olas doesn't ship a Suspense integration — use `subscription.firstValue()` to await first data, or render `isLoading ? <Spinner /> : <View />`.
-- **DevTools.** TanStack devtools is mature; Olas ships `@olas/devtools` — `<DevtoolsLauncher root={root} />` gives you a floating panel with controller-tree, cache timeline, and mutation log. No separate browser extension (yet — tracked in `BACKLOG.md`).
+- **DevTools.** TanStack devtools is mature; Olas ships `@kontsedal/olas-devtools` — `<DevtoolsLauncher root={root} />` gives you a floating panel with controller-tree, cache timeline, and mutation log. No separate browser extension (yet — tracked in `BACKLOG.md`).
 
 ---
 
@@ -84,7 +84,7 @@ Why: actions and reducers are useful for time-travel debugging and replayable hi
 | Middleware (logger, thunk, etc.)               | `root.__debug.subscribe(handler)` for events; mutations replace thunks |
 | `combineReducers` / module separation          | Controller tree — each subtree is its own "slice"               |
 | `useStore()`                                   | `useRoot<Api>()` (returns the root's API)                       |
-| Persist via redux-persist                      | `usePersisted(ctx, key, source)` from `@olas/persist`           |
+| Persist via redux-persist                      | `usePersisted(ctx, key, source)` from `@kontsedal/olas-persist`           |
 
 ### Selectors vs computed
 

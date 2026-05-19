@@ -122,7 +122,7 @@ export type QuerySpec<Args extends unknown[], T> = {
   retry?: RetryPolicy
   retryDelay?: RetryDelay
   /**
-   * Stable identifier used by `QueryClientPlugin`s (e.g. `@olas/cross-tab`)
+   * Stable identifier used by `QueryClientPlugin`s (e.g. `@kontsedal/olas-cross-tab`)
    * to locate the same query across tabs / processes / persistence layers.
    * REQUIRED for queries with `crossTab: true`. SPEC §13.2.
    *
@@ -131,7 +131,7 @@ export type QuerySpec<Args extends unknown[], T> = {
    */
   queryId?: string
   /**
-   * Opt this query into cross-tab cache sync (`@olas/cross-tab`). No effect
+   * Opt this query into cross-tab cache sync (`@kontsedal/olas-cross-tab`). No effect
    * without a `queryId` and without a plugin installed. SPEC §13.2.
    */
   crossTab?: boolean

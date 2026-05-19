@@ -1,6 +1,6 @@
 {
-  "name": "@olas/realtime",
-  "version": "0.0.0",
+  "name": "@kontsedal/olas-realtime",
+  "version": "0.0.1-rc.0",
   "description": "Olas realtime composables (useRealtimePatcher, defineLiveStream)",
   "license": "MIT",
   "type": "module",
@@ -29,9 +29,9 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@olas/core": "workspace:^"
+    "@kontsedal/olas-core": "workspace:^"
   },
   "devDependencies": {
-    "@olas/core": "workspace:^"
+    "@kontsedal/olas-core": "workspace:^"
   }
 }

@@ -1,0 +1,20 @@
+{
+  "mode": "pre",
+  "tag": "rc",
+  "initialVersions": {
+    "@kontsedal/olas-example-kanban": "0.0.0",
+    "@kontsedal/olas-example-reader-ssr": "0.0.0",
+    "@kontsedal/olas-example-stock-ticker": "0.0.0",
+    "@kontsedal/olas-example-virtualized-table": "0.0.0",
+    "@kontsedal/olas-core": "0.0.0",
+    "@kontsedal/olas-cross-tab": "0.0.0",
+    "@kontsedal/olas-devtools": "0.0.0",
+    "@kontsedal/olas-persist": "0.0.0",
+    "@kontsedal/olas-react": "0.0.0",
+    "@kontsedal/olas-realtime": "0.0.0",
+    "@kontsedal/olas-zod": "0.0.0"
+  },
+  "changesets": [
+    "initial-release"
+  ]
+}

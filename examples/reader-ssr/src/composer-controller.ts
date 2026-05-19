@@ -6,7 +6,7 @@
 // the server thinks; `isValid` is false until the server says it's fine. The
 // usual mutation submits the comment when the form is valid.
 
-import { type Ctx, debouncedValidator, defineController, required } from '@olas/core'
+import { type Ctx, debouncedValidator, defineController, required } from '@kontsedal/olas-core'
 import type { Comment } from './api'
 
 export type ComposerProps = { articleId: string }

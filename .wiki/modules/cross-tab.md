@@ -1,6 +1,6 @@
 ---
 name: cross-tab
-description: "@olas/cross-tab — BroadcastChannel-based in-memory query cache sync across tabs of the same origin."
+description: "@kontsedal/olas-cross-tab — BroadcastChannel-based in-memory query cache sync across tabs of the same origin."
 type: module
 covers:
   - packages/cross-tab/src/index.ts
@@ -19,7 +19,7 @@ last_verified: 2026-05-19
 confidence: medium
 ---
 
-# `@olas/cross-tab`
+# `@kontsedal/olas-cross-tab`
 
 Single composable: `crossTabPlugin(options)` — a `QueryClientPlugin` (§13.2) that broadcasts every `setData` and `invalidate` for `crossTab: true` queries over a `BroadcastChannel`, and replays inbound messages back through the local `QueryClient`. Spec §13.2.
 
@@ -89,12 +89,12 @@ The `QueryClient` fires plugin events for every query that has a `queryId` set, 
 
 `channelFactory` defaults to `defaultChannelFactory`, which returns `undefined` when `typeof BroadcastChannel === 'undefined'`. In that case `crossTabPlugin(...)` returns an empty plugin object (`{}`) — every hook is undefined, so the QueryClient's `try/catch`-wrapped dispatch is a no-op. Roots boot cleanly in Node / SSR contexts; cross-tab is just disabled.
 
-## Interaction with `@olas/persist`
+## Interaction with `@kontsedal/olas-persist`
 
 Both layers sync state between tabs but at different levels:
 
-- `@olas/persist` mirrors **durable** state via `localStorage` + the `storage` event.
-- `@olas/cross-tab` mirrors the **in-memory** query cache via `BroadcastChannel`.
+- `@kontsedal/olas-persist` mirrors **durable** state via `localStorage` + the `storage` event.
+- `@kontsedal/olas-cross-tab` mirrors the **in-memory** query cache via `BroadcastChannel`.
 
 Layering them on the same logical state is supported but redundant. Persist already handles cross-tab via the storage event; this plugin is for the much larger query cache that doesn't touch disk.
 

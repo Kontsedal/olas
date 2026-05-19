@@ -18,7 +18,7 @@ If a behavior isn't covered here and you can't find it in SPEC.md, that's a docs
 
 ## Table of contents
 
-- [@olas/core](#olascore)
+- [@kontsedal/olas-core](#olascore)
   - [Signals](#signals)
   - [Time-based signals](#time-based-signals)
   - [Controllers & roots](#controllers--roots)
@@ -37,15 +37,15 @@ If a behavior isn't covered here and you can't find it in SPEC.md, that's a docs
   - [Errors](#errors)
   - [Devtools event bus](#devtools-event-bus)
   - [Utilities](#utilities)
-- [@olas/core/testing](#olascoretesting)
-- [@olas/react](#olasreact)
-- [@olas/persist](#olaspersist)
-- [@olas/zod](#olaszod)
-- [@olas/devtools](#olasdevtools)
+- [@kontsedal/olas-core/testing](#olascoretesting)
+- [@kontsedal/olas-react](#olasreact)
+- [@kontsedal/olas-persist](#olaspersist)
+- [@kontsedal/olas-zod](#olaszod)
+- [@kontsedal/olas-devtools](#olasdevtools)
 
 ---
 
-# @olas/core
+# @kontsedal/olas-core
 
 ## Signals
 
@@ -56,7 +56,7 @@ The reactive substrate. A signal is a typed cell with a value; reads inside `com
 Read-write signal. `.value` reads, `.set(v)` writes, `.update(fn)` writes via a function of the current value. `.peek()` reads without registering a dependency. `.subscribe(fn)` registers a listener; returns an unsubscribe.
 
 ```ts
-import { signal } from '@olas/core'
+import { signal } from '@kontsedal/olas-core'
 
 const count = signal(0)
 console.log(count.value)         // 0
@@ -73,7 +73,7 @@ const unsub = count.subscribe((v) => console.log(v))
 Derived read-only signal. Tracks every signal read inside `fn` and recomputes when any of them change. Glitch-free (a computed never reads a half-updated graph).
 
 ```ts
-import { signal, computed } from '@olas/core'
+import { signal, computed } from '@kontsedal/olas-core'
 
 const first = signal('Ada')
 const last = signal('Lovelace')
@@ -88,7 +88,7 @@ console.log(full.value)          // "Ada Lovelace"
 Tracking side effect. Re-runs whenever its read signals change. `fn` may return a cleanup function that runs before the next invocation (and on disposal). The outer return value is an unsubscribe.
 
 ```ts
-import { signal, effect } from '@olas/core'
+import { signal, effect } from '@kontsedal/olas-core'
 
 const count = signal(0)
 const stop = effect(() => {
@@ -106,7 +106,7 @@ stop()                           // tear down
 Group multiple writes so subscribers fire once. Inside `batch`, signal writes don't propagate until `fn` returns.
 
 ```ts
-import { batch, signal } from '@olas/core'
+import { batch, signal } from '@kontsedal/olas-core'
 
 const a = signal(1)
 const b = signal(2)
@@ -121,7 +121,7 @@ batch(() => {
 Run `fn` without registering its signal reads as dependencies. Useful inside a `computed` / `effect` to "peek" at a value without re-running on its changes.
 
 ```ts
-import { signal, computed, untracked } from '@olas/core'
+import { signal, computed, untracked } from '@kontsedal/olas-core'
 
 const tracked = signal(1)
 const peeked = signal(100)
@@ -159,7 +159,7 @@ Derived signals that delay or rate-limit a source.
 Reflects `source`, but waits `ms` after the last source change before emitting. Same value during the window; new value after. Great for "react after the user stops typing".
 
 ```ts
-import { signal, debounced } from '@olas/core'
+import { signal, debounced } from '@kontsedal/olas-core'
 
 const term = signal('')
 const dTerm = debounced(term, 300)
@@ -173,7 +173,7 @@ const dTerm = debounced(term, 300)
 Reflects `source` at most once every `ms`. Drops intermediate values during the window.
 
 ```ts
-import { signal, throttled } from '@olas/core'
+import { signal, throttled } from '@kontsedal/olas-core'
 
 const scrollY = signal(0)
 const tScroll = throttled(scrollY, 50)
@@ -195,7 +195,7 @@ function defineController<Props, Api>(
 Declare a controller. The factory runs once per *instance* (one per `createRoot` or `ctx.child` call); it receives a fresh `ctx` bound to that instance's lifetime. The returned object is the controller's public API.
 
 ```ts
-import { defineController, signal } from '@olas/core'
+import { defineController, signal } from '@kontsedal/olas-core'
 
 export const counter = defineController(() => {
   const count = signal(0)
@@ -222,7 +222,7 @@ function createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>(
 Instantiate a controller as a *root*. Roots have no props (`ControllerDef<void, Api>`); all startup config goes in `deps`. The returned object is the controller's API plus the lifecycle controls — `dispose`, `suspend`, `resume`, `dehydrate`, `waitForIdle`, `__debug`.
 
 ```ts
-import { createRoot } from '@olas/core'
+import { createRoot } from '@kontsedal/olas-core'
 import { counter } from './counter'
 
 const root = createRoot(counter, { deps: {} })
@@ -277,7 +277,7 @@ Opaque handle returned by `defineController`. Pass to `createRoot(...)`, `ctx.ch
 ### Type: `AmbientDeps`
 
 ```ts
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     api: ApiClient
     router: Router
@@ -383,7 +383,7 @@ Shared, keyed, cacheable async data. Two controllers subscribing to the same que
 Declare a query at module scope. The returned `Query` value is passed to `ctx.use(...)` in subscribers, and exposes `invalidate`, `invalidateAll`, `setData`, `prefetch` at the module level for direct cache writes (e.g., from a mutation's `onMutate`).
 
 ```ts
-import { defineQuery } from '@olas/core'
+import { defineQuery } from '@kontsedal/olas-core'
 
 export const userQuery = defineQuery({
   key: (id: string) => [id],
@@ -443,7 +443,7 @@ type Query<Args extends unknown[], T> = {
 Subscribe a controller to a `Query`. The `key` thunk reads signals — re-evaluating when they change re-keys the subscription (auto-unsubscribes the old entry, acquires the new).
 
 ```ts
-import { defineController } from '@olas/core'
+import { defineController } from '@kontsedal/olas-core'
 import { userQuery } from './queries'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
@@ -498,7 +498,7 @@ Cursor / page-based pagination accumulating into `pages: TPage[]`.
 ### `defineInfiniteQuery<Args, PageParam, TPage, TItem?>(spec): InfiniteQuery<Args, TPage, TItem>`
 
 ```ts
-import { defineInfiniteQuery } from '@olas/core'
+import { defineInfiniteQuery } from '@kontsedal/olas-core'
 
 export const feedQuery = defineInfiniteQuery({
   key: (channel: string) => [channel],
@@ -555,7 +555,7 @@ Writes that may need optimistic updates, abort handling, and concurrency rules.
 ### `ctx.mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>`
 
 ```ts
-import { defineController } from '@olas/core'
+import { defineController } from '@kontsedal/olas-core'
 import { userQuery } from './queries'
 
 const profile = defineController((ctx, props: { id: string }) => {
@@ -645,7 +645,7 @@ Both are idempotent and mutually exclusive — whichever happens first wins, sub
 Create a single field. The `initial` value seeds the field; `validators` is an array of `Validator<T>` functions run on every change (and on `validate()` / `revalidate()`).
 
 ```ts
-import { defineController, required, minLength } from '@olas/core'
+import { defineController, required, minLength } from '@kontsedal/olas-core'
 
 const form = defineController((ctx) => {
   const name = ctx.field<string>('', [required(), minLength(2)])
@@ -693,7 +693,7 @@ Return `null` for "valid", a non-empty string for "invalid (here's the error)". 
 Wrap an async validator so per-keystroke checks don't pile up. Cancels the prior run via `AbortSignal` when a new value arrives within `ms`.
 
 ```ts
-import { debouncedValidator } from '@olas/core'
+import { debouncedValidator } from '@kontsedal/olas-core'
 
 const usernameAvailable = debouncedValidator<string>(async (value, signal) => {
   const res = await fetch(`/api/check?name=${value}`, { signal })
@@ -711,7 +711,7 @@ const usernameAvailable = debouncedValidator<string>(async (value, signal) => {
 Aggregate fields, sub-forms, and field-arrays into one typed object with `value`, `errors`, `isValid`, etc. The schema is a record of primitives.
 
 ```ts
-import { defineController, required, email } from '@olas/core'
+import { defineController, required, email } from '@kontsedal/olas-core'
 
 const profile = defineController((ctx) => {
   const form = ctx.form({
@@ -777,7 +777,7 @@ type FormOptions<S> = {
 Dynamic list of `Field<T>` or `Form<S>` items. The factory is invoked once per insertion.
 
 ```ts
-import { defineController } from '@olas/core'
+import { defineController } from '@kontsedal/olas-core'
 
 const todoList = defineController((ctx) => {
   const todos = ctx.fieldArray(
@@ -826,7 +826,7 @@ type FieldArray<I extends Field<any> | Form<any>> = {
 Pre-built `Validator<T>` factories. Each accepts an optional custom message.
 
 ```ts
-import { required, minLength, maxLength, min, max, email, pattern } from '@olas/core'
+import { required, minLength, maxLength, min, max, email, pattern } from '@kontsedal/olas-core'
 
 required('Name is required')
 minLength(3, 'Min 3 characters')
@@ -837,7 +837,7 @@ email('Invalid email')
 pattern(/^\d{5}$/, 'ZIP must be 5 digits')
 ```
 
-Each returns a `Validator<T>` you pass to `ctx.field(initial, [validator, ...])`. For complex/cross-field rules, write your own or use `@olas/zod`.
+Each returns a `Validator<T>` you pass to `ctx.field(initial, [validator, ...])`. For complex/cross-field rules, write your own or use `@kontsedal/olas-zod`.
 
 ---
 
@@ -848,7 +848,7 @@ Typed cross-tree data without prop drilling — like React context, but typed an
 ### `defineScope<T>(options?): Scope<T>`
 
 ```ts
-import { defineScope } from '@olas/core'
+import { defineScope } from '@kontsedal/olas-core'
 
 export const currentBoardScope = defineScope<{ id: string; title: string }>()
 export const activityScope = defineScope<Emitter<string>>({ default: createEmitter() })
@@ -897,7 +897,7 @@ Typed pub/sub for cross-controller events. The emitter itself is just a value �
 Standalone emitter. Use when you want one app-wide or share via a scope.
 
 ```ts
-import { createEmitter } from '@olas/core'
+import { createEmitter } from '@kontsedal/olas-core'
 
 const activity = createEmitter<{ when: number; what: string }>()
 activity.on((ev) => console.log(ev))
@@ -1004,9 +1004,9 @@ type DebugBus = {
 }
 ```
 
-Subscribe to a structured event stream — controller lifecycle, cache events, mutation events, field validations. Used by `@olas/devtools`.
+Subscribe to a structured event stream — controller lifecycle, cache events, mutation events, field validations. Used by `@kontsedal/olas-devtools`.
 
-**Production behaviour.** In `@olas/core`'s production build, the emission
+**Production behaviour.** In `@kontsedal/olas-core`'s production build, the emission
 sites are removed by the bundler. `subscribe` accepts and returns a no-op
 unsub; no events fire. Use the devtools subscription in dev only — see
 SPEC §23 *Devtools / `__debug` and production builds*.
@@ -1040,7 +1040,7 @@ See [Errors](#errors).
 Conveniences for extracting types from a `ControllerDef<Props, Api>`:
 
 ```ts
-import type { CtrlApi, CtrlProps } from '@olas/core'
+import type { CtrlApi, CtrlProps } from '@kontsedal/olas-core'
 
 type Props = CtrlProps<typeof myController>
 type Api = CtrlApi<typeof myController>
@@ -1048,7 +1048,7 @@ type Api = CtrlApi<typeof myController>
 
 ---
 
-# @olas/core/testing
+# @kontsedal/olas-core/testing
 
 Test-only helpers. Importing from a non-test file is a smell — the `/testing` sub-path makes it grep-able.
 
@@ -1057,7 +1057,7 @@ Test-only helpers. Importing from a non-test file is a smell — the `/testing` 
 Construct an isolated root wrapping a single controller. Returns the controller's API plus the standard `Root` lifecycle controls. Equivalent to a hand-rolled "wrap in a root" boilerplate.
 
 ```ts
-import { createTestController } from '@olas/core/testing'
+import { createTestController } from '@kontsedal/olas-core/testing'
 
 test('counter increments', () => {
   const ctrl = createTestController(counter, { deps: {}, props: undefined })
@@ -1072,7 +1072,7 @@ test('counter increments', () => {
 Shape-correct fake. Pass an initial value plus optional overrides for the read-only signals (`errors`, `isValid`, etc.) or methods (`set`, `revalidate`, etc.). Returns a real `Field<T>` — passes `useField(...)` and any component accepting a real field.
 
 ```ts
-import { fakeField } from '@olas/core/testing'
+import { fakeField } from '@kontsedal/olas-core/testing'
 import { render } from '@testing-library/react'
 
 const name = fakeField<string>('Ada', { errors: ['too short'], touched: true })
@@ -1084,7 +1084,7 @@ render(<NameInput field={name} />)
 Same idea for `AsyncState<T>`. Pass overrides for any of the signal-backed fields plus `refetch` / `reset` / `firstValue` methods. Defaults: `status: 'idle'` unless `data` is provided (then `'success'`).
 
 ```ts
-import { fakeAsyncState } from '@olas/core/testing'
+import { fakeAsyncState } from '@kontsedal/olas-core/testing'
 
 const user = fakeAsyncState({ data: { id: '1', name: 'Ada' } })
 render(<UserCard user={user} />)
@@ -1092,7 +1092,7 @@ render(<UserCard user={user} />)
 
 ---
 
-# @olas/react
+# @kontsedal/olas-react
 
 The React adapter. `~230` LOC on top of `useSyncExternalStore` — concurrent-safe, no tearing, StrictMode-safe.
 
@@ -1109,7 +1109,7 @@ Pass the root from your app entry. Components descended from this provider can c
 Resolve the provider's root api in a component. Throws if called outside a provider — surfaces the "I forgot to wrap" mistake at the first hook call.
 
 ```ts
-import { useRoot } from '@olas/react'
+import { useRoot } from '@kontsedal/olas-react'
 import type { AppApi } from './controllers/app'
 
 function Header() {
@@ -1127,7 +1127,7 @@ Back-compat alias for `useRoot()`. Takes the root explicitly, so it's usable out
 Subscribe a component to one signal. Returns the current value; re-renders on change. Built on `useSyncExternalStore`.
 
 ```ts
-import { use, useRoot } from '@olas/react'
+import { use, useRoot } from '@kontsedal/olas-react'
 
 function Count() {
   const api = useRoot<{ count: ReadSignal<number> }>()
@@ -1140,7 +1140,7 @@ function Count() {
 Subscribe to all 5 read signals on a `Field<T>` with a single hook call. Returns the unwrapped values plus the action methods so binding to an `<input>` is one destructure.
 
 ```ts
-import { useField } from '@olas/react'
+import { useField } from '@kontsedal/olas-react'
 
 function NameInput({ field }: { field: Field<string> }) {
   const f = useField(field)
@@ -1159,7 +1159,7 @@ function NameInput({ field }: { field: Field<string> }) {
 Subscribe to all 8 read signals on an `AsyncState<T>` with a single hook call.
 
 ```ts
-import { useQuery } from '@olas/react'
+import { useQuery } from '@kontsedal/olas-react'
 
 function UserCard({ user }: { user: AsyncState<User> }) {
   const u = useQuery(user)
@@ -1193,7 +1193,7 @@ Any object with `suspend` and `resume` satisfies this — a full `Root<Api>` or 
 
 ---
 
-# @olas/persist
+# @kontsedal/olas-persist
 
 Persist state to a storage adapter (localStorage by default). Composes with any signal-shaped source — plain signals, fields, custom objects.
 
@@ -1202,8 +1202,8 @@ Persist state to a storage adapter (localStorage by default). Composes with any 
 Wire a signal-like source to persistent storage. Reads the saved value on construction (sync for localStorage, async if the adapter returns a promise). Subsequent source writes mirror to storage. Cleanup is bound to `ctx`.
 
 ```ts
-import { signal } from '@olas/core'
-import { usePersisted } from '@olas/persist'
+import { signal } from '@kontsedal/olas-core'
+import { usePersisted } from '@kontsedal/olas-persist'
 
 const draft = signal('')
 usePersisted(ctx, 'draft', draft, { crossTab: true })
@@ -1257,7 +1257,7 @@ The default. Returns `null` from `get` if `localStorage` is undefined (SSR-safe)
 
 ---
 
-# @olas/zod
+# @kontsedal/olas-zod
 
 Bridge Zod schemas into Olas validators and forms.
 
@@ -1267,7 +1267,7 @@ Wrap a Zod schema as a synchronous `Validator<T>`. Use as a field validator.
 
 ```ts
 import { z } from 'zod'
-import { zodValidator } from '@olas/zod'
+import { zodValidator } from '@kontsedal/olas-zod'
 
 const email = ctx.field('', [zodValidator(z.string().email())])
 ```
@@ -1282,7 +1282,7 @@ Walk a `z.object(...)` / `z.array(...)` / leaf tree and emit the matching `Form`
 
 ```ts
 import { z } from 'zod'
-import { formFromZod } from '@olas/zod'
+import { formFromZod } from '@kontsedal/olas-zod'
 
 const Schema = z.object({
   name: z.string().min(2),
@@ -1302,7 +1302,7 @@ Mapped type for the Olas-form structure derived from a Zod schema. Useful for ty
 
 ---
 
-# @olas/devtools
+# @kontsedal/olas-devtools
 
 In-app debugging UI consuming `root.__debug`. Two main components, both React.
 
@@ -1311,7 +1311,7 @@ In-app debugging UI consuming `root.__debug`. Two main components, both React.
 Floating, draggable, resizable host for the panel. Renders a small launcher button (always present) and, when open, a `position: fixed` window with the panel inside. Position + size + open + minimized state persist to `localStorage`.
 
 ```tsx
-import { DevtoolsLauncher } from '@olas/devtools'
+import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
 
 <OlasProvider root={root}>
   <App />

@@ -1,4 +1,4 @@
-# @olas/core
+# @kontsedal/olas-core
 
 The core of Olas — UI-framework-agnostic. Signals, controllers, queries, mutations, forms, scopes, SSR, and the devtools event bus. No React / Vue / Svelte imports anywhere.
 
@@ -7,7 +7,7 @@ This package is the only place that touches `@preact/signals-core` (peer dep). E
 ## Install
 
 ```bash
-pnpm add @olas/core @preact/signals-core
+pnpm add @kontsedal/olas-core @preact/signals-core
 ```
 
 ## What's in the box
@@ -33,7 +33,7 @@ Full reference with signatures and examples: [`../../API.md`](../../API.md).
 ## 30-second example
 
 ```ts
-import { createRoot, defineController, signal } from '@olas/core'
+import { createRoot, defineController, signal } from '@kontsedal/olas-core'
 
 const counter = defineController(() => {
   const count = signal(0)
@@ -48,11 +48,11 @@ root.dispose()
 
 ## Sub-paths
 
-- `@olas/core` — the main entry.
-- `@olas/core/testing` — `createTestController`, `fakeField`, `fakeAsyncState`. Test-only helpers; the sub-path makes "you imported testing utilities into production code" loud and grep-able.
+- `@kontsedal/olas-core` — the main entry.
+- `@kontsedal/olas-core/testing` — `createTestController`, `fakeField`, `fakeAsyncState`. Test-only helpers; the sub-path makes "you imported testing utilities into production code" loud and grep-able.
 
 ```ts
-import { createTestController, fakeField, fakeAsyncState } from '@olas/core/testing'
+import { createTestController, fakeField, fakeAsyncState } from '@kontsedal/olas-core/testing'
 ```
 
 ## Further reading

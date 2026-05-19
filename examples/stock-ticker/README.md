@@ -26,10 +26,10 @@ Olas signals; DOM bindings come from `effect()` wrappers in `src/dom.ts`.
 
 ```bash
 pnpm install
-pnpm --filter @olas/example-stock-ticker dev        # vite dev server
-pnpm --filter @olas/example-stock-ticker test       # vitest
-pnpm --filter @olas/example-stock-ticker typecheck  # tsc --noEmit
-pnpm --filter @olas/example-stock-ticker build      # vite build → dist/
+pnpm --filter @kontsedal/olas-example-stock-ticker dev        # vite dev server
+pnpm --filter @kontsedal/olas-example-stock-ticker test       # vitest
+pnpm --filter @kontsedal/olas-example-stock-ticker typecheck  # tsc --noEmit
+pnpm --filter @kontsedal/olas-example-stock-ticker build      # vite build → dist/
 ```
 
 Then open the printed `http://localhost:5180` and watch the prices wiggle.

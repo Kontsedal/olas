@@ -7,7 +7,7 @@ in pure-TypeScript controllers; React components are thin renderers.
 
 - Business logic — fetching, mutations, derivation, multi-step flows — lives
   in controllers (`defineController((ctx) => api)`), not in components.
-- React components subscribe via @olas/react hooks (`useRoot`, `use(signal)`,
+- React components subscribe via @kontsedal/olas-react hooks (`useRoot`, `use(signal)`,
   `useQuery`, `useField`). They never call `fetch`, never own a query or
   mutation, never hold long-lived state.
 - Controller factories are SYNCHRONOUS. Async work goes inside `ctx.cache`,
@@ -24,12 +24,12 @@ in pure-TypeScript controllers; React components are thin renderers.
 
 Test controllers in pure Node, no jsdom:
 
-    import { createTestController } from '@olas/core/testing'
+    import { createTestController } from '@kontsedal/olas-core/testing'
     const { api, dispose } = createTestController(myController, { deps: fakes })
     // call api.someMethod(), assert against api.someSignal.peek()
     dispose()
 
-`@olas/core/testing` is reserved for test files (`*.test.ts`, `*.spec.ts`).
+`@kontsedal/olas-core/testing` is reserved for test files (`*.test.ts`, `*.spec.ts`).
 Don't import it from production code.
 
 Run with `pnpm vitest run packages/<name>/tests/<file>.test.ts`.

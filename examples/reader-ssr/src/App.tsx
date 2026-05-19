@@ -2,7 +2,7 @@
 // `useSuspendOnHidden` pauses the root when the tab is hidden (cache stays in
 // memory; effects tear down; resumes on visible).
 
-import { OlasProvider, use, useRoot, useSuspendOnHidden } from '@olas/react'
+import { OlasProvider, use, useRoot, useSuspendOnHidden } from '@kontsedal/olas-react'
 import { Bookmark, BookmarkPlus, Loader2, MessageCircle, Moon, Sun, SunMoon } from 'lucide-react'
 import { type ReactElement, useEffect, useState } from 'react'
 import type { Article } from './api'

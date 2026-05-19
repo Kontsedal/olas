@@ -12,7 +12,7 @@
 // Optional props mirror DevtoolsPanel's. The launcher manages the window
 // chrome and ferries the rest through.
 
-import type { Root } from '@olas/core'
+import type { Root } from '@kontsedal/olas-core'
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
 import { DevtoolsPanel, type DevtoolsTab } from './DevtoolsPanel'
 import { DEVTOOLS_CSS } from './styles'

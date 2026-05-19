@@ -7,6 +7,7 @@
 
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
+import { use } from '@kontsedal/olas-react'
 import {
   ArrowDown,
   ArrowRight,
@@ -14,10 +15,20 @@ import {
   CalendarDays,
   CheckSquare,
   GripVertical,
+  Pencil,
   Plus,
 } from 'lucide-react'
-import type { ReactElement } from 'react'
+import {
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactElement,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import type { Card, Column as ColumnT, Priority } from '../api'
+import { useApi } from './useApi'
 
 export type ColumnProps = {
   column: ColumnT
@@ -32,6 +43,9 @@ export type ColumnProps = {
 export function Column(props: ColumnProps): ReactElement {
   const { column, cards, otherColumns, onMove, onReorder, onEditCard, onAddCard } = props
   const { setNodeRef, isOver } = useDroppable({ id: `col:${column.id}` })
+  // Ordered card ids in this column — shift-click range select uses this so
+  // the range is bounded by the column the user is interacting with.
+  const orderedIds = useMemo(() => cards.map((c) => c.id), [cards])
 
   return (
     <section
@@ -64,6 +78,7 @@ export function Column(props: ColumnProps): ReactElement {
             card={card}
             index={idx}
             column={column}
+            orderedIds={orderedIds}
             otherColumns={otherColumns}
             cardCount={cards.length}
             onEdit={() => onEditCard(card)}
@@ -85,16 +100,26 @@ function CardRow(props: {
   card: Card
   index: number
   column: ColumnT
+  orderedIds: readonly string[]
   otherColumns: ColumnT[]
   cardCount: number
   onEdit: () => void
   onReorder: (cardIds: string[]) => Promise<void>
   onMove: (cardId: string, toColumnId: string, toIndex: number) => Promise<void>
 }): ReactElement {
-  const { card, index, column, otherColumns, cardCount, onEdit, onReorder, onMove } = props
+  const { card, index, column, orderedIds, otherColumns, cardCount, onEdit, onReorder, onMove } =
+    props
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `card:${card.id}`,
   })
+  const [isInlineEditing, setIsInlineEditing] = useState(false)
+  const api = useApi()
+  const sel = api.board.selection
+  const selected = use(sel.isSelected(card.id))
+
+  const onSelectionClick = (e: MouseEvent<HTMLInputElement>): void => {
+    sel.handleClick(card.id, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey }, orderedIds)
+  }
 
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -105,8 +130,12 @@ function CardRow(props: {
     <li
       ref={setNodeRef}
       style={style}
-      className={`group rounded-lg border border-(--color-border) bg-(--color-bg-sunk) p-3 transition hover:-translate-y-px hover:shadow-[var(--shadow-card)] ${
+      className={`group rounded-lg border bg-(--color-bg-sunk) p-3 transition hover:-translate-y-px hover:shadow-[var(--shadow-card)] ${
         isDragging ? 'ring-2 ring-(--color-accent)' : ''
+      } ${
+        selected
+          ? 'border-(--color-accent) ring-1 ring-(--color-accent) bg-(--color-accent)/5'
+          : 'border-(--color-border)'
       }`}
     >
       <div className="flex items-start gap-2">
@@ -119,13 +148,44 @@ function CardRow(props: {
         >
           <GripVertical className="size-4" />
         </button>
-        <button
-          type="button"
-          className="flex-1 text-left text-sm font-semibold leading-tight text-(--color-fg) hover:text-(--color-accent)"
-          onClick={onEdit}
-        >
-          {card.title}
-        </button>
+        <input
+          type="checkbox"
+          aria-label={`Select ${card.title} (shift-click for range, ⌘/ctrl-click to toggle)`}
+          checked={selected}
+          onChange={() => {}}
+          onClick={onSelectionClick}
+          title="Shift-click for range · ⌘/Ctrl-click to toggle"
+          className={`size-3.5 accent-(--color-accent) transition-opacity ${
+            selected ? 'opacity-100' : 'opacity-30 group-hover:opacity-100'
+          }`}
+        />
+        {isInlineEditing ? (
+          <InlineTitleEditor card={card} onDone={() => setIsInlineEditing(false)} />
+        ) : (
+          <>
+            <button
+              type="button"
+              className="flex-1 text-left text-sm font-semibold leading-tight text-(--color-fg) hover:text-(--color-accent)"
+              onClick={onEdit}
+              onDoubleClick={(e) => {
+                e.preventDefault()
+                setIsInlineEditing(true)
+              }}
+              title="Click to open editor · double-click to rename inline"
+            >
+              {card.title}
+            </button>
+            <button
+              type="button"
+              aria-label="Rename inline"
+              className="rounded p-0.5 text-(--color-fg-mute) opacity-0 transition group-hover:opacity-100 hover:text-(--color-accent)"
+              onClick={() => setIsInlineEditing(true)}
+              title="Rename (inline) — demonstrates ctx.attach ephemeral controller"
+            >
+              <Pencil className="size-3" />
+            </button>
+          </>
+        )}
         <PriorityBadge priority={card.priority} />
       </div>
 
@@ -211,6 +271,64 @@ function PriorityBadge({ priority }: { priority: Priority }): ReactElement {
     >
       {priority.toUpperCase()}
     </span>
+  )
+}
+
+/**
+ * Inline title editor. Spawns an ephemeral controller via
+ * `boardController.openInlineTitleEditor(card)` (which calls `ctx.attach`),
+ * holds the `{ api, dispose }` handle, and disposes on save / cancel / blur.
+ * Exists to demonstrate the SPEC §11.1 "ephemeral child controller" pattern.
+ */
+function InlineTitleEditor({ card, onDone }: { card: Card; onDone: () => void }): ReactElement {
+  const api = useApi()
+  const handle = useMemo(() => api.board.openInlineTitleEditor(card), [api, card])
+  useEffect(() => () => handle.dispose(), [handle])
+  const editor = handle.api
+  const draftValue = use(editor.draft)
+  const isPending = use(editor.commit.isPending)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [])
+
+  const finish = (commit: boolean): void => {
+    if (!commit) {
+      onDone()
+      return
+    }
+    editor.commit
+      .run()
+      .catch(() => {
+        // surface errors via the Activity feed; just close the editor.
+      })
+      .finally(() => onDone())
+  }
+
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      finish(true)
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      finish(false)
+    }
+  }
+
+  return (
+    <input
+      ref={inputRef}
+      type="text"
+      value={draftValue}
+      onChange={(e) => editor.draft.set(e.target.value)}
+      onKeyDown={onKeyDown}
+      onBlur={() => finish(true)}
+      disabled={isPending}
+      aria-label="Rename card inline"
+      className="flex-1 rounded border border-(--color-accent) bg-(--color-bg-elev) px-1.5 py-0.5 text-sm font-semibold leading-tight text-(--color-fg) outline-none ring-2 ring-(--color-accent)/30 disabled:opacity-60"
+    />
   )
 }
 

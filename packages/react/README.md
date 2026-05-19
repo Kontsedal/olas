@@ -1,11 +1,11 @@
-# @olas/react
+# @kontsedal/olas-react
 
 The React adapter for [Olas](../..). Tiny binding layer (~230 LOC) on top of `useSyncExternalStore`. The root is created **outside** React and resolved via context — so React never owns the controller lifetime, no double-construction under StrictMode, and concurrent rendering is safe by construction.
 
 ## Install
 
 ```bash
-pnpm add @olas/react @olas/core @preact/signals-core react react-dom
+pnpm add @kontsedal/olas-react @kontsedal/olas-core @preact/signals-core react react-dom
 ```
 
 `react >= 18` is a peer dep (we rely on `useSyncExternalStore`).
@@ -14,7 +14,7 @@ pnpm add @olas/react @olas/core @preact/signals-core react react-dom
 
 ```tsx
 // counter.ts — controller defined outside React
-import { defineController, signal, type ReadSignal } from '@olas/core'
+import { defineController, signal, type ReadSignal } from '@kontsedal/olas-core'
 
 export const counter = defineController(() => {
   const count = signal(0)
@@ -29,9 +29,9 @@ export type CounterApi = {
 
 ```tsx
 // main.tsx — root constructed once
-import { createRoot } from '@olas/core'
+import { createRoot } from '@kontsedal/olas-core'
 import { createRoot as createReactRoot } from 'react-dom/client'
-import { OlasProvider } from '@olas/react'
+import { OlasProvider } from '@kontsedal/olas-react'
 import { counter } from './counter'
 import { App } from './App'
 
@@ -46,7 +46,7 @@ createReactRoot(document.getElementById('root')!).render(
 
 ```tsx
 // App.tsx — React reads signals via tiny hooks
-import { use, useRoot } from '@olas/react'
+import { use, useRoot } from '@kontsedal/olas-react'
 import type { CounterApi } from './counter'
 
 export function App() {
@@ -78,10 +78,10 @@ The internal pattern: every signal `.subscribe()` fires synchronously with the c
 
 ## Fakes for tests
 
-`@olas/core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)` so a component test can be driven without building a real controller:
+`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)` so a component test can be driven without building a real controller:
 
 ```tsx
-import { fakeField, fakeAsyncState } from '@olas/core/testing'
+import { fakeField, fakeAsyncState } from '@kontsedal/olas-core/testing'
 
 const profile = {
   draft: fakeField('hello'),

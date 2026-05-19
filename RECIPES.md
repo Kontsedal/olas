@@ -8,10 +8,10 @@ Spec §16.5 documents the same patterns in narrative form. This file is the "rea
 
 ## `useDebounced` — debounce a write
 
-When the user types into a search box, you want to query after they stop typing, not on every keystroke. `debounced` (from `@olas/core`) is a pure derived signal — no controller needed:
+When the user types into a search box, you want to query after they stop typing, not on every keystroke. `debounced` (from `@kontsedal/olas-core`) is a pure derived signal — no controller needed:
 
 ```ts
-import { defineController, signal, debounced } from '@olas/core'
+import { defineController, signal, debounced } from '@kontsedal/olas-core'
 
 const searchController = defineController((ctx) => {
   const term = signal('')
@@ -26,7 +26,7 @@ const searchController = defineController((ctx) => {
 
 `debounced(source, ms)` returns a `ReadSignal<T>` that reflects `source` but waits `ms` after the last write before emitting. Compose with `ctx.use` directly — the query re-keys on debounced changes, not raw ones.
 
-For "debounce a validator," use `debouncedValidator(fn, ms)` from `@olas/core` instead — it wraps a `Validator<T>` so per-keystroke async checks don't pile up.
+For "debounce a validator," use `debouncedValidator(fn, ms)` from `@kontsedal/olas-core` instead — it wraps a `Validator<T>` so per-keystroke async checks don't pile up.
 
 ---
 
@@ -35,8 +35,8 @@ For "debounce a validator," use `debouncedValidator(fn, ms)` from `@olas/core` i
 The page-number + next/prev triad:
 
 ```ts
-import type { Ctx } from '@olas/core'
-import { signal } from '@olas/core'
+import type { Ctx } from '@kontsedal/olas-core'
+import { signal } from '@kontsedal/olas-core'
 
 function usePagination(_ctx: Ctx, opts: { pageSize: number; initialPage?: number } = { pageSize: 20 }) {
   const page = signal(opts.initialPage ?? 1)
@@ -67,7 +67,7 @@ const listController = defineController((ctx) => {
 ## `useSubmit` — validate then mutate
 
 ```ts
-import type { Ctx, Form, Mutation, ReadSignal } from '@olas/core'
+import type { Ctx, Form, Mutation, ReadSignal } from '@kontsedal/olas-core'
 
 function useSubmit<T, R>(
   ctx: Ctx,
@@ -100,8 +100,8 @@ const profileController = defineController((ctx) => {
 ## `useInlineEdit` — click-to-edit a cell
 
 ```ts
-import type { Ctx } from '@olas/core'
-import { signal } from '@olas/core'
+import type { Ctx } from '@kontsedal/olas-core'
+import { signal } from '@kontsedal/olas-core'
 
 function useInlineEdit<T>(
   ctx: Ctx,
@@ -140,8 +140,8 @@ function useInlineEdit<T>(
 For WebSocket / SSE streams firing 10–1000 events/sec, rendered live:
 
 ```ts
-import type { Ctx } from '@olas/core'
-import { signal } from '@olas/core'
+import type { Ctx } from '@kontsedal/olas-core'
+import { signal } from '@kontsedal/olas-core'
 
 function useTail<T>(
   ctx: Ctx,
@@ -192,7 +192,7 @@ function useTail<T>(
 ## `useRealtimePatcher` — WebSocket events → cache mutations
 
 ```ts
-import type { Ctx } from '@olas/core'
+import type { Ctx } from '@kontsedal/olas-core'
 
 function useRealtimePatcher<TEvent extends { type: string }>(
   ctx: Ctx,

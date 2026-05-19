@@ -1,6 +1,6 @@
 {
-  "name": "@olas/core",
-  "version": "0.0.0",
+  "name": "@kontsedal/olas-core",
+  "version": "0.0.1-rc.0",
   "description": "Olas core — controller tree, signals, queries, mutations, forms",
   "license": "MIT",
   "type": "module",

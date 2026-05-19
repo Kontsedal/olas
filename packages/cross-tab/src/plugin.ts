@@ -5,7 +5,7 @@ import {
   type QueryClientPlugin,
   type QueryClientPluginApi,
   type SetDataEvent,
-} from '@olas/core'
+} from '@kontsedal/olas-core'
 import { type ChannelLike, defaultChannelFactory } from './channel'
 import { type Message, PROTOCOL_VERSION } from './protocol'
 

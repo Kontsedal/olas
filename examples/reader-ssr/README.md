@@ -31,21 +31,21 @@ Olas's lean SSR story: `waitForIdle → dehydrate` on the server, `createRoot(..
 pnpm install
 
 # Plain SPA dev mode (no SSR — fast iteration):
-pnpm --filter @olas/example-reader-ssr dev          # http://localhost:5182
+pnpm --filter @kontsedal/olas-example-reader-ssr dev          # http://localhost:5182
 
 # Production build + SSR server:
-pnpm --filter @olas/example-reader-ssr preview      # builds, then http://localhost:5183
+pnpm --filter @kontsedal/olas-example-reader-ssr preview      # builds, then http://localhost:5183
 # or step-by-step:
-pnpm --filter @olas/example-reader-ssr build
-pnpm --filter @olas/example-reader-ssr serve
+pnpm --filter @kontsedal/olas-example-reader-ssr build
+pnpm --filter @kontsedal/olas-example-reader-ssr serve
 
-pnpm --filter @olas/example-reader-ssr typecheck
-pnpm --filter @olas/example-reader-ssr test
+pnpm --filter @kontsedal/olas-example-reader-ssr typecheck
+pnpm --filter @kontsedal/olas-example-reader-ssr test
 ```
 
 ## How to confirm SSR is actually working
 
-1. `pnpm --filter @olas/example-reader-ssr preview`.
+1. `pnpm --filter @kontsedal/olas-example-reader-ssr preview`.
 2. Open `http://localhost:5183` in a browser with DevTools open.
 3. Disable JavaScript and reload — the article list still renders (server-rendered HTML).
 4. Re-enable JS, open the Network tab, hard-refresh — the page's HTML carries the data; **no `getPage` request fires on first paint**. Only when you click "Load more" does the client hit the api.

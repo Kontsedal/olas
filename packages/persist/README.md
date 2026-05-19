@@ -1,18 +1,18 @@
-# @olas/persist
+# @kontsedal/olas-persist
 
 Persist a `Signal<T>` or `Field<T>` (or anything with `.value` + `.set` + `.subscribe`) to `localStorage` — or any custom `StorageAdapter`. Optional cross-tab sync. Works with async storage backends.
 
 ## Install
 
 ```bash
-pnpm add @olas/persist @olas/core @preact/signals-core
+pnpm add @kontsedal/olas-persist @kontsedal/olas-core @preact/signals-core
 ```
 
 ## 30-second example
 
 ```ts
-import { defineController, signal } from '@olas/core'
-import { usePersisted } from '@olas/persist'
+import { defineController, signal } from '@kontsedal/olas-core'
+import { usePersisted } from '@kontsedal/olas-persist'
 
 const settings = defineController((ctx) => {
   const theme = signal<'light' | 'dark'>('light')

@@ -1,6 +1,6 @@
 {
-  "name": "@olas/example-stock-ticker",
-  "version": "0.0.0",
+  "name": "@kontsedal/olas-example-stock-ticker",
+  "version": "0.0.1-rc.0",
   "private": true,
   "description": "Vanilla TS example — live stock ticker on signals + emitter + throttled, no UI framework",
   "license": "MIT",
@@ -13,8 +13,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@olas/core": "workspace:^",
-    "@olas/persist": "workspace:^"
+    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-persist": "workspace:^"
   },
   "devDependencies": {
     "@preact/signals-core": "^1.14.2",

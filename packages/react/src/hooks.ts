@@ -1,4 +1,4 @@
-import type { AsyncState, AsyncStatus, Field, ReadSignal } from '@olas/core'
+import type { AsyncState, AsyncStatus, Field, ReadSignal } from '@kontsedal/olas-core'
 import { useCallback, useRef, useSyncExternalStore } from 'react'
 
 /**

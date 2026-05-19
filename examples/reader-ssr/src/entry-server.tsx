@@ -2,7 +2,7 @@
 // returns the rendered HTML plus the dehydrated state for the client to
 // hydrate against.
 
-import type { DehydratedState } from '@olas/core'
+import type { DehydratedState } from '@kontsedal/olas-core'
 import { renderToString } from 'react-dom/server'
 import { App } from './App'
 import { createFakeApi } from './api'

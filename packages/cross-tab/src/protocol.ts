@@ -1,5 +1,5 @@
 /**
- * Wire protocol for `@olas/cross-tab` messages. SPEC §13.2.
+ * Wire protocol for `@kontsedal/olas-cross-tab` messages. SPEC §13.2.
  *
  * `v` (protocol version) and `sourceId` (per-plugin-instance unique tag)
  * combine to make the three-layer echo prevention work:

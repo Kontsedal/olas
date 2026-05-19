@@ -1,20 +1,20 @@
-# @olas/cross-tab
+# @kontsedal/olas-cross-tab
 
-`BroadcastChannel`-backed cache sync for `@olas/core`. When one tab writes via `query.setData(...)` or `query.invalidate(...)`, every other tab of the same origin sees the same write — without re-fetching, without persistence, without a server round-trip. SPEC §13.2.
+`BroadcastChannel`-backed cache sync for `@kontsedal/olas-core`. When one tab writes via `query.setData(...)` or `query.invalidate(...)`, every other tab of the same origin sees the same write — without re-fetching, without persistence, without a server round-trip. SPEC §13.2.
 
-This is the **in-memory** sibling to `@olas/persist`. Persistence mirrors *durable* state on the `storage` event; this mirrors the (much larger) in-memory query cache that never touches disk. Both are independently opt-in.
+This is the **in-memory** sibling to `@kontsedal/olas-persist`. Persistence mirrors *durable* state on the `storage` event; this mirrors the (much larger) in-memory query cache that never touches disk. Both are independently opt-in.
 
 ## Install
 
 ```bash
-pnpm add @olas/cross-tab @olas/core @preact/signals-core
+pnpm add @kontsedal/olas-cross-tab @kontsedal/olas-core @preact/signals-core
 ```
 
 ## 30-second example
 
 ```ts
-import { createRoot, defineController, defineQuery } from '@olas/core'
-import { crossTabPlugin } from '@olas/cross-tab'
+import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 
 // Opt the query in. `queryId` is required — it routes inbound messages
 // across tabs without depending on the in-memory `Query` reference.
@@ -98,14 +98,14 @@ Setting `crossTab: true` without a `queryId` logs a one-time `console.warn` (dev
 
 When `BroadcastChannel === undefined` (Node, older browsers) and no `channelFactory` override is supplied, `crossTabPlugin(...)` returns a no-op plugin. The root still constructs cleanly; cross-tab is just disabled. This means you can wire the plugin unconditionally in shared code paths.
 
-## Interaction with `@olas/persist`
+## Interaction with `@kontsedal/olas-persist`
 
 These two layers solve different problems:
 
-- `@olas/persist` mirrors **durable** state via `localStorage` + the `storage` event.
-- `@olas/cross-tab` mirrors the **in-memory** query cache via `BroadcastChannel`.
+- `@kontsedal/olas-persist` mirrors **durable** state via `localStorage` + the `storage` event.
+- `@kontsedal/olas-cross-tab` mirrors the **in-memory** query cache via `BroadcastChannel`.
 
-You can combine them on the same logical entity, but it's redundant — `@olas/persist`'s cross-tab sync already covers the durable copy.
+You can combine them on the same logical entity, but it's redundant — `@kontsedal/olas-persist`'s cross-tab sync already covers the durable copy.
 
 ## Limitations (v1)
 

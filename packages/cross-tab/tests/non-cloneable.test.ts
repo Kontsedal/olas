@@ -1,4 +1,4 @@
-import { createRoot, defineController, defineQuery } from '@olas/core'
+import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import type { ChannelLike } from '../src/channel'
 import { crossTabPlugin } from '../src/plugin'

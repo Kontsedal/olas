@@ -5,7 +5,7 @@
 // receives `{ signal, deps }` from `FetchCtx`, so the api is reached via
 // `deps.api` — no module-level capture, no `setApiForQuery(api)` ceremony.
 
-import { defineQuery } from '@olas/core'
+import { defineQuery } from '@kontsedal/olas-core'
 import type { Api, Board } from './api'
 
 export const boardQuery = defineQuery({
@@ -14,7 +14,7 @@ export const boardQuery = defineQuery({
   staleTime: 10_000,
 })
 
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     api: Api
   }

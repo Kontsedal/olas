@@ -1,6 +1,6 @@
 ---
 name: react
-description: "@olas/react — Provider, useRoot, use/useQuery/useField, KeepAlive, useSuspendOnHidden. Built on useSyncExternalStore."
+description: "@kontsedal/olas-react — Provider, useRoot, use/useQuery/useField, KeepAlive, useSuspendOnHidden. Built on useSyncExternalStore."
 type: module
 covers:
   - packages/react/src/index.ts
@@ -17,7 +17,7 @@ last_verified: 2026-05-18
 confidence: high
 ---
 
-# `@olas/react`
+# `@kontsedal/olas-react`
 
 The React adapter. Pure binding layer on top of `useSyncExternalStore` — no controller construction happens here; React just reads signals. The root is created once outside React (typically in `main.tsx`) and resolved via context. Spec §16, §20.10.
 
@@ -85,4 +85,4 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 
 ## Fakes for UI tests
 
-`@olas/core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` / `AsyncState<T>` so a test can pass them straight into a `useField`/`useQuery`-consuming component without building a real controller. See `testing.ts:31-132`.
+`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` / `AsyncState<T>` so a test can pass them straight into a `useField`/`useQuery`-consuming component without building a real controller. See `testing.ts:31-132`.

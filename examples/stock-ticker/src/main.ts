@@ -1,7 +1,7 @@
 // Entry. Builds the root, then wires DOM nodes to signals via `effect()`.
 // No frameworks involved.
 
-import { computed, effect } from '@olas/core'
+import { computed, effect } from '@kontsedal/olas-core'
 import { createFakeMarket } from './api'
 import { createAppRoot } from './controller'
 import { bindList, bindText, makeSparkline } from './dom'

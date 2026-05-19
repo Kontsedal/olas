@@ -8,7 +8,7 @@ export default defineConfig({
   clean: true,
   treeshake: true,
   target: 'es2022',
-  deps: { neverBundle: ['react', '@olas/core'] },
+  deps: { neverBundle: ['react', '@kontsedal/olas-core'] },
   define: {
     __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
   },

@@ -20,7 +20,7 @@ Coverage at bootstrap:
 Source for the bootstrap is the agent's working memory from implementing the codebase. Pages with `confidence: high` are also cross-verifiable against `SPEC.md` + source code. Pages without spec backing are `confidence: medium`.
 
 Followups:
-- Phase 10 (`@olas/react` + scopes) lands → add `modules/react.md`, `entities/scope.md`, `flows/use-root.md`.
+- Phase 10 (`@kontsedal/olas-react` + scopes) lands → add `modules/react.md`, `entities/scope.md`, `flows/use-root.md`.
 - No automated lint yet; manual passes only. A `scripts/wiki-lint.ts` is a TODO.
 
 ## [2026-05-18 18:35] refine | self-critique pass
@@ -44,15 +44,15 @@ What I considered but didn't change:
 
 Linter passes cleanly on the current wiki: 37 pages, 0 errors, 0 warnings.
 
-## [2026-05-18 19:30] ingest | Phase 10 — scopes + `@olas/react`
+## [2026-05-18 19:30] ingest | Phase 10 — scopes + `@kontsedal/olas-react`
 
 Spec §10.3 + §16 + §20.10 land. Two pieces in one phase, per §22.
 
 What shipped:
 
-- **Scopes in `@olas/core`** — new `packages/core/src/scope.ts` (`defineScope`, `Scope<T>`). `Ctx` gains `provide<T>(scope, value)` and `inject<T>(scope): T`. `ControllerInstance` carries a lazy `scopes: Map<symbol, unknown> | null` and `inject` walks the parent chain. Throws synchronously during construction when no provider + no default. 11 new tests in `packages/core/tests/scope.test.ts` cover: distinct identity, hasDefault flag, shadow semantics, missing-provider error, default fallback, reactive scope value via embedded signal.
-- **`@olas/react`** — was empty shell; now ~230 LOC across `context.ts`, `hooks.ts`, `keep-alive.ts`. Built on `useSyncExternalStore`. Public surface matches §20.10 exactly: `OlasProvider`, `useRoot`, `useController` (alias), `use(signal)`, `useQuery(subscription)`, `useField(field)`, `<KeepAlive>`, `useSuspendOnHidden`. `useQuery`/`useField` batch N subscribes into one render trigger via a per-hook version counter. 7 new tests in `packages/react/tests/adapter.test.tsx` cover the four spec-required cases (signal re-render, query invalidation, StrictMode safety, field/`<input>` round-trip) plus provider edge cases.
-- **Testing helpers** — `fakeField<T>` and `fakeAsyncState<T>` added to `@olas/core/testing`, per §20.10.
+- **Scopes in `@kontsedal/olas-core`** — new `packages/core/src/scope.ts` (`defineScope`, `Scope<T>`). `Ctx` gains `provide<T>(scope, value)` and `inject<T>(scope): T`. `ControllerInstance` carries a lazy `scopes: Map<symbol, unknown> | null` and `inject` walks the parent chain. Throws synchronously during construction when no provider + no default. 11 new tests in `packages/core/tests/scope.test.ts` cover: distinct identity, hasDefault flag, shadow semantics, missing-provider error, default fallback, reactive scope value via embedded signal.
+- **`@kontsedal/olas-react`** — was empty shell; now ~230 LOC across `context.ts`, `hooks.ts`, `keep-alive.ts`. Built on `useSyncExternalStore`. Public surface matches §20.10 exactly: `OlasProvider`, `useRoot`, `useController` (alias), `use(signal)`, `useQuery(subscription)`, `useField(field)`, `<KeepAlive>`, `useSuspendOnHidden`. `useQuery`/`useField` batch N subscribes into one render trigger via a per-hook version counter. 7 new tests in `packages/react/tests/adapter.test.tsx` cover the four spec-required cases (signal re-render, query invalidation, StrictMode safety, field/`<input>` round-trip) plus provider edge cases.
+- **Testing helpers** — `fakeField<T>` and `fakeAsyncState<T>` added to `@kontsedal/olas-core/testing`, per §20.10.
 
 What changed in the wiki:
 
@@ -95,13 +95,13 @@ Conventions decided here (for future reference):
 - Internal architecture knowledge stays in `.wiki/`.
 - Examples are typechecked but not built or run by CI.
 
-## [2026-05-18 21:10] ingest | Phase 13 — `@olas/devtools` (in-app variant)
+## [2026-05-18 21:10] ingest | Phase 13 — `@kontsedal/olas-devtools` (in-app variant)
 
 Spec §13 ships as an in-app `<DevtoolsPanel>` rather than a browser extension. The same `root.__debug` contract works for either; the extension is a future thin wrapper around the wire format.
 
 What shipped:
 
-- **New `@olas/devtools` package.** Drop-in React panel + lower-level `DevtoolsStore`. Four tabs: Tree (live controller tree from construct/suspend/resume/dispose events), Cache (fetch lifecycle + invalidate/gc), Mutations (run/success/error/rollback), Fields (validation outcomes — runtime not yet emitting these but the rendering is wired). Inline-scoped CSS so it's truly drop-in. Bounded logs (default 100/each); a Clear button empties them but preserves the live tree.
+- **New `@kontsedal/olas-devtools` package.** Drop-in React panel + lower-level `DevtoolsStore`. Four tabs: Tree (live controller tree from construct/suspend/resume/dispose events), Cache (fetch lifecycle + invalidate/gc), Mutations (run/success/error/rollback), Fields (validation outcomes — runtime not yet emitting these but the rendering is wired). Inline-scoped CSS so it's truly drop-in. Bounded logs (default 100/each); a Clear button empties them but preserves the live tree.
 - **Runtime devtools wiring.** Before this phase the runtime emitted only `controller:*` events; the `DebugEvent` union listed `cache:*` / `mutation:*` / `field:*` but nothing fired them. Now wired:
   - `cache:fetch-start / fetch-success / fetch-error` — via a new `EntryEvents` callback bundle that `ClientEntry` constructs from `client.devtools` and passes into `Entry`. The bundle is `undefined` when no devtools, so the cost is one extra constructor field.
   - `cache:invalidated / gc` — `QueryClient.invalidate / invalidateAll / dropEntry`.
@@ -120,7 +120,7 @@ Tests added: store.test.ts (13), panel.test.tsx (6), core/tests/devtools-events.
 Future stretch (NOT v1-blocking):
 - Browser extension wrapping `root.__debug` over `window.postMessage` → content script → background → DevTools panel.
 - `cache:subscribed` and `field:validated` emission (low priority).
-- Signal dependency graph view (spec §13 mentioned; needs additional plumbing inside `@olas/core/signals`).
+- Signal dependency graph view (spec §13 mentioned; needs additional plumbing inside `@kontsedal/olas-core/signals`).
 
 ## [2026-05-18 22:10] ingest | three new example apps for breadth + testability
 
@@ -130,7 +130,7 @@ apps so the eloquence + testability claim is concrete. Each app has its own
 
 What shipped:
 
-- **`examples/_shared/aliases.ts`** — single source of Vite + Vitest source aliases for `@olas/*` packages so apps run without a pre-built `dist/`.
+- **`examples/_shared/aliases.ts`** — single source of Vite + Vitest source aliases for `@kontsedal/olas-*` packages so apps run without a pre-built `dist/`.
 - **`examples/stock-ticker/`** (vanilla TS, no React) — `signal`/`computed`/`effect` DOM bindings, `ctx.emitter` price stream, `debounced`/`throttled`, `defineQuery` + `refetchInterval`, `usePersisted` watchlist. 7 controller tests.
 - **`examples/kanban/`** (React + Devtools) — three mutation concurrency modes side by side (`parallel` moveCard with optimistic rollback, `latest-wins` filter, `serial` reorder), `formFromZod` + `FieldArray` for card subtasks, `defineScope` for currentBoardScope, `<DevtoolsPanel>` mounted. 9 tests (7 controller + 2 component using `fakeField`).
 - **`examples/reader-ssr/`** (React + SSR) — `waitForIdle → dehydrate → hydrate` round-trip with a paginated `defineQuery` keyed by cursor (the cursor-keyed pattern was forced because `dehydrate` doesn't currently serialize `defineInfiniteQuery` entries — see findings below). `useSuspendOnHidden`, `usePersisted` reading progress, emitter-driven analytics, `onError` root option. 6 tests including the SSR cache-hit contract.
@@ -210,7 +210,7 @@ Test coverage adds (jsdom env):
 Lib test count 244 → 248. Status / README / overview counts bumped; the `entities/query-client.md` `unsubFocus`/`unsubOnline` paragraph updated to spell out the precedence rule.
 
 
-## [2026-05-19 14:58] ingest | @olas/realtime package landed
+## [2026-05-19 14:58] ingest | @kontsedal/olas-realtime package landed
 
 New workspace package: thin wrappers around the SPEC §16.5 realtime → cache-patches
 pattern and the §16.5 tail-buffer pattern. Adds modules/realtime.md (medium
@@ -227,16 +227,16 @@ is consumer-implemented via AmbientDeps augmentation; package ships no default.
 10 new tests (5 patcher, 5 live-stream). vitest alias added; biome / typecheck
 / wiki-lint pass. BACKLOG entry flipped from `[idea]` to `[in-progress]`.
 
-## [2026-05-19 15:50] ingest | @olas/cross-tab package + QueryClientPlugin surface landed
+## [2026-05-19 15:50] ingest | @kontsedal/olas-cross-tab package + QueryClientPlugin surface landed
 
 Two-part change: (1) a new pluggable surface on the core `QueryClient`,
-(2) `@olas/cross-tab` — the first consumer — as a workspace package. Spec
+(2) `@kontsedal/olas-cross-tab` — the first consumer — as a workspace package. Spec
 amendment lands at §13.2 (sibling to §13.1 persist), plus updates to
 §5.2, §20.4, §20.8, §20.9.
 
 ### Core surface (`packages/core/src/query/plugin.ts`)
 
-New types exported from `@olas/core`:
+New types exported from `@kontsedal/olas-core`:
 
 - `QueryClientPlugin` — `init` / `onSetData` / `onInvalidate` / `onGc` /
   `dispose`. All optional; wrapped in try/catch by `QueryClient`.
@@ -262,7 +262,7 @@ already exist locally (matched by `stableHash(keyArgs)`). Otherwise the
 message is dropped silently — without `callArgs` the receiver couldn't
 refetch later, and seeding rows the user never subscribed to is leaky.
 
-### `@olas/cross-tab` package
+### `@kontsedal/olas-cross-tab` package
 
 `crossTabPlugin({ channelName, onWarn?, channelFactory? })`. Three echo-
 prevention layers: (1) sender-side `isRemote` skip in core, (2) own-

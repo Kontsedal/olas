@@ -31,10 +31,10 @@ live Devtools panel.
 
 ```bash
 pnpm install
-pnpm --filter @olas/example-kanban dev        # http://localhost:5181
-pnpm --filter @olas/example-kanban test
-pnpm --filter @olas/example-kanban typecheck
-pnpm --filter @olas/example-kanban build
+pnpm --filter @kontsedal/olas-example-kanban dev        # http://localhost:5181
+pnpm --filter @kontsedal/olas-example-kanban test
+pnpm --filter @kontsedal/olas-example-kanban typecheck
+pnpm --filter @kontsedal/olas-example-kanban build
 ```
 
 In the dev UI:

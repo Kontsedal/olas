@@ -19,7 +19,8 @@ import {
   useSensor,
   useSensors,
 } from '@dnd-kit/core'
-import { useQuery } from '@olas/react'
+import { use, useQuery } from '@kontsedal/olas-react'
+import { X } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { Board as BoardT, Card } from '../api'
 import { Column } from './Column'
@@ -105,6 +106,7 @@ export function Board(props: {
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+      <BulkActionBar />
       <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
         {board.data.columns.map((col) => {
           const cards = col.cardIds
@@ -131,6 +133,52 @@ export function Board(props: {
         })}
       </div>
     </DndContext>
+  )
+}
+
+/**
+ * Bulk-action toolbar — only visible when at least one card is selected.
+ * Drives `boardController.bulkMoveSelected`, which loops over each selected
+ * id through the existing `moveCard` mutation (parallel + per-card
+ * optimistic rollback). Demonstrates the SPEC §17.5 `selection` composable.
+ */
+function BulkActionBar(): ReactElement | null {
+  const api = useApi()
+  const sel = api.board.selection
+  const size = use(sel.size)
+  const board = useQuery(api.board.board)
+  if (size === 0 || !board.data) return null
+  const columns = board.data.columns
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-(--color-accent) bg-(--color-accent)/10 px-3 py-2 text-sm">
+      <span className="font-medium text-(--color-fg)">
+        {size} selected
+        <span className="ml-2 text-xs font-normal text-(--color-fg-mute)">
+          shift-click for ranges · ⌘/Ctrl-click to toggle
+        </span>
+      </span>
+      <div className="ml-auto flex flex-wrap items-center gap-2">
+        {columns.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => void api.board.bulkMoveSelected(c.id)}
+            className="rounded-md border border-(--color-border) bg-(--color-bg-elev) px-2 py-1 text-xs font-medium text-(--color-fg) hover:border-(--color-accent) hover:text-(--color-accent)"
+          >
+            Move → {c.title}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => sel.clear()}
+          aria-label="Clear selection"
+          title="Clear selection"
+          className="inline-flex items-center gap-1 rounded-md border border-(--color-border) bg-(--color-bg-elev) px-2 py-1 text-xs text-(--color-fg-mute) hover:text-(--color-fg)"
+        >
+          <X className="size-3" />
+        </button>
+      </div>
+    </div>
   )
 }
 

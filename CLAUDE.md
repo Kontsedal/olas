@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: all five published packages exist and ship — `@olas/core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`), `@olas/react` (Provider + hooks + keep-alive), `@olas/zod`, `@olas/persist`, `@olas/devtools` (in-app panel + floating launcher). 255 lib tests + the `examples/` apps (kanban, reader-ssr, stock-ticker). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
+Current implementation status: all five published packages exist and ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`), `@kontsedal/olas-react` (Provider + hooks + keep-alive), `@kontsedal/olas-zod`, `@kontsedal/olas-persist`, `@kontsedal/olas-devtools` (in-app panel + floating launcher). 255 lib tests + the `examples/` apps (kanban, reader-ssr, stock-ticker). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -35,16 +35,16 @@ CI = `install → typecheck → lint → test → build`. Reproducing CI locally
 
 ```
 packages/
-  core/      # @olas/core     — signals, controllers, queries, mutations, forms, SSR
-  react/     # @olas/react    — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden
-  persist/   # @olas/persist  — usePersisted + localStorage adapter
-  zod/       # @olas/zod      — zodValidator, formFromZod
-  devtools/  # @olas/devtools — in-app DevtoolsPanel + floating launcher
+  core/      # @kontsedal/olas-core     — signals, controllers, queries, mutations, forms, SSR
+  react/     # @kontsedal/olas-react    — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden
+  persist/   # @kontsedal/olas-persist  — usePersisted + localStorage adapter
+  zod/       # @kontsedal/olas-zod      — zodValidator, formFromZod
+  devtools/  # @kontsedal/olas-devtools — in-app DevtoolsPanel + floating launcher
 ```
 
 Tests import workspace packages via aliases declared in `vitest.config.ts` — pointed at each package's `src/index.ts` (and `core/src/testing.ts`), so tests run without building `dist/`. The published `dist/` is what consumers see; the alias is dev-only.
 
-`@olas/core/testing` is the only sub-path export — `createTestController` and other test-only helpers live there. Importing it in production code is a smell; the sub-path makes it grep-able.
+`@kontsedal/olas-core/testing` is the only sub-path export — `createTestController` and other test-only helpers live there. Importing it in production code is a smell; the sub-path makes it grep-able.
 
 ---
 
@@ -226,6 +226,6 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 # Conventions
 
 - **Don't commit `dist/`.** `tsdown` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
-- **`@preact/signals-core` is a peer dep on `@olas/core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
+- **`@preact/signals-core` is a peer dep on `@kontsedal/olas-core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
 - **biome v1.9.4 config in `biome.json`** — two rules are intentionally off: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't re-enable them.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".

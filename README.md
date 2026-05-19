@@ -5,7 +5,7 @@
 Olas pulls everything that *isn't* rendering — fetching, mutations, forms, business rules, cross-screen coordination — into a parallel tree of typed controllers. Your components stay thin and your logic becomes plain TypeScript you can read top to bottom and test without spinning up a renderer.
 
 ```ts
-import { defineController, signal } from '@olas/core'
+import { defineController, signal } from '@kontsedal/olas-core'
 
 export const counter = defineController(() => {
   const count = signal(0)
@@ -55,19 +55,19 @@ The practical wins:
 - **Logic without renderers.** A controller is a function. Tests pass in fake `deps`, call methods, and assert against signals. No `render(<App />)`, no Testing Library, no fake timers chasing effect flushes.
 - **Explicit lifetimes.** Every field, query, mutation, and child controller dies with its parent. No "what owns this subscription?" mystery.
 - **Shared queries by default.** Two controllers subscribing to the same query share one fetch and one cache entry. The same primitive scales from "one widget" to "every screen on the dashboard."
-- **Framework-agnostic core.** `@olas/core` never imports React. The React adapter is ~200 lines. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
+- **Framework-agnostic core.** `@kontsedal/olas-core` never imports React. The React adapter is ~200 lines. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
 
 ---
 
 ## Install
 
 ```bash
-pnpm add @olas/core @olas/react @preact/signals-core react
+pnpm add @kontsedal/olas-core @kontsedal/olas-react @preact/signals-core react
 # optional
-pnpm add @olas/persist @olas/zod @olas/devtools zod
+pnpm add @kontsedal/olas-persist @kontsedal/olas-zod @kontsedal/olas-devtools zod
 ```
 
-`@preact/signals-core` is a peer dep on `@olas/core` — the library does not bundle it.
+`@preact/signals-core` is a peer dep on `@kontsedal/olas-core` — the library does not bundle it.
 
 ---
 
@@ -78,7 +78,7 @@ Six concepts, each smaller than the last. By the end you can read any Olas codeb
 ### 1. Signals — typed boxes that notify
 
 ```ts
-import { signal, computed, effect } from '@olas/core'
+import { signal, computed, effect } from '@kontsedal/olas-core'
 
 const count = signal(0)
 const double = computed(() => count.value * 2)
@@ -101,7 +101,7 @@ Olas wraps [`@preact/signals-core`](https://github.com/preactjs/signals) behind 
 A controller is a function from `ctx` to an API object.
 
 ```ts
-import { defineController, signal } from '@olas/core'
+import { defineController, signal } from '@kontsedal/olas-core'
 
 const counter = defineController((ctx) => {
   const count = signal(0)
@@ -123,7 +123,7 @@ const counter = defineController((ctx) => {
 Mount the controller as a root once, near your app entry point.
 
 ```ts
-import { createRoot } from '@olas/core'
+import { createRoot } from '@kontsedal/olas-core'
 
 const root = createRoot(counter, { deps: {} })
 
@@ -140,8 +140,8 @@ root.dispose()                    // tears down the effect, signals, everything
 ```tsx
 // main.tsx
 import { createRoot as createReactRoot } from 'react-dom/client'
-import { createRoot as createOlasRoot } from '@olas/core'
-import { OlasProvider } from '@olas/react'
+import { createRoot as createOlasRoot } from '@kontsedal/olas-core'
+import { OlasProvider } from '@kontsedal/olas-react'
 import { counter } from './counter'
 import { App } from './App'
 
@@ -158,7 +158,7 @@ Export the api type alongside the controller so components can reach for it with
 
 ```ts
 // counter.ts (cont.)
-import type { ReadSignal } from '@olas/core'
+import type { ReadSignal } from '@kontsedal/olas-core'
 
 export type CounterApi = {
   count: ReadSignal<number>
@@ -169,7 +169,7 @@ export type CounterApi = {
 
 ```tsx
 // App.tsx
-import { use, useRoot } from '@olas/react'
+import { use, useRoot } from '@kontsedal/olas-react'
 import type { CounterApi } from './counter'
 
 export function App() {
@@ -193,7 +193,7 @@ export function App() {
 For data that comes from the network and might be shared across screens, define a query at module scope:
 
 ```ts
-import { defineQuery } from '@olas/core'
+import { defineQuery } from '@kontsedal/olas-core'
 
 export const userQuery = defineQuery({
   key: (id: string) => [id],
@@ -209,7 +209,7 @@ export const userQuery = defineQuery({
 Subscribe to it from a controller. `ctx.use` returns an `AsyncState<T>` — eight signals you can read individually.
 
 ```ts
-import { defineController } from '@olas/core'
+import { defineController } from '@kontsedal/olas-core'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
   const user = ctx.use(userQuery, () => [props.id])
@@ -221,7 +221,7 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
 In a component, `useQuery` collapses those eight signals into one render:
 
 ```tsx
-import { useQuery, useRoot } from '@olas/react'
+import { useQuery, useRoot } from '@kontsedal/olas-react'
 
 function UserCard() {
   const api = useRoot<UserProfileApi>()
@@ -238,7 +238,7 @@ function UserCard() {
 ### 5. Writes with mutations
 
 ```ts
-import { defineController } from '@olas/core'
+import { defineController } from '@kontsedal/olas-core'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
   const user = ctx.use(userQuery, () => [props.id])
@@ -277,7 +277,7 @@ Three concurrency modes (`parallel` is default):
 ### 6. Forms
 
 ```ts
-import { defineController, required, minLength, email } from '@olas/core'
+import { defineController, required, minLength, email } from '@kontsedal/olas-core'
 
 export const signupForm = defineController((ctx) => {
   const form = ctx.form({
@@ -303,7 +303,7 @@ export const signupForm = defineController((ctx) => {
 A `Form` aggregates fields (and nested forms, and `FieldArray`s) into a single typed `value` signal plus `isValid`, `isDirty`, `touched`, `isValidating`. Components subscribe one field at a time with `useField`:
 
 ```tsx
-import { useField } from '@olas/react'
+import { useField } from '@kontsedal/olas-react'
 
 function NameInput({ field }: { field: Field<string> }) {
   const f = useField(field)
@@ -317,11 +317,11 @@ function NameInput({ field }: { field: Field<string> }) {
 }
 ```
 
-For schema-driven forms, `@olas/zod` walks a `z.object(...)` tree and emits the matching `Form` / `Field` / `FieldArray` structure with validators auto-attached:
+For schema-driven forms, `@kontsedal/olas-zod` walks a `z.object(...)` tree and emits the matching `Form` / `Field` / `FieldArray` structure with validators auto-attached:
 
 ```ts
 import { z } from 'zod'
-import { formFromZod } from '@olas/zod'
+import { formFromZod } from '@kontsedal/olas-zod'
 
 const Schema = z.object({
   name: z.string().min(2),
@@ -349,7 +349,7 @@ export interface AppDeps {
   router: { navigate(path: string): void }
 }
 
-declare module '@olas/core' {
+declare module '@kontsedal/olas-core' {
   interface AmbientDeps extends AppDeps {}
 }
 ```
@@ -384,8 +384,8 @@ Pattern shown above in [§5](#5-writes-with-mutations). The key rule: `onMutate`
 ### Persisted state
 
 ```ts
-import { signal } from '@olas/core'
-import { usePersisted } from '@olas/persist'
+import { signal } from '@kontsedal/olas-core'
+import { usePersisted } from '@kontsedal/olas-persist'
 
 const theme = signal<'light' | 'dark'>('light')
 usePersisted(ctx, 'theme', theme)
@@ -414,7 +414,7 @@ The cache survives the boundary. Queries already in `state` don't refetch on the
 ### Devtools
 
 ```tsx
-import { DevtoolsLauncher } from '@olas/devtools'
+import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
 
 <OlasProvider root={root}>
   <App />
@@ -460,11 +460,11 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 
 | Package | What it gives you |
 |---|---|
-| [`@olas/core`](packages/core) | Everything: signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus. |
-| [`@olas/react`](packages/react) | React adapter — `OlasProvider`, `useRoot`, `use`, `useQuery`, `useField`, `KeepAlive`, `useSuspendOnHidden`. |
-| [`@olas/persist`](packages/persist) | `usePersisted` + `localStorage` adapter. |
-| [`@olas/zod`](packages/zod) | `zodValidator(schema)` + `formFromZod(ctx, schema)`. |
-| [`@olas/devtools`](packages/devtools) | In-app `<DevtoolsPanel>` + floating launcher consuming `root.__debug`. |
+| [`@kontsedal/olas-core`](packages/core) | Everything: signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus. |
+| [`@kontsedal/olas-react`](packages/react) | React adapter — `OlasProvider`, `useRoot`, `use`, `useQuery`, `useField`, `KeepAlive`, `useSuspendOnHidden`. |
+| [`@kontsedal/olas-persist`](packages/persist) | `usePersisted` + `localStorage` adapter. |
+| [`@kontsedal/olas-zod`](packages/zod) | `zodValidator(schema)` + `formFromZod(ctx, schema)`. |
+| [`@kontsedal/olas-devtools`](packages/devtools) | In-app `<DevtoolsPanel>` + floating launcher consuming `root.__debug`. |
 
 Outstanding work — additional storage adapters, normalization, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
 
@@ -482,11 +482,11 @@ Three runnable example apps live in [`examples/`](examples). Each is a real (sma
 
 ```bash
 pnpm install
-pnpm --filter @olas/example-kanban dev      # or stock-ticker, reader-ssr
-pnpm --filter @olas/example-kanban test
+pnpm --filter @kontsedal/olas-example-kanban dev      # or stock-ticker, reader-ssr
+pnpm --filter @kontsedal/olas-example-kanban test
 ```
 
-Every business-logic surface in these examples is covered by a controller test that uses `createTestController`, `fakeField`, and `fakeAsyncState` from `@olas/core/testing` — no rendered components.
+Every business-logic surface in these examples is covered by a controller test that uses `createTestController`, `fakeField`, and `fakeAsyncState` from `@kontsedal/olas-core/testing` — no rendered components.
 
 ---
 

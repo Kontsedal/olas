@@ -1,5 +1,5 @@
-import type { DebugEvent, Root } from '@olas/core'
-import { type Signal, signal } from '@olas/core'
+import type { DebugEvent, Root } from '@kontsedal/olas-core'
+import { type Signal, signal } from '@kontsedal/olas-core'
 
 /**
  * Per-path node in the live controller tree. `state` reflects the most
@@ -88,7 +88,7 @@ export type DevtoolsStoreOptions = {
 /**
  * Subscribes to a root's `__debug` bus and maintains live state for the
  * devtools panel. Exposes signals so the React layer can consume via
- * `@olas/react`'s `use()`.
+ * `@kontsedal/olas-react`'s `use()`.
  *
  * Pure logic — no DOM, no React. Construct one per root.
  */

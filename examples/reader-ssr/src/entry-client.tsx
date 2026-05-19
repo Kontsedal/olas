@@ -2,7 +2,7 @@
 // `window.__OLAS_STATE__`, builds the root with `hydrate`, then calls
 // `hydrateRoot` so React reuses the SSR-rendered DOM.
 
-import type { DehydratedState } from '@olas/core'
+import type { DehydratedState } from '@kontsedal/olas-core'
 import { hydrateRoot } from 'react-dom/client'
 import { App } from './App'
 import { createFakeApi } from './api'

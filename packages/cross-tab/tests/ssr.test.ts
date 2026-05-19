@@ -1,4 +1,4 @@
-import { createRoot, defineController } from '@olas/core'
+import { createRoot, defineController } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import { crossTabPlugin } from '../src/plugin'
 

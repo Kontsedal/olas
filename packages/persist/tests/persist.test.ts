@@ -1,4 +1,4 @@
-import { createRoot, defineController, signal } from '@olas/core'
+import { createRoot, defineController, signal } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
 import { type StorageAdapter, usePersisted } from '../src'
 

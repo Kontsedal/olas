@@ -46,7 +46,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 | `use.ts` | `createUse` and `createInfiniteUse`. Build a `SubscriptionImpl` that swaps entries reactively on key change. |
 | `mutation.ts` | `MutationImpl` — three concurrency modes, abort-race, snapshot rollback. |
 | `infinite.ts` | `InfiniteEntry<TPage, TItem, PageParam>` — paginated variant. Owns `pages`, `pageParams`, `fetchNextPage`, `fetchPreviousPage`. |
-| `plugin.ts` | `QueryClientPlugin` contract + the `queryId → Query` registry. Used by `@olas/cross-tab`. Spec §13.2. |
+| `plugin.ts` | `QueryClientPlugin` contract + the `queryId → Query` registry. Used by `@kontsedal/olas-cross-tab`. Spec §13.2. |
 | `index.ts` | re-exports |
 
 ## How a subscription is wired

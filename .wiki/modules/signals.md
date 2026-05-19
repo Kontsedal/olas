@@ -44,7 +44,7 @@ type Computed<T>   = ReadSignal<T>
 
 ## Subscribe semantics
 
-`subscribe(handler)` from `@preact/signals-core` fires immediately with the current value AND on every change. This is the upstream behavior we keep; some consumers rely on the initial sync delivery (e.g. `@olas/persist` uses it to read the source after load — and explicitly skips the first delivery to avoid writing back). See `pitfalls/preact-signals-overload-return.md`.
+`subscribe(handler)` from `@preact/signals-core` fires immediately with the current value AND on every change. This is the upstream behavior we keep; some consumers rely on the initial sync delivery (e.g. `@kontsedal/olas-persist` uses it to read the source after load — and explicitly skips the first delivery to avoid writing back). See `pitfalls/preact-signals-overload-return.md`.
 
 ## Why wrapped, not re-exported
 

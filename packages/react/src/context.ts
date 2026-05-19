@@ -1,4 +1,4 @@
-import type { Root } from '@olas/core'
+import type { Root } from '@kontsedal/olas-core'
 import { createContext, createElement, type ReactNode, useContext } from 'react'
 
 const OlasContext = createContext<Root<unknown> | null>(null)

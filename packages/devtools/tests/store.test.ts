@@ -1,4 +1,4 @@
-import type { DebugEvent } from '@olas/core'
+import type { DebugEvent } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
 import { DevtoolsStore, insertNode, setNodeState } from '../src/store'
 

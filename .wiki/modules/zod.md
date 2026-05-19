@@ -1,6 +1,6 @@
 ---
 name: zod
-description: "@olas/zod — zodValidator and formFromZod."
+description: "@kontsedal/olas-zod — zodValidator and formFromZod."
 type: module
 covers:
   - packages/zod/src/index.ts
@@ -12,7 +12,7 @@ last_verified: 2026-05-18
 confidence: high
 ---
 
-# `@olas/zod`
+# `@kontsedal/olas-zod`
 
 Two exports: `zodValidator(schema)` and `formFromZod(ctx, schema, options?)`. Plus `zodValidatorAsync` for `.refine(async ...)` schemas. Spec §8.7, §10.
 
@@ -38,4 +38,4 @@ The Phase 9 implementation **does not** yet collect top-level `z.object().refine
 
 ## Peer dep contract
 
-`peerDependencies: { @olas/core: workspace:^, zod: ^3.23.0 }`. The adapter is small (~2 kB); Zod itself is ~13 kB. Bundling Zod into core would force the cost on every consumer — see `decisions/zod-as-adapter.md` (TODO if/when raised).
+`peerDependencies: { @kontsedal/olas-core: workspace:^, zod: ^3.23.0 }`. The adapter is small (~2 kB); Zod itself is ~13 kB. Bundling Zod into core would force the cost on every consumer — see `decisions/zod-as-adapter.md` (TODO if/when raised).

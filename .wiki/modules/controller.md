@@ -34,7 +34,7 @@ Implements the controller container: `defineController`, `createRoot`, the `Ctx`
 - **`root.ts`** — `createRoot` / `createRootWithProps`. Wraps the root `ControllerInstance` with `dispose / suspend / resume / dehydrate / waitForIdle / __debug` non-enumerable methods on the returned api.
 - **`index.ts`** — public re-exports.
 
-`testing.ts` (root of `core/src/`) lives at `@olas/core/testing` — exports `createTestController(def, { deps, props })`, equivalent to `createRootWithProps` but more ergonomic for tests.
+`testing.ts` (root of `core/src/`) lives at `@kontsedal/olas-core/testing` — exports `createTestController(def, { deps, props })`, equivalent to `createRootWithProps` but more ergonomic for tests.
 
 ## Ctx surface (Phase 0–12)
 

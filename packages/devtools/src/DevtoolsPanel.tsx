@@ -1,5 +1,5 @@
-import type { DebugCacheEntry, Root } from '@olas/core'
-import { use } from '@olas/react'
+import type { DebugCacheEntry, Root } from '@kontsedal/olas-core'
+import { use } from '@kontsedal/olas-react'
 import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react'
 import { formatPath, formatTime } from './format'
 import { JsonView } from './JsonView'

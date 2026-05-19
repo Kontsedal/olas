@@ -1,4 +1,4 @@
-# @olas/devtools
+# @kontsedal/olas-devtools
 
 In-app devtools UI for an Olas root. Two React components: `<DevtoolsLauncher>` (floating draggable window with a launcher button) and `<DevtoolsPanel>` (the panel itself, for embedding in your own chrome). Both read the same `root.__debug` event stream.
 
@@ -7,7 +7,7 @@ A standalone browser extension reading the same stream is tracked in [`../../BAC
 ## Install
 
 ```bash
-pnpm add @olas/devtools @olas/core @olas/react @preact/signals-core react
+pnpm add @kontsedal/olas-devtools @kontsedal/olas-core @kontsedal/olas-react @preact/signals-core react
 ```
 
 `react >= 18` and the three Olas packages are peer deps.
@@ -15,9 +15,9 @@ pnpm add @olas/devtools @olas/core @olas/react @preact/signals-core react
 ## 30-second example
 
 ```tsx
-import { OlasProvider } from '@olas/react'
-import { DevtoolsLauncher } from '@olas/devtools'
-import { createRoot } from '@olas/core'
+import { OlasProvider } from '@kontsedal/olas-react'
+import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
+import { createRoot } from '@kontsedal/olas-core'
 
 const root = createRoot(appController, { deps })
 
