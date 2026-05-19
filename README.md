@@ -426,6 +426,22 @@ A floating button opens a panel with the controller tree, cache timeline, and mu
 
 ---
 
+## Working with AI assistants
+
+Because controllers are pure TypeScript with no renderer involvement, AI coding assistants (Claude Code, Cursor, Copilot Workspace) can work on business logic in isolation:
+
+- Hand the assistant `someController.ts` plus its test file. It iterates with `pnpm vitest run packages/foo/tests/someController.test.ts` against `createTestController` — no jsdom, no Testing Library, no fake DOM tree.
+- For UI work, export `type FooApi` from the controller and hand it plus the React file to the assistant. It maps `api.foo.run()` to a button without needing to understand the optimistic-rollback logic happening behind it.
+
+Foundation models default to React/Redux idioms — without rules pinning Olas's invariants ("UI doesn't fetch", "controllers stay synchronous", "tests don't render"), output drifts. The repo ships:
+
+- [`.cursorrules`](.cursorrules) — short rules file that Cursor (and other rule-aware assistants) injects per prompt.
+- [`CLAUDE.md`](CLAUDE.md) — long-form operating instructions for AI assistants working *on* the framework itself (wiki schema, BACKLOG protocol, codebase-specific gotchas).
+
+For projects building *with* Olas, copy `.cursorrules` into your repo and trim to your conventions.
+
+---
+
 ## How it scales
 
 | Concern | What changes as the app grows |
@@ -498,6 +514,7 @@ These are honest, terse sketches. None of them are reasons to leave a tool you'r
 - [`.wiki/overview.md`](.wiki/overview.md) — one-page architecture.
 - [`BACKLOG.md`](BACKLOG.md) — proposed extensions, post-v1 packages, deferred ideas.
 - [`CLAUDE.md`](CLAUDE.md) — orientation for AI assistants working in this repo.
+- [`.cursorrules`](.cursorrules) — short rules file for AI assistants writing Olas code in *your* projects; copy into your repo.
 
 ---
 
