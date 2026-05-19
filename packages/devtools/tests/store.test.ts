@@ -156,6 +156,7 @@ describe('DevtoolsStore.handle', () => {
             captured = undefined
           }
         },
+        queryEntries: () => [],
       },
     }
     const store = new DevtoolsStore({ now: fixedNow })
