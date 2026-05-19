@@ -21,7 +21,12 @@ export function CardEditor({
   // Construct the child controller once per open. `target` is referentially
   // stable for the lifetime of the modal because the parent passes it via a
   // single state cell (see View/App.tsx).
-  const editor = useMemo(() => api.board.openEditor(target), [api, target])
+  const handle = useMemo(() => api.board.openEditor(target), [api, target])
+  // Tear down the child when the modal unmounts. Without this, repeated
+  // opens leak a `cardEditor[N]` per open into the controller tree until
+  // the root disposes.
+  useEffect(() => () => handle.dispose(), [handle])
+  const editor = handle.api
 
   const isPending = use(editor.save.isPending)
   const error = use(editor.save.error)
