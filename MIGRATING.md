@@ -55,8 +55,8 @@ The Olas root owns its own QueryClient (one per root). Two roots have isolated c
 ### Patterns that don't translate one-to-one
 
 - **TanStack `useQuery` returns the same `data | undefined` and you handle both.** Olas `ctx.use(q)` returns an `AsyncState<T>` with eight signals (`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`) plus `refetch` / `reset` / `firstValue`. In React, `useQuery(subscription)` bundles them into one render trigger.
-- **Suspense.** TanStack has `useSuspenseQuery`. Olas doesn't ship a Suspense integration in v1 — use `subscription.firstValue()` to await first data, or render `isLoading ? <Spinner /> : <View />`.
-- **DevTools.** TanStack devtools is mature; Olas devtools (`@olas/devtools`) is Phase 13 — not in v1.
+- **Suspense.** TanStack has `useSuspenseQuery`. Olas doesn't ship a Suspense integration — use `subscription.firstValue()` to await first data, or render `isLoading ? <Spinner /> : <View />`.
+- **DevTools.** TanStack devtools is mature; Olas ships `@olas/devtools` — `<DevtoolsLauncher root={root} />` gives you a floating panel with controller-tree, cache timeline, and mutation log. No separate browser extension (yet — tracked in `BACKLOG.md`).
 
 ---
 

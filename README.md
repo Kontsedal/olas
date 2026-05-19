@@ -490,12 +490,13 @@ These are honest, terse sketches. None of them are reasons to leave a tool you'r
 
 ## Learn more
 
-- [`SPEC.md`](SPEC.md) — the authoritative design. Read top to bottom or jump by `§N.M` section.
-- [`BACKLOG.md`](BACKLOG.md) — what's outstanding, what's an idea, what's been deferred.
+- [`API.md`](API.md) — complete API reference: every export, signature, signature-typechecked example, gotchas. The "leave no questions" doc.
+- [`SPEC.md`](SPEC.md) — authoritative design. Read top to bottom or jump by `§N.M` section.
+- [`RECIPES.md`](RECIPES.md) — reusable user composables (`useDebounced`, `usePagination`, `useSubmit`, `useInlineEdit`, `useTail`, `useRealtimePatcher`).
+- [`MIGRATING.md`](MIGRATING.md) — coming from TanStack Query or Redux Toolkit.
 - [`.wiki/index.md`](.wiki/index.md) — codebase wiki: per-module pages, design decisions, recorded pitfalls.
 - [`.wiki/overview.md`](.wiki/overview.md) — one-page architecture.
-- [`RECIPES.md`](RECIPES.md) — extended cookbook beyond the recipes above.
-- [`MIGRATING.md`](MIGRATING.md) — coming from TanStack Query or Redux Toolkit.
+- [`BACKLOG.md`](BACKLOG.md) — proposed extensions, post-v1 packages, deferred ideas.
 - [`CLAUDE.md`](CLAUDE.md) — orientation for AI assistants working in this repo.
 
 ---

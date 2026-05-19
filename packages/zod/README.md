@@ -72,7 +72,12 @@ function formFromZod<S extends z.ZodObject<z.ZodRawShape>>(
 
 Form-level `.refine(...)` on the root `z.object(...)` is attached as a top-level form validator (surfaces via `form.topLevelErrors`).
 
+## Limitation
+
+Array-level `.min(N)` rules from the outer Zod schema are *not* promoted to a `FieldArray`-level validator today — leaf and nested-object rules walk correctly. Workaround: write a manual `FieldArrayValidator` for that case, or assert on `form.isValid` (driven by leaf rules). Tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
+
 ## Further reading
 
-- [`.wiki/modules/zod.md`](../../.wiki/modules/zod.md)
-- Spec §8.7 (Zod integration), §20.7 (form types).
+- [`../../API.md`](../../API.md#olaszod) — full reference.
+- [`../../.wiki/modules/zod.md`](../../.wiki/modules/zod.md)
+- SPEC §8.7 (Zod integration), §20.7 (form types).

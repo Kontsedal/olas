@@ -1,6 +1,6 @@
 # @olas/core
 
-The core of Olas: signals, controllers, queries, mutations, forms, scopes, SSR, and the devtools event bus. UI-framework-agnostic — no React, Vue, or Svelte imports anywhere.
+The core of Olas — UI-framework-agnostic. Signals, controllers, queries, mutations, forms, scopes, SSR, and the devtools event bus. No React / Vue / Svelte imports anywhere.
 
 This package is the only place that touches `@preact/signals-core` (peer dep). Everything else is plain TypeScript.
 
@@ -10,60 +10,55 @@ This package is the only place that touches `@preact/signals-core` (peer dep). E
 pnpm add @olas/core @preact/signals-core
 ```
 
-## 30-second example
-
-```ts
-import { defineController, createRoot, signal, defineQuery } from '@olas/core'
-
-const greetingQuery = defineQuery({
-  key: (name: string) => [name],
-  fetcher: async (name) => `Hello, ${name}`,
-})
-
-const greeter = defineController((ctx, props: { name: string }) => {
-  const greeting = ctx.use(greetingQuery, () => [props.name])
-  const excited = signal(false)
-  return { greeting, excited, shout: () => excited.set(true) }
-})
-
-// In a non-React project: drive it directly via signals.
-const root = createRoot(/* …a no-props wrapper… */, { deps: {} })
-root.greeting.firstValue().then(console.log) // → "Hello, world"
-```
-
-For UI integration, see [`@olas/react`](../react).
-
 ## What's in the box
 
 | Concern | API |
-|---------|-----|
+|---|---|
 | Reactive primitives | `signal`, `computed`, `effect`, `batch`, `untracked` |
 | Time-based signals | `debounced`, `throttled` |
 | Controllers | `defineController`, `createRoot`, `Ctx` |
-| Async data | `ctx.cache`, `defineQuery`, `defineInfiniteQuery`, `ctx.use` |
+| Async data — shared | `defineQuery`, `defineInfiniteQuery`, `ctx.use` |
+| Async data — local | `ctx.cache` |
 | Mutations | `ctx.mutation` with `parallel` / `latest-wins` / `serial` modes |
 | Forms | `ctx.field`, `ctx.form`, `ctx.fieldArray`, stdlib validators |
 | Cross-tree data | `defineScope`, `ctx.provide`, `ctx.inject` |
 | Events | `createEmitter`, `ctx.emitter`, `ctx.on` |
+| Lifecycle | `ctx.effect`, `ctx.child`, `ctx.attach`, `ctx.onDispose`, `ctx.onSuspend`, `ctx.onResume` |
 | SSR | `root.dehydrate()`, `createRoot(def, { hydrate })`, `root.waitForIdle()` |
 | Devtools | `root.__debug.subscribe(handler)` (events documented in `DebugEvent`) |
 | Errors | `RootOptions.onError`, `ErrorContext`, `isAbortError` |
 
+Full reference with signatures and examples: [`../../API.md`](../../API.md).
+
+## 30-second example
+
+```ts
+import { createRoot, defineController, signal } from '@olas/core'
+
+const counter = defineController(() => {
+  const count = signal(0)
+  return { count, increment: () => count.update((n) => n + 1) }
+})
+
+const root = createRoot(counter, { deps: {} })
+root.increment()
+console.log(root.count.value)    // 1
+root.dispose()
+```
+
 ## Sub-paths
 
 - `@olas/core` — the main entry.
-- `@olas/core/testing` — `createTestController`, `fakeField`, `fakeAsyncState`. Test-only helpers.
+- `@olas/core/testing` — `createTestController`, `fakeField`, `fakeAsyncState`. Test-only helpers; the sub-path makes "you imported testing utilities into production code" loud and grep-able.
 
 ```ts
 import { createTestController, fakeField, fakeAsyncState } from '@olas/core/testing'
 ```
 
-## Status
-
-Phases 0–12 of the [spec](../../SPEC.md) are implemented. Phase 13 (devtools browser extension) and Phase 14 (polish & docs) are in flight. `ctx.collection`, `ctx.session`, and `ctx.lazyChild` are unimplemented (spec §20.2).
-
 ## Further reading
 
-- [`SPEC.md`](../../SPEC.md) — authoritative design.
-- [`.wiki/modules/`](../../.wiki/modules/) — per-module pages (signals, controller, query, forms, …).
-- [`.wiki/pitfalls/`](../../.wiki/pitfalls/) — known footguns.
+- [`../../API.md`](../../API.md) — every export, signature, example.
+- [`../../README.md`](../../README.md) — guided tour.
+- [`../../SPEC.md`](../../SPEC.md) — authoritative design.
+- [`../../.wiki/modules/`](../../.wiki/modules/) — per-module pages (signals, controller, query, forms, …).
+- [`../../.wiki/pitfalls/`](../../.wiki/pitfalls/) — known footguns.
