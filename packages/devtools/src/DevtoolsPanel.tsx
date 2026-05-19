@@ -1,6 +1,6 @@
-import type { Root } from '@olas/core'
+import type { DebugCacheEntry, Root } from '@olas/core'
 import { use } from '@olas/react'
-import { type ReactElement, useEffect, useMemo, useState } from 'react'
+import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react'
 import { formatPath, formatPayload, formatTime } from './format'
 import {
   type CacheEntry,
@@ -11,7 +11,7 @@ import {
 } from './store'
 import { DEVTOOLS_CSS } from './styles'
 
-export type DevtoolsTab = 'tree' | 'cache' | 'mutations' | 'fields'
+export type DevtoolsTab = 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
 
 export type DevtoolsPanelProps = {
   /** The root to inspect. The panel subscribes to `root.__debug` on mount. */
@@ -20,6 +20,13 @@ export type DevtoolsPanelProps = {
   defaultTab?: DevtoolsTab
   /** Cap on each event log. Default: 100. */
   maxEntries?: number
+  /**
+   * Persist filter state to the URL hash under this key. When set,
+   * reloading the page restores filter + tab. Default: no persistence.
+   */
+  urlHashKey?: string
+  /** How often (ms) to refresh the live cache inspector snapshot. Default 800. */
+  inspectorPollMs?: number
 }
 
 /**
@@ -39,24 +46,41 @@ export type DevtoolsPanelProps = {
  * Spec §13.
  */
 export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
-  const { root, defaultTab = 'tree', maxEntries } = props
+  const { root, defaultTab = 'tree', maxEntries, urlHashKey, inspectorPollMs = 800 } = props
   const store = useMemo(
     () => new DevtoolsStore(maxEntries !== undefined ? { maxEntries } : undefined),
     [maxEntries],
   )
   useEffect(() => store.attach(root), [root, store])
 
-  const [tab, setTab] = useState<DevtoolsTab>(defaultTab)
+  // Initial state read from URL hash if `urlHashKey` is set.
+  const initial = useMemo(() => readUrlHash(urlHashKey, defaultTab), [urlHashKey, defaultTab])
+  const [tab, setTab] = useState<DevtoolsTab>(initial.tab)
   const [paused, setPaused] = useState(false)
   // Filters are kept per-tab so switching back doesn't lose the query.
-  const [filters, setFilters] = useState<Record<DevtoolsTab, string>>({
-    tree: '',
-    cache: '',
-    mutations: '',
-    fields: '',
-  })
+  const [filters, setFilters] = useState<Record<DevtoolsTab, string>>(initial.filters)
   const filter = filters[tab]
   const setFilter = (q: string) => setFilters((prev) => ({ ...prev, [tab]: q }))
+
+  // Persist tab + filters back to the URL hash on every change.
+  useEffect(() => {
+    if (urlHashKey === undefined) return
+    writeUrlHash(urlHashKey, { tab, filters })
+  }, [urlHashKey, tab, filters])
+
+  // Live cache inspector — polls `root.__debug.queryEntries()` periodically.
+  // Polling is cheap (a single peek per entry) and bounded by inspectorPollMs;
+  // only the Cache Inspector view reads this.
+  const [cacheEntries, setCacheEntries] = useState<DebugCacheEntry[]>([])
+  const rootRef = useRef(root)
+  rootRef.current = root
+  useEffect(() => {
+    if (tab !== 'inspector') return
+    const tick = () => setCacheEntries(rootRef.current.__debug.queryEntries())
+    tick()
+    const id = window.setInterval(tick, inspectorPollMs)
+    return () => window.clearInterval(id)
+  }, [tab, inspectorPollMs])
 
   const liveTree = use(store.tree$)
   const liveCache = use(store.cache$)
@@ -96,6 +120,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
       <div className="olas-devtools-tabs" role="tablist">
         <Tab name="tree" current={tab} setTab={setTab} label="Tree" count={countLiveControllers(liveTree)} />
         <Tab name="cache" current={tab} setTab={setTab} label="Cache" count={liveCache.length} />
+        <Tab name="inspector" current={tab} setTab={setTab} label="Inspector" count={cacheEntries.length} />
         <Tab name="mutations" current={tab} setTab={setTab} label="Mutations" count={liveMutations.length} />
         <Tab name="fields" current={tab} setTab={setTab} label="Fields" count={liveFields.length} />
         <button
@@ -112,7 +137,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
         </button>
       </div>
 
-      {tab !== 'tree' && (
+      {(tab === 'cache' || tab === 'inspector' || tab === 'mutations' || tab === 'fields') && (
         <div className="olas-devtools-filter">
           <input
             type="search"
@@ -129,8 +154,9 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
       )}
 
       <div className="olas-devtools-body" role="tabpanel">
-        {tab === 'tree' && <TreeView tree={tree} />}
+        {tab === 'tree' && <TreeView tree={tree} mutations={liveMutations} />}
         {tab === 'cache' && <CacheView entries={cache} filter={filter} />}
+        {tab === 'inspector' && <InspectorView entries={cacheEntries} filter={filter} />}
         {tab === 'mutations' && <MutationsView entries={mutations} filter={filter} />}
         {tab === 'fields' && <FieldsView entries={fields} filter={filter} />}
       </div>
@@ -174,20 +200,49 @@ function countLiveControllers(node: ControllerNode): number {
 // Tree
 // ===========================================================================
 
-function TreeView({ tree }: { tree: ControllerNode }): ReactElement {
+function TreeView({
+  tree,
+  mutations,
+}: { tree: ControllerNode; mutations: MutationEntry[] }): ReactElement {
   if (tree.children.length === 0) {
     return <Empty title="No controllers yet" hint="The root hasn't constructed any controllers." />
   }
+  // Roll up pending-mutation counts per controller path. A "pending" mutation
+  // is one whose last entry is `run` with no matching success/error for the
+  // same (path, name).
+  const pending = useMemo(() => rollupPending(mutations), [mutations])
   return (
     <div className="olas-devtools-tree">
       {tree.children.map((child) => (
-        <TreeNode key={child.path.join('/')} node={child} />
+        <TreeNode key={child.path.join('/')} node={child} pending={pending} />
       ))}
     </div>
   )
 }
 
-function TreeNode({ node }: { node: ControllerNode }): ReactElement {
+function rollupPending(entries: readonly MutationEntry[]): Map<string, number> {
+  const inFlight = new Map<string, number>() // (path|name) → count
+  const out = new Map<string, number>() // path → pending count
+  for (const e of entries) {
+    const key = `${e.path.join('>')}#${e.name ?? ''}`
+    const pathKey = e.path.join('>')
+    if (e.kind === 'run') {
+      inFlight.set(key, (inFlight.get(key) ?? 0) + 1)
+      out.set(pathKey, (out.get(pathKey) ?? 0) + 1)
+    } else if (e.kind === 'success' || e.kind === 'error') {
+      const n = inFlight.get(key) ?? 0
+      if (n > 0) inFlight.set(key, n - 1)
+      const p = out.get(pathKey) ?? 0
+      if (p > 0) out.set(pathKey, p - 1)
+    }
+  }
+  return out
+}
+
+function TreeNode({
+  node,
+  pending,
+}: { node: ControllerNode; pending: Map<string, number> }): ReactElement {
   const name = node.path[node.path.length - 1] ?? '?'
   const stateClass =
     node.state === 'suspended'
@@ -195,21 +250,134 @@ function TreeNode({ node }: { node: ControllerNode }): ReactElement {
       : node.state === 'disposed'
         ? 'olas-devtools-tree-state-disposed'
         : 'olas-devtools-tree-state-active'
+  const pendingCount = pending.get(node.path.join('>')) ?? 0
   return (
     <div className="olas-devtools-tree-node">
       <span className="olas-devtools-tree-row">
         <span className="olas-devtools-tree-name">{name}</span>
         <span className={stateClass}>{node.state}</span>
+        {pendingCount > 0 && (
+          <span className="olas-devtools-tree-pending" title="pending mutations on this controller">
+            {pendingCount} pending
+          </span>
+        )}
       </span>
       {node.children.length > 0 && (
         <div className="olas-devtools-tree-children">
           {node.children.map((child) => (
-            <TreeNode key={child.path.join('/')} node={child} />
+            <TreeNode key={child.path.join('/')} node={child} pending={pending} />
           ))}
         </div>
       )}
     </div>
   )
+}
+
+// ===========================================================================
+// Cache Inspector — live state, not history
+// ===========================================================================
+
+function InspectorView({
+  entries,
+  filter,
+}: { entries: DebugCacheEntry[]; filter: string }): ReactElement {
+  const filtered = useFiltered(entries, filter, inspectorHaystack)
+  if (entries.length === 0) {
+    return (
+      <Empty
+        title="No cache entries"
+        hint="Subscribe to a query somewhere in the tree to see its data."
+      />
+    )
+  }
+  if (filtered.length === 0) {
+    return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
+  }
+  return (
+    <ul className="olas-devtools-list">
+      {filtered.map((entry) => (
+        <InspectorRow key={entry.key.join('|')} entry={entry} />
+      ))}
+    </ul>
+  )
+}
+
+function inspectorHaystack(e: DebugCacheEntry): string {
+  return [...e.key.map(String), e.status, formatPayload(e.data, 9999)].join(' ')
+}
+
+function InspectorRow({ entry }: { entry: DebugCacheEntry }): ReactElement {
+  const kindClass =
+    entry.status === 'error'
+      ? 'olas-devtools-kind-error'
+      : entry.status === 'success'
+        ? 'olas-devtools-kind-success'
+        : entry.status === 'pending'
+          ? 'olas-devtools-kind-warn'
+          : ''
+  const ageMs = entry.lastUpdatedAt != null ? Date.now() - entry.lastUpdatedAt : null
+  const tags: string[] = []
+  if (entry.isStale) tags.push('stale')
+  if (entry.isFetching) tags.push('fetching')
+  if (entry.hasPendingMutations) tags.push('optimistic')
+  return (
+    <Row
+      kind={entry.status}
+      kindClass={kindClass}
+      target={formatPath(entry.key)}
+      t={entry.lastUpdatedAt ?? Date.now()}
+      payload={formatPayload(entry.error ?? entry.data, 9999)}
+      suffix={[ageMs != null ? `${formatAge(ageMs)} ago` : '—', ...tags].join(' · ')}
+    />
+  )
+}
+
+function formatAge(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`
+  return `${Math.round(ms / 3_600_000)}h`
+}
+
+// ===========================================================================
+// URL-hash persistence
+// ===========================================================================
+
+function readUrlHash(
+  key: string | undefined,
+  defaultTab: DevtoolsTab,
+): { tab: DevtoolsTab; filters: Record<DevtoolsTab, string> } {
+  const empty = { tree: '', cache: '', inspector: '', mutations: '', fields: '' }
+  if (key === undefined) return { tab: defaultTab, filters: empty }
+  if (typeof window === 'undefined') return { tab: defaultTab, filters: empty }
+  try {
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    const raw = params.get(key)
+    if (raw === null) return { tab: defaultTab, filters: empty }
+    const parsed = JSON.parse(decodeURIComponent(raw)) as {
+      tab?: DevtoolsTab
+      filters?: Partial<Record<DevtoolsTab, string>>
+    }
+    return {
+      tab: parsed.tab ?? defaultTab,
+      filters: { ...empty, ...(parsed.filters ?? {}) },
+    }
+  } catch {
+    return { tab: defaultTab, filters: empty }
+  }
+}
+
+function writeUrlHash(
+  key: string,
+  state: { tab: DevtoolsTab; filters: Record<DevtoolsTab, string> },
+): void {
+  if (typeof window === 'undefined') return
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+  params.set(key, encodeURIComponent(JSON.stringify(state)))
+  const next = `#${params.toString()}`
+  if (next !== window.location.hash) {
+    window.history.replaceState(null, '', next)
+  }
 }
 
 // ===========================================================================

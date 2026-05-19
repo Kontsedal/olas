@@ -306,6 +306,15 @@ export const DEVTOOLS_CSS = `
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
+.olas-devtools-tree-pending {
+  color: var(--olas-warn);
+  background: var(--olas-warn-soft);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
 .olas-devtools-tree-children {
   margin-left: 12px;
   border-left: 1px dashed color-mix(in oklch, var(--olas-border) 80%, var(--olas-muted) 20%);
