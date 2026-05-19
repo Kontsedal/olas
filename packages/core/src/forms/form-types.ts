@@ -76,6 +76,13 @@ export type Form<S extends FormSchema> = {
 
   /** Deep-merge a partial value into the form, batched. */
   set(partial: DeepPartial<FormValue<S>>): void
+  /**
+   * Re-seat the form's leaves from `partial` as their new initials —
+   * each leaf calls `setAsInitial(value)`, so `isDirty` stays false and a
+   * subsequent `reset()` returns *here*. Internal-ish but exported for
+   * `Form`-traversal code (nested-form initial application).
+   */
+  resetWithInitial(partial: DeepPartial<FormValue<S>>): void
   /** Reset every leaf to its initial value. */
   reset(): void
   /** Mark every leaf as touched (so error messages appear). */

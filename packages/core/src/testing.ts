@@ -43,6 +43,7 @@ export function fakeField<T>(
     touched: boolean
     isValidating: boolean
     set: (value: T) => void
+    setAsInitial: (value: T) => void
     reset: () => void
     markTouched: () => void
     revalidate: () => Promise<boolean>
@@ -59,7 +60,15 @@ export function fakeField<T>(
       ? signal(overrides.isValid)
       : computed(() => errors$.value.length === 0 && !validating$.value)
 
+  let currentInitial = initial
   const set = overrides?.set ?? ((next: T) => value$.set(next))
+  const setAsInitial =
+    overrides?.setAsInitial ??
+    ((next: T) => {
+      currentInitial = next
+      value$.set(next)
+      dirty$.set(false)
+    })
   const fake: Field<T> = {
     get value() {
       return value$.value
@@ -72,7 +81,8 @@ export function fakeField<T>(
     touched: touched$,
     isValidating: validating$,
     set,
-    reset: overrides?.reset ?? (() => value$.set(initial)),
+    setAsInitial,
+    reset: overrides?.reset ?? (() => value$.set(currentInitial)),
     markTouched: overrides?.markTouched ?? (() => touched$.set(true)),
     revalidate: overrides?.revalidate ?? (async () => errors$.peek().length === 0),
     dispose: overrides?.dispose ?? (() => {}),

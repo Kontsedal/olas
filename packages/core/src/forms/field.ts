@@ -33,7 +33,9 @@ class FieldImpl<T> implements Field<T> {
   private readonly revalidateTrigger$: Signal<number>
 
   private readonly validators: ReadonlyArray<Validator<T>>
-  private readonly initial: T
+  /** The value `reset()` returns to. Mutated by `setAsInitial()` so a form
+   * initialized from server data resets to *that* data, not the empty seed. */
+  private initial: T
   private validatorDispose: (() => void) | null = null
   private currentAbort: AbortController | null = null
   private runId = 0
@@ -97,6 +99,22 @@ class FieldImpl<T> implements Field<T> {
     if (this.disposed) return
     this.value$.set(value)
     this.dirty$.set(true)
+  }
+
+  /**
+   * Reseat the field as if this value had been its constructor `initial`.
+   * Sets the value, re-anchors `reset()`'s target, and does NOT mark dirty.
+   * Used by `Form` when applying its own `initial` (in the constructor and
+   * on `reset()`), so server-loaded forms don't start dirty. Internal-ish —
+   * exposed for `Form`'s use, not for user code that just wants to write.
+   */
+  setAsInitial(value: T): void {
+    if (this.disposed) return
+    this.initial = value
+    batch(() => {
+      this.value$.set(value)
+      this.dirty$.set(false)
+    })
   }
 
   reset(): void {

@@ -135,9 +135,9 @@ describe('runtime devtools events', () => {
   test('mutation:rollback fires when latest-wins supersedes an inflight run', async () => {
     const events: DebugEvent[] = []
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: ctx.mutation<number, string>({
         concurrency: 'latest-wins',
-        mutate: async (_: number, signal) => {
+        mutate: async (_, signal) => {
           await new Promise<void>((resolve, reject) => {
             const id = setTimeout(resolve, 50)
             signal.addEventListener('abort', () => {
@@ -147,7 +147,7 @@ describe('runtime devtools events', () => {
           })
           return 'done'
         },
-        onMutate: () => ({ rollback: () => {} }),
+        onMutate: () => ({ rollback: () => {}, finalize: () => {} }),
       }),
     }))
     const root = createRoot(def, { deps: {}, onError: () => {} })

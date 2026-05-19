@@ -33,13 +33,16 @@ export function defineQuery<Args extends unknown[], T>(spec: QuerySpec<Args, T>)
     setData(...rest: [...Args, updater: (prev: T | undefined) => T]): Snapshot {
       const updater = rest[rest.length - 1] as (prev: T | undefined) => T
       const keyArgs = rest.slice(0, -1) as unknown as Args
-      const rollbacks: Snapshot[] = []
+      const childSnapshots: Snapshot[] = []
       for (const client of clients) {
-        rollbacks.push(client.setData(query as Query<Args, T>, keyArgs, updater))
+        childSnapshots.push(client.setData(query as Query<Args, T>, keyArgs, updater))
       }
       return {
         rollback: () => {
-          for (const s of rollbacks) s.rollback()
+          for (const s of childSnapshots) s.rollback()
+        },
+        finalize: () => {
+          for (const s of childSnapshots) s.finalize()
         },
       }
     },
@@ -97,9 +100,9 @@ export function defineInfiniteQuery<Args extends unknown[], PageParam, TPage, TI
     setData(...rest: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot {
       const updater = rest[rest.length - 1] as (prev: TPage[] | undefined) => TPage[]
       const keyArgs = rest.slice(0, -1) as unknown as Args
-      const rollbacks: Snapshot[] = []
+      const childSnapshots: Snapshot[] = []
       for (const client of clients) {
-        rollbacks.push(
+        childSnapshots.push(
           client.setInfiniteData<Args, TPage>(
             query as InfiniteQuery<Args, TPage, TItem>,
             keyArgs,
@@ -109,7 +112,10 @@ export function defineInfiniteQuery<Args extends unknown[], PageParam, TPage, TI
       }
       return {
         rollback: () => {
-          for (const s of rollbacks) s.rollback()
+          for (const s of childSnapshots) s.rollback()
+        },
+        finalize: () => {
+          for (const s of childSnapshots) s.finalize()
         },
       }
     },
