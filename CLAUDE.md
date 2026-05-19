@@ -9,7 +9,7 @@ Two artifacts in this repo are authoritative and outrank everything else:
 1. **`SPEC.md`** — the design specification. When code and spec disagree, the spec wins unless a test pins the current behavior on purpose. Section pointers (e.g. "§6.1", "§5.7") are canonical citations.
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how this code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 
-Current implementation status: spec phases 0–9 and 11–12 are complete (187 tests). Phase 10 (scopes + React adapter), 13 (devtools extension), and 14 (polish/docs) are not implemented; types and structure already anticipate them in places, so don't tear down "unused" scaffolding without checking.
+Current implementation status: all five published packages exist and ship — `@olas/core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`), `@olas/react` (Provider + hooks + keep-alive), `@olas/zod`, `@olas/persist`, `@olas/devtools` (in-app panel + floating launcher). 236 lib tests + the `examples/` apps (kanban, reader-ssr, stock-ticker). Known gaps against the spec: `refetchOnWindowFocus` / `refetchOnReconnect` are declared in types but not wired (spec §5.9). Phase 14 polish — inline TSDoc on all exports, stdlib composables (`useDebounced`, `usePagination`, `useSubmit`) — is not done. Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet.
 
 ## Commands
 
@@ -34,10 +34,11 @@ CI = `install → typecheck → lint → test → build`. Reproducing CI locally
 
 ```
 packages/
-  core/      # @olas/core    — everything: signals, controllers, queries, mutations, forms, SSR
-  react/     # @olas/react   — empty shell (Phase 10 not implemented)
-  persist/   # @olas/persist — usePersisted + localStorage adapter
-  zod/       # @olas/zod     — zodValidator, formFromZod
+  core/      # @olas/core     — signals, controllers, queries, mutations, forms, SSR
+  react/     # @olas/react    — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden
+  persist/   # @olas/persist  — usePersisted + localStorage adapter
+  zod/       # @olas/zod      — zodValidator, formFromZod
+  devtools/  # @olas/devtools — in-app DevtoolsPanel + floating launcher
 ```
 
 Tests import workspace packages via aliases declared in `vitest.config.ts` — pointed at each package's `src/index.ts` (and `core/src/testing.ts`), so tests run without building `dist/`. The published `dist/` is what consumers see; the alias is dev-only.

@@ -3,7 +3,6 @@ name: examples
 description: Four runnable example apps demonstrating Olas's API breadth (vanilla + React + SSR) and testability via `@olas/core/testing`.
 type: module
 covers:
-  - examples/user-profile
   - examples/stock-ticker
   - examples/kanban
   - examples/reader-ssr
@@ -16,7 +15,7 @@ edges:
   - { type: uses, target: ../modules/devtools-panel.md }
   - { type: uses, target: ../flows/ssr.md }
   - { type: uses, target: ../flows/mutation-concurrency.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-19
 confidence: high
 ---
 
