@@ -154,12 +154,14 @@ export const boardController = defineController(
       recentActivity,
       boardId: props.boardId,
       /**
-       * Open a card editor. Must live on this controller (not the root) so the
-       * child sees `currentBoardScope` + `activityScope`. Spec §10.3 — scopes
-       * are downward-only.
+       * Open a card editor. Returns `{ api, dispose }` (via `ctx.attach`) so
+       * closing the modal can tear the editor down explicitly — without the
+       * caller, every open would leak a controller until the parent disposes.
+       * Must live here (not on the root) so the child sees
+       * `currentBoardScope` + `activityScope`. Spec §10.3.
        */
       openEditor: (target: CardEditorTarget) =>
-        ctx.child(cardEditorController, { target }),
+        ctx.attach(cardEditorController, { target }),
     }
   },
   { name: 'board' },
