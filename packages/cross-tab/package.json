@@ -1,8 +1,28 @@
 {
   "name": "@kontsedal/olas-cross-tab",
   "version": "0.0.1-rc.0",
-  "description": "Olas cross-tab in-memory query cache sync via BroadcastChannel",
+  "description": "Olas cross-tab cache sync — BroadcastChannel-backed QueryClientPlugin keeping every browser tab in lockstep.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "broadcast-channel",
+    "cross-tab",
+    "cache-sync"
+  ],
   "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/cross-tab#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/cross-tab"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -33,5 +53,8 @@
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,8 +1,28 @@
 {
   "name": "@kontsedal/olas-devtools",
   "version": "0.0.1-rc.0",
-  "description": "Olas in-app devtools panel — controller tree, cache timeline, mutation log",
+  "description": "Olas in-app devtools — controller tree inspector, cache timeline, mutation log, signal graph.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "devtools",
+    "debugging",
+    "inspector"
+  ],
   "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/devtools#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/devtools"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -41,5 +61,8 @@
     "@types/react-dom": "^19.2.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,8 +1,29 @@
 {
   "name": "@kontsedal/olas-realtime",
   "version": "0.0.1-rc.0",
-  "description": "Olas realtime composables (useRealtimePatcher, defineLiveStream)",
+  "description": "Olas realtime composables — useRealtimePatcher and defineLiveStream over a pluggable RealtimeService.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "realtime",
+    "websocket",
+    "sse",
+    "cache-patching"
+  ],
   "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/realtime#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/realtime"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -33,5 +54,8 @@
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -1,8 +1,28 @@
 {
   "name": "@kontsedal/olas-persist",
   "version": "0.0.1-rc.0",
-  "description": "Olas persistence composable",
+  "description": "Olas persistence composables — usePersisted with a localStorage adapter.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "persistence",
+    "localStorage",
+    "cache-persistence"
+  ],
   "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/persist#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/persist"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -33,5 +53,8 @@
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
