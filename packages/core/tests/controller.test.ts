@@ -455,6 +455,29 @@ describe('construction error rollback (§12.1)', () => {
     expect(() => createRoot(broken, { deps: noopApi, onError })).toThrow('bootstrap fail')
     expect(onError).not.toHaveBeenCalled()
   })
+
+  test('root bootstrap failure disposes the QueryClient (plugins / listeners cleaned up)', () => {
+    // Regression: the QueryClient + its plugins were created BEFORE the
+    // factory ran. If the factory threw, the client (and any plugin-side
+    // listeners — window/storage subscribers, transports) leaked.
+    const initSpy = vi.fn()
+    const disposeSpy = vi.fn()
+    const plugin = {
+      init: initSpy,
+      dispose: disposeSpy,
+    }
+    const broken = defineController(() => {
+      throw new Error('bootstrap fail')
+    })
+    expect(() =>
+      createRoot(broken, {
+        deps: noopApi,
+        plugins: [plugin],
+      }),
+    ).toThrow('bootstrap fail')
+    expect(initSpy).toHaveBeenCalledTimes(1)
+    expect(disposeSpy).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('createTestController', () => {

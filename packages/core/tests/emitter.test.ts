@@ -35,6 +35,33 @@ describe('createEmitter', () => {
     expect(handler).toHaveBeenCalledWith('a')
   })
 
+  test('once returns an unsubscribe function that cancels before firing', () => {
+    const e = createEmitter<string>()
+    const handler = vi.fn()
+    const off = e.once(handler)
+    off()
+    e.emit('a')
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  test('on after dispose returns a no-op unsubscribe and never fires', () => {
+    const e = createEmitter<string>()
+    e.dispose()
+    const off = e.on(() => {})
+    expect(typeof off).toBe('function')
+    expect(() => off()).not.toThrow()
+  })
+
+  test('once after dispose returns a no-op unsubscribe', () => {
+    const e = createEmitter<string>()
+    e.dispose()
+    const handler = vi.fn()
+    const off = e.once(handler)
+    expect(() => off()).not.toThrow()
+    e.emit('z')
+    expect(handler).not.toHaveBeenCalled()
+  })
+
   test('handlers added during emit do NOT fire for the in-progress emit', () => {
     const e = createEmitter<number>()
     const seen: string[] = []

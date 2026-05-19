@@ -42,6 +42,11 @@ describe('stableHash', () => {
     expect(() => stableHash([() => 1])).toThrow()
     expect(() => stableHash([Symbol('x')])).toThrow()
   })
+
+  test('throws on Map/Set — keys must be primitive-ish to hash stably', () => {
+    expect(() => stableHash([new Map([['a', 1]])])).toThrow(/Map\/Set/)
+    expect(() => stableHash([new Set(['a'])])).toThrow(/Map\/Set/)
+  })
 })
 
 describe('defineQuery + ctx.use', () => {

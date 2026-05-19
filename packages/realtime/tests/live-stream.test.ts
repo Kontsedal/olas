@@ -113,6 +113,38 @@ describe('useLiveStream', () => {
       root.dispose()
     })
 
+    test('pending events queued in the pre-pause window are flushed on resume', () => {
+      // Regression: pause()'s cleanup cleared the trailing flush timer but
+      // kept `pending`. Without a fresh event, those buffered events were
+      // stranded forever after resume().
+      const realtime = fakeRealtime()
+      const def = defineController((ctx) => {
+        const stream = useLiveStream<string>(ctx, 'logs', {
+          capacity: 100,
+          flushMs: 50,
+        })
+        return { stream }
+      })
+      const root = createRoot(def, { deps: { realtime } })
+
+      realtime.emit('logs', 'queued')
+      // Pause BEFORE flushMs elapses — the trailing timer is canceled.
+      vi.advanceTimersByTime(10)
+      expect(root.stream.events.value).toEqual([])
+      root.stream.pause()
+
+      // While paused: time advances; the stranded event would never appear in
+      // the original buggy implementation.
+      vi.advanceTimersByTime(1000)
+      expect(root.stream.events.value).toEqual([])
+
+      // Resume — the effect re-runs and reschedules the flush.
+      root.stream.resume()
+      vi.advanceTimersByTime(50)
+      expect(root.stream.events.value).toEqual(['queued'])
+      root.dispose()
+    })
+
     test('pause stops buffering; resume continues; buffer survives the pause', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {

@@ -48,7 +48,15 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
   )
 
   // Bootstrap failure throws straight out of createRoot. Spec §12.1.5.
-  const api = instance.construct(getFactory(def), props)
+  // Tear down the QueryClient and any plugins it spawned (window/storage
+  // listeners, transports) before re-throwing so the failure doesn't leak.
+  let api: Api
+  try {
+    api = instance.construct(getFactory(def), props)
+  } catch (err) {
+    queryClient.dispose()
+    throw err
+  }
 
   if (typeof api !== 'object' || api === null) {
     // Allow primitive APIs in principle but root controls must live somewhere.

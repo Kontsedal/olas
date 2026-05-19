@@ -2,7 +2,7 @@
 
 Zod ↔ Olas forms adapter. Two helpers — `zodValidator` (single field) and `formFromZod` (whole form, inferred from schema).
 
-Olas core stays Zod-free. This package has a peer dep on `zod ^3`.
+Olas core stays Zod-free. This package has a peer dep on `zod ^4`.
 
 ## Install
 
@@ -70,7 +70,7 @@ function formFromZod<S extends z.ZodObject<z.ZodRawShape>>(
 
 `zodValidator` runs `schema.safeParse(value)` and reports the first `ZodIssue`'s `message`. `zodValidatorAsync` awaits `.safeParseAsync(...)` for schemas with async `.refine` / `.transform`.
 
-Form-level `.refine(...)` on the root `z.object(...)` is attached as a top-level form validator (surfaces via `form.topLevelErrors`).
+Root-level `.refine(...)` rules on `z.object(...)` are **not** auto-promoted to a form-level validator today. Wire one manually with `ctx.form(fields, { validators: [zodValidator(schema)] })`, or assert on `form.isValid` for leaf-level rules. Tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
 
 ## Limitation
 

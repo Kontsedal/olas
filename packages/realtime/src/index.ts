@@ -152,6 +152,13 @@ export function useLiveStream<TEvent>(
 
   ctx.effect(() => {
     if (isPaused$.value) return
+    // Events buffered during the previous run that the cleanup cleared the
+    // timer for (i.e. pause() fired before the trailing flush) would sit
+    // forever otherwise; reschedule the flush as we re-subscribe so they
+    // eventually land in `events$`.
+    if (pending.length > 0 && !syncFlush && flushTimer == null) {
+      flushTimer = setTimeout(flush, flushMs)
+    }
     const sub = ctx.deps.realtime.subscribe<TEvent>(channel, (event) => {
       pending.push(event)
       if (syncFlush) {

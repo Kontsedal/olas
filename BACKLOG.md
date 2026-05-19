@@ -91,6 +91,10 @@ Today users write their own retry logic inside the fetcher (or use the existing 
 
 ## Forms
 
+### [idea] Promote root-level Zod `.refine(...)` to a form-level validator in `formFromZod`
+
+`formFromZod` walks `schema.shape` to build leaves; any `.refine(...)` rules on the root `z.object(...)` aren't lifted into a top-level form validator. Workaround: pass `{ validators: [zodValidator(schema)] }` manually to `ctx.form(...)`. Implementing it well needs to split Zod issues by path (root-only vs. field-scoped) so leaf rules aren't double-reported.
+
 ### [idea] Path-typed `form.fieldAt('a.b.c')` lookup
 
 [from SPEC §20.7] The current public API uses the nested `form.fields.a.fields.b.fields.c` access. A `fieldAt<P extends FormPath<S>>(path: P): FieldAt<S, P>` would be ergonomic for deep forms but needs template-literal-type machinery that's implementation-heavy. Nested access covers ~95% of cases today, so this is opportunistic, not blocking.
