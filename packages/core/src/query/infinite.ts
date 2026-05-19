@@ -71,7 +71,7 @@ export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
   fetchPreviousPage: () => Promise<void>
 }
 
-type Snapshot = { rollback: () => void }
+import type { Snapshot } from './types'
 
 /**
  * Holds an array of pages plus their pageParams. Supports fetchNextPage /
@@ -344,7 +344,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
 
   setData(updater: (prev: TPage[] | undefined) => TPage[]): Snapshot {
     if (this.disposed) {
-      return { rollback: () => {} }
+      return { rollback: () => {}, finalize: () => {} }
     }
     const prev = this.pages.peek()
     const next = updater(prev.length === 0 ? undefined : prev)
@@ -370,6 +370,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           this.snapshots = this.snapshots.filter((s) => s.id !== id)
           this.hasPendingMutations.set(this.snapshots.some((s) => s.live))
         })
+      },
+      finalize: () => {
+        if (!record.live || this.disposed) return
+        record.live = false
+        this.snapshots = this.snapshots.filter((s) => s.id !== id)
+        if (!this.snapshots.some((s) => s.live)) {
+          this.hasPendingMutations.set(false)
+        }
       },
     }
   }

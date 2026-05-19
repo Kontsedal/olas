@@ -59,9 +59,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     this.validators = options?.validators ?? []
 
     // Apply initial values (one-shot or initial snapshot from a function).
+    // `asInitial: true` flag tells leaf fields to set their value AND re-anchor
+    // their `reset()` target without marking themselves dirty.
     if (options?.initial !== undefined) {
       const ini = typeof options.initial === 'function' ? options.initial() : options.initial
-      if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>)
+      if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
     }
 
     this.value = computed(() => this.computeValue())
@@ -136,15 +138,21 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   set(partial: DeepPartial<FormValue<S>>): void {
     if (this.disposed) return
-    batch(() => this.applyPartial(partial))
+    batch(() => this.applyPartial(partial, false))
   }
 
-  private applyPartial(partial: DeepPartial<FormValue<S>>): void {
+  private applyPartial(partial: DeepPartial<FormValue<S>>, asInitial: boolean): void {
     for (const [k, val] of Object.entries(partial)) {
       const child = (this.fields as Record<string, unknown>)[k]
       if (!child) continue
       if (isForm(child)) {
-        child.set(val as DeepPartial<FormValue<FormSchema>>)
+        // Nested form: recurse via its own `set` (user) or rebuild via reset
+        // through the same `applyPartial`-with-`asInitial` flag (initial).
+        if (asInitial) {
+          ;(child as Form<FormSchema>).resetWithInitial(val as DeepPartial<FormValue<FormSchema>>)
+        } else {
+          child.set(val as DeepPartial<FormValue<FormSchema>>)
+        }
       } else if (isFieldArray(child)) {
         const arr = child
         // Replace items: clear, then add each
@@ -153,9 +161,17 @@ class FormImpl<S extends FormSchema> implements Form<S> {
           arr.add(itemVal as ItemInitial<Field<unknown>>)
         }
       } else {
-        ;(child as Field<unknown>).set(val)
+        const f = child as Field<unknown>
+        if (asInitial) f.setAsInitial(val)
+        else f.set(val)
       }
     }
+  }
+
+  /** Internal: re-seat this form's leaves from `partial` as their new initial. */
+  resetWithInitial(partial: DeepPartial<FormValue<S>>): void {
+    if (this.disposed) return
+    batch(() => this.applyPartial(partial, true))
   }
 
   reset(): void {
@@ -170,11 +186,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       }
       this.topLevelErrors$.set([])
     })
-    // Re-apply initial if provided.
+    // Re-apply initial if provided — as initial (no dirty bump).
     if (this.options?.initial !== undefined) {
       const ini =
         typeof this.options.initial === 'function' ? this.options.initial() : this.options.initial
-      if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>)
+      if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
     }
   }
 

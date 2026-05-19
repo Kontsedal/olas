@@ -202,7 +202,7 @@ export class Entry<T> {
 
   setData(updater: (prev: T | undefined) => T): Snapshot {
     if (this.disposed) {
-      return { rollback: () => {} }
+      return { rollback: () => {}, finalize: () => {} }
     }
     const prev = this.data.peek()
     const next = updater(prev)
@@ -229,6 +229,14 @@ export class Entry<T> {
           const anyLive = this.snapshots.some((s) => s.live)
           this.hasPendingMutations.set(anyLive)
         })
+      },
+      finalize: () => {
+        if (!record.live || this.disposed) return
+        record.live = false
+        this.snapshots = this.snapshots.filter((s) => s.id !== id)
+        if (!this.snapshots.some((s) => s.live)) {
+          this.hasPendingMutations.set(false)
+        }
       },
     }
   }

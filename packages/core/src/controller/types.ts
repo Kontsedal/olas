@@ -47,6 +47,14 @@ export type Field<T> = ReadSignal<T> & {
   touched: ReadSignal<boolean>
   isValidating: ReadSignal<boolean>
   set(value: T): void
+  /**
+   * Reseat the field as if this value had been its constructor `initial`:
+   * writes the value, re-anchors `reset()`'s target, leaves `isDirty` false.
+   * `Form` uses this when applying its own `initial` (constructor + reset),
+   * so a form populated from server data isn't born dirty. Useful for any
+   * "load this value as the new baseline" pattern.
+   */
+  setAsInitial(value: T): void
   reset(): void
   markTouched(): void
   revalidate(): Promise<boolean>

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import type { Snapshot } from '../src/query/types'
 import { isAbortError } from '../src/utils'
 
 const emptyDeps = {}
@@ -290,6 +291,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
               rollbackCalls++
               snap.rollback()
             },
+            finalize: () => snap.finalize(),
           }
         },
         onError: (_e, _v, snap) => snap?.rollback(),
@@ -332,6 +334,32 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     root.dispose()
   })
 
+  test('hasPendingMutations clears after successful optimistic mutation', async () => {
+    // Regression: setData() set the pending flag and stored a snapshot, but
+    // mutation success never finalized it. Only rollback cleared it. So an
+    // optimistic+successful write left `hasPendingMutations` stuck true.
+    const q = defineQuery({
+      key: () => ['n'],
+      fetcher: async () => 0,
+    })
+    const def = defineController((ctx) => {
+      const x = ctx.use(q)
+      const save = ctx.mutation({
+        mutate: async () => 'ok',
+        onMutate: () => q.setData(() => 99),
+      })
+      return { x, save }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.x.hasPendingMutations.value).toBe(false)
+
+    await root.save.run()
+    expect(root.x.data.value).toBe(99)
+    expect(root.x.hasPendingMutations.value).toBe(false)
+    root.dispose()
+  })
+
   test('stacked optimistic updates: later mutation rollback lands on earlier intermediate state', async () => {
     const q = defineQuery({
       key: () => ['n'],
@@ -339,8 +367,8 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     })
     const dA = deferred<number>()
     const dB = deferred<number>()
-    let aSnap: { rollback: () => void } | undefined
-    let bSnap: { rollback: () => void } | undefined
+    let aSnap: Snapshot | undefined
+    let bSnap: Snapshot | undefined
 
     const def = defineController((ctx) => {
       const x = ctx.use(q)

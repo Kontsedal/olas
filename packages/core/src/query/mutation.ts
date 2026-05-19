@@ -215,6 +215,10 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       })
       this.emit({ type: 'mutation:success', result })
       this.safeCall(() => this.spec.onSuccess?.(result, vars), 'mutation')
+      // Commit the optimistic snapshot so `hasPendingMutations` clears on the
+      // affected entry. Symmetric to the auto-rollback in the error path.
+      // Spec §6.4.
+      snapshot?.finalize()
       this.safeCall(() => this.spec.onSettled?.(result, undefined, vars), 'mutation')
       return result
     } catch (err) {
@@ -241,9 +245,10 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     }
   }
 
-  // Wrap so any rollback path — auto on supersede/dispose/onError, or
-  // user-driven inside onError — runs the raw rollback at most once and
-  // emits a single mutation:rollback event.
+  // Wrap so any rollback / finalize path runs the raw operation at most
+  // once. The mutation auto-finalizes on success and auto-rolls-back on
+  // error; user code may also call rollback() from onError. Whichever
+  // happens first wins; subsequent calls (including the auto-call) no-op.
   private wrapSnapshot(raw: Snapshot): Snapshot {
     let consumed = false
     return {
@@ -252,6 +257,11 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         consumed = true
         raw.rollback()
         this.emit({ type: 'mutation:rollback' })
+      },
+      finalize: () => {
+        if (consumed) return
+        consumed = true
+        raw.finalize()
       },
     }
   }

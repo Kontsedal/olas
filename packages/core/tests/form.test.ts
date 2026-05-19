@@ -110,6 +110,59 @@ describe('ctx.form — basic aggregation', () => {
     expect(await root.form.validate()).toBe(true)
     root.dispose()
   })
+
+  test('form options.initial does NOT start the form dirty', () => {
+    // Regression: `applyPartial` previously called `Field.set(...)` for the
+    // initial value, which marked dirty. Server-loaded forms were born dirty.
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        {
+          name: ctx.field<string>(''),
+          email: ctx.field<string>(''),
+          address: ctx.form({
+            street: ctx.field<string>(''),
+            city: ctx.field<string>(''),
+          }),
+        },
+        {
+          initial: {
+            name: 'Ada',
+            email: 'ada@example.com',
+            address: { street: '1 Babbage St', city: 'London' },
+          },
+        },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    // Initial values applied
+    expect(root.form.fields.name.value).toBe('Ada')
+    expect(root.form.fields.address.fields.city.value).toBe('London')
+
+    // Not dirty — top level or any leaf
+    expect(root.form.isDirty.value).toBe(false)
+    expect(root.form.fields.name.isDirty.value).toBe(false)
+    expect(root.form.fields.address.fields.city.isDirty.value).toBe(false)
+    root.dispose()
+  })
+
+  test('reset() with initial returns to the initial values, not empty', () => {
+    // Regression: reset() called Field.reset() (which goes to ctor `initial`)
+    // and then re-applied form.initial via set(), making the form dirty again.
+    const def = defineController((ctx) => ({
+      form: ctx.form({ name: ctx.field<string>('') }, { initial: { name: 'Ada' } }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    root.form.fields.name.set('Bob')
+    expect(root.form.fields.name.value).toBe('Bob')
+    expect(root.form.isDirty.value).toBe(true)
+
+    root.form.reset()
+    expect(root.form.fields.name.value).toBe('Ada')
+    expect(root.form.isDirty.value).toBe(false)
+    root.dispose()
+  })
 })
 
 describe('ctx.form — form-level validators', () => {

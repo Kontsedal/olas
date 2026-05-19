@@ -35,11 +35,23 @@ export type AsyncState<T> = {
 }
 
 /**
- * Returned by `query.setData(...)` or `localCache.setData(...)`. Calling
- * `rollback()` restores the previous data state. Used by `mutation.onMutate`
- * for optimistic-update rollback (spec §6.4).
+ * Returned by `query.setData(...)` or `localCache.setData(...)`. Used by
+ * `mutation.onMutate` for optimistic-update rollback (spec §6.4).
+ *
+ * - `rollback()` restores the previous data state (and clears the
+ *   "pending mutation" flag on the entry if no other snapshots are live).
+ * - `finalize()` commits the snapshot as the new truth — no rollback,
+ *   `hasPendingMutations` clears once all live snapshots on the entry
+ *   are finalized or rolled back. The mutation runner calls this on
+ *   success; user code rarely needs to.
+ *
+ * Both are idempotent and mutually exclusive (calling one disables the
+ * other). Safe to call after the owning entry has been disposed.
  */
-export type Snapshot = { rollback: () => void }
+export type Snapshot = {
+  rollback: () => void
+  finalize: () => void
+}
 
 /**
  * A cache owned by one controller — no sharing across the tree. Returned by

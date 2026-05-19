@@ -623,10 +623,18 @@ type Mutation<V, R> = {
 ### Type: `Snapshot`
 
 ```ts
-type Snapshot = { rollback: () => void }
+type Snapshot = {
+  rollback: () => void
+  finalize: () => void
+}
 ```
 
-Returned by `query.setData(...)` / `localCache.setData(...)`. Calling `rollback()` restores the previous data.
+Returned by `query.setData(...)` / `localCache.setData(...)`.
+
+- `rollback()` — restore the previous data; also clears `hasPendingMutations` on the entry if no other snapshots are live.
+- `finalize()` — commit the snapshot as the new truth. The mutation runner auto-calls this on success; user code rarely needs to.
+
+Both are idempotent and mutually exclusive — whichever happens first wins, subsequent calls (including the runtime's auto-calls) no-op.
 
 ---
 
@@ -658,6 +666,7 @@ type Field<T> = ReadSignal<T> & {
   readonly isValidating: ReadSignal<boolean>
 
   set(value: T): void
+  setAsInitial(value: T): void
   reset(): void
   markTouched(): void
   revalidate(): Promise<boolean>
@@ -665,7 +674,9 @@ type Field<T> = ReadSignal<T> & {
 }
 ```
 
-`Field<T>` *is* a `ReadSignal<T>` — `field.value` reads the current value directly, no `.value.value` indirection. Compare with `Form` and `FieldArray`, whose `value` is a `ReadSignal<...>`. See [`.wiki/pitfalls/field-value-shape.md`](.wiki/pitfalls/field-value-shape.md).
+- `set(value)` — write a new value; marks `isDirty: true` and triggers validators.
+- `setAsInitial(value)` — write a new value AND re-anchor `reset()`'s target here, without marking dirty. Use for "load this value as the new baseline" — most commonly when reseating a form from server data outside the `ctx.form({initial})` path.
+- `field.value` reads the current value directly (because `Field<T>` *is* a `ReadSignal<T>`). Compare with `Form` and `FieldArray`, whose `value` is a `ReadSignal<...>`. See [`.wiki/pitfalls/field-value-shape.md`](.wiki/pitfalls/field-value-shape.md).
 
 ### Type: `Validator<T>`
 
@@ -732,6 +743,7 @@ type Form<S extends FormSchema> = {
   readonly isValidating: ReadSignal<boolean>
 
   set(partial: DeepPartial<FormValue<S>>): void
+  resetWithInitial(partial: DeepPartial<FormValue<S>>): void
   reset(): void
   markAllTouched(): void
   validate(): Promise<boolean>
@@ -740,7 +752,8 @@ type Form<S extends FormSchema> = {
 ```
 
 - `value` is a `ReadSignal<FormValue<S>>` — read via `form.value.value`. (Compare with `Field.value`, which is the value directly.)
-- `set(partial)` deep-merges a partial value, batched.
+- `set(partial)` deep-merges a partial value, batched; marks affected leaves dirty.
+- `resetWithInitial(partial)` re-seats every covered leaf via `setAsInitial` — values applied, `reset()` retargeted, **no dirty bump**. Used for "load this from the server as the new baseline."
 - `validate()` runs every leaf's validators and resolves with `true` iff all leaves are valid.
 
 ### Type: `FormOptions<S>`

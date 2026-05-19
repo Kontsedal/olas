@@ -30,7 +30,7 @@
   },
   "peerDependencies": {
     "@olas/core": "workspace:^",
-    "zod": "^3.23.0"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@olas/core": "workspace:^",
