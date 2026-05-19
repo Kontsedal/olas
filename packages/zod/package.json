@@ -1,8 +1,28 @@
 {
   "name": "@kontsedal/olas-zod",
   "version": "0.0.1-rc.0",
-  "description": "Olas Zod adapter — zodValidator + formFromZod",
+  "description": "Olas Zod integration — zodValidator and formFromZod for end-to-end typed forms.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "zod",
+    "validation",
+    "forms"
+  ],
   "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/zod#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/zod"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -35,5 +55,8 @@
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^",
     "zod": "^4.4.3"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

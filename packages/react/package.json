@@ -1,8 +1,29 @@
 {
   "name": "@kontsedal/olas-react",
   "version": "0.0.1-rc.0",
-  "description": "Olas React adapter",
+  "description": "Olas React adapter — OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "react",
+    "hooks",
+    "keep-alive",
+    "concurrent-react"
+  ],
   "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/react#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/react"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -40,5 +61,8 @@
     "jsdom": "^29.1.1",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

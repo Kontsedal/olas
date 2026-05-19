@@ -1,8 +1,31 @@
 {
   "name": "@kontsedal/olas-core",
   "version": "0.0.1-rc.0",
-  "description": "Olas core — controller tree, signals, queries, mutations, forms",
+  "description": "Olas core — controller-tree state management with signals, queries, mutations, and forms. Framework-agnostic.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "query-cache",
+    "mutation",
+    "optimistic-updates",
+    "forms",
+    "ssr",
+    "framework-agnostic"
+  ],
   "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/core#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
@@ -43,5 +66,8 @@
   },
   "devDependencies": {
     "@preact/signals-core": "^1.14.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
