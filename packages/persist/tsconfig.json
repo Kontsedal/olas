@@ -4,7 +4,7 @@
     "rootDir": ".",
     "outDir": "dist",
     "noEmit": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"]
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
   "include": ["src/**/*", "tests/**/*"]
 }

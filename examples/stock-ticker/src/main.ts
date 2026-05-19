@@ -13,17 +13,21 @@ const root = createAppRoot(market, { initialWatchlist: ['AAPL', 'MSFT', 'NVDA'] 
 // Per-symbol details controller, opened on row click. Keyed by symbol so
 // re-clicking the same row is a no-op; clicking a different row disposes the
 // previous details. The cache + effect inside the child clean themselves up.
-let detailsActive: { symbol: string; api: ReturnType<typeof root.ticker.openDetails>; teardown: () => void } | null = null
+let detailsActive: {
+  symbol: string
+  api: ReturnType<typeof root.ticker.openDetails>
+  teardown: () => void
+} | null = null
 
-const totalEl   = mustEl<HTMLElement>('#total')
-const wlEl      = mustEl<HTMLUListElement>('#watchlist')
-const searchEl  = mustEl<HTMLInputElement>('#search')
+const totalEl = mustEl<HTMLElement>('#total')
+const wlEl = mustEl<HTMLUListElement>('#watchlist')
+const searchEl = mustEl<HTMLInputElement>('#search')
 const resultsEl = mustEl<HTMLUListElement>('#results')
-const aSymEl    = mustEl<HTMLSelectElement>('#alert-symbol')
-const aDirEl    = mustEl<HTMLSelectElement>('#alert-direction')
-const aTgtEl    = mustEl<HTMLInputElement>('#alert-target')
-const aAddEl    = mustEl<HTMLButtonElement>('#alert-add')
-const alertsEl  = mustEl<HTMLUListElement>('#alerts')
+const aSymEl = mustEl<HTMLSelectElement>('#alert-symbol')
+const aDirEl = mustEl<HTMLSelectElement>('#alert-direction')
+const aTgtEl = mustEl<HTMLInputElement>('#alert-target')
+const aAddEl = mustEl<HTMLButtonElement>('#alert-add')
+const alertsEl = mustEl<HTMLUListElement>('#alerts')
 const toastRoot = mustEl<HTMLElement>('#toast-root')
 
 // --- Portfolio total -----------------------------------------------------
@@ -54,7 +58,8 @@ bindList(wlEl, watchlistRows, (row) => {
 
   const sym = document.createElement('button')
   sym.type = 'button'
-  sym.className = 'font-mono font-bold text-sm bg-transparent border-0 p-0 text-left cursor-pointer hover:text-(--color-accent)'
+  sym.className =
+    'font-mono font-bold text-sm bg-transparent border-0 p-0 text-left cursor-pointer hover:text-(--color-accent)'
   sym.textContent = row.symbol
   sym.onclick = () => openDetailsFor(row.symbol)
 
@@ -117,10 +122,12 @@ bindList(resultsEl, root.ticker.filteredSymbols, (sym) => {
   if (alreadyIn) {
     add.textContent = 'Added'
     add.disabled = true
-    add.className = 'rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-2 py-0.5 text-[11px] text-(--color-fg-mute) cursor-not-allowed'
+    add.className =
+      'rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-2 py-0.5 text-[11px] text-(--color-fg-mute) cursor-not-allowed'
   } else {
     add.textContent = '+ add'
-    add.className = 'rounded-md bg-(--color-accent) px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110'
+    add.className =
+      'rounded-md bg-(--color-accent) px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110'
     add.onclick = () => root.ticker.addToWatchlist(sym.symbol)
   }
   li.append(s, meta, add)
@@ -145,7 +152,7 @@ effect(() => {
 
 aAddEl.addEventListener('click', () => {
   const symbol = aSymEl.value
-  const direction = (aDirEl.value as 'above' | 'below')
+  const direction = aDirEl.value as 'above' | 'below'
   const target = parseFloat(aTgtEl.value)
   if (Number.isNaN(target)) return
   root.ticker.addAlert({ symbol, target, direction })

@@ -1,5 +1,5 @@
 import type { Field } from '../controller/types'
-import { type Signal, batch, computed, effect, signal, untracked } from '../signals'
+import { batch, computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { bindFieldDevtoolsOwner, createField } from './field'
 import type {

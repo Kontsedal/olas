@@ -37,7 +37,8 @@
   }
 }
 
-html, body {
+html,
+body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);

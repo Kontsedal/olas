@@ -4,18 +4,21 @@
 // difference is the `target` we open the editor with. The editor controller
 // branches on `mode` internally to choose `api.saveCard` vs `api.createCard`.
 
-import { useEffect, useMemo, type ReactElement } from 'react'
 import { use } from '@olas/react'
 import { X } from 'lucide-react'
+import { type ReactElement, useEffect, useMemo } from 'react'
 import type { CardEditorTarget } from '../controllers/cardEditor'
-import { DateRow, PriorityRow, TextRow, TextareaRow } from './form/inputs'
+import { DateRow, PriorityRow, TextareaRow, TextRow } from './form/inputs'
 import { SubtasksRow } from './form/SubtasksRow'
 import { useApi } from './useApi'
 
 export function CardEditor({
   target,
   onClose,
-}: { target: CardEditorTarget; onClose: () => void }): ReactElement {
+}: {
+  target: CardEditorTarget
+  onClose: () => void
+}): ReactElement {
   const api = useApi()
 
   // Construct the child controller once per open. `target` is referentially
@@ -100,7 +103,10 @@ export function CardEditor({
           </details>
         )}
         {error !== undefined && (
-          <div role="alert" className="rounded-md bg-(--color-danger)/10 px-3 py-2 text-xs text-(--color-danger)">
+          <div
+            role="alert"
+            className="rounded-md bg-(--color-danger)/10 px-3 py-2 text-xs text-(--color-danger)"
+          >
             {String((error as Error)?.message ?? error)}
           </div>
         )}

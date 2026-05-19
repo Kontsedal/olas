@@ -22,10 +22,7 @@ function FieldError({ message }: { message: string }): ReactElement {
   return <span className="text-xs text-(--color-danger)">{message}</span>
 }
 
-export function TextRow({
-  label,
-  field,
-}: { label: string; field: Field<string> }): ReactElement {
+export function TextRow({ label, field }: { label: string; field: Field<string> }): ReactElement {
   const f = useField(field)
   return (
     <label className="flex flex-col gap-1">
@@ -46,7 +43,11 @@ export function TextareaRow({
   label,
   field,
   rows = 2,
-}: { label: string; field: Field<string>; rows?: number }): ReactElement {
+}: {
+  label: string
+  field: Field<string>
+  rows?: number
+}): ReactElement {
   const f = useField(field)
   return (
     <label className="flex flex-col gap-1">
@@ -81,10 +82,7 @@ export function PriorityRow({ field }: { field: Field<Priority> }): ReactElement
   )
 }
 
-export function DateRow({
-  label,
-  field,
-}: { label: string; field: Field<string> }): ReactElement {
+export function DateRow({ label, field }: { label: string; field: Field<string> }): ReactElement {
   const f = useField(field)
   return (
     <label className="flex flex-col gap-1">

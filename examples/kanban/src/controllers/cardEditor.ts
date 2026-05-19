@@ -12,19 +12,12 @@
 // its parent (the board controller) — neither flows in via props. Spec §10.3.
 
 import { type Ctx, defineController } from '@olas/core'
-import { boardQuery } from '../query'
-import {
-  type CardFormValue,
-  buildCardForm,
-  cardToFormInitials,
-  NEW_CARD_INITIALS,
-} from '../schema'
-import { activityScope, currentBoardScope } from '../scopes'
 import type { Card, NewCard } from '../api'
+import { boardQuery } from '../query'
+import { buildCardForm, type CardFormValue, cardToFormInitials, NEW_CARD_INITIALS } from '../schema'
+import { activityScope, currentBoardScope } from '../scopes'
 
-export type CardEditorTarget =
-  | { mode: 'edit'; card: Card }
-  | { mode: 'create'; columnId: string }
+export type CardEditorTarget = { mode: 'edit'; card: Card } | { mode: 'create'; columnId: string }
 
 export type CardEditorProps = {
   target: CardEditorTarget
@@ -71,21 +64,14 @@ export const cardEditorController = defineController(
         }
 
         // Create mode: api mints the id and appends to the target column.
-        const saved = await ctx.deps.api.createCard(
-          board.id,
-          target.columnId,
-          newCardBody,
-          signal,
-        )
+        const saved = await ctx.deps.api.createCard(board.id, target.columnId, newCardBody, signal)
         boardQuery.setData(board.id, (prev) => {
           if (!prev) throw new Error('createCard before board loaded')
           return {
             ...prev,
             cards: { ...prev.cards, [saved.id]: saved },
             columns: prev.columns.map((c) =>
-              c.id === target.columnId
-                ? { ...c, cardIds: [saved.id, ...c.cardIds] }
-                : c,
+              c.id === target.columnId ? { ...c, cardIds: [saved.id, ...c.cardIds] } : c,
             ),
           }
         })

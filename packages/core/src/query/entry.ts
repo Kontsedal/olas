@@ -1,4 +1,4 @@
-import { type Signal, batch, signal } from '../signals'
+import { batch, type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
 import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 

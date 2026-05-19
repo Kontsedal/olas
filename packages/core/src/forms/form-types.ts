@@ -26,23 +26,14 @@ export type FormErrors<S extends FormSchema> = {
         : never
 }
 
-export type FieldArrayValue<I> = I extends Field<infer T>
-  ? T[]
-  : I extends Form<infer S>
-    ? FormValue<S>[]
-    : never
+export type FieldArrayValue<I> =
+  I extends Field<infer T> ? T[] : I extends Form<infer S> ? FormValue<S>[] : never
 
-export type FieldArrayItemErrors<I> = I extends Field<any>
-  ? string[]
-  : I extends Form<infer S>
-    ? FormErrors<S>
-    : never
+export type FieldArrayItemErrors<I> =
+  I extends Field<any> ? string[] : I extends Form<infer S> ? FormErrors<S> : never
 
-export type ItemInitial<I> = I extends Field<infer T>
-  ? T
-  : I extends Form<infer S>
-    ? DeepPartial<FormValue<S>>
-    : never
+export type ItemInitial<I> =
+  I extends Field<infer T> ? T : I extends Form<infer S> ? DeepPartial<FormValue<S>> : never
 
 export type DeepPartial<T> = T extends object
   ? T extends ReadonlyArray<infer U>

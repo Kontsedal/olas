@@ -2,10 +2,10 @@
 // activity feed, the error toast, the devtools panel, and the card editor
 // modal.
 
-import { OlasProvider } from '@olas/react'
 import { DevtoolsLauncher } from '@olas/devtools'
-import { useState, type ReactElement } from 'react'
+import { OlasProvider } from '@olas/react'
 import { AlertTriangle, Sparkles } from 'lucide-react'
+import { type ReactElement, useState } from 'react'
 import type { Api } from '../api'
 import type { AppRoot } from '../app'
 import type { CardEditorTarget } from '../controllers/cardEditor'

@@ -4,8 +4,8 @@
 
 import type { DehydratedState } from '@olas/core'
 import { hydrateRoot } from 'react-dom/client'
-import { createFakeApi } from './api'
 import { App } from './App'
+import { createFakeApi } from './api'
 import { createAppRoot } from './controller'
 import './styles.css'
 

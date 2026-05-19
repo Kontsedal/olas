@@ -1,12 +1,12 @@
 import type { Field } from '../controller/types'
 import type { DevtoolsEmitter } from '../devtools'
 import {
-  type Computed,
-  type ReadSignal,
-  type Signal,
   batch,
+  type Computed,
   computed,
   effect,
+  type ReadSignal,
+  type Signal,
   signal,
 } from '../signals'
 import { isAbortError } from '../utils'
@@ -244,10 +244,7 @@ class FieldImpl<T> implements Field<T> {
  * `bindDevtoolsOwner` on the public `Field<T>` type while letting `createForm`
  * call it via a structural check.
  */
-export function bindFieldDevtoolsOwner<T>(
-  field: Field<T>,
-  owner: FieldDevtoolsOwner | null,
-): void {
+export function bindFieldDevtoolsOwner<T>(field: Field<T>, owner: FieldDevtoolsOwner | null): void {
   const impl = field as { bindDevtoolsOwner?: (o: FieldDevtoolsOwner | null) => void }
   if (typeof impl.bindDevtoolsOwner === 'function') {
     impl.bindDevtoolsOwner(owner)

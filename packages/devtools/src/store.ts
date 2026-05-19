@@ -45,8 +45,24 @@ export type CacheEntry =
  * the entry can be paired with a preceding `run` for the same path+name. */
 export type MutationEntry =
   | { id: number; t: number; kind: 'run'; path: readonly string[]; name?: string; vars: unknown }
-  | { id: number; t: number; kind: 'success'; path: readonly string[]; name?: string; result: unknown; durationMs?: number }
-  | { id: number; t: number; kind: 'error'; path: readonly string[]; name?: string; error: unknown; durationMs?: number }
+  | {
+      id: number
+      t: number
+      kind: 'success'
+      path: readonly string[]
+      name?: string
+      result: unknown
+      durationMs?: number
+    }
+  | {
+      id: number
+      t: number
+      kind: 'error'
+      path: readonly string[]
+      name?: string
+      error: unknown
+      durationMs?: number
+    }
   | { id: number; t: number; kind: 'rollback'; path: readonly string[]; name?: string }
 
 /** One entry in the field validation log. */

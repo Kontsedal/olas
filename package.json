@@ -20,13 +20,13 @@
     "wiki:lint": "tsx scripts/wiki-lint.ts"
   },
   "devDependencies": {
-    "@biomejs/biome": "^1.9.4",
-    "@changesets/cli": "^2.27.10",
-    "@types/node": "^22.10.2",
-    "tsup": "^8.3.5",
-    "tsx": "^4.19.2",
-    "typescript": "^5.7.2",
-    "vitest": "^2.1.8",
-    "yaml": "^2.6.1"
+    "@biomejs/biome": "^2.4.15",
+    "@changesets/cli": "^2.31.0",
+    "@types/node": "^25.9.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.2",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.6",
+    "yaml": "^2.9.0"
   }
 }

@@ -4,15 +4,19 @@
 // `errors[0]` or "ready to post".
 
 import { use, useField } from '@olas/react'
-import { useEffect, useMemo, type ReactElement } from 'react'
 import { Loader2, MessageCircle, Send, X } from 'lucide-react'
+import { type ReactElement, useEffect, useMemo } from 'react'
 import type { AppApi } from './controller'
 
 export function Composer({
   api,
   articleId,
   onClose,
-}: { api: AppApi; articleId: string; onClose: () => void }): ReactElement {
+}: {
+  api: AppApi
+  articleId: string
+  onClose: () => void
+}): ReactElement {
   // ctx.attach returns { api, dispose } — let the parent close it.
   const handle = useMemo(() => api.reader.openComposer(articleId), [api, articleId])
   // Tear down when the React component unmounts (e.g. switching articles).
@@ -79,7 +83,10 @@ export function Composer({
         />
 
         {error !== undefined && (
-          <div role="alert" className="rounded-md bg-(--color-accent-bg) px-3 py-2 text-xs text-(--color-accent)">
+          <div
+            role="alert"
+            className="rounded-md bg-(--color-accent-bg) px-3 py-2 text-xs text-(--color-accent)"
+          >
             {String((error as Error)?.message ?? error)}
           </div>
         )}
@@ -90,7 +97,11 @@ export function Composer({
             disabled={isPending}
             className="inline-flex items-center gap-1.5 rounded-md bg-(--color-accent) px-3 py-1.5 text-xs font-medium text-white hover:brightness-110 disabled:opacity-50"
           >
-            {isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Send className="size-3.5" />}
+            {isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Send className="size-3.5" />
+            )}
             {isPending ? 'Posting…' : 'Post comment'}
           </button>
         </div>

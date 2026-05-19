@@ -5,13 +5,13 @@
 // into the input updates the field's value and that an error message renders
 // when the field has errors.
 
-import { describe, expect, test } from 'vitest'
-import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
+import type { Field } from '@olas/core'
 import { fakeField } from '@olas/core/testing'
 import { useField } from '@olas/react'
-import type { Field } from '@olas/core'
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
+import { describe, expect, test } from 'vitest'
 
 // Local re-implementation of FieldRow so we don't have to extract it from the
 // CardEditor module. Mirrors `examples/kanban/src/View/CardEditor.tsx:FieldRow`.
@@ -20,11 +20,7 @@ function FieldRow({ label, field }: { label: string; field: Field<string> }): Re
   return (
     <label>
       <span>{label}</span>
-      <input
-        value={f.value}
-        onChange={(e) => f.set(e.target.value)}
-        onBlur={f.markTouched}
-      />
+      <input value={f.value} onChange={(e) => f.set(e.target.value)} onBlur={f.markTouched} />
       {f.touched && f.errors[0] !== undefined && <span role="alert">{f.errors[0]}</span>}
     </label>
   )

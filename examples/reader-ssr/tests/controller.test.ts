@@ -1,7 +1,7 @@
 // Controller-level tests — pagination accumulator and analytics emitter.
 
-import { describe, expect, test, vi } from 'vitest'
 import { createTestController } from '@olas/core/testing'
+import { describe, expect, test, vi } from 'vitest'
 import { createFakeApi } from '../src/api'
 import { readerController } from '../src/controller'
 
@@ -86,9 +86,15 @@ describe('readerController — pagination', () => {
     const api = createFakeApi()
     const storage = {
       store: new Map<string, string>(),
-      get(k: string) { return this.store.get(k) ?? null },
-      set(k: string, v: string) { this.store.set(k, v) },
-      delete(k: string) { this.store.delete(k) },
+      get(k: string) {
+        return this.store.get(k) ?? null
+      },
+      set(k: string, v: string) {
+        this.store.set(k, v)
+      },
+      delete(k: string) {
+        this.store.delete(k)
+      },
     }
     const root = createTestController(readerController, {
       props: undefined,

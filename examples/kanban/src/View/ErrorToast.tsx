@@ -2,8 +2,8 @@
 // offers a one-click retry using the mutation's `lastVariables` signal.
 
 import { use } from '@olas/react'
-import { useEffect, useState, type ReactElement } from 'react'
 import { AlertTriangle, X } from 'lucide-react'
+import { type ReactElement, useEffect, useState } from 'react'
 import { useApi } from './useApi'
 
 export function ErrorToast(): ReactElement | null {
@@ -58,11 +58,7 @@ function describe(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-function Toast(props: {
-  text: string
-  onRetry: () => void
-  onDismiss: () => void
-}): ReactElement {
+function Toast(props: { text: string; onRetry: () => void; onDismiss: () => void }): ReactElement {
   return (
     <div
       role="alert"

@@ -7,7 +7,6 @@
 
 import { useDraggable, useDroppable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
-import type { ReactElement } from 'react'
 import {
   ArrowDown,
   ArrowRight,
@@ -17,6 +16,7 @@ import {
   GripVertical,
   Plus,
 } from 'lucide-react'
+import type { ReactElement } from 'react'
 import type { Card, Column as ColumnT, Priority } from '../api'
 
 export type ColumnProps = {
@@ -206,7 +206,9 @@ function PriorityBadge({ priority }: { priority: Priority }): ReactElement {
         ? 'bg-(--color-warning)/15 text-(--color-warning) ring-1 ring-(--color-warning)/30'
         : 'bg-(--color-success)/15 text-(--color-success) ring-1 ring-(--color-success)/30'
   return (
-    <span className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold ${cls}`}
+    >
       {priority.toUpperCase()}
     </span>
   )
@@ -216,7 +218,9 @@ function DueDate({ date }: { date: string }): ReactElement {
   const today = new Date().toISOString().slice(0, 10)
   const overdue = date < today
   return (
-    <span className={`inline-flex items-center gap-1 ${overdue ? 'text-(--color-danger) font-semibold' : ''}`}>
+    <span
+      className={`inline-flex items-center gap-1 ${overdue ? 'text-(--color-danger) font-semibold' : ''}`}
+    >
       <CalendarDays className="size-3" />
       {date}
     </span>

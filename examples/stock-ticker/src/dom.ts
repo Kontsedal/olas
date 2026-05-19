@@ -34,7 +34,11 @@ export function bindClass(el: HTMLElement, src: ReadSignal<boolean>, className: 
 /** Two-way bind: input.value ↔ a signal-like with `.set(string)`. */
 export function bindInput(
   input: HTMLInputElement,
-  src: { value: string; set: (v: string) => void; subscribe?: (h: (v: string) => void) => () => void },
+  src: {
+    value: string
+    set: (v: string) => void
+    subscribe?: (h: (v: string) => void) => () => void
+  },
 ): void {
   // signal → DOM. We always pull through effect() so any *future* changes
   // to the signal also reflect into the DOM (e.g. programmatic reset).
@@ -79,7 +83,7 @@ export function makeSparkline(values: readonly number[]): SVGSVGElement {
   for (let i = 0; i < values.length; i++) {
     const x = i * stepX
     const y = 32 - ((values[i]! - min) / range) * 30 - 1 // pad 1px top/bottom
-    d += (i === 0 ? 'M' : ' L') + x.toFixed(1) + ',' + y.toFixed(1)
+    d += `${(i === 0 ? 'M' : ' L') + x.toFixed(1)},${y.toFixed(1)}`
   }
 
   const trend = values[values.length - 1]! >= values[0]!

@@ -1,4 +1,4 @@
-import { type Signal, computed, effect, signal, untracked } from '../signals'
+import { computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import type { ClientEntry, InfiniteClientEntry, QueryClient } from './client'
 import type { InfiniteQuery, InfiniteQuerySpec, InfiniteQuerySubscription } from './infinite'

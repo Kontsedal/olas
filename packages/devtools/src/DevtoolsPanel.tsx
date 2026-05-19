@@ -119,11 +119,46 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
     <div className="olas-devtools" data-testid="olas-devtools">
       <style>{DEVTOOLS_CSS}</style>
       <div className="olas-devtools-tabs" role="tablist">
-        <Tab name="tree" current={tab} setTab={setTab} label="Tree" short="Tree" count={countLiveControllers(liveTree)} />
-        <Tab name="cache" current={tab} setTab={setTab} label="Cache" short="Cache" count={liveCache.length} />
-        <Tab name="inspector" current={tab} setTab={setTab} label="Inspector" short="Insp" count={cacheEntries.length} />
-        <Tab name="mutations" current={tab} setTab={setTab} label="Mutations" short="Mut" count={liveMutations.length} />
-        <Tab name="fields" current={tab} setTab={setTab} label="Fields" short="Fld" count={liveFields.length} />
+        <Tab
+          name="tree"
+          current={tab}
+          setTab={setTab}
+          label="Tree"
+          short="Tree"
+          count={countLiveControllers(liveTree)}
+        />
+        <Tab
+          name="cache"
+          current={tab}
+          setTab={setTab}
+          label="Cache"
+          short="Cache"
+          count={liveCache.length}
+        />
+        <Tab
+          name="inspector"
+          current={tab}
+          setTab={setTab}
+          label="Inspector"
+          short="Insp"
+          count={cacheEntries.length}
+        />
+        <Tab
+          name="mutations"
+          current={tab}
+          setTab={setTab}
+          label="Mutations"
+          short="Mut"
+          count={liveMutations.length}
+        />
+        <Tab
+          name="fields"
+          current={tab}
+          setTab={setTab}
+          label="Fields"
+          short="Fld"
+          count={liveFields.length}
+        />
         <button
           type="button"
           aria-pressed={paused}
@@ -141,7 +176,9 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
           title="Clear logs"
         >
           <span className="olas-devtools-clear-text">Clear</span>
-          <span className="olas-devtools-clear-icon" aria-hidden="true">✕</span>
+          <span className="olas-devtools-clear-icon" aria-hidden="true">
+            ✕
+          </span>
         </button>
       </div>
 
@@ -216,7 +253,10 @@ function countLiveControllers(node: ControllerNode): number {
 function TreeView({
   tree,
   mutations,
-}: { tree: ControllerNode; mutations: MutationEntry[] }): ReactElement {
+}: {
+  tree: ControllerNode
+  mutations: MutationEntry[]
+}): ReactElement {
   if (tree.children.length === 0) {
     return <Empty title="No controllers yet" hint="The root hasn't constructed any controllers." />
   }
@@ -255,7 +295,10 @@ function rollupPending(entries: readonly MutationEntry[]): Map<string, number> {
 function TreeNode({
   node,
   pending,
-}: { node: ControllerNode; pending: Map<string, number> }): ReactElement {
+}: {
+  node: ControllerNode
+  pending: Map<string, number>
+}): ReactElement {
   const name = node.path[node.path.length - 1] ?? '?'
   const stateClass =
     node.state === 'suspended'
@@ -345,7 +388,10 @@ function truncate(s: string, max: number): string {
 function InspectorView({
   entries,
   filter,
-}: { entries: DebugCacheEntry[]; filter: string }): ReactElement {
+}: {
+  entries: DebugCacheEntry[]
+  filter: string
+}): ReactElement {
   const filtered = useFiltered(entries, filter, inspectorHaystack)
   if (entries.length === 0) {
     return (
@@ -460,7 +506,9 @@ function writeUrlHash(
 function CacheView({ entries, filter }: { entries: CacheEntry[]; filter: string }): ReactElement {
   const filtered = useFiltered(entries, filter, cacheHaystack)
   if (entries.length === 0) {
-    return <Empty title="No cache events yet" hint="Trigger a query subscription to see fetches here." />
+    return (
+      <Empty title="No cache events yet" hint="Trigger a query subscription to see fetches here." />
+    )
   }
   if (filtered.length === 0) {
     return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
@@ -523,7 +571,10 @@ function CacheRow({ entry }: { entry: CacheEntry }): ReactElement {
 function MutationsView({
   entries,
   filter,
-}: { entries: MutationEntry[]; filter: string }): ReactElement {
+}: {
+  entries: MutationEntry[]
+  filter: string
+}): ReactElement {
   const filtered = useFiltered(entries, filter, mutationHaystack)
   if (entries.length === 0) {
     return <Empty title="No mutations yet" hint="Trigger a mutation to see the lifecycle here." />
@@ -558,9 +609,7 @@ function MutationRow({ entry }: { entry: MutationEntry }): ReactElement {
           ? 'olas-devtools-kind-success'
           : ''
 
-  const target = entry.name
-    ? `${entry.name} · ${formatPath(entry.path)}`
-    : formatPath(entry.path)
+  const target = entry.name ? `${entry.name} · ${formatPath(entry.path)}` : formatPath(entry.path)
 
   let payload: unknown | undefined
   let suffix: string | null = null
@@ -589,10 +638,7 @@ function MutationRow({ entry }: { entry: MutationEntry }): ReactElement {
 // Fields
 // ===========================================================================
 
-function FieldsView({
-  entries,
-  filter,
-}: { entries: FieldEntry[]; filter: string }): ReactElement {
+function FieldsView({ entries, filter }: { entries: FieldEntry[]; filter: string }): ReactElement {
   const filtered = useFiltered(entries, filter, fieldHaystack)
   if (entries.length === 0) {
     return (

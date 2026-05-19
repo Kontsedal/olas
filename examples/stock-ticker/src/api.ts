@@ -26,21 +26,29 @@ export type Market = {
 }
 
 const SEED: SymbolMeta[] = [
-  { symbol: 'AAPL', name: 'Apple Inc.',          sector: 'Tech'       },
-  { symbol: 'MSFT', name: 'Microsoft Corp.',     sector: 'Tech'       },
-  { symbol: 'GOOG', name: 'Alphabet Inc.',       sector: 'Tech'       },
-  { symbol: 'NVDA', name: 'NVIDIA Corp.',        sector: 'Semis'      },
-  { symbol: 'AMD',  name: 'AMD Inc.',            sector: 'Semis'      },
-  { symbol: 'TSLA', name: 'Tesla Inc.',          sector: 'Autos'      },
-  { symbol: 'F',    name: 'Ford Motor Co.',      sector: 'Autos'      },
-  { symbol: 'JPM',  name: 'JPMorgan Chase',      sector: 'Banks'      },
-  { symbol: 'GS',   name: 'Goldman Sachs',       sector: 'Banks'      },
-  { symbol: 'XOM',  name: 'Exxon Mobil',         sector: 'Energy'     },
+  { symbol: 'AAPL', name: 'Apple Inc.', sector: 'Tech' },
+  { symbol: 'MSFT', name: 'Microsoft Corp.', sector: 'Tech' },
+  { symbol: 'GOOG', name: 'Alphabet Inc.', sector: 'Tech' },
+  { symbol: 'NVDA', name: 'NVIDIA Corp.', sector: 'Semis' },
+  { symbol: 'AMD', name: 'AMD Inc.', sector: 'Semis' },
+  { symbol: 'TSLA', name: 'Tesla Inc.', sector: 'Autos' },
+  { symbol: 'F', name: 'Ford Motor Co.', sector: 'Autos' },
+  { symbol: 'JPM', name: 'JPMorgan Chase', sector: 'Banks' },
+  { symbol: 'GS', name: 'Goldman Sachs', sector: 'Banks' },
+  { symbol: 'XOM', name: 'Exxon Mobil', sector: 'Energy' },
 ]
 
 const STARTING_PRICES: Record<string, number> = {
-  AAPL: 180, MSFT: 410, GOOG: 145, NVDA: 880, AMD: 165,
-  TSLA: 240, F: 12, JPM: 195, GS: 420, XOM: 110,
+  AAPL: 180,
+  MSFT: 410,
+  GOOG: 145,
+  NVDA: 880,
+  AMD: 165,
+  TSLA: 240,
+  F: 12,
+  JPM: 195,
+  GS: 420,
+  XOM: 110,
 }
 
 export function createFakeMarket(options: { autoTick?: boolean } = {}): Market {
@@ -101,7 +109,8 @@ export function createFakeMarket(options: { autoTick?: boolean } = {}): Market {
       }
     },
     tick(symbol, priceOverride) {
-      const next = priceOverride ?? round2((lastPrice[symbol] ?? 100) * (1 + (Math.random() - 0.5) * 0.01))
+      const next =
+        priceOverride ?? round2((lastPrice[symbol] ?? 100) * (1 + (Math.random() - 0.5) * 0.01))
       lastPrice[symbol] = next
       const handlers = subscribers.get(symbol)
       if (!handlers) return

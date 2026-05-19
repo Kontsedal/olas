@@ -1,4 +1,4 @@
-import { type Signal, batch, computed, signal } from '../signals'
+import { batch, computed, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { isAbortError } from '../utils'
 import type { AsyncState, AsyncStatus, RetryDelay, RetryPolicy } from './types'
@@ -42,7 +42,7 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
  * Module-scoped handle for a paginated query. Mirrors `Query<Args, TPage[]>`
  * with paginated `setData` semantics.
  */
-export type InfiniteQuery<Args extends unknown[], TPage, TItem> = {
+export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
   readonly __olas: 'infiniteQuery'
   invalidate(...args: Args): void
   invalidateAll(): void

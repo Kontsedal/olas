@@ -1,6 +1,6 @@
 import type { DevtoolsEmitter } from '../devtools'
-import { type ErrorHandler, dispatchError } from '../errors'
-import { type Signal, batch, signal } from '../signals'
+import { dispatchError, type ErrorHandler } from '../errors'
+import { batch, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { isAbortError } from '../utils'
 import type { RetryDelay, RetryPolicy, Snapshot } from './types'

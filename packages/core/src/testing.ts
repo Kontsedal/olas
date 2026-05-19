@@ -1,7 +1,7 @@
 import { createRootWithProps } from './controller/root'
 import type { ControllerDef, Field, Root, RootOptions } from './controller/types'
 import type { AsyncState, AsyncStatus } from './query/types'
-import { type ReadSignal, type Signal, computed, signal } from './signals'
+import { computed, type ReadSignal, type Signal, signal } from './signals'
 
 /**
  * Construct an isolated root wrapping a single controller. The returned object
