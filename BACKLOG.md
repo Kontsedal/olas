@@ -37,7 +37,7 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 Until this lands, the canonical pattern is one tiny `patchPostEverywhere`-style helper per entity that enumerates the touch sites — verbose but grep-able. See SPEC §18.1 for the worked example.
 
-### [idea] `@olas/realtime` — realtime-to-cache patcher
+### [in-progress] `@olas/realtime` — realtime-to-cache patcher
 
 [from SPEC §16.5] The recurring shape "WebSocket / SSE event arrives → patch some queries". The framework primitive (`ctx.effect` + `setData`) is enough; the package would just wrap the typical dispatching boilerplate (`useRealtimePatcher`, `defineLiveStream` for tail/log buffers, etc.). Today these live as user composables; SPEC §16.5 has the reference implementations.
 

@@ -21,6 +21,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/errors.md](modules/errors.md) — `ErrorContext`, `dispatchError`
 - [modules/zod.md](modules/zod.md) — `@olas/zod`: `zodValidator`, `formFromZod`
 - [modules/persist.md](modules/persist.md) — `@olas/persist`: `usePersisted`
+- [modules/realtime.md](modules/realtime.md) — `@olas/realtime`: `useRealtimePatcher` + `defineLiveStream` over a consumer-supplied `RealtimeService`
 - [modules/react.md](modules/react.md) — `@olas/react`: provider + `useSyncExternalStore`-backed hooks
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@olas/devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
 - [modules/examples.md](modules/examples.md) — the four runnable example apps in `examples/`
