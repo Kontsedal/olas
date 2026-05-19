@@ -1,6 +1,7 @@
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery } from '../src/query/define'
+import { signal } from '../src/signals'
 
 const emptyDeps = {}
 
@@ -132,6 +133,87 @@ describe('defineInfiniteQuery + ctx.use', () => {
     await flush()
     expect(root.x.pages.value).toEqual(['page0'])
     expect(root.x.flat.value).toEqual(['page0'])
+    root.dispose()
+  })
+})
+
+describe('infinite query: refetchInterval', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  test('refetches periodically while subscribed', async () => {
+    // Regression: refetchInterval was declared in InfiniteQuerySpec but never
+    // wired in InfiniteClientEntry — periodic refetch silently did nothing.
+    let count = 0
+    const q = defineInfiniteQuery({
+      key: () => ['rfi-infinite'],
+      fetcher: async () => `page${++count}`,
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      refetchInterval: 1000,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(3)
+    root.dispose()
+  })
+})
+
+describe('infinite query: keepPreviousData', () => {
+  test('previous pages remain visible until the new key resolves', async () => {
+    // Regression: keepPreviousData was declared in InfiniteQuerySpec but
+    // InfiniteSubscriptionImpl ignored it. Page-keyed infinite queries
+    // would flash an empty pages array on key change.
+    const dKey1 = (() => {
+      let res: (v: string) => void = () => {}
+      return {
+        promise: new Promise<string>((r) => {
+          res = r
+        }),
+        resolve: () => res('first-key'),
+      }
+    })()
+    const dKey2 = (() => {
+      let res: (v: string) => void = () => {}
+      return {
+        promise: new Promise<string>((r) => {
+          res = r
+        }),
+        resolve: () => res('second-key'),
+      }
+    })()
+
+    const q = defineInfiniteQuery({
+      key: (k: number) => [k],
+      fetcher: async (_, k: number) => (k === 1 ? dKey1.promise : dKey2.promise),
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      keepPreviousData: true,
+    })
+    const keySig = signal<[number]>([1])
+    const def = defineController((ctx) => ({
+      x: ctx.use(q, () => keySig.value),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    dKey1.resolve()
+    await flush()
+    expect(root.x.pages.value).toEqual(['first-key'])
+
+    // Switch to key 2; the new fetch hasn't resolved yet — pages still expose
+    // the previous key's data because keepPreviousData is on.
+    keySig.set([2])
+    await Promise.resolve()
+    expect(root.x.pages.value).toEqual(['first-key'])
+
+    dKey2.resolve()
+    await flush()
+    expect(root.x.pages.value).toEqual(['second-key'])
     root.dispose()
   })
 })

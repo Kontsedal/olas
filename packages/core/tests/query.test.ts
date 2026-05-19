@@ -272,6 +272,54 @@ describe('gc — entries are dropped after gcTime expires with no subscribers', 
     expect(fetchCount).toBe(2)
     b.dispose()
   })
+
+  test('prefetch entry gc-collects after gcTime when never subscribed', async () => {
+    // Regression: prefetch / setData called bindEntry() but never
+    // acquire/release, so the resulting entry's gcTimer never started — the
+    // entry lived until root dispose. Now the prefetch path acquires for the
+    // fetch and releases on settle, which schedules gc on the way out.
+    let fetchCount = 0
+    const q = defineQuery({
+      key: (k: string) => [k],
+      fetcher: async () => ++fetchCount,
+      gcTime: 1000,
+    })
+    // Register the query with at least one client by subscribing to a different
+    // key (prefetch refuses to run before any client has touched the query).
+    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
+    const root = createTestController(def, { deps: emptyDeps, props: undefined })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(root.__debug.queryEntries().length).toBe(1)
+
+    // Prefetch a *different* key; that entry has no subscriber.
+    await q.prefetch('orphan')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(root.__debug.queryEntries().length).toBe(2)
+
+    // The orphaned entry drops after gcTime; the subscribed one stays.
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(root.__debug.queryEntries().length).toBe(1)
+    root.dispose()
+  })
+
+  test('setData on an unbound key gc-collects after gcTime', async () => {
+    // Same shape as prefetch: setData() bound an entry without acquire/release.
+    // The gc-on-orphan schedule in bindEntry covers this case.
+    const q = defineQuery({
+      key: (k: string) => [k],
+      fetcher: async () => 0,
+      gcTime: 1000,
+    })
+    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
+    const root = createTestController(def, { deps: emptyDeps, props: undefined })
+    await vi.advanceTimersByTimeAsync(0)
+
+    q.setData('orphan', () => 99)
+    expect(root.__debug.queryEntries().length).toBe(2)
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(root.__debug.queryEntries().length).toBe(1)
+    root.dispose()
+  })
 })
 
 describe('keepPreviousData (§5.2)', () => {

@@ -567,31 +567,63 @@ export function createFieldArray<I extends Field<any> | Form<any>>(
 
 /**
  * Recursively wire every leaf `Field` in a form / field-array tree to a
- * devtools emitter. The supplied `pathBuilder` decides the field's display
- * name within the form ("title" vs "subtasks[0].text"). Internal — called by
- * `ctx.form` / `ctx.fieldArray` so the devtools panel knows what fields exist.
+ * devtools emitter. Returns a single disposer that tears down every standalone
+ * `effect()` registered along the way (used for FieldArray watching), so the
+ * caller — `ctx.form` / `ctx.fieldArray` in the controller — can register one
+ * cleanup entry and have the whole subtree's reactive work die with the
+ * controller. Spec §20.9.
  */
 export function bindTreeToDevtools(
   node: Field<unknown> | Form<FormSchema> | FieldArray<Field<unknown> | Form<FormSchema>>,
   prefix: string,
   controllerPath: readonly string[],
   emitter: import('../devtools').DevtoolsEmitter,
+): () => void {
+  const disposers: Array<() => void> = []
+  bindTreeToDevtoolsInto(node, prefix, controllerPath, emitter, disposers)
+  return () => {
+    for (const d of disposers) {
+      try {
+        d()
+      } catch {
+        // Disposer failures must not break sibling cleanup.
+      }
+    }
+    disposers.length = 0
+  }
+}
+
+function bindTreeToDevtoolsInto(
+  node: Field<unknown> | Form<FormSchema> | FieldArray<Field<unknown> | Form<FormSchema>>,
+  prefix: string,
+  controllerPath: readonly string[],
+  emitter: import('../devtools').DevtoolsEmitter,
+  disposers: Array<() => void>,
 ): void {
   if (isForm(node)) {
     for (const [key, child] of Object.entries(node.fields)) {
-      bindTreeToDevtools(child, prefix === '' ? key : `${prefix}.${key}`, controllerPath, emitter)
+      bindTreeToDevtoolsInto(
+        child,
+        prefix === '' ? key : `${prefix}.${key}`,
+        controllerPath,
+        emitter,
+        disposers,
+      )
     }
     return
   }
   if (isFieldArray(node)) {
     // Re-bind on every items change so dynamically-added entries get tracked.
+    // `effect()` returns its own disposer; capture it so the controller can
+    // tear it down on dispose (otherwise dynamic forms leak reactive work).
     const arr = node as FieldArray<Field<unknown> | Form<FormSchema>>
-    effect(() => {
+    const stop = effect(() => {
       const items = arr.items.value
       items.forEach((item, idx) => {
-        bindTreeToDevtools(item, `${prefix}[${idx}]`, controllerPath, emitter)
+        bindTreeToDevtoolsInto(item, `${prefix}[${idx}]`, controllerPath, emitter, disposers)
       })
     })
+    disposers.push(stop)
     return
   }
   // Leaf Field.
