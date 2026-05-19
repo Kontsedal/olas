@@ -47,10 +47,11 @@ export class ClientEntry<T> {
     this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
     this.refetchInterval = spec.refetchInterval
     const fetcherFn = spec.fetcher
+    const deps = client.deps as import('../controller/types').AmbientDeps
     const devtools = client.devtools
     const queryKey = this.keyArgs
     this.entry = new Entry<T>({
-      fetcher: () => (signal) => fetcherFn(...callArgs, signal),
+      fetcher: () => (signal) => fetcherFn({ signal, deps }, ...(callArgs as never[])),
       staleTime: spec.staleTime,
       retry: spec.retry as RetryPolicy | undefined,
       retryDelay: spec.retryDelay as RetryDelay | undefined,
@@ -154,8 +155,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     this.keyArgs = keyArgs
     this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
     const fetcherFn = spec.fetcher
+    const deps = client.deps as import('../controller/types').AmbientDeps
     this.entry = new InfiniteEntry<TPage, TItem, PageParam>({
-      fetcher: ({ pageParam, signal }) => fetcherFn({ pageParam, signal }, ...callArgs),
+      fetcher: ({ pageParam, signal }) =>
+        fetcherFn({ pageParam, signal, deps }, ...(callArgs as never[])),
       initialPageParam: spec.initialPageParam,
       getNextPageParam: spec.getNextPageParam,
       getPreviousPageParam: spec.getPreviousPageParam,
@@ -222,13 +225,18 @@ export class QueryClient {
   /** Devtools bus, if any — passed by `createRoot`. Used to emit cache events. */
   readonly devtools: DevtoolsEmitter | undefined
 
+  /** Root-level deps; passed to every `QuerySpec.fetcher` via `FetchCtx`. */
+  readonly deps: Record<string, unknown>
+
   constructor(opts?: {
     onError?: ErrorHandler
     hydrate?: DehydratedState
     devtools?: DevtoolsEmitter
+    deps?: Record<string, unknown>
   }) {
     this.onError = opts?.onError
     this.devtools = opts?.devtools
+    this.deps = opts?.deps ?? {}
     if (opts?.hydrate) this.hydrate(opts.hydrate)
   }
 
@@ -241,6 +249,46 @@ export class QueryClient {
         lastUpdatedAt: entry.lastUpdatedAt,
       })
     }
+  }
+
+  /**
+   * Snapshot every live cache entry (regular + infinite) as a flat list of
+   * `DebugCacheEntry`. Exposed via `root.__debug.queryEntries()` for the
+   * devtools cache inspector — shows current data and state, not past
+   * fetch events. Spec §20.9.
+   */
+  queryEntriesSnapshot(): import('../devtools').DebugCacheEntry[] {
+    const out: import('../devtools').DebugCacheEntry[] = []
+    for (const map of this.maps.values()) {
+      for (const ce of map.values()) {
+        out.push({
+          key: ce.keyArgs as readonly unknown[],
+          status: ce.entry.status.peek(),
+          data: ce.entry.data.peek(),
+          error: ce.entry.error.peek(),
+          lastUpdatedAt: ce.entry.lastUpdatedAt.peek(),
+          isStale: ce.entry.isStale.peek(),
+          isFetching: ce.entry.isFetching.peek(),
+          hasPendingMutations: ce.entry.hasPendingMutations.peek(),
+        })
+      }
+    }
+    for (const map of this.infiniteMaps.values()) {
+      for (const ce of map.values()) {
+        out.push({
+          key: ce.keyArgs as readonly unknown[],
+          status: ce.entry.status.peek(),
+          // Infinite entries carry an array of pages; expose them verbatim.
+          data: ce.entry.pages.peek(),
+          error: ce.entry.error.peek(),
+          lastUpdatedAt: ce.entry.lastUpdatedAt.peek(),
+          isStale: ce.entry.isStale.peek(),
+          isFetching: ce.entry.isFetching.peek(),
+          hasPendingMutations: ce.entry.hasPendingMutations.peek(),
+        })
+      }
+    }
+    return out
   }
 
   dehydrate(): DehydratedState {

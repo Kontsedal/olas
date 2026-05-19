@@ -12,9 +12,20 @@ import type { AsyncState, AsyncStatus, RetryDelay, RetryPolicy } from './types'
  * - `itemsOf(page)` (optional) flattens pages into items for the
  *   `subscription.flat` convenience signal.
  */
+export type InfiniteFetchCtx<PageParam> = {
+  pageParam: PageParam
+  signal: AbortSignal
+  deps: import('../controller/types').AmbientDeps
+}
+
 export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> = {
   key: (...args: Args) => unknown[]
-  fetcher: (pageCtx: { pageParam: PageParam; signal: AbortSignal }, ...args: Args) => Promise<TPage>
+  /**
+   * Fetcher receives an `InfiniteFetchCtx` (pageParam + signal + deps) as
+   * the first arg and positional cache args after. See `FetchCtx` for the
+   * regular-query analogue.
+   */
+  fetcher: (ctx: InfiniteFetchCtx<PageParam>, ...args: Args) => Promise<TPage>
   initialPageParam: PageParam
   getNextPageParam: (lastPage: TPage, allPages: TPage[]) => PageParam | null
   getPreviousPageParam?: (firstPage: TPage, allPages: TPage[]) => PageParam | null

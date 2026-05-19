@@ -8,7 +8,7 @@ describe('runtime devtools events', () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
       key: (id: string) => [id],
-      fetcher: async (id) => `data-${id}`,
+      fetcher: async (_ctx, id) =>`data-${id}`,
     })
     const def = defineController((ctx) => ({ x: ctx.use(q, () => ['1']) }))
     const root = createRoot(def, { deps: {} })
@@ -51,7 +51,7 @@ describe('runtime devtools events', () => {
 
   test('cache:invalidated fires on query.invalidate()', async () => {
     const events: DebugEvent[] = []
-    const q = defineQuery({ key: (id: string) => [id], fetcher: async (id) => id })
+    const q = defineQuery({ key: (id: string) => [id], fetcher: async (_ctx, id) => id })
     const def = defineController((ctx) => ({ x: ctx.use(q, () => ['k']) }))
     const root = createRoot(def, { deps: {}, onError: () => {} })
     await root.x.firstValue()
@@ -102,7 +102,7 @@ describe('runtime devtools events', () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
       key: (id: string) => [id],
-      fetcher: async (id) => `server-${id}`,
+      fetcher: async (_ctx, id) =>`server-${id}`,
     })
     const def = defineController((ctx) => ({
       cur: ctx.use(q, () => ['1']),
@@ -165,7 +165,7 @@ describe('runtime devtools events', () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
       key: (id: string) => [id],
-      fetcher: async (id) => id,
+      fetcher: async (_ctx, id) =>id,
       gcTime: 0, // immediate gc
     })
     const def = defineController((ctx) => ({ x: ctx.use(q, () => ['1']) }))

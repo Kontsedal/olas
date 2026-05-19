@@ -49,9 +49,24 @@ export type MutationSpec<V, R> = {
  *
  * Spec §6, §20.5.
  */
+/**
+ * Call signature for `mutation.run`:
+ *  - When `V` is `void` → no args. (`mutation.run()`)
+ *  - When `V` was not constrained (default-inferred as `unknown`) → optional
+ *    arg. Lets `ctx.mutation({ mutate: async () => 1 })` call `run()` *or*
+ *    `run(anything)` without a type error.
+ *  - Otherwise → arg required. (`mutation.run(vars)`)
+ *
+ * Defined as a variadic-tuple conditional so consumers see the right shape
+ * without writing `run(undefined as unknown as void)`.
+ */
+export type MutationRun<V, R> = (
+  ...args: unknown extends V ? [V?] : [V] extends [void] ? [] : [V]
+) => Promise<R>
+
 export type Mutation<V, R> = {
   /** Trigger a run. Returns a Promise that resolves with the mutate result. */
-  run: (vars: V) => Promise<R>
+  run: MutationRun<V, R>
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
   isPending: ReadSignal<boolean>
@@ -111,7 +126,10 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     this.devtools.emit(out as Parameters<DevtoolsEmitter['emit']>[0])
   }
 
-  run = (vars: V): Promise<R> => {
+  // Implementation-side signature accepts an optional `vars` (defaults to
+  // `undefined`) so call sites for `Mutation<void, R>` can call `.run()` with
+  // no args. The public type forces the right shape per `V`.
+  run = ((vars: V = undefined as V): Promise<R> => {
     if (this.disposed) {
       return Promise.reject(new Error('Mutation disposed'))
     }
@@ -132,7 +150,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       case 'serial':
         return this.enqueueSerial(vars)
     }
-  }
+  }) as MutationRun<V, R>
 
   private enqueueSerial(vars: V): Promise<R> {
     if (this.serialActive) {
@@ -208,6 +226,10 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       this.error.set(err)
       this.emit({ type: 'mutation:error', error: err })
       this.safeCall(() => this.spec.onError?.(err, vars, snapshot), 'mutation')
+      // Auto-rollback after the user's onError. The wrapped snapshot is
+      // single-consume, so an `onError` that already called `snapshot.rollback()`
+      // turns the auto-call into a no-op. Spec §6.4.
+      snapshot?.rollback()
       this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
       throw err
     } finally {
@@ -219,15 +241,16 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     }
   }
 
-  // Wrap so any rollback path — auto on supersede/dispose, or user-driven
-  // inside onError — emits a single mutation:rollback event.
+  // Wrap so any rollback path — auto on supersede/dispose/onError, or
+  // user-driven inside onError — runs the raw rollback at most once and
+  // emits a single mutation:rollback event.
   private wrapSnapshot(raw: Snapshot): Snapshot {
-    let fired = false
+    let consumed = false
     return {
       rollback: () => {
+        if (consumed) return
+        consumed = true
         raw.rollback()
-        if (fired) return
-        fired = true
         this.emit({ type: 'mutation:rollback' })
       },
     }

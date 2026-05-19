@@ -10,7 +10,7 @@ export type { Emitter } from './emitter'
 export { createEmitter } from './emitter'
 
 // Errors & devtools
-export type { DebugEvent, DebugBus } from './devtools'
+export type { DebugCacheEntry, DebugEvent, DebugBus } from './devtools'
 export type { ErrorContext } from './errors'
 
 // Query primitives

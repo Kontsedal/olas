@@ -117,6 +117,20 @@ export type Ctx<TDeps = AmbientDeps> = {
     options?: { deps?: Partial<TDeps> },
   ): Api
 
+  /**
+   * Like `child(...)` but additionally returns a `dispose()` handle so the
+   * parent can tear down this specific sub-tree early — e.g. when the user
+   * closes a details panel. The child is still disposed automatically when
+   * the parent disposes; `dispose()` is idempotent and only earlies the
+   * teardown. Useful for "openable" sub-controllers whose lifetime is driven
+   * by a user gesture rather than the parent's lifetime alone.
+   */
+  attach<Props, Api>(
+    def: ControllerDef<Props, Api>,
+    props: Props,
+    options?: { deps?: Partial<TDeps> },
+  ): { api: Api; dispose: () => void }
+
   effect(fn: () => void | (() => void)): void
 
   on<T>(emitter: Emitter<T>, handler: (value: T) => void): void

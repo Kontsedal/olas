@@ -29,6 +29,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     onError: options.onError,
     hydrate: options.hydrate,
     devtools,
+    deps: options.deps as Record<string, unknown>,
   })
   const rootShared: RootShared = {
     devtools,
@@ -99,6 +100,7 @@ function attachRootControls<Api>(
   const debug = {
     subscribe: (handler: Parameters<DevtoolsEmitter['subscribe']>[0]) =>
       devtools.subscribe(handler),
+    queryEntries: () => queryClient.queryEntriesSnapshot(),
   }
 
   const target = api as Record<string, unknown>

@@ -69,6 +69,34 @@ function defaultInitial(schema: AnyZodType): unknown {
 
 type AnyForm = Form<Record<string, Field<any> | Form<any> | FieldArray<any>>>
 
+// Strip the same wrappers as the runtime `unwrap` helper, at the type level.
+type UnwrapZod<S> = S extends z.ZodDefault<infer Inner>
+  ? UnwrapZod<Inner>
+  : S extends z.ZodOptional<infer Inner>
+    ? UnwrapZod<Inner>
+    : S extends z.ZodNullable<infer Inner>
+      ? UnwrapZod<Inner>
+      : S
+
+/**
+ * Recursively map a Zod schema to its Olas form leaf:
+ *  - `ZodObject<S>` → `Form<{ [K]: ZodToLeaf<S[K]> }>`
+ *  - `ZodArray<E>`  → `FieldArray<ZodToLeaf<E>>` (when E is object/array)
+ *                     or `FieldArray<Field<infer<E>>>` for primitive elements.
+ *  - everything else → `Field<infer<S>>`.
+ *
+ * `ZodToLeaf<S>` matches what `buildLeaf(ctx, s, ...)` returns at runtime,
+ * so the public `formFromZod<T>` can publish a precise structural type
+ * without the consumer needing a hand-written `CardForm = Form<{...}>` cast.
+ */
+export type ZodToLeaf<S> = UnwrapZod<S> extends z.ZodObject<infer RawShape>
+  ? Form<{ [K in keyof RawShape]: ZodToLeaf<RawShape[K]> }>
+  : UnwrapZod<S> extends z.ZodArray<infer Element>
+    ? FieldArray<
+        ZodToLeaf<Element> extends Form<any> | Field<any> ? ZodToLeaf<Element> : never
+      >
+    : Field<z.infer<UnwrapZod<S> & z.ZodTypeAny>>
+
 /**
  * Walk a Zod schema and emit the equivalent Olas Form / FieldArray / Field
  * tree, with validators auto-attached.
@@ -79,15 +107,18 @@ type AnyForm = Form<Record<string, Field<any> | Form<any> | FieldArray<any>>>
  *
  * Each leaf's initial value is the Zod default if present, otherwise an empty
  * value for that type (`''` for strings, `0` for numbers, etc.).
+ *
+ * The return type is structurally precise — `form.fields.title.value` is
+ * `string` (not `string | boolean | …`), `form.fields.subtasks.add(...)`
+ * accepts the exact item shape, etc. Consumers do not need to hand-write
+ * a `CardForm = Form<{...}>` matching the schema.
  */
 export function formFromZod<T extends z.ZodObject<z.ZodRawShape>>(
   ctx: Ctx,
   schema: T,
   options?: { initials?: Partial<z.infer<T>> },
-): Form<{ [K in keyof z.infer<T>]: Field<z.infer<T>[K]> | Form<any> | FieldArray<any> }> {
-  return buildForm(ctx, schema, options?.initials) as Form<{
-    [K in keyof z.infer<T>]: Field<z.infer<T>[K]> | Form<any> | FieldArray<any>
-  }>
+): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]> }> {
+  return buildForm(ctx, schema, options?.initials) as never
 }
 
 function buildForm(

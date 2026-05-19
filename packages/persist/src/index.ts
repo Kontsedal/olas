@@ -9,7 +9,13 @@ export type StorageAdapter = {
 }
 
 export type PersistOptions<T> = {
-  storage?: StorageAdapter
+  /**
+   * Storage backend. When omitted *or explicitly `undefined`* (handy for app
+   * code that forwards a deps slot like `ctx.deps.storage`), the browser
+   * `localStorageAdapter` is used. SSR-safe — `localStorageAdapter` no-ops
+   * when `localStorage` isn't defined.
+   */
+  storage?: StorageAdapter | undefined
   serialize?: (value: T) => string
   deserialize?: (raw: string) => T
   crossTab?: boolean
