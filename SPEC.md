@@ -2373,6 +2373,10 @@ type RootOptions<TDeps> = {
   deps: TDeps
   onError?: (err: unknown, context: ErrorContext) => void
   hydrate?: DehydratedState
+  /** Default for queries that don't set `refetchOnWindowFocus` on their spec (§5.9). */
+  refetchOnWindowFocus?: boolean
+  /** Default for queries that don't set `refetchOnReconnect` on their spec (§5.9). */
+  refetchOnReconnect?: boolean
 }
 
 function createRoot<Api, TDeps = AmbientDeps>(

@@ -51,8 +51,8 @@ export class ClientEntry<T> {
     this.keyArgs = keyArgs
     this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
     this.refetchInterval = spec.refetchInterval
-    this.refetchOnWindowFocus = spec.refetchOnWindowFocus ?? false
-    this.refetchOnReconnect = spec.refetchOnReconnect ?? false
+    this.refetchOnWindowFocus = spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus
+    this.refetchOnReconnect = spec.refetchOnReconnect ?? client.refetchOnReconnect
     const fetcherFn = spec.fetcher
     const deps = client.deps as import('../controller/types').AmbientDeps
     const devtools = client.devtools
@@ -262,15 +262,23 @@ export class QueryClient {
   /** Root-level deps; passed to every `QuerySpec.fetcher` via `FetchCtx`. */
   readonly deps: Record<string, unknown>
 
+  /** Root-wide defaults for refetch triggers; per-query spec overrides win. Spec §5.9. */
+  readonly refetchOnWindowFocus: boolean
+  readonly refetchOnReconnect: boolean
+
   constructor(opts?: {
     onError?: ErrorHandler
     hydrate?: DehydratedState
     devtools?: DevtoolsEmitter
     deps?: Record<string, unknown>
+    refetchOnWindowFocus?: boolean
+    refetchOnReconnect?: boolean
   }) {
     this.onError = opts?.onError
     this.devtools = opts?.devtools
     this.deps = opts?.deps ?? {}
+    this.refetchOnWindowFocus = opts?.refetchOnWindowFocus ?? false
+    this.refetchOnReconnect = opts?.refetchOnReconnect ?? false
     if (opts?.hydrate) this.hydrate(opts.hydrate)
   }
 

@@ -37,7 +37,7 @@ Why two? Regular and infinite queries differ enough (single `data` vs array of `
 - `subscriberCount` — incremented by `acquire()`, decremented by `release()`.
 - `gcTimer` — started on `release()` when count hits zero; cleared on `acquire()`. Fires `client.dropEntry(this)`.
 - `intervalTimer` — runs `entry.startFetch()` every `refetchInterval` ms while subscribers exist.
-- `unsubFocus` / `unsubOnline` — `window` focus and `online` subscriptions, installed on the 0→1 acquire transition when `refetchOnWindowFocus` / `refetchOnReconnect` are set on the spec. Cleared on release-to-zero and on dispose. The handler skips refetch if `entry.isStaleNow()` is false, so a freshly-fetched query within `staleTime` ignores the focus event. The window/document listeners themselves live in `query/focus-online.ts` as a lazy single-listener pubsub, shared across all clients and SSR-safe.
+- `unsubFocus` / `unsubOnline` — `window` focus and `online` subscriptions, installed on the 0→1 acquire transition when the resolved flag is `true`. Resolution: `spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus ?? false` (and same for reconnect) — per-query spec wins, root-wide default fills in, otherwise off. Cleared on release-to-zero and on dispose. The handler skips refetch if `entry.isStaleNow()` is false, so a freshly-fetched query within `staleTime` ignores the focus event. The window/document listeners themselves live in `query/focus-online.ts` as a lazy single-listener pubsub, shared across all clients and SSR-safe.
 - `callArgs` and `keyArgs` — separately stored. `callArgs` is fed to the fetcher. `keyArgs = spec.key(...callArgs)` is hashed for identity. See `../pitfalls/callargs-vs-keyargs.md`.
 
 ## Cross-root query operation
