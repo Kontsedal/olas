@@ -10,7 +10,7 @@ covers:
 edges:
   - { type: documented-in, target: ../SPEC.md }
   - { type: related, target: glossary.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-19
 confidence: high
 ---
 
@@ -88,4 +88,4 @@ See `modules/*.md` for per-directory details.
 
 ## Build & verify
 
-CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 232 tests pass. See `../CLAUDE.md` for the full command list.
+CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 236 tests pass. See `../CLAUDE.md` for the full command list.

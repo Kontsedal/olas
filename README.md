@@ -138,7 +138,7 @@ pnpm build                                         # tsdown per package → dist
 pnpm wiki:lint                                     # check .wiki/ for broken refs
 ```
 
-CI = `install → typecheck → lint → test → build`. 232 tests, all green.
+CI = `install → typecheck → lint → test → build`. 236 tests, all green.
 
 ---
 
