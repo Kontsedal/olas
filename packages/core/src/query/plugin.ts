@@ -34,6 +34,22 @@ export type QueryClientPluginApi = {
    * Snapshot of currently bound entry keys for a query (by `queryId`). Empty
    * array when the query isn't registered, has no client entries, or the
    * `queryId` doesn't match any registered query.
+   *
+   * @example
+   * ```ts
+   * // Plugin sees an incoming invalidate; only echo it outward if any local
+   * // controller is actually subscribed to that key — otherwise the message
+   * // is unilateral noise.
+   * const plugin: QueryClientPlugin = {
+   *   init(api) { this.api = api },
+   *   onInvalidate(ev) {
+   *     if (ev.isRemote) return
+   *     const subscribed = this.api.subscribedKeys(ev.queryId)
+   *     if (subscribed.length === 0) return // no local subscribers → don't send
+   *     transport.send({ type: 'invalidate', queryId: ev.queryId, keyArgs: ev.keyArgs })
+   *   },
+   * }
+   * ```
    */
   subscribedKeys(queryId: string): readonly (readonly unknown[])[]
 }

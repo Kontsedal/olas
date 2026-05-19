@@ -44,6 +44,10 @@ function usePersisted<T>(
 
 Defaults: `JSON.stringify` / `JSON.parse`. Override `serialize` / `deserialize` for custom shapes (Dates, Maps, etc.). Cleanup is registered via `ctx.onDispose`.
 
+> **Note on serializer parity with `@kontsedal/olas-cross-tab`.** `@kontsedal/olas-persist` defaults to JSON; `@kontsedal/olas-cross-tab` uses structured clone via `BroadcastChannel`. They differ in what survives a round-trip: `Date` becomes a string under JSON but survives cross-tab; `Map`/`Set` are dropped by JSON but survive cross-tab; functions and symbols are dropped by both. If you use both packages on the same value, supply a `serialize` / `deserialize` pair to persist that matches cross-tab's structured-clone semantics.
+
+> **Cross-tab delete.** When another tab calls `localStorage.removeItem(key)` (or your custom adapter signals `null` through `onChange`), the local source is reset to `undefined`. Consumers whose `T` excludes `undefined` should treat this as "value gone, fall back to your own initial".
+
 Full signatures and types in [`../../API.md`](../../API.md#olaspersist).
 
 ## Custom storage adapter

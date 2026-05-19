@@ -45,8 +45,24 @@ export type FormValidator<S extends FormSchema> = Validator<FormValue<S>>
 export type FieldArrayValidator<I> = Validator<FieldArrayValue<I>>
 
 export type FormOptions<S extends FormSchema> = {
+  /**
+   * Initial values for the form. A function form is **tracked** — if the
+   * function reads reactive signals (e.g. a query's `data`), the form re-seats
+   * itself when those signals change, but only while the form is not dirty
+   * (so a user mid-edit isn't clobbered by a background refetch). See
+   * `resetOnInitialChange` for opt-out. Spec §8.4.
+   */
   initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>
   validators?: FormValidator<S>[]
+  /**
+   * When `initial` is a function and one of its tracked deps changes:
+   *  - `'when-clean'` (default) — re-seat only if the form is not dirty.
+   *  - `'never'` — never re-seat; `initial()` runs once at construction.
+   *  - `'always'` — re-seat unconditionally (dirty state is discarded).
+   *
+   * Spec §20.7.
+   */
+  resetOnInitialChange?: 'when-clean' | 'never' | 'always'
 }
 
 export type FieldArrayOptions<I> = {

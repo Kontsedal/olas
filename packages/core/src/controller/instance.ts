@@ -2,7 +2,12 @@ import type { DevtoolsEmitter } from '../devtools'
 import { createEmitter, type Emitter } from '../emitter'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { bindFieldDevtoolsOwner, createField } from '../forms/field'
-import { bindTreeToDevtools, createFieldArray, createForm } from '../forms/form'
+import {
+  bindTreeToDevtools,
+  bindTreeValidatorErrorReporter,
+  createFieldArray,
+  createForm,
+} from '../forms/form'
 import type {
   FieldArray,
   FieldArrayOptions,
@@ -36,6 +41,17 @@ type LifecycleEntry =
       dispose: (() => void) | null
     }
   | { kind: 'cleanup'; dispose: () => void }
+  | {
+      /**
+       * Cache subscription via `ctx.use`. Suspend/resume call the
+       * `suspend`/`resume` hooks so the underlying entry's `refetchInterval`
+       * and event listeners pause for the duration. Spec §4.1.
+       */
+      kind: 'subscription-cache'
+      dispose: () => void
+      suspend: () => void
+      resume: () => void
+    }
   | { kind: 'child'; instance: ControllerInstance }
   | { kind: 'onDispose'; fn: () => void }
   | { kind: 'onSuspend'; fn: () => void }
@@ -109,7 +125,6 @@ export class ControllerInstance {
 
   dispose(): void {
     if (this.state === 'disposed') return
-    const wasSuspended = this.state === 'suspended'
     this.state = 'disposed'
 
     for (let i = this.entries.length - 1; i >= 0; i--) {
@@ -130,8 +145,6 @@ export class ControllerInstance {
     if (__DEV__) {
       this.rootShared.devtools.emit({ type: 'controller:disposed', path: this.path })
     }
-    // Silence "unused" — `wasSuspended` may inform future logic; intentionally a no-op for now.
-    void wasSuspended
   }
 
   private disposeEntry(entry: LifecycleEntry): void {
@@ -141,6 +154,9 @@ export class ControllerInstance {
         entry.dispose = null
         break
       case 'cleanup':
+        entry.dispose()
+        break
+      case 'subscription-cache':
         entry.dispose()
         break
       case 'child':
@@ -171,6 +187,11 @@ export class ControllerInstance {
           case 'effect':
             entry.dispose?.()
             entry.dispose = null
+            break
+          case 'subscription-cache':
+            // Pause `refetchInterval` + focus/online listeners + release the
+            // entry from this subscriber. Spec §4.1.
+            entry.suspend()
             break
           case 'child':
             entry.instance.suspend()
@@ -203,6 +224,11 @@ export class ControllerInstance {
         switch (entry.kind) {
           case 'effect':
             entry.dispose = standaloneEffect(entry.factory)
+            break
+          case 'subscription-cache':
+            // Re-acquire the entry, restart `refetchInterval`, and re-check
+            // staleness (a stale entry refetches on resume — spec §4.1).
+            entry.resume()
             break
           case 'child':
             entry.instance.resume()
@@ -255,7 +281,12 @@ export class ControllerInstance {
           }
         }
         entry.factory = wrapped
-        entry.dispose = standaloneEffect(wrapped)
+        // If we're suspended, register the entry but defer activation to
+        // `resume()` — otherwise the resume loop would overwrite a live
+        // `dispose` ref (the just-activated effect), leaking it.
+        if (self.state !== 'suspended') {
+          entry.dispose = standaloneEffect(wrapped)
+        }
         self.entries.push(entry)
       },
 
@@ -271,21 +302,31 @@ export class ControllerInstance {
       use(query: any, keyOrOptions?: any): any {
         const brand = (query as { __olas?: string }).__olas
         if (brand === 'infiniteQuery') {
-          const { subscription, dispose: d } = createInfiniteUse(
+          const handle = createInfiniteUse(
             self.rootShared.queryClient,
             query as InfiniteQuery<unknown[], unknown, unknown>,
             keyOrOptions,
           )
-          self.entries.push({ kind: 'cleanup', dispose: d })
-          return subscription
+          self.entries.push({
+            kind: 'subscription-cache',
+            dispose: handle.dispose,
+            suspend: handle.suspend,
+            resume: handle.resume,
+          })
+          return handle.subscription
         }
-        const { subscription, dispose: d } = createUse(
+        const handle = createUse(
           self.rootShared.queryClient,
           query as Query<unknown[], unknown>,
           keyOrOptions,
         )
-        self.entries.push({ kind: 'cleanup', dispose: d })
-        return subscription
+        self.entries.push({
+          kind: 'subscription-cache',
+          dispose: handle.dispose,
+          suspend: handle.suspend,
+          resume: handle.resume,
+        })
+        return handle.subscription
       },
 
       mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R> {
@@ -307,7 +348,17 @@ export class ControllerInstance {
       },
 
       field<T>(initial: T, validators?: ReadonlyArray<Validator<T>>): Field<T> {
-        const f = createField(initial, validators)
+        // Pass the reporter at construct time so the FIRST validator pass
+        // (which runs synchronously in the FieldImpl constructor's
+        // validator-effect) is covered.
+        const f = createField(initial, validators, {
+          onValidatorError: (err) => {
+            dispatchError(self.rootShared.onError, err, {
+              kind: 'effect',
+              controllerPath: self.path,
+            })
+          },
+        })
         self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
         // Standalone fields (not inside a form) still publish field:validated
         // events. Use the controller path with field name "(field)" — the
@@ -321,7 +372,13 @@ export class ControllerInstance {
       },
 
       form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S> {
-        const f = createForm(schema, options)
+        const reporter = (err: unknown): void => {
+          dispatchError(self.rootShared.onError, err, {
+            kind: 'effect',
+            controllerPath: self.path,
+          })
+        }
+        const f = createForm(schema, options, { onValidatorError: reporter })
         self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
         // Make every leaf field publish `field:validated` to the devtools bus
         // with its key path inside the form. See spec §20.9.
@@ -332,6 +389,12 @@ export class ControllerInstance {
           self.rootShared.devtools,
         )
         self.entries.push({ kind: 'cleanup', dispose: stop })
+        // Bind the reporter onto every leaf in the tree too (the form itself
+        // got it via the constructor option; nested forms/arrays inside the
+        // schema didn't, since they were constructed by the caller before
+        // ctx.form ran). Idempotent — leaves that already got the reporter
+        // via ctx.field get the same one set again.
+        bindTreeValidatorErrorReporter(f as unknown as Form<FormSchema>, reporter)
         return f
       },
 
@@ -339,7 +402,13 @@ export class ControllerInstance {
         itemFactory: (initial?: ItemInitial<I>) => I,
         options?: FieldArrayOptions<I>,
       ): FieldArray<I> {
-        const fa = createFieldArray<I>(itemFactory, options)
+        const reporter = (err: unknown): void => {
+          dispatchError(self.rootShared.onError, err, {
+            kind: 'effect',
+            controllerPath: self.path,
+          })
+        }
+        const fa = createFieldArray<I>(itemFactory, options, { onValidatorError: reporter })
         self.entries.push({ kind: 'cleanup', dispose: () => fa.dispose() })
         const stop = bindTreeToDevtools(
           fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
@@ -348,6 +417,10 @@ export class ControllerInstance {
           self.rootShared.devtools,
         )
         self.entries.push({ kind: 'cleanup', dispose: stop })
+        bindTreeValidatorErrorReporter(
+          fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
+          reporter,
+        )
         return fa
       },
 

@@ -1,7 +1,12 @@
 import type { Field } from '../controller/types'
 import { batch, computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
-import { bindFieldDevtoolsOwner, createField } from './field'
+import {
+  bindFieldDevtoolsOwner,
+  bindFieldValidatorErrorReporter,
+  createField,
+  type ValidatorErrorReporter,
+} from './field'
 import type {
   DeepPartial,
   FieldArray,
@@ -49,21 +54,59 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   private readonly validators: ReadonlyArray<FormValidator<S>>
   private readonly options: FormOptions<S> | undefined
   private validatorDispose: (() => void) | null = null
+  private initialDispose: (() => void) | null = null
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
   private disposed = false
+  private onValidatorError: ((err: unknown) => void) | null = null
 
-  constructor(schema: S, options?: FormOptions<S>) {
+  /** Internal — wire a sync-throw reporter for the top-level validators. */
+  bindValidatorErrorReporter(reporter: ((err: unknown) => void) | null): void {
+    this.onValidatorError = reporter
+  }
+
+  constructor(
+    schema: S,
+    options?: FormOptions<S>,
+    internalOptions?: { onValidatorError?: (err: unknown) => void },
+  ) {
     this.fields = schema
     this.options = options
     this.validators = options?.validators ?? []
+    // Capture reporter BEFORE the top-level validator effect kicks off in
+    // this constructor — mirrors the FieldImpl fix.
+    this.onValidatorError = internalOptions?.onValidatorError ?? null
 
-    // Apply initial values (one-shot or initial snapshot from a function).
-    // `asInitial: true` flag tells leaf fields to set their value AND re-anchor
-    // their `reset()` target without marking themselves dirty.
+    // Initial values — supports both the static shape and the tracked-function
+    // shape from spec §8.4. For the function form, wrap in an effect so a
+    // change to any tracked signal re-seats the form (subject to the dirty
+    // guard from `resetOnInitialChange`).
     if (options?.initial !== undefined) {
-      const ini = typeof options.initial === 'function' ? options.initial() : options.initial
-      if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+      if (typeof options.initial === 'function') {
+        const initialFn = options.initial
+        const mode = options.resetOnInitialChange ?? 'when-clean'
+        let firstRun = true
+        this.initialDispose = effect(() => {
+          // Track signals read by `initialFn`. The dirty-guard MUST run
+          // untracked — otherwise `isDirty` would become a dep and re-seating
+          // on user input would cascade.
+          const ini = initialFn()
+          if (ini === undefined) return
+          untracked(() => {
+            if (this.disposed) return
+            if (firstRun) {
+              firstRun = false
+              this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+              return
+            }
+            if (mode === 'never') return
+            if (mode === 'when-clean' && this.isDirty.peek()) return
+            this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+          })
+        })
+      } else {
+        this.applyPartial(options.initial as DeepPartial<FormValue<S>>, true)
+      }
     }
 
     this.value = computed(() => this.computeValue())
@@ -145,6 +188,10 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     for (const [k, val] of Object.entries(partial)) {
       const child = (this.fields as Record<string, unknown>)[k]
       if (!child) continue
+      // `partial.someNestedForm === undefined` means "leave this subtree
+      // alone", not "reset it with undefined" — which would crash on
+      // `Object.entries(undefined)`.
+      if (val === undefined) continue
       if (isForm(child)) {
         // Nested form: recurse via its own `set` (user) or rebuild via reset
         // through the same `applyPartial`-with-`asInitial` flag (initial).
@@ -214,6 +261,12 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       }
     }
     await Promise.all(tasks)
+    // Kick a fresh top-level run so the surface matches "re-run every
+    // validator" — without this, `validate()` would skip top-level if it
+    // settled before the call and the value hasn't tracked-changed since.
+    if (this.validators.length > 0) {
+      this.runTopLevelValidators()
+    }
     // Wait for top-level validators to finish.
     if (this.topLevelValidating$.peek()) {
       await new Promise<void>((resolve) => {
@@ -232,6 +285,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     if (this.disposed) return
     this.disposed = true
     this.validatorDispose?.()
+    this.initialDispose?.()
     this.currentValidatorAbort?.abort()
     for (const child of Object.values(this.fields)) {
       ;(child as { dispose?: () => void }).dispose?.()
@@ -249,9 +303,18 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     const syncErrors: string[] = []
     const asyncPromises: Promise<string | null>[] = []
     for (const v of this.validators) {
-      const r = v(value, abort.signal)
-      if (r instanceof Promise) asyncPromises.push(r)
-      else if (r != null) syncErrors.push(r)
+      try {
+        const r = v(value, abort.signal)
+        if (r instanceof Promise) asyncPromises.push(r)
+        else if (r != null) syncErrors.push(r)
+      } catch (err) {
+        try {
+          this.onValidatorError?.(err)
+        } catch {
+          // The reporter must not propagate.
+        }
+        syncErrors.push(err instanceof Error ? err.message : String(err))
+      }
     }
 
     if (syncErrors.length > 0) {
@@ -346,10 +409,21 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   private currentValidatorAbort: AbortController | null = null
   private validatorDispose: (() => void) | null = null
   private disposed = false
+  private onValidatorError: ((err: unknown) => void) | null = null
 
-  constructor(itemFactory: (initial?: ItemInitial<I>) => I, options?: FieldArrayOptions<I>) {
+  /** Internal — see `FormImpl.bindValidatorErrorReporter`. */
+  bindValidatorErrorReporter(reporter: ((err: unknown) => void) | null): void {
+    this.onValidatorError = reporter
+  }
+
+  constructor(
+    itemFactory: (initial?: ItemInitial<I>) => I,
+    options?: FieldArrayOptions<I>,
+    internalOptions?: { onValidatorError?: (err: unknown) => void },
+  ) {
     this.itemFactory = itemFactory
     this.validators = options?.validators ?? []
+    this.onValidatorError = internalOptions?.onValidatorError ?? null
     this.items$ = signal<I[]>([])
     if (options?.initial) {
       this.initialItems = options.initial
@@ -480,6 +554,10 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       else tasks.push((item as Field<unknown>).revalidate())
     }
     await Promise.all(tasks)
+    // Fresh top-level run — see `FormImpl.validate` for the rationale.
+    if (this.validators.length > 0) {
+      this.runTopLevelValidators()
+    }
     if (this.topLevelValidating$.peek()) {
       await new Promise<void>((resolve) => {
         const unsub = this.topLevelValidating$.subscribe((v) => {
@@ -514,9 +592,18 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     const syncErrors: string[] = []
     const asyncPromises: Promise<string | null>[] = []
     for (const v of this.validators) {
-      const r = v(value, abort.signal)
-      if (r instanceof Promise) asyncPromises.push(r)
-      else if (r != null) syncErrors.push(r)
+      try {
+        const r = v(value, abort.signal)
+        if (r instanceof Promise) asyncPromises.push(r)
+        else if (r != null) syncErrors.push(r)
+      } catch (err) {
+        try {
+          this.onValidatorError?.(err)
+        } catch {
+          // The reporter must not propagate.
+        }
+        syncErrors.push(err instanceof Error ? err.message : String(err))
+      }
     }
 
     if (syncErrors.length > 0) {
@@ -554,15 +641,20 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   }
 }
 
-export function createForm<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S> {
-  return new FormImpl(schema, options)
+export function createForm<S extends FormSchema>(
+  schema: S,
+  options?: FormOptions<S>,
+  internalOptions?: { onValidatorError?: (err: unknown) => void },
+): Form<S> {
+  return new FormImpl(schema, options, internalOptions)
 }
 
 export function createFieldArray<I extends Field<any> | Form<any>>(
   itemFactory: (initial?: ItemInitial<I>) => I,
   options?: FieldArrayOptions<I>,
+  internalOptions?: { onValidatorError?: (err: unknown) => void },
 ): FieldArray<I> {
-  return new FieldArrayImpl<I>(itemFactory, options)
+  return new FieldArrayImpl<I>(itemFactory, options, internalOptions)
 }
 
 /**
@@ -614,16 +706,40 @@ function bindTreeToDevtoolsInto(
   }
   if (isFieldArray(node)) {
     // Re-bind on every items change so dynamically-added entries get tracked.
-    // `effect()` returns its own disposer; capture it so the controller can
-    // tear it down on dispose (otherwise dynamic forms leak reactive work).
+    // Each re-bind has its own disposer set scoped to that pass; on the next
+    // items change we flush the previous pass's disposers BEFORE creating the
+    // new effects, so a churning array doesn't accumulate reactive work.
+    // (Pre-fix, every items mutation appended fresh effects to the outer
+    // `disposers` array and never released the old ones.)
     const arr = node as FieldArray<Field<unknown> | Form<FormSchema>>
+    let perPass: Array<() => void> = []
     const stop = effect(() => {
       const items = arr.items.value
+      // Flush previous pass before rebinding the new item set.
+      for (const d of perPass) {
+        try {
+          d()
+        } catch {
+          // Disposer failures must not break sibling cleanup.
+        }
+      }
+      perPass = []
       items.forEach((item, idx) => {
-        bindTreeToDevtoolsInto(item, `${prefix}[${idx}]`, controllerPath, emitter, disposers)
+        bindTreeToDevtoolsInto(item, `${prefix}[${idx}]`, controllerPath, emitter, perPass)
       })
     })
     disposers.push(stop)
+    // On final dispose, drain the per-pass disposers too.
+    disposers.push(() => {
+      for (const d of perPass) {
+        try {
+          d()
+        } catch {
+          // Ignore.
+        }
+      }
+      perPass = []
+    })
     return
   }
   // Leaf Field.
@@ -632,6 +748,40 @@ function bindTreeToDevtoolsInto(
     fieldName: prefix,
     emitter,
   })
+}
+
+/**
+ * Walk a Form/FieldArray subtree and install `reporter` on every level —
+ * leaf fields, nested forms' top-level validators, and field-arrays' top-level
+ * validators. Called by `ctx.form` / `ctx.fieldArray` so synchronous validator
+ * throws anywhere in the tree route through `root.onError`. See
+ * `ValidatorErrorReporter` in `./field.ts`.
+ */
+export function bindTreeValidatorErrorReporter(
+  node: Field<unknown> | Form<FormSchema> | FieldArray<Field<unknown> | Form<FormSchema>>,
+  reporter: ValidatorErrorReporter | null,
+): void {
+  if (isForm(node)) {
+    const impl = node as { bindValidatorErrorReporter?: (r: ValidatorErrorReporter | null) => void }
+    impl.bindValidatorErrorReporter?.(reporter)
+    for (const child of Object.values(node.fields)) {
+      bindTreeValidatorErrorReporter(child, reporter)
+    }
+    return
+  }
+  if (isFieldArray(node)) {
+    const impl = node as { bindValidatorErrorReporter?: (r: ValidatorErrorReporter | null) => void }
+    impl.bindValidatorErrorReporter?.(reporter)
+    // Items currently in the array. (Items added later won't get the reporter
+    // unless `ctx.fieldArray` is wrapped to rebind — but the leaf items in the
+    // typical pattern come from a user factory that constructs through
+    // `createField` and is bound here by the parent traversal.)
+    for (const item of node.items.value) {
+      bindTreeValidatorErrorReporter(item, reporter)
+    }
+    return
+  }
+  bindFieldValidatorErrorReporter(node as Field<unknown>, reporter)
 }
 
 // Quiet unused-import linter without exporting these symbols publicly.

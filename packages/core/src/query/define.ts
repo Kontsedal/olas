@@ -72,6 +72,13 @@ export function defineQuery<Args extends unknown[], T>(spec: QuerySpec<Args, T>)
       if (!first) {
         return Promise.reject(new Error('[olas] prefetch called before any root has subscribed'))
       }
+      if (__DEV__ && clients.size > 1) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[olas] query.prefetch() is ambiguous when multiple roots are registered; ' +
+            'using an arbitrary root. Call `root.prefetch(query, args)` (or per-root) to be explicit.',
+        )
+      }
       return first.prefetch(query as Query<Args, T>, args)
     },
   } satisfies QueryInternal<Args, T>
@@ -144,6 +151,13 @@ export function defineInfiniteQuery<Args extends unknown[], PageParam, TPage, TI
       const [first] = clients
       if (!first) {
         return Promise.reject(new Error('[olas] prefetch called before any root has subscribed'))
+      }
+      if (__DEV__ && clients.size > 1) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[olas] infiniteQuery.prefetch() is ambiguous when multiple roots are registered; ' +
+            'using an arbitrary root. Call `root.prefetch(query, args)` (or per-root) to be explicit.',
+        )
       }
       return first.prefetchInfinite(query as InfiniteQuery<Args, TPage, TItem>, args)
     },

@@ -84,7 +84,15 @@ export function createUse<Args extends unknown[], T>(
   client: QueryClient,
   query: Query<Args, T>,
   keyOrOptions?: (() => Args) | UseOptions<Args>,
-): { subscription: QuerySubscription<T>; dispose: () => void } {
+): {
+  subscription: QuerySubscription<T>
+  dispose: () => void
+  /** Suspend the subscription — release the entry (its refetchInterval +
+   *  focus/online listeners pause) without disposing it. Spec §4.1. */
+  suspend: () => void
+  /** Resume after `suspend`. Re-acquires the entry and refetches if stale. */
+  resume: () => void
+} {
   const internal = query as unknown as QueryInternal<Args, T>
   const spec = internal.__spec
   const keepPreviousData = spec.keepPreviousData ?? false
@@ -95,8 +103,10 @@ export function createUse<Args extends unknown[], T>(
 
   const sub = new SubscriptionImpl<T>(keepPreviousData)
   let currentEntry: ClientEntry<T> | null = null
+  let suspended = false
 
   const effectDispose = effect(() => {
+    if (suspended) return
     const isEnabled = enabledFn ? enabledFn() : true
     if (!isEnabled) {
       untracked(() => {
@@ -138,7 +148,43 @@ export function createUse<Args extends unknown[], T>(
     sub.detach()
   }
 
-  return { subscription: sub, dispose }
+  const suspend = (): void => {
+    if (suspended) return
+    suspended = true
+    if (currentEntry) {
+      currentEntry.release()
+      currentEntry = null
+    }
+    // Keep subscription detached so reads return the last committed values
+    // via the entry's signals if still alive (the entry may be gc'd after
+    // its gcTime; that's fine — resume re-binds).
+  }
+
+  const resume = (): void => {
+    if (!suspended) return
+    suspended = false
+    // Re-evaluate the keyFn + enabled flag and rebind. The effect's deps
+    // didn't change while suspended, so toggling `suspended` here doesn't
+    // re-fire the effect on its own — force a sync rebind through the same
+    // code path.
+    const isEnabled = enabledFn ? enabledFn() : true
+    if (!isEnabled) return
+    const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
+    const entry = client.bindEntry<Args, T>(query, args)
+    entry.acquire()
+    currentEntry = entry
+    sub.attach(entry)
+    // On resume, refetch if stale (matches the spec §4.1 "stale-on-resume"
+    // requirement). Non-stale data stays as-is.
+    const status = entry.entry.status.peek()
+    if (status === 'idle' || entry.entry.isStaleNow() || status === 'error') {
+      entry.entry.startFetch().catch(() => {
+        /* error captured on entry */
+      })
+    }
+  }
+
+  return { subscription: sub, dispose, suspend, resume }
 }
 
 type InfiniteQueryInternal<Args extends unknown[], TPage, TItem> = InfiniteQuery<
@@ -265,6 +311,8 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
 ): {
   subscription: InfiniteQuerySubscription<TPage, TItem>
   dispose: () => void
+  suspend: () => void
+  resume: () => void
 } {
   const spec = (query as unknown as InfiniteQueryInternal<Args, TPage, TItem>).__spec
   const keepPreviousData = spec.keepPreviousData ?? false
@@ -274,8 +322,10 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
 
   const sub = new InfiniteSubscriptionImpl<TPage, TItem>(keepPreviousData)
   let currentEntry: InfiniteClientEntry<TPage, TItem, unknown> | null = null
+  let suspended = false
 
   const effectDispose = effect(() => {
+    if (suspended) return
     const isEnabled = enabledFn ? enabledFn() : true
     if (!isEnabled) {
       untracked(() => {
@@ -317,5 +367,32 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
     sub.detach()
   }
 
-  return { subscription: sub, dispose }
+  const suspend = (): void => {
+    if (suspended) return
+    suspended = true
+    if (currentEntry) {
+      currentEntry.release()
+      currentEntry = null
+    }
+  }
+
+  const resume = (): void => {
+    if (!suspended) return
+    suspended = false
+    const isEnabled = enabledFn ? enabledFn() : true
+    if (!isEnabled) return
+    const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
+    const entry = client.bindInfiniteEntry<Args, TPage, TItem>(query, args)
+    entry.acquire()
+    currentEntry = entry
+    sub.attach(entry)
+    const status = entry.entry.status.peek()
+    if (status === 'idle' || entry.entry.isStaleNow() || status === 'error') {
+      entry.entry.startFetch().catch(() => {
+        /* error captured on entry */
+      })
+    }
+  }
+
+  return { subscription: sub, dispose, suspend, resume }
 }

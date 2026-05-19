@@ -134,6 +134,10 @@ export class DevtoolsStore {
         return
       case 'controller:disposed':
         this.tree$.set(setNodeState(this.tree$.peek(), event.path, 'disposed'))
+        // A controller that disposed mid-mutation (before `success`/`error`
+        // ever fired) would otherwise leave its `mutation:run` start entry
+        // in `mutationStarts` forever. Drop any starts under this path.
+        this.dropStartsForPath(event.path)
         return
       case 'cache:subscribed':
         this.pushCache({
@@ -212,6 +216,10 @@ export class DevtoolsStore {
     this.cache$.set([])
     this.mutations$.set([])
     this.fields$.set([])
+    // Drop pending mutation-start timing records too — `clearLogs()` is the
+    // user's "start fresh" gesture; any subsequent `success`/`error` for a
+    // pre-clear `run` would have produced a duration anchored to noise.
+    this.mutationStarts.clear()
   }
 
   // -----------------------------------------------------------------------
@@ -239,6 +247,23 @@ export class DevtoolsStore {
     if (startedAt === undefined) return undefined
     this.mutationStarts.delete(key)
     return this.now() - startedAt
+  }
+
+  /**
+   * Drop every pending mutation-start record under `path` (and its
+   * descendants). Called on `controller:disposed` so a dispose mid-mutation
+   * doesn't leave a permanent entry in `mutationStarts`.
+   */
+  private dropStartsForPath(path: readonly string[]): void {
+    if (this.mutationStarts.size === 0) return
+    const prefix = `${path.join('>')}>`
+    const exact = path.join('>')
+    for (const key of this.mutationStarts.keys()) {
+      const beforeHash = key.split('#')[0] ?? ''
+      if (beforeHash === exact || beforeHash.startsWith(prefix)) {
+        this.mutationStarts.delete(key)
+      }
+    }
   }
 }
 

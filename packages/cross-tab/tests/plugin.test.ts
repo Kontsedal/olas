@@ -477,4 +477,32 @@ describe('crossTabPlugin', () => {
 
     root.dispose()
   })
+
+  test('11. plugin instance reused across two roots surfaces an onError', () => {
+    // Per `ASSESSMENT.md`: a single `crossTabPlugin({...})` instance owns
+    // one sourceId / channel / listener Map. Sharing across two roots would
+    // clobber state on the second init — the guard throws from `init`. The
+    // QueryClient routes that throw through `onError({ kind: 'plugin' })`
+    // (it doesn't tear down the root), but the misuse is now visible.
+    const factory = busChannelFactory()
+    const plugin = crossTabPlugin({ channelName: 'reuse', channelFactory: factory })
+
+    const q = makeUsersQuery('xtab-test/11')
+    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1' as string]) }))
+
+    const onError1 = vi.fn()
+    const root1 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError1 })
+    // First root: clean — no plugin error.
+    expect(onError1).not.toHaveBeenCalled()
+
+    const onError2 = vi.fn()
+    const root2 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError2 })
+    // Second root: plugin init throws → dispatched as kind:'plugin'.
+    const pluginErr = onError2.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'plugin')
+    expect(pluginErr).toBeTruthy()
+    expect((pluginErr?.[0] as Error).message).toMatch(/reused across multiple roots/)
+
+    root1.dispose()
+    root2.dispose()
+  })
 })

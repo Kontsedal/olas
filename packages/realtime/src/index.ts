@@ -105,6 +105,10 @@ const DEFAULT_FLUSH_MS = 16
  * subscription lives inside `ctx.effect` so pause/resume re-runs it (we read
  * `isPaused.value` as a tracked dep).
  *
+ * Naming: the `use*` prefix matches the spec convention for ctx-taking
+ * composables (`usePersisted`, `useRealtimePatcher`). The `define*` prefix is
+ * reserved for module-scope factories (`defineQuery`, `defineController`).
+ *
  * Buffer semantics (SPEC §16.5):
  * - `capacity` caps memory; oldest entries drop when exceeded.
  * - `flushMs` coalesces N events into one signal write — prevents thrashing
@@ -113,14 +117,14 @@ const DEFAULT_FLUSH_MS = 16
  * - `clear()` resets the buffer (and any unflushed pending events) without
  *   touching the subscription.
  */
-export function defineLiveStream<TEvent>(
+export function useLiveStream<TEvent>(
   ctx: Ctx<RealtimeDeps>,
   channel: string,
   options?: LiveStreamOptions,
 ): LiveStream<TEvent> {
   const capacity = options?.capacity ?? DEFAULT_CAPACITY
   if (capacity < 1) {
-    throw new RangeError(`[olas/realtime] defineLiveStream: capacity must be >= 1, got ${capacity}`)
+    throw new RangeError(`[olas/realtime] useLiveStream: capacity must be >= 1, got ${capacity}`)
   }
   const flushMs = options?.flushMs ?? DEFAULT_FLUSH_MS
   const syncFlush = flushMs <= 0

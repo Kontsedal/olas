@@ -1,6 +1,7 @@
 import type { DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { type Signal, signal } from '../signals'
+import { isAbortError } from '../utils'
 import { Entry } from './entry'
 import { subscribeReconnect, subscribeWindowFocus } from './focus-online'
 import { InfiniteEntry, type InfiniteQuery, type InfiniteQuerySpec } from './infinite'
@@ -542,6 +543,9 @@ export class QueryClient {
       // Emit AFTER kicking off invalidate so plugins reading entry state see
       // post-invalidation values, mirroring setData's emit-after-write order.
       entry.entry.invalidate().catch((err) => {
+        // Two rapid invalidates on the same key supersede each other, which
+        // raises AbortError. That's not a cache error — swallow.
+        if (isAbortError(err)) return
         dispatchError(this.onError, err, {
           kind: 'cache',
           controllerPath: [],
@@ -555,7 +559,19 @@ export class QueryClient {
   }
 
   hydrate(state: DehydratedState): void {
-    if (state.version !== 1) return
+    if (state.version !== 1) {
+      // Silent drop hid schema-bumped payloads. Warn so a future spec bump is
+      // detectable from the client side without code archaeology.
+      if (__DEV__) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          '[olas] hydrate(): unsupported state.version =',
+          state.version,
+          '— expected 1. Dropping payload; cache will fetch fresh.',
+        )
+      }
+      return
+    }
     for (const entry of state.entries) {
       const hash = stableHash(entry.key)
       this.hydratedData.set(hash, {
@@ -653,6 +669,17 @@ export class QueryClient {
       if (tasks.length === 0) return
       await Promise.all(tasks)
     }
+    // The 100-iteration safety bound exists so a pathological setup that
+    // keeps starting new fetches doesn't lock the dehydrate path. Warn so
+    // it's surfaced — silent success would let an SSR dehydrate ship an
+    // incomplete payload looking like a clean one.
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[olas] waitForIdle(): exited via the 100-iteration safety bound — ' +
+          'the cache or mutations keep restarting. The dehydrate payload may be incomplete.',
+      )
+    }
   }
 
   bindEntry<Args extends unknown[], T>(query: Query<Args, T>, args: Args): ClientEntry<T> {
@@ -708,6 +735,7 @@ export class QueryClient {
       this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
     }
     entry.entry.invalidate().catch((err) => {
+      if (isAbortError(err)) return
       dispatchError(this.onError, err, {
         kind: 'cache',
         controllerPath: [],
@@ -727,6 +755,7 @@ export class QueryClient {
         this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
       }
       entry.entry.invalidate().catch((err) => {
+        if (isAbortError(err)) return
         dispatchError(this.onError, err, {
           kind: 'cache',
           controllerPath: [],
@@ -805,6 +834,7 @@ export class QueryClient {
     const entry = map.get(hash)
     if (!entry) return
     entry.entry.invalidate().catch((err) => {
+      if (isAbortError(err)) return
       dispatchError(this.onError, err, {
         kind: 'cache',
         controllerPath: [],
@@ -820,6 +850,7 @@ export class QueryClient {
     if (!map) return
     for (const entry of map.values()) {
       entry.entry.invalidate().catch((err) => {
+        if (isAbortError(err)) return
         dispatchError(this.onError, err, {
           kind: 'cache',
           controllerPath: [],

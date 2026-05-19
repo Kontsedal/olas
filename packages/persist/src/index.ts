@@ -133,7 +133,19 @@ export function usePersisted<T>(
   if (crossTab && storage.onChange) {
     unsubChange = storage.onChange((changedKey, rawValue) => {
       if (changedKey !== key) return
-      if (rawValue == null) return
+      // Storage delete in another tab (`localStorage.removeItem`) arrives as
+      // `rawValue == null`. Mirror the delete locally by writing `undefined`
+      // through to source — consumers whose `T` doesn't include `undefined`
+      // should treat that as "value gone, fall back to initial."
+      if (rawValue == null) {
+        writingFromLoad = true
+        try {
+          source.set(undefined as T)
+        } finally {
+          writingFromLoad = false
+        }
+        return
+      }
       try {
         const value = deserialize(rawValue)
         writingFromLoad = true
