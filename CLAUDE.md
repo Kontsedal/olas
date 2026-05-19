@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Read this first
 
-Two artifacts in this repo are authoritative and outrank everything else:
+Three artifacts in this repo own different kinds of truth. Keep them strictly separated.
 
-1. **`SPEC.md`** — the design specification. When code and spec disagree, the spec wins unless a test pins the current behavior on purpose. Section pointers (e.g. "§6.1", "§5.7") are canonical citations.
-2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how this code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
+1. **`SPEC.md`** — the design **contract**. Describes what *is*. When code and spec disagree, the spec wins unless a test pins the current behavior on purpose. Section pointers (e.g. "§6.1", "§5.7") are canonical citations. SPEC.md never contains "we'll add this later" notes — those go in BACKLOG.md.
+2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
+3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: all five published packages exist and ship — `@olas/core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`), `@olas/react` (Provider + hooks + keep-alive), `@olas/zod`, `@olas/persist`, `@olas/devtools` (in-app panel + floating launcher). 248 lib tests + the `examples/` apps (kanban, reader-ssr, stock-ticker). Phase 14 polish — inline TSDoc on all exports, stdlib composables (`useDebounced`, `usePagination`, `useSubmit`) — is not done. Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet.
+Current implementation status: all five published packages exist and ship — `@olas/core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`), `@olas/react` (Provider + hooks + keep-alive), `@olas/zod`, `@olas/persist`, `@olas/devtools` (in-app panel + floating launcher). 248 lib tests + the `examples/` apps (kanban, reader-ssr, stock-ticker). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -187,6 +188,26 @@ Move via `git mv`, change `confidence`, update incoming edges.
 ## When to deviate
 
 This schema is a starting point, not a contract. If a page doesn't fit a type, ask. If the layout starts feeling wrong, raise it — the schema is iterable. The goal is a wiki that's useful to the next session, not bureaucratic compliance.
+
+---
+
+# The BACKLOG protocol
+
+`BACKLOG.md` at the repo root is the **only** place where future work, follow-ups, ideas-in-progress, and "we should also…" thoughts live.
+
+**Rule:** if a thought is about *something not yet done* — a follow-up, a refactor idea, a wishlist API, a footnote you noticed while working on something else — it goes in `BACKLOG.md`. It does **not** go in:
+
+- `SPEC.md` — the spec is the contract for what *is*. No roadmap, no "deferred to post-v1," no "future package."
+- `CLAUDE.md` — operating instructions only. No backlog items.
+- `.wiki/` — describes the codebase as it stands.
+- Commit messages or PR descriptions only — those vanish from regular reading paths.
+- Code comments (`// TODO`, `// later we should…`) — invisible at a glance.
+
+When this matters most: **mid-task drift**. You're fixing a typecheck error and notice an unrelated rough edge in a neighbouring file. Don't fix it (that grows scope). Don't forget it. Append a one-liner to `BACKLOG.md` under the appropriate section (or "Loose ends" if it doesn't fit), then return to the task.
+
+When you finish a backlog item, change its status tag to `[done]` and add a pointer to where it lives now (commit hash, SPEC.md section, wiki page). When you kill one, mark `[dropped]` with the reason. Both are searchable later.
+
+If a backlog item turns into a real plan with a date, that's still fine — keep it in BACKLOG.md with `[planned]` status. It graduates to SPEC.md only when the design is committed and (usually) implemented.
 
 ---
 
