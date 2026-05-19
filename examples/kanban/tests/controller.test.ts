@@ -12,11 +12,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createTestController } from '@olas/core/testing'
 import { defineController } from '@olas/core'
-import {
-  boardController,
-  cardEditorController,
-  setApiForQuery,
-} from '../src/controller'
+import { boardController, cardEditorController } from '../src/controller'
 import { activityScope, currentBoardScope } from '../src/scopes'
 import { createFakeApi } from '../src/api'
 
@@ -24,11 +20,7 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
-const setup = () => {
-  const api = createFakeApi()
-  setApiForQuery(api)
-  return api
-}
+const setup = () => createFakeApi()
 
 // Wait until the query first lands. Latency is real (setTimeout), so plain
 // flush() is not enough — we have to wait for the data signal to populate.
@@ -256,7 +248,7 @@ describe('cardEditorController — formFromZod', () => {
     const ok = await root.editor.form.validate()
     expect(ok).toBe(true)
 
-    const saved = await root.editor.save.run(undefined as unknown as void)
+    const saved = await root.editor.save.run()
     expect(saved.title).toBe('Migrate the migrator')
     expect(saved.subtasks.length).toBe(2)
 

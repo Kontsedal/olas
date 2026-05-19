@@ -29,6 +29,7 @@ import {
 } from '@olas/core'
 import { type StorageAdapter, usePersisted } from '@olas/persist'
 import type { Api, Article, Page } from './api'
+import { composerController } from './composer-controller'
 
 export type AnalyticsEvent = { articleId: string; ts: number }
 
@@ -54,17 +55,10 @@ declare module '@olas/core' {
 
 // --- Shared query: one cache entry per cursor. ---------------------------
 
-let currentApi: Api | undefined
-export function setApiForQuery(api: Api): void {
-  currentApi = api
-}
-
 export const pageQuery = defineQuery({
   key: (cursor: number) => ['page', cursor],
-  fetcher: async (cursor: number, signal: AbortSignal): Promise<Page> => {
-    if (currentApi === undefined) throw new Error('pageQuery: api not wired')
-    return currentApi.getPage(cursor, signal)
-  },
+  fetcher: ({ signal, deps }, cursor: number): Promise<Page> =>
+    deps.api.getPage(cursor, signal),
   staleTime: 60_000,
 })
 
@@ -171,6 +165,14 @@ export const readerController = defineController((ctx: Ctx) => {
       progress.update((p) => ({ ...p, lastArticleId: articleId }))
       analyticsEmitter.emit({ articleId, ts: Date.now() })
     },
+    /**
+     * Construct a private composer controller for `articleId`. `ctx.attach`
+     * returns `{ api, dispose }` so the caller (the React layer) can close
+     * the composer and tear down its form, debounced validator timers, and
+     * comments cache without waiting for the root to dispose.
+     */
+    openComposer: (articleId: string) =>
+      ctx.attach(composerController, { articleId }),
   }
 }, { name: 'reader' })
 
@@ -184,7 +186,6 @@ const appController = defineController(
 )
 
 export function createAppRoot(deps: ReaderDeps, hydrate?: DehydratedState) {
-  setApiForQuery(deps.api)
   return createRoot(appController, {
     deps,
     onError: (err, context) => {

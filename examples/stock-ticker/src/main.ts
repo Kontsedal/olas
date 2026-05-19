@@ -10,6 +10,11 @@ import './styles.css'
 const market = createFakeMarket({ autoTick: true })
 const root = createAppRoot(market, { initialWatchlist: ['AAPL', 'MSFT', 'NVDA'] })
 
+// Per-symbol details controller, opened on row click. Keyed by symbol so
+// re-clicking the same row is a no-op; clicking a different row disposes the
+// previous details. The cache + effect inside the child clean themselves up.
+let detailsActive: { symbol: string; api: ReturnType<typeof root.ticker.openDetails>; teardown: () => void } | null = null
+
 const totalEl   = mustEl<HTMLElement>('#total')
 const wlEl      = mustEl<HTMLUListElement>('#watchlist')
 const searchEl  = mustEl<HTMLInputElement>('#search')
@@ -47,9 +52,11 @@ bindList(wlEl, watchlistRows, (row) => {
   const header = document.createElement('div')
   header.className = 'flex items-center justify-between gap-2'
 
-  const sym = document.createElement('span')
-  sym.className = 'font-mono font-bold text-sm'
+  const sym = document.createElement('button')
+  sym.type = 'button'
+  sym.className = 'font-mono font-bold text-sm bg-transparent border-0 p-0 text-left cursor-pointer hover:text-(--color-accent)'
   sym.textContent = row.symbol
+  sym.onclick = () => openDetailsFor(row.symbol)
 
   const right = document.createElement('div')
   right.className = 'flex items-center gap-1.5'
@@ -165,6 +172,72 @@ bindList(alertsEl, root.ticker.alerts, (alert) => {
   li.append(label, status, rm)
   return li
 })
+
+// --- Details panel (per-symbol child controller) ------------------------
+//
+// Each click constructs a fresh `detailsController` via `openDetails`. The
+// child owns a `ctx.cache` (recent trades) + a `ctx.effect` (live ticks for
+// this symbol). Clicking a *different* symbol disposes the previous child;
+// `ctx.cache.dispose()` and `ctx.effect`'s cleanup fire automatically. The
+// close button does the same.
+
+const detailsSection = mustEl<HTMLElement>('#details-section')
+const detailsSymbolEl = mustEl<HTMLElement>('#details-symbol')
+const detailsStatsEl = mustEl<HTMLElement>('#details-stats')
+const detailsTradesEl = mustEl<HTMLElement>('#details-trades')
+const detailsCloseBtn = mustEl<HTMLButtonElement>('#details-close')
+
+function openDetailsFor(symbol: string): void {
+  if (detailsActive?.symbol === symbol) return
+  detailsActive?.teardown()
+  const handle = root.ticker.openDetails(symbol)
+
+  const unsubSymbol = effect(() => {
+    detailsSymbolEl.textContent = handle.api.symbol
+  })
+  const unsubStats = effect(() => {
+    const s = handle.api.stats.value
+    detailsStatsEl.innerHTML = `
+      <span><span class="text-(--color-fg-mute) mr-1">avg</span>${s.avg.toFixed(2)}</span>
+      <span><span class="text-(--color-fg-mute) mr-1">low</span><span class="text-(--color-danger)">${s.min.toFixed(2)}</span></span>
+      <span><span class="text-(--color-fg-mute) mr-1">high</span><span class="text-(--color-success)">${s.max.toFixed(2)}</span></span>`
+  })
+  const unsubTrades = effect(() => {
+    detailsTradesEl.replaceChildren(
+      ...handle.api.series.value
+        .slice()
+        .reverse()
+        .map((t) => {
+          const li = document.createElement('li')
+          li.className =
+            'flex items-center gap-3 font-mono text-xs tabular-nums px-2 py-1 rounded hover:bg-(--color-bg-sunk)'
+          li.innerHTML = `
+            <span class="text-(--color-fg-mute) w-16">${new Date(t.ts).toLocaleTimeString()}</span>
+            <span class="flex-1">${t.price.toFixed(2)}</span>
+            <span class="text-(--color-fg-mute)">×${t.size}</span>`
+          return li
+        }),
+    )
+  })
+
+  detailsSection.classList.remove('hidden')
+  detailsActive = {
+    symbol,
+    api: handle,
+    teardown: () => {
+      unsubSymbol()
+      unsubStats()
+      unsubTrades()
+      handle.dispose()
+    },
+  }
+}
+
+detailsCloseBtn.onclick = () => {
+  detailsActive?.teardown()
+  detailsActive = null
+  detailsSection.classList.add('hidden')
+}
 
 // --- Alert toast (via emitter) -------------------------------------------
 

@@ -8,7 +8,7 @@
 
 import { describe, expect, test } from 'vitest'
 import { createFakeApi } from '../src/api'
-import { createAppRoot, setApiForQuery } from '../src/controller'
+import { createAppRoot } from '../src/controller'
 
 const flush = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve()
@@ -18,7 +18,6 @@ describe('SSR dehydrate → hydrate', () => {
   test('client reads cursor-0 from cache; no fresh fetch', async () => {
     // --- Server side ---
     const serverApi = createFakeApi()
-    setApiForQuery(serverApi)
     const server = createAppRoot({ api: serverApi })
     await server.waitForIdle()
     expect(serverApi.callCount).toBe(1) // only the initial page
@@ -30,7 +29,6 @@ describe('SSR dehydrate → hydrate', () => {
 
     // --- Client side ---
     const clientApi = createFakeApi()
-    setApiForQuery(clientApi)
     const client = createAppRoot({ api: clientApi }, state)
     await flush()
 
@@ -45,14 +43,12 @@ describe('SSR dehydrate → hydrate', () => {
 
   test('after hydrate, loadMore fetches the next cursor only', async () => {
     const serverApi = createFakeApi()
-    setApiForQuery(serverApi)
     const server = createAppRoot({ api: serverApi })
     await server.waitForIdle()
     const state = server.dehydrate()
     server.dispose()
 
     const clientApi = createFakeApi()
-    setApiForQuery(clientApi)
     const client = createAppRoot({ api: clientApi }, state)
     await flush()
     expect(client.reader.flatArticles.value.length).toBe(4)

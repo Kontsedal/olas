@@ -2,7 +2,7 @@
 // `query.ts`, `schema.ts`, `controllers/`, and `app.ts`. Tests + the existing
 // example doc can import from `./controller` unchanged.
 
-export { boardQuery, setApiForQuery } from './query'
+export { boardQuery } from './query'
 export {
   cardSchema,
   prioritySchema,

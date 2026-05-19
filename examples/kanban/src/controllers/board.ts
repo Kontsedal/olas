@@ -79,8 +79,9 @@ export const boardController = defineController(
           text: `Moved ${vars.cardId} → ${vars.toColumnId}`,
         })
       },
-      onError: (err, vars, snapshot) => {
-        snapshot?.rollback()
+      // No explicit rollback — the snapshot returned from `onMutate`
+      // auto-rolls back on non-abort errors. Spec §6.4.
+      onError: (err, vars) => {
         activity.emit({
           ts: Date.now(),
           kind: 'error',

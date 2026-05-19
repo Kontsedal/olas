@@ -48,8 +48,8 @@ export function App({ root, api }: { root: AppRoot; api: Api }): ReactElement {
             <div className="px-3 py-2 border-b border-(--color-border) text-[10px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
               Devtools
             </div>
-            <div className="h-[460px]">
-              <DevtoolsPanel root={root} defaultTab="tree" />
+            <div className="h-[480px]">
+              <DevtoolsPanel root={root} defaultTab="tree" urlHashKey="kanban" />
             </div>
           </div>
         </aside>

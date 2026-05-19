@@ -9,7 +9,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { createTestController } from '@olas/core/testing'
 import type { StorageAdapter } from '@olas/persist'
 import { createFakeMarket } from '../src/api'
-import { setMarketForQuery, tickerController } from '../src/controller'
+import { tickerController } from '../src/controller'
 
 const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
@@ -36,7 +36,6 @@ const memoryStorage = (
 describe('tickerController', () => {
   test('emitter ticks update the prices signal', async () => {
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL'], uiThrottleMs: 0 },
       deps: { market, storage: memoryStorage() },
@@ -55,7 +54,6 @@ describe('tickerController', () => {
   test('changing the watchlist resubscribes the market (effect re-runs)', async () => {
     const market = createFakeMarket({ autoTick: false })
     const subscribeSpy = vi.spyOn(market, 'subscribe')
-    setMarketForQuery(market)
 
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL'], uiThrottleMs: 0 },
@@ -84,7 +82,6 @@ describe('tickerController', () => {
   test('throttled prices coalesce rapid ticks within the window', async () => {
     vi.useFakeTimers()
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL'], uiThrottleMs: 100 },
       deps: { market, storage: memoryStorage() },
@@ -120,7 +117,6 @@ describe('tickerController', () => {
   test('debounced search fires once after rapid typing', async () => {
     vi.useFakeTimers()
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const root = createTestController(tickerController, {
       props: { initialWatchlist: [], uiThrottleMs: 0, searchDebounceMs: 150 },
       deps: { market, storage: memoryStorage() },
@@ -149,7 +145,6 @@ describe('tickerController', () => {
 
   test('watchlist persists to the injected storage adapter', async () => {
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const storage = memoryStorage()
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL'], uiThrottleMs: 0 },
@@ -167,7 +162,6 @@ describe('tickerController', () => {
 
   test('persisted watchlist is restored on construction', async () => {
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const storage = memoryStorage({
       'olas-ticker.watchlist': JSON.stringify(['TSLA', 'F']),
     })
@@ -185,7 +179,6 @@ describe('tickerController', () => {
 
   test('addToWatchlist / removeFromWatchlist mutate the list (and persist)', async () => {
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const storage = memoryStorage()
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL'], uiThrottleMs: 0 },
@@ -208,7 +201,6 @@ describe('tickerController', () => {
 
   test('price alert fires once when crossed and emits an alertFiredEmitter event', async () => {
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL'], uiThrottleMs: 0 },
       deps: { market, storage: memoryStorage() },
@@ -239,7 +231,6 @@ describe('tickerController', () => {
 
   test('history is bounded by historyCap', async () => {
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL'], uiThrottleMs: 0, historyCap: 5 },
       deps: { market, storage: memoryStorage() },
@@ -255,7 +246,6 @@ describe('tickerController', () => {
 
   test('portfolioTotal sums throttled prices for watched symbols only', async () => {
     const market = createFakeMarket({ autoTick: false })
-    setMarketForQuery(market)
     const root = createTestController(tickerController, {
       props: { initialWatchlist: ['AAPL', 'MSFT'], uiThrottleMs: 0 },
       deps: { market, storage: memoryStorage() },

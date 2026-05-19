@@ -1,5 +1,12 @@
 // One column. Renders its cards plus reordering/move/add controls.
+//
+// Each card is a `useDraggable` source; the column body is `useDroppable`.
+// The actual drop semantics (which mutation fires, whether to reorder vs
+// move) live in `<Board>`'s `onDragEnd`. Cards keep their arrow + → buttons
+// as an a11y fallback for keyboard / screen reader users.
 
+import { useDraggable, useDroppable } from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
 import type { ReactElement } from 'react'
 import {
   ArrowDown,
@@ -7,6 +14,7 @@ import {
   ArrowUp,
   CalendarDays,
   CheckSquare,
+  GripVertical,
   Plus,
 } from 'lucide-react'
 import type { Card, Column as ColumnT, Priority } from '../api'
@@ -23,8 +31,15 @@ export type ColumnProps = {
 
 export function Column(props: ColumnProps): ReactElement {
   const { column, cards, otherColumns, onMove, onReorder, onEditCard, onAddCard } = props
+  const { setNodeRef, isOver } = useDroppable({ id: `col:${column.id}` })
+
   return (
-    <section className="flex flex-col gap-3 rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-3 shadow-[var(--shadow-card)] min-w-0">
+    <section
+      ref={setNodeRef}
+      className={`flex flex-col gap-3 rounded-xl border bg-(--color-bg-elev) p-3 shadow-[var(--shadow-card)] min-w-0 transition-colors ${
+        isOver ? 'border-(--color-accent) bg-(--color-accent)/5' : 'border-(--color-border)'
+      }`}
+    >
       <header className="flex items-center justify-between gap-2">
         <h2 className="m-0 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
           <span>{column.title}</span>
@@ -42,7 +57,7 @@ export function Column(props: ColumnProps): ReactElement {
         </button>
       </header>
 
-      <ul className="flex flex-col gap-2 list-none p-0 m-0">
+      <ul className="flex flex-col gap-2 list-none p-0 m-0 min-h-[40px]">
         {cards.map((card, idx) => (
           <CardRow
             key={card.id}
@@ -58,7 +73,7 @@ export function Column(props: ColumnProps): ReactElement {
         ))}
         {cards.length === 0 && (
           <li className="rounded-lg border border-dashed border-(--color-border) p-4 text-center text-xs text-(--color-fg-mute)">
-            No cards. Click <em>Add</em> to start.
+            Drop a card here, or click <em>Add</em>.
           </li>
         )}
       </ul>
@@ -77,9 +92,33 @@ function CardRow(props: {
   onMove: (cardId: string, toColumnId: string, toIndex: number) => Promise<void>
 }): ReactElement {
   const { card, index, column, otherColumns, cardCount, onEdit, onReorder, onMove } = props
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
+    id: `card:${card.id}`,
+  })
+
+  const style = {
+    transform: CSS.Translate.toString(transform),
+    opacity: isDragging ? 0.5 : 1,
+  }
+
   return (
-    <li className="group rounded-lg border border-(--color-border) bg-(--color-bg-sunk) p-3 transition hover:-translate-y-px hover:shadow-[var(--shadow-card)]">
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`group rounded-lg border border-(--color-border) bg-(--color-bg-sunk) p-3 transition hover:-translate-y-px hover:shadow-[var(--shadow-card)] ${
+        isDragging ? 'ring-2 ring-(--color-accent)' : ''
+      }`}
+    >
       <div className="flex items-start gap-2">
+        <button
+          type="button"
+          aria-label="Drag handle"
+          className="cursor-grab text-(--color-fg-mute) hover:text-(--color-fg) -ml-1"
+          {...listeners}
+          {...attributes}
+        >
+          <GripVertical className="size-4" />
+        </button>
         <button
           type="button"
           className="flex-1 text-left text-sm font-semibold leading-tight text-(--color-fg) hover:text-(--color-accent)"

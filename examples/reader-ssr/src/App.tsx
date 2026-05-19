@@ -3,9 +3,10 @@
 // memory; effects tear down; resumes on visible).
 
 import { OlasProvider, use, useRoot, useSuspendOnHidden } from '@olas/react'
-import { useEffect, type ReactElement } from 'react'
-import { Bookmark, BookmarkPlus, Loader2, Moon, Sun, SunMoon } from 'lucide-react'
+import { useEffect, useState, type ReactElement } from 'react'
+import { Bookmark, BookmarkPlus, Loader2, MessageCircle, Moon, Sun, SunMoon } from 'lucide-react'
 import type { Article } from './api'
+import { Composer } from './Composer'
 import type { AppApi, AppRoot, Theme } from './controller'
 
 export function App({ root }: { root: AppRoot }): ReactElement {
@@ -26,6 +27,10 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
   const progress = use(api.reader.progress)
   const bookmarks = use(api.reader.bookmarks)
   const theme = use(api.reader.theme)
+  // Which article's composer is open. Only one at a time — the controller is
+  // disposed via `ctx.attach`'s dispose handle when the user closes it or
+  // opens a different one.
+  const [openComment, setOpenComment] = useState<string | null>(null)
 
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -132,6 +137,25 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
             </span>
           </div>
           <p className="mt-2 leading-relaxed">{article.excerpt}</p>
+          <div className="mt-2">
+            <button
+              type="button"
+              onClick={() =>
+                setOpenComment((cur) => (cur === article.id ? null : article.id))
+              }
+              className="inline-flex items-center gap-1.5 font-sans text-xs text-(--color-fg-mute) hover:text-(--color-accent)"
+            >
+              <MessageCircle className="size-3.5" />
+              {openComment === article.id ? 'Hide comments' : 'Comments'}
+            </button>
+          </div>
+          {openComment === article.id && (
+            <Composer
+              api={api}
+              articleId={article.id}
+              onClose={() => setOpenComment(null)}
+            />
+          )}
         </article>
       ))}
 

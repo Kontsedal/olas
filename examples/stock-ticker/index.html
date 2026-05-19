@@ -27,6 +27,17 @@
       <ul id="watchlist" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 list-none p-0 m-0 mt-3"></ul>
     </section>
 
+    <section id="details-section" class="rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-4 mb-4 shadow-[var(--shadow-card)] hidden">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="m-0 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
+          Details · <span id="details-symbol" class="font-mono text-(--color-fg)">—</span>
+        </h2>
+        <button id="details-close" type="button" class="text-(--color-fg-mute) hover:text-(--color-fg) text-xs">close</button>
+      </div>
+      <div id="details-stats" class="flex gap-6 mb-3 text-sm font-mono tabular-nums"></div>
+      <ul id="details-trades" class="m-0 p-0 list-none flex flex-col gap-1 max-h-72 overflow-auto"></ul>
+    </section>
+
     <section class="rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-4 mb-4 shadow-[var(--shadow-card)]">
       <h2 class="m-0 mb-3 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
         Search &amp; add symbols

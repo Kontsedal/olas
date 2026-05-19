@@ -1,15 +1,15 @@
-// Card form — Zod schema + a strongly-typed wrapper around `formFromZod`.
+// Card form — Zod schema + a thin wrapper around `formFromZod`.
 //
-// `formFromZod` returns a union per leaf (Field | Form | FieldArray) because
-// Zod schemas are runtime-typed. The `CardForm` type below pins each leaf to
-// its exact runtime shape so consumers can read `form.fields.title.value`
-// without casts. `buildCardForm(ctx, initials?)` performs the single cast
-// internally — every other reference is fully type-safe.
+// As of the typed-formFromZod change in @olas/zod, `formFromZod(ctx, schema)`
+// returns a *structurally-precise* Form whose leaves match the schema —
+// `form.fields.title.value` is `string`, `form.fields.subtasks.add({ … })`
+// accepts the exact item shape. The hand-rolled `CardForm = Form<{…}>` type
+// is no longer needed.
 
-import type { Ctx, Field, FieldArray, Form } from '@olas/core'
-import { formFromZod } from '@olas/zod'
+import type { Ctx } from '@olas/core'
+import { formFromZod, type ZodToLeaf } from '@olas/zod'
 import { z } from 'zod'
-import type { Card, Priority } from './api'
+import type { Card } from './api'
 
 export const subtaskSchema = z.object({
   text: z.string().min(1, 'Subtask cannot be empty'),
@@ -29,35 +29,15 @@ export const cardSchema = z.object({
 
 export type CardFormValue = z.infer<typeof cardSchema>
 
-/** Per-subtask form: text + done. */
-export type SubtaskForm = Form<{
-  text: Field<string>
-  done: Field<boolean>
-}>
+/** Inferred from the schema — no hand-written shape. */
+export type CardForm = ReturnType<typeof buildCardForm>
+/** Inferred subtask leaf form — used by `<SubtasksRow array={...}>` props. */
+export type SubtaskForm = ZodToLeaf<typeof subtaskSchema>
 
-/** The whole card form, typed exactly. */
-export type CardForm = Form<{
-  title: Field<string>
-  description: Field<string>
-  priority: Field<Priority>
-  dueDate: Field<string>
-  subtasks: FieldArray<SubtaskForm>
-}>
-
-/**
- * Build a `CardForm` from the shared `cardSchema`. Performs the single cast
- * needed to specialize `formFromZod`'s untyped leaf union into the precise
- * `CardForm` shape — every consumer downstream is fully typed.
- */
-export function buildCardForm(ctx: Ctx, initials?: Partial<CardFormValue>): CardForm {
-  return formFromZod(
-    ctx,
-    cardSchema,
-    initials !== undefined ? { initials } : undefined,
-  ) as unknown as CardForm
+export function buildCardForm(ctx: Ctx, initials?: Partial<CardFormValue>) {
+  return formFromZod(ctx, cardSchema, initials !== undefined ? { initials } : undefined)
 }
 
-/** Convert a `Card` (db shape, nullable dueDate) to form initials (empty string). */
 export function cardToFormInitials(card: Card): Partial<CardFormValue> {
   return {
     title: card.title,
@@ -68,7 +48,6 @@ export function cardToFormInitials(card: Card): Partial<CardFormValue> {
   }
 }
 
-/** Convert form value back to a `Card` shape — applies the dueDate empty/null mapping. */
 export function formValueToCard(id: string, value: CardFormValue): Card {
   return {
     id,

@@ -35,23 +35,12 @@ export const currentUserScope = defineScope<{ id: string }>({ name: 'currentUser
 
 export const userQuery = defineQuery({
   key: (id: string) => [id],
-  fetcher: async (id: string, signal: AbortSignal): Promise<User> => {
-    // The fetcher receives any deps via closure — but in this example we want
-    // a single shared query, so we pluck the api from a module-level reference.
-    // In a real app, prefer wiring this through a small per-root QueryClient
-    // bootstrap or, more idiomatically, capture an api injected via a
-    // factory like `makeUserQuery(api)`.
-    const api = currentApi
-    if (api === undefined) throw new Error('userQuery: api not set; call setUserQueryApi first')
-    return api.getUser(id, signal)
-  },
+  // The fetcher receives `{ signal, deps }` from FetchCtx — the api is
+  // available as `deps.api` via the AmbientDeps augmentation below. No
+  // module-level `setUserQueryApi(...)` capture needed.
+  fetcher: ({ signal, deps }, id: string): Promise<User> => deps.api.getUser(id, signal),
   staleTime: 30_000,
 })
-
-let currentApi: Api | undefined
-export function setUserQueryApi(api: Api): void {
-  currentApi = api
-}
 
 // ---------------------------------------------------------------------------
 // Profile schema (Zod) — drives both validators and the typed form value.
@@ -122,11 +111,8 @@ export const userProfileController = defineController((ctx: Ctx, props: { userId
 // ---------------------------------------------------------------------------
 
 export function createAppRoot(userId: string, api: Api) {
-  setUserQueryApi(api)
-
   const appController = defineController((ctx) => ({
     profile: ctx.child(userProfileController, { userId }),
   }))
-
   return createRoot(appController, { deps: { api } })
 }
