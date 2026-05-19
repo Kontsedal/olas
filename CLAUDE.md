@@ -20,7 +20,7 @@ pnpm lint                                          # biome check .
 pnpm exec biome check --write .                    # auto-fix lint + format
 pnpm test                                          # vitest run (all packages)
 pnpm test:watch                                    # vitest watch
-pnpm build                                         # tsup per package → dist/{mjs,cjs,d.ts}
+pnpm build                                         # tsdown per package → dist/{mjs,cjs,d.mts,d.cts}
 
 pnpm vitest run packages/core/tests/query.test.ts  # run one test file
 pnpm vitest run -t "race protection"               # run by test-name substring
@@ -203,7 +203,7 @@ This schema is a starting point, not a contract. If a page doesn't fit a type, a
 
 # Conventions
 
-- **Don't commit `dist/`.** `tsup` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
+- **Don't commit `dist/`.** `tsdown` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
 - **`@preact/signals-core` is a peer dep on `@olas/core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
 - **biome v1.9.4 config in `biome.json`** — two rules are intentionally off: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't re-enable them.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".

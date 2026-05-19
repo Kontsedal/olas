@@ -146,3 +146,29 @@ Findings surfaced while writing these (now filed on the examples wiki page):
 
 CI status: every example passes its own `typecheck` and `test`. The root `pnpm typecheck` (which globs `examples/*`) is also green. Production builds verified for stock-ticker (60 KB / 14 KB gzip), kanban (276 KB / 77 KB gzip), and reader-ssr (client 202 KB / 60 KB gzip + server bundle).
 
+## [2026-05-19 12:10] ingest | tsup → tsdown; drop ignoreDeprecations
+
+Removed `"ignoreDeprecations": "6.0"` from `tsconfig.base.json`. The previous deps-bump commit added it to silence a deprecated-`baseUrl` warning that tsup injects into its internal DTS-build tsconfig. Instead of carrying that suppression forward (or patching tsup), swapped the bundler for **tsdown** (egoist's rolldown-powered successor to tsup), which doesn't inject the deprecated option.
+
+Mechanical changes:
+- 5× `tsup.config.ts` → `tsdown.config.ts`. Same shape, with three renames:
+  - `outExtension({ format })` → `outExtensions: ({ format }) => ...` (plural, and `format` is now the rolldown-internal value `"es"` / `"cjs"`, not tsup's `"esm"` / `"cjs"`).
+  - `external: [...]` → `deps: { neverBundle: [...] }`.
+  - `target: 'es2020'` → `target: 'es2022'` (now matches `tsconfig.base.json`; previously divergent for no reason).
+- Each `packages/*/package.json` `build` script: `tsup` → `tsdown`.
+- Root `devDependencies`: dropped `tsup`, added `tsdown@^0.22.0` + `unrun@^0.3.0` (the loader tsdown uses to read `.ts` config files — optional peer; without it tsdown refuses to load TS configs).
+- tsdown emits **separate `.d.mts` and `.d.cts` files** per output format (no plain `.d.ts`). Updated each package's `exports` to the dual-conditional pattern:
+  ```json
+  "exports": { ".": {
+      "import":  { "types": "./dist/index.d.mts", "default": "./dist/index.mjs" },
+      "require": { "types": "./dist/index.d.cts", "default": "./dist/index.cjs" }
+  } }
+  ```
+  Top-level `"types"` repointed to `.d.cts` (the legacy-resolution fallback path TS uses when it doesn't read `exports`).
+
+Verification: typecheck (8 projects) clean, lint (146 files) clean, 236/236 tests pass, all 5 package builds clean with no warnings.
+
+Pages touched: `decisions/no-react-adapter-yet.md` (mentioned `tsup.config.ts`). README + CLAUDE.md `pnpm build` line updated to reflect new dist shape (`{mjs,cjs,d.mts,d.cts}`).
+
+Wiki-lint after this change reports 1 pre-existing error (`modules/examples.md` covers a deleted `examples/user-profile`) and 67 pre-existing drift warnings (covered files modified by the `09cd034` deps-bump without bumping `last_verified` on the wiki pages). Both predate this change and are out of scope for this ingest.
+

@@ -1,4 +1,4 @@
-import { defineConfig } from 'tsup'
+import { defineConfig } from 'tsdown'
 
 export default defineConfig({
   entry: {
@@ -10,8 +10,6 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   treeshake: true,
-  target: 'es2020',
-  outExtension({ format }) {
-    return { js: format === 'esm' ? '.mjs' : '.cjs' }
-  },
+  target: 'es2022',
+  outExtensions: ({ format }) => ({ js: format === 'es' ? '.mjs' : '.cjs' }),
 })
