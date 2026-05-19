@@ -30,6 +30,8 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     hydrate: options.hydrate,
     devtools,
     deps: options.deps as Record<string, unknown>,
+    refetchOnWindowFocus: options.refetchOnWindowFocus,
+    refetchOnReconnect: options.refetchOnReconnect,
   })
   const rootShared: RootShared = {
     devtools,

@@ -179,3 +179,83 @@ describe('refetchOnReconnect', () => {
     root.dispose()
   })
 })
+
+describe('root-wide defaults', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  test('root refetchOnWindowFocus applies to queries that do not set it', async () => {
+    let count = 0
+    const q = defineQuery({
+      key: () => ['root-wide-focus'],
+      fetcher: async () => ++count,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps, refetchOnWindowFocus: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    window.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(2)
+
+    root.dispose()
+  })
+
+  test('root refetchOnReconnect applies to queries that do not set it', async () => {
+    let count = 0
+    const q = defineQuery({
+      key: () => ['root-wide-reconnect'],
+      fetcher: async () => ++count,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps, refetchOnReconnect: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(2)
+
+    root.dispose()
+  })
+
+  test('spec false beats root true (explicit per-query opt-out)', async () => {
+    let count = 0
+    const q = defineQuery({
+      key: () => ['opt-out'],
+      fetcher: async () => ++count,
+      refetchOnWindowFocus: false,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps, refetchOnWindowFocus: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    window.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    root.dispose()
+  })
+
+  test('spec true wins when root default is unset', async () => {
+    // Sanity: verifies the resolution order doesn't accidentally clobber spec true.
+    let count = 0
+    const q = defineQuery({
+      key: () => ['spec-only'],
+      fetcher: async () => ++count,
+      refetchOnWindowFocus: true,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    window.dispatchEvent(new Event('focus'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(2)
+
+    root.dispose()
+  })
+})

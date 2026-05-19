@@ -193,3 +193,19 @@ Lib test count 236 → 244. Wiki: `entities/query-client.md` covers updated (now
 
 Spec impact: none — this is implementing already-spec'd behavior. The `RootOptions` root-wide override mentioned by spec §5.9 ("opt-in per query or root-wide") is still not implemented; only per-query opt-in is wired. Filing as a separate follow-up if needed.
 
+## [2026-05-19 12:50] ingest | root-wide refetchOn defaults
+
+Followup to the per-query wiring above. Spec §5.9 narrative said "opt-in per query or root-wide", but the §20.8 `RootOptions` type listing didn't include the fields — a spec typo, since the narrative was authoritative. Fixed both ends in one change:
+
+- **Spec amendment.** Added `refetchOnWindowFocus?: boolean` and `refetchOnReconnect?: boolean` to the `RootOptions` type in §20.8. Pure addition; matches the narrative that's been there since v1 draft.
+- **Type + runtime.** Same fields added to `controller/types.ts` `RootOptions`. Plumbed through `createRootWithProps` into `new QueryClient({ ... })`. `QueryClient` stores them as `readonly` defaults. `ClientEntry`'s flag resolution: `spec.flag ?? client.flag ?? false` — per-query spec wins so an explicit `false` on a query opts out even when the root default is `true`.
+
+Test coverage adds (jsdom env):
+
+1. Root `refetchOnWindowFocus: true` applies to a query that doesn't set the flag.
+2. Root `refetchOnReconnect: true` likewise.
+3. **`spec.refetchOnWindowFocus: false` beats root `refetchOnWindowFocus: true`** — the per-query opt-out is honored.
+4. **`spec.refetchOnWindowFocus: true` is honored when root default is unset** — guards against resolution-order regressions.
+
+Lib test count 244 → 248. Status / README / overview counts bumped; the `entities/query-client.md` `unsubFocus`/`unsubOnline` paragraph updated to spell out the precedence rule.
+
