@@ -47,7 +47,7 @@ export function CardEditor({
         onClick={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault()
-          editor.save.run(undefined).catch(() => {})
+          editor.save.run().catch(() => {})
         }}
         className="flex w-full max-w-lg flex-col gap-3 rounded-2xl border border-(--color-border) bg-(--color-bg-elev) p-5 shadow-[var(--shadow-pop)] max-h-[86vh] overflow-auto"
       >

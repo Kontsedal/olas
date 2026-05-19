@@ -29,6 +29,7 @@ import {
   removeAlert as removeAlertPure,
 } from './alerts'
 import type { Market, SymbolMeta, Tick } from './api'
+import { detailsController } from './details'
 
 declare module '@olas/core' {
   interface AmbientDeps {
@@ -39,19 +40,9 @@ declare module '@olas/core' {
 
 // --- Shared query: symbol metadata, refetched on a slow interval. ---------
 
-let currentMarket: Market | undefined
-export function setMarketForQuery(market: Market): void {
-  currentMarket = market
-}
-
 export const symbolsQuery = defineQuery({
   key: () => [],
-  fetcher: async (signal: AbortSignal): Promise<SymbolMeta[]> => {
-    if (currentMarket === undefined) {
-      throw new Error('symbolsQuery: market not wired; call setMarketForQuery first')
-    }
-    return currentMarket.getSymbols(signal)
-  },
+  fetcher: ({ signal, deps }): Promise<SymbolMeta[]> => deps.market.getSymbols(signal),
   staleTime: 10_000,
   refetchInterval: 30_000,
 })
@@ -84,11 +75,13 @@ export const tickerController = defineController(
 
     const symbols = ctx.use(symbolsQuery)
 
-    // Persisted state.
+    // Persisted state. `usePersisted` accepts `storage: undefined` and falls
+    // back to localStorage — so tests passing `deps.storage = memoryStorage()`
+    // and the browser default both work without a fork.
     const watchlist = signal<string[]>(props.initialWatchlist ?? DEFAULTS.watchlist)
     const alerts = signal<Alert[]>([])
-    bindPersisted(ctx, 'olas-ticker.watchlist', watchlist)
-    bindPersisted(ctx, 'olas-ticker.alerts', alerts)
+    usePersisted(ctx, 'olas-ticker.watchlist', watchlist, { storage: ctx.deps.storage })
+    usePersisted(ctx, 'olas-ticker.alerts', alerts, { storage: ctx.deps.storage })
 
     // Internal events: live ticks (fan-in from the market) and alert fires.
     const priceEmitter = ctx.emitter<Tick>()
@@ -180,6 +173,15 @@ export const tickerController = defineController(
       alerts.update((list) => removeAlertPure(list, id))
     }
 
+    /**
+     * Construct a private `detailsController` for `symbol` via `ctx.attach`.
+     * The returned `{ api, dispose }` lets the caller tear down THIS child
+     * early — closing the details panel disposes its cache + tick
+     * subscription immediately, instead of waiting for the parent to dispose.
+     */
+    const openDetails = (symbol: string) =>
+      ctx.attach(detailsController, { symbol })
+
     return {
       symbols,
       watchlist,
@@ -198,34 +200,15 @@ export const tickerController = defineController(
       removeFromWatchlist,
       addAlert,
       removeAlert,
+      openDetails,
     }
   },
   { name: 'ticker' },
 )
 
-/**
- * Persist a Signal-like source to whatever `StorageAdapter` the deps carry.
- * Falls back to the default (localStorage) when `deps.storage` is undefined —
- * so tests can pass a memory storage and assert against `storage.store`,
- * while the browser path needs no extra wiring.
- */
-function bindPersisted<T>(
-  ctx: Ctx,
-  key: string,
-  source: { readonly value: T; set(v: T): void; subscribe(h: (v: T) => void): () => void },
-): void {
-  const storage = ctx.deps.storage
-  if (storage !== undefined) {
-    usePersisted(ctx, key, source, { storage })
-  } else {
-    usePersisted(ctx, key, source)
-  }
-}
-
 // --- Root composition -----------------------------------------------------
 
 export function createAppRoot(market: Market, props: TickerProps = {}) {
-  setMarketForQuery(market)
   const appController = defineController(
     (ctx) => ({
       ticker: ctx.child(tickerController, props),

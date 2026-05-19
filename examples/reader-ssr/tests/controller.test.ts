@@ -3,7 +3,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createTestController } from '@olas/core/testing'
 import { createFakeApi } from '../src/api'
-import { readerController, setApiForQuery } from '../src/controller'
+import { readerController } from '../src/controller'
 
 const flush = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve()
@@ -12,7 +12,6 @@ const flush = async () => {
 describe('readerController — pagination', () => {
   test('initial fetch lands page 0; hasNextPage true', async () => {
     const api = createFakeApi()
-    setApiForQuery(api)
     const root = createTestController(readerController, {
       props: undefined,
       deps: { api },
@@ -26,7 +25,6 @@ describe('readerController — pagination', () => {
 
   test('loadMore appends successive pages; eventually hasNextPage flips false', async () => {
     const api = createFakeApi()
-    setApiForQuery(api)
     const root = createTestController(readerController, {
       props: undefined,
       deps: { api },
@@ -63,7 +61,6 @@ describe('readerController — pagination', () => {
 
   test('toggleBookmark add/remove + isBookmarked', async () => {
     const api = createFakeApi()
-    setApiForQuery(api)
     const root = createTestController(readerController, {
       props: undefined,
       deps: { api },
@@ -87,7 +84,6 @@ describe('readerController — pagination', () => {
 
   test('theme persists via the injected storage adapter', async () => {
     const api = createFakeApi()
-    setApiForQuery(api)
     const storage = {
       store: new Map<string, string>(),
       get(k: string) { return this.store.get(k) ?? null },
@@ -106,7 +102,6 @@ describe('readerController — pagination', () => {
 
   test('onArticleRead emits analytics + updates progress', async () => {
     const api = createFakeApi()
-    setApiForQuery(api)
     const track = vi.fn()
     const root = createTestController(readerController, {
       props: undefined,

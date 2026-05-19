@@ -19,8 +19,26 @@ export type Page = {
   nextCursor: number | null
 }
 
+export type Comment = {
+  id: string
+  articleId: string
+  author: string
+  body: string
+  ts: number
+}
+
 export type Api = {
   getPage(cursor: number, signal?: AbortSignal): Promise<Page>
+  /**
+   * Async server-side validation for a comment body. Returns `null` if OK,
+   * or a human-readable error string. Exists to demo `debouncedValidator`
+   * inside the comment composer's form.
+   */
+  validateCommentBody(body: string, signal?: AbortSignal): Promise<string | null>
+  /** Submit a comment to an article — used by the composer's mutation. */
+  postComment(input: Omit<Comment, 'id' | 'ts'>, signal?: AbortSignal): Promise<Comment>
+  /** Recent comments for an article — feeds the composer's "current thread" view. */
+  listComments(articleId: string, signal?: AbortSignal): Promise<Comment[]>
   /** Test hook — total calls. */
   callCount: number
 }
@@ -98,9 +116,15 @@ function makeDate(idx: number): string {
   return new Date(t).toISOString().slice(0, 10)
 }
 
+const BANNED = ['spam', 'lorem', 'click here']
+
+let commentIdSeq = 1
+const commentsByArticle = new Map<string, Comment[]>()
+
 export function createFakeApi(): Api {
   const api: Api = {
     callCount: 0,
+
     async getPage(cursor: number, signal?: AbortSignal) {
       api.callCount += 1
       await delay(5, signal)
@@ -108,6 +132,33 @@ export function createFakeApi(): Api {
       const items = Array.from({ length: PER_PAGE }, (_, i) => makeArticle(start + i))
       const nextCursor = cursor + 1 < TOTAL_PAGES ? cursor + 1 : null
       return { items, nextCursor }
+    },
+
+    async validateCommentBody(body, signal) {
+      // Simulate a network round-trip to a content-moderation service.
+      // Long enough for the user to notice the `isValidating` spinner.
+      await delay(180, signal)
+      const trimmed = body.trim()
+      if (trimmed.length < 12) return 'Comment must be at least 12 characters.'
+      if (trimmed.length > 500) return 'Comment must be at most 500 characters.'
+      const lower = trimmed.toLowerCase()
+      for (const banned of BANNED) {
+        if (lower.includes(banned)) return `“${banned}” isn't allowed.`
+      }
+      return null
+    },
+
+    async postComment(input, signal) {
+      await delay(80, signal)
+      const comment: Comment = { ...input, id: `cm${commentIdSeq++}`, ts: Date.now() }
+      const list = commentsByArticle.get(input.articleId) ?? []
+      commentsByArticle.set(input.articleId, [comment, ...list])
+      return comment
+    },
+
+    async listComments(articleId, signal) {
+      await delay(40, signal)
+      return commentsByArticle.get(articleId)?.slice() ?? []
     },
   }
   return api

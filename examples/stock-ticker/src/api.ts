@@ -13,8 +13,13 @@ export type SymbolMeta = {
 
 export type Tick = { symbol: string; price: number; ts: number }
 
+/** One historical print. The detailsController loads a recent-trades slice. */
+export type Trade = { symbol: string; price: number; size: number; ts: number }
+
 export type Market = {
   getSymbols(signal?: AbortSignal): Promise<SymbolMeta[]>
+  /** Recent trades for a single symbol — used by the detailsController. */
+  getRecentTrades(symbol: string, signal?: AbortSignal): Promise<Trade[]>
   subscribe(symbol: string, handler: (tick: Tick) => void): () => void
   /** Test hook — drive one synthetic tick. Browsers use the timer; tests use this. */
   tick(symbol: string, price?: number): void
@@ -60,6 +65,23 @@ export function createFakeMarket(options: { autoTick?: boolean } = {}): Market {
     async getSymbols(_signal) {
       await delay(80)
       return SEED.slice()
+    },
+    async getRecentTrades(symbol, _signal) {
+      // Deterministic walk back from the last seen price — 20 prints.
+      await delay(60)
+      const base = lastPrice[symbol] ?? 100
+      const trades: Trade[] = []
+      let p = base
+      for (let i = 19; i >= 0; i--) {
+        p = round2(p * (1 + (Math.random() - 0.5) * 0.005))
+        trades.push({
+          symbol,
+          price: p,
+          size: Math.floor(50 + Math.random() * 450),
+          ts: Date.now() - i * 30_000,
+        })
+      }
+      return trades
     },
     subscribe(symbol, handler) {
       let set = subscribers.get(symbol)
