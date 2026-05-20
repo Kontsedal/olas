@@ -20,7 +20,7 @@ Olas signals; DOM bindings come from `effect()` wrappers in `src/dom.ts`.
 - `src/controller.ts` — the entire app's behavior. No DOM imports.
 - `src/dom.ts` — three small helpers: `bindText`, `bindList`, `bindInput`.
 - `src/main.ts` — bootstrap: build the root, wire DOM nodes to signals.
-- `tests/controller.test.ts` — 7 tests covering emitter fan-out, reactive resubscribe, throttle coalescing, debounce, persistence (write + restore), and portfolio sum.
+- `tests/controller.test.ts` — tests covering emitter fan-out, reactive resubscribe, throttle coalescing, debounce, persistence (write + restore), and portfolio sum.
 
 ## Run it
 
@@ -44,5 +44,5 @@ Then open the printed `http://localhost:5180` and watch the prices wiggle.
 ## Notes
 
 - The library does not bundle `@preact/signals-core`; it's a peer dependency. The example installs it in `devDependencies` so `pnpm install` is enough.
-- `setMarketForQuery(market)` is the same module-level hand-off pattern used by `examples/user-profile/src/controller.ts:52-54`. A real app would inject the api through `ctx.deps` everywhere (which we do for the controller itself — only the module-scoped query needs the hand-off).
+- `setMarketForQuery(market)` is a module-level hand-off: a `defineQuery` at module scope can't read `ctx.deps`, so we expose a setter the bootstrap calls once. A real app would inject the api through `ctx.deps` everywhere (which we do for the controller itself — only the module-scoped query needs this hand-off).
 - `usePersisted` falls back to `localStorageAdapter` when `ctx.deps.storage` is `undefined`. The controller branches on this so tests can substitute a memory storage and assert against `storage.store`.

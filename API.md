@@ -42,8 +42,15 @@ If a behavior isn't covered here and you can't find it in SPEC.md, that's a docs
 - [@kontsedal/olas-persist](#olaspersist)
 - [@kontsedal/olas-zod](#olaszod)
 - [@kontsedal/olas-devtools](#olasdevtools)
+- [@kontsedal/olas-cross-tab](#olascrosstab)
+- [@kontsedal/olas-entities](#olasentities)
+- [@kontsedal/olas-realtime](#olasrealtime)
+
+The sub-path packages each have their own typed surfaces; their full reference lives in the package README (see [the per-package sections](#olascrosstab) at the bottom of this file).
 
 ---
+
+<a id="olascore"></a>
 
 # @kontsedal/olas-core
 
@@ -1001,10 +1008,11 @@ Returns `true` for `DOMException` with `name === 'AbortError'`. Use in `mutate` 
 ```ts
 type DebugBus = {
   subscribe(handler: (event: DebugEvent) => void): () => void
+  queryEntries(): DebugCacheEntry[]
 }
 ```
 
-Subscribe to a structured event stream — controller lifecycle, cache events, mutation events, field validations. Used by `@kontsedal/olas-devtools`.
+`subscribe` exposes a structured event stream — controller lifecycle, cache events, mutation events, field validations — and replays the live controller-tree snapshot synchronously to every new subscriber. `queryEntries()` returns a fresh "what's in the cache right now?" inspector snapshot. Used by `@kontsedal/olas-devtools`.
 
 **Production behaviour.** In `@kontsedal/olas-core`'s production build, the emission
 sites are removed by the bundler. `subscribe` accepts and returns a no-op
@@ -1047,6 +1055,8 @@ type Api = CtrlApi<typeof myController>
 ```
 
 ---
+
+<a id="olascoretesting"></a>
 
 # @kontsedal/olas-core/testing
 
@@ -1092,9 +1102,11 @@ render(<UserCard user={user} />)
 
 ---
 
+<a id="olasreact"></a>
+
 # @kontsedal/olas-react
 
-The React adapter. `~230` LOC on top of `useSyncExternalStore` — concurrent-safe, no tearing, StrictMode-safe.
+The React adapter. ~230 LOC on top of `useSyncExternalStore` — concurrent-safe, no tearing, StrictMode-safe.
 
 ### `OlasProvider({ root, children })`
 
@@ -1137,7 +1149,7 @@ function Count() {
 
 ### `useField<T>(field: Field<T>): { value, errors, isValid, isDirty, touched, isValidating, set, reset, markTouched, revalidate }`
 
-Subscribe to all 5 read signals on a `Field<T>` with a single hook call. Returns the unwrapped values plus the action methods so binding to an `<input>` is one destructure.
+Subscribe to all 6 read signals on a `Field<T>` (the field itself plus `errors`, `isValid`, `isDirty`, `touched`, `isValidating`) with a single hook call. Returns the unwrapped values plus the action methods so binding to an `<input>` is one destructure.
 
 ```ts
 import { useField } from '@kontsedal/olas-react'
@@ -1192,6 +1204,8 @@ type SuspendableController = { suspend(options?: { maxIdle?: number }): void; re
 Any object with `suspend` and `resume` satisfies this — a full `Root<Api>` or a smaller child returned from `ctx.attach`.
 
 ---
+
+<a id="olaspersist"></a>
 
 # @kontsedal/olas-persist
 
@@ -1257,6 +1271,8 @@ The default. Returns `null` from `get` if `localStorage` is undefined (SSR-safe)
 
 ---
 
+<a id="olaszod"></a>
+
 # @kontsedal/olas-zod
 
 Bridge Zod schemas into Olas validators and forms.
@@ -1302,6 +1318,8 @@ Mapped type for the Olas-form structure derived from a Zod schema. Useful for ty
 
 ---
 
+<a id="olasdevtools"></a>
+
 # @kontsedal/olas-devtools
 
 In-app debugging UI consuming `root.__debug`. Two main components, both React.
@@ -1332,6 +1350,66 @@ type DevtoolsTab = 'tree' | 'cache' | 'mutations' | 'fields' | 'events'
 ### Formatters
 
 `formatPath(path: string[]): string`, `formatPayload(value: unknown): string`, `formatTime(ms: number): string` — utilities the panel uses, exported for embedding in custom views.
+
+---
+
+<a id="olascrosstab"></a>
+
+# @kontsedal/olas-cross-tab
+
+`BroadcastChannel`-backed cross-tab cache sync as a `QueryClientPlugin`. Pass to `createRoot(..., { plugins: [crossTabPlugin(...)] })`; queries that opt in (`crossTab: true` on `defineQuery`) propagate their results to other tabs in the same origin.
+
+```ts
+import { createRoot } from '@kontsedal/olas-core'
+import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
+
+const root = createRoot(app, {
+  deps,
+  plugins: [crossTabPlugin({ channelName: 'app-cache' })],
+})
+```
+
+Surface lives in [`packages/cross-tab/README.md`](packages/cross-tab/README.md). Key points: each query must declare a stable `queryId` (`defineQuery({ queryId: 'users.byId', ... })`), `source: 'fetch'` payloads are skipped (only `setData` and remote-origin events sync), `'infinite'` queries are not synced in v1 (see `BACKLOG.md`).
+
+---
+
+<a id="olasentities"></a>
+
+# @kontsedal/olas-entities
+
+Entity normalization layer as a `QueryClientPlugin`. Define entities at module scope; the plugin walks every `setData` payload, indexes by `id`, and back-propagates updates into every query holding that entity.
+
+```ts
+import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
+
+type Post = { id: string; title: string; authorId: string }
+const PostEntity = defineEntity<Post>({
+  name: 'Post',
+  idOf: (v) => (v && typeof v.id === 'string' && 'title' in v ? v.id : null),
+})
+
+const entities = entitiesPlugin([PostEntity])
+const root = createRoot(app, { deps, plugins: [entities] })
+
+// later, with `entities` in scope:
+entities.update(PostEntity, 'p1', { title: 'Renamed' })
+// every query whose data contains p1 is patched and notified (one batched write).
+```
+
+Full surface (`defineEntity`, `entitiesPlugin`, `entities.signal/get/upsert/update/invalidate`) lives in [`packages/entities/README.md`](packages/entities/README.md). v1 walks JSON-shaped query payloads only; infinite queries are not walked (`BACKLOG.md`).
+
+---
+
+<a id="olasrealtime"></a>
+
+# @kontsedal/olas-realtime
+
+Two composables over a consumer-supplied `RealtimeService` on `ctx.deps.realtime`:
+
+- `useRealtimePatcher<TEvent>(ctx, channel, handlers)` — subscribe to a realtime channel and dispatch per-event-type handlers (typed by the `event.type` discriminant). Apply `query.setData(...)` from inside each handler.
+- `useLiveStream<TEvent>(ctx, channel, { capacity, flushMs })` — capped tail buffer + coalesced writes for high-rate streams (logs, metrics, presence).
+
+Full surface lives in [`packages/realtime/README.md`](packages/realtime/README.md). The package ships no transport — wire your own `RealtimeService` (WebSocket / SSE / Pusher / Ably / Supabase Realtime / …) on `ctx.deps`.
 
 ---
 

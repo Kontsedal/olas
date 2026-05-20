@@ -220,7 +220,7 @@ is consumer-implemented via AmbientDeps augmentation; package ships no default.
 - `useRealtimePatcher(ctx, channel, handlers)` — dispatch realtime events by
   `event.type`; handlers wrapped in `untracked(...)` to prevent re-subscribe
   thrash when handlers read signals.
-- `defineLiveStream<TEvent>(ctx, channel, options?)` — `capacity` oldest-drop,
+- `useLiveStream<TEvent>(ctx, channel, options?)` — `capacity` oldest-drop,
   `flushMs` coalesced flush, `pause/resume/clear`. Buffer preserved across
   pause; subscription cycled via `ctx.effect` reading `isPaused.value`.
 

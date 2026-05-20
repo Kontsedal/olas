@@ -13,7 +13,7 @@ edges:
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/ctx.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-20
 confidence: high
 ---
 

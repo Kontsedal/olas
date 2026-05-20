@@ -8,7 +8,7 @@ covers:
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-20
 confidence: high
 ---
 

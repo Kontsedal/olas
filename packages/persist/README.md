@@ -58,8 +58,8 @@ The default `localStorageAdapter` is exported. Implement `StorageAdapter` for se
 type StorageAdapter = {
   get(key: string): string | null | Promise<string | null>
   set(key: string, value: string): void | Promise<void>
-  remove(key: string): void | Promise<void>
-  subscribe?(key: string, handler: (raw: string | null) => void): () => void
+  delete(key: string): void | Promise<void>
+  onChange?(handler: (key: string, value: string | null) => void): () => void
 }
 ```
 
@@ -67,7 +67,7 @@ type StorageAdapter = {
 
 ## Cross-tab sync
 
-`{ crossTab: true }` wires the adapter's `subscribe(...)` callback. The default localStorage adapter wires it to the browser's `storage` event. Updates from other tabs deserialize and call `source.set(value)` without echoing the write back.
+`{ crossTab: true }` wires the adapter's `onChange(...)` callback. The default localStorage adapter wires it to the browser's `storage` event. Updates from other tabs deserialize and call `source.set(value)` without echoing the write back.
 
 ## Further reading
 

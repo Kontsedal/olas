@@ -5,14 +5,14 @@ type: flow
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/controller/instance.ts:237-260
+  - packages/core/src/controller/instance.ts:295-330
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/entry.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-20
 confidence: medium
 ---
 
@@ -31,7 +31,7 @@ const userController = defineController((ctx, props: { id: string }) => {
 
 ## Step by step
 
-### 1. Dispatch on brand — `instance.ts:237`
+### 1. Dispatch on brand — `instance.ts:303`
 
 `ctx.use(query, keyOrOptions)`:
 
@@ -41,7 +41,7 @@ if (brand === 'infiniteQuery') return createInfiniteUse(...)
 return createUse(...)
 ```
 
-### 2. `createUse(client, query, keyOrOptions)` — `use.ts:82`
+### 2. `createUse(client, query, keyOrOptions)` — `use.ts:83`
 
 Builds a `SubscriptionImpl<T>` and an `effect` that owns the binding:
 
@@ -78,7 +78,7 @@ Key tricks:
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
 - We refetch on subscribe only if status is `idle` / stale / errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
 
-### 3. `client.bindEntry(query, args)` — `client.ts:155`
+### 3. `client.bindEntry(query, args)` — `client.ts:746`
 
 Looks up the entry in `client.maps`. If absent:
 
@@ -91,11 +91,11 @@ Looks up the entry in `client.maps`. If absent:
 
 `ClientEntry`'s constructor builds an `Entry<T>` with a fetcher closure that captures the original `args` (the user's call args, not the hash key — these are distinct, see `../pitfalls/callargs-vs-keyargs.md`).
 
-### 4. `entry.acquire()` — `client.ts:60`
+### 4. `entry.acquire()` — `client.ts:254`
 
 Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer.
 
-### 5. `SubscriptionImpl.attach(entry)` — `use.ts:50`
+### 5. `SubscriptionImpl.attach(entry)` — `use.ts:48`
 
 Sets the subscription's `current$` signal to the new entry. The subscription's `data`/`error`/`status`/... are all computeds over `current$.value?.entry.<sig>.value` — flipping `current$` ripples through every derived signal in one batched update.
 

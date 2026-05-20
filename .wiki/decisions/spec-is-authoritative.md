@@ -7,7 +7,7 @@ covers:
   - CLAUDE.md
 edges:
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-20
 confidence: high
 ---
 

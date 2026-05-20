@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: all five published packages exist and ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`), `@kontsedal/olas-react` (Provider + hooks + keep-alive), `@kontsedal/olas-zod`, `@kontsedal/olas-persist`, `@kontsedal/olas-devtools` (in-app panel + floating launcher). 255 lib tests + the `examples/` apps (kanban, reader-ssr, stock-ticker). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
+Current implementation status: all eight published packages exist and ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`), `@kontsedal/olas-react` (Provider + hooks + keep-alive), `@kontsedal/olas-zod`, `@kontsedal/olas-persist`, `@kontsedal/olas-devtools` (in-app panel + floating launcher), `@kontsedal/olas-cross-tab` (BroadcastChannel cache sync), `@kontsedal/olas-entities` (entity normalization plugin), `@kontsedal/olas-realtime` (realtime patcher + live streams). 436 lib tests across 37 files + the `examples/` apps (kanban, reader-ssr, stock-ticker, virtualized-table). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -35,11 +35,14 @@ CI = `install → typecheck → lint → test → build`. Reproducing CI locally
 
 ```
 packages/
-  core/      # @kontsedal/olas-core     — signals, controllers, queries, mutations, forms, SSR
-  react/     # @kontsedal/olas-react    — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden
-  persist/   # @kontsedal/olas-persist  — usePersisted + localStorage adapter
-  zod/       # @kontsedal/olas-zod      — zodValidator, formFromZod
-  devtools/  # @kontsedal/olas-devtools — in-app DevtoolsPanel + floating launcher
+  core/       # @kontsedal/olas-core      — signals, controllers, queries, mutations, forms, SSR
+  react/      # @kontsedal/olas-react     — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden
+  persist/    # @kontsedal/olas-persist   — usePersisted + localStorage adapter
+  zod/        # @kontsedal/olas-zod       — zodValidator, formFromZod
+  devtools/   # @kontsedal/olas-devtools  — in-app DevtoolsPanel + floating launcher
+  cross-tab/  # @kontsedal/olas-cross-tab — BroadcastChannel-backed cross-tab cache sync (QueryClientPlugin)
+  entities/   # @kontsedal/olas-entities  — defineEntity + auto-walk + reverse-index backprop (QueryClientPlugin)
+  realtime/   # @kontsedal/olas-realtime  — useRealtimePatcher + useLiveStream over a consumer-supplied RealtimeService
 ```
 
 Tests import workspace packages via aliases declared in `vitest.config.ts` — pointed at each package's `src/index.ts` (and `core/src/testing.ts`), so tests run without building `dist/`. The published `dist/` is what consumers see; the alias is dev-only.
@@ -113,7 +116,7 @@ confidence: high
   - `candidate` — speculation. One file cited, no confirming test, no spec section. Lives in `.wiki/candidates/`. Excluded from authoritative queries.
 - **`last_verified`** — ISO date (YYYY-MM-DD). Update when you re-read the covered code and confirm the page is still accurate.
 
-**Bootstrap caveat.** Pages dated `2026-05-18` were authored by the same agent that wrote the implementation, in the same session. Even pages marked `high` haven't had independent review. When you encounter a `high`-confidence page from that date and your session is the next opportunity for verification, treat the page as `medium` for the purposes of trust — read the covered code, confirm the claims, and bump `last_verified` if they hold. If they don't, fix the page or demote it.
+**Bootstrap caveat.** Wiki pages dated in the project bootstrap window (roughly `2026-05-18` through `2026-05-20`) were authored by the same agent that wrote the implementation, in the same session. Even pages marked `high` haven't had independent review. When you encounter a `high`-confidence page whose `last_verified` falls before the first independent-review session and your session is the next opportunity for verification, treat the page as `medium` for the purposes of trust — read the covered code, confirm the claims, and bump `last_verified` if they hold. If they don't, fix the page or demote it.
 
 In page bodies, prefer **citations as `path:line` or `path:start-end`** over prose references. `query/entry.ts:47-62` beats "the fetch loop in the entry module". Citations are mechanically dereference-able.
 
@@ -205,7 +208,7 @@ This schema is a starting point, not a contract. If a page doesn't fit a type, a
 
 When this matters most: **mid-task drift**. You're fixing a typecheck error and notice an unrelated rough edge in a neighbouring file. Don't fix it (that grows scope). Don't forget it. Append a one-liner to `BACKLOG.md` under the appropriate section (or "Loose ends" if it doesn't fit), then return to the task.
 
-When you finish a backlog item, change its status tag to `[done]` and add a pointer to where it lives now (commit hash, SPEC.md section, wiki page). When you kill one, mark `[dropped]` with the reason. Both are searchable later.
+When a backlog item lands, **remove the entry** — the wiki page, CHANGELOG, and (if it amends the spec) SPEC.md section are the durable trail. When you kill an item, mark `[dropped]` with the reason and leave it in place; that reasoning matters next time the idea resurfaces.
 
 If a backlog item turns into a real plan with a date, that's still fine — keep it in BACKLOG.md with `[planned]` status. It graduates to SPEC.md only when the design is committed and (usually) implemented.
 
@@ -227,5 +230,5 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 
 - **Don't commit `dist/`.** `tsdown` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
 - **`@preact/signals-core` is a peer dep on `@kontsedal/olas-core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
-- **biome v1.9.4 config in `biome.json`** — two rules are intentionally off: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't re-enable them.
+- **biome config in `biome.json`** (currently v2.x — see `package.json`) — two rules are intentionally off: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't re-enable them.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".
