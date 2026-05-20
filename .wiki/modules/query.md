@@ -25,7 +25,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-19
+last_verified: 2026-05-20
 confidence: medium
 ---
 
@@ -82,23 +82,25 @@ A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it re
 
 ## SSR
 
-`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`. Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map; the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry`. See `flows/ssr.md`.
+`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`. Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map; the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry`. The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md` and `client.ts:756-770`.
 
 ## Plugin slot
 
-The `QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`). Plugins observe `setData` / `invalidate` / `gc` and can push remote-originated writes back through the cache via `QueryClientPluginApi.applyRemoteSetData` / `applyRemoteInvalidate`. Spec §13.2. Surface:
+The `QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`). Plugins observe `setData` / `invalidate` / `gc` and can push remote-originated writes back through the cache via `QueryClientPluginApi.applyRemoteSetData` / `applyRemoteInvalidate` / `setEntryData`. Spec §13.2. Surface:
 
 - **`init(api)`** — called once after construction. Wire transports here. The `api` is closed over the client; safe to retain.
-- **`onSetData(event)`** — every successful `setData` (regular queries only; infinite still fires with `kind: 'infinite'` but the cross-tab plugin filters those out in v1). `event.isRemote === true` when the write originated from `applyRemoteSetData` — plugins MUST skip rebroadcast.
+- **`onSetData(event)`** — fires on every cache write. `event.source` discriminates origin: `'set'` (explicit `client.setData` / mutation / plugin-initiated `setEntryData`), `'fetch'` (fetcher resolved successfully via `Entry.applySuccess`, OR a hydrated entry was first bound via `bindEntry`), or `'remote'` (`applyRemoteSetData`). `event.isRemote` is `true` only for `'remote'` — `source === 'remote' ⇔ isRemote === true`, kept dual for back-compat (cross-tab gates on `isRemote`, entities gates on `source`). Infinite queries also fire with `kind: 'infinite'` for explicit `setData` but DO NOT yet fire on fetch — `kind: 'infinite' + source: 'fetch'` is reserved (cross-tab and entities both skip infinite in v1).
 - **`onInvalidate(event)`** — every invalidate (regular + infinite). Same `isRemote` semantics.
 - **`onGc(event)`** — every entry drop. No `isRemote` (gc is local).
 - **`dispose()`** — called from `QueryClient.dispose`. Tear down transports.
+
+`QueryClientPluginApi.setEntryData(queryId, keyArgs, updater)` writes back into a specific entry by `keyArgs` (not `callArgs`). Used by `@kontsedal/olas-entities` to backpropagate entity patches into every query holding the entity without recovering the original args. The resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast.
 
 Plugin callbacks are wrapped in try/catch; exceptions route to the root's `onError` with `kind: 'plugin'`. The `queryId → Query` registry (`registerQueryById` / `lookupRegisteredQuery` in `plugin.ts`) routes inbound messages back to the right query value across module-graph boundaries (cross-tab, cross-process).
 
 Plugin events fire only for queries that have a `queryId`. Queries without one are silently invisible to plugins — a `crossTab: true` spec without a `queryId` triggers a one-time `console.warn` from `defineQuery` (dev only).
 
-See `modules/cross-tab.md` for the canonical consumer.
+Canonical consumers: `modules/cross-tab.md` (broadcast `setData` across tabs), `modules/entities.md` (normalized per-id signal store + cross-query backprop).
 
 ## Notable gotchas (full details in `../pitfalls/`)
 

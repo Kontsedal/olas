@@ -52,7 +52,16 @@ export class ClientEntry<T> {
     callArgs: readonly unknown[],
     keyArgs: readonly unknown[],
     spec: QuerySpec<any, T>,
-    hydrated?: { data: T; lastUpdatedAt: number },
+    hydrated: { data: T; lastUpdatedAt: number } | undefined,
+    /**
+     * Prepared by `QueryClient.bindEntry` (which is the only construction
+     * site). When the query has a `queryId`, the closure calls back into
+     * `QueryClient.emitSetData` with `source: 'fetch'` after every
+     * successful fetch. We accept it pre-built rather than reach into the
+     * client from here because `emitSetData` is `private` on `QueryClient`
+     * — restricting the access path is the whole point.
+     */
+    onFetchSuccess: ((data: T) => void) | undefined,
   ) {
     this.client = client
     this.query = query
@@ -88,6 +97,7 @@ export class ClientEntry<T> {
                 }),
             }
           : undefined,
+      onSuccessData: onFetchSuccess,
     })
   }
 
@@ -395,6 +405,9 @@ export class QueryClient {
       applyRemoteInvalidate(queryId, keyArgs) {
         self.applyRemoteInvalidate(queryId, keyArgs)
       },
+      setEntryData(queryId, keyArgs, updater) {
+        self.setEntryData(queryId, keyArgs, updater)
+      },
       subscribedKeys(queryId) {
         return self.subscribedKeysFor(queryId)
       },
@@ -413,11 +426,29 @@ export class QueryClient {
     }
   }
 
+  /**
+   * Emit a `SetDataEvent` to every installed plugin. The `source` field
+   * tells layered plugins where the write originated:
+   * - `'set'`: explicit `client.setData`, including mutations and plugin-
+   *   initiated `setEntryData` calls (e.g. entity backpropagation).
+   * - `'fetch'`: a query fetcher resolved successfully (`Entry.applySuccess`
+   *   reaches this through `onSuccessData`), or hydrated data was first
+   *   bound (a per-tab arrival of pre-fetched data; cross-tab skips
+   *   `'fetch'` so this stays a per-tab concern).
+   * - `'remote'`: `applyRemoteSetData` — cross-tab / server-push. Mirrors
+   *   `isRemote === true`.
+   *
+   * Private — fetcher-success emission goes through the `onFetchSuccess`
+   * closure that `bindEntry` builds and hands to each new `ClientEntry`.
+   * Hydrated emission goes through this method directly from `bindEntry`.
+   * Mutation / remote paths call it from within QueryClient methods.
+   */
   private emitSetData(
     query: AnyQuery | AnyInfiniteQuery,
     keyArgs: readonly unknown[],
     data: unknown,
     kind: 'data' | 'infinite',
+    source: 'set' | 'fetch' | 'remote',
   ): void {
     if (this.plugins.length === 0) return
     const queryId = query.__spec.queryId
@@ -428,6 +459,7 @@ export class QueryClient {
       data,
       kind,
       isRemote: this.applyingRemote,
+      source,
     }
     for (const plugin of this.plugins) {
       if (plugin.onSetData) {
@@ -522,10 +554,39 @@ export class QueryClient {
     this.applyingRemote = true
     try {
       entry.entry.setData(() => data as never)
-      this.emitSetData(internal, entry.keyArgs, data, 'data')
+      this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
     } finally {
       this.applyingRemote = false
     }
+  }
+
+  /**
+   * Local-originated `setData` keyed by `queryId + keyArgs`. Plugin-facing
+   * (exposed via `QueryClientPluginApi.setEntryData`); used by the
+   * `@kontsedal/olas-entities` plugin to backpropagate entity patches into
+   * every query holding the entity, without forcing the plugin to recover
+   * the original `callArgs`.
+   *
+   * Drops silently in the same cases as `applyRemoteSetData` (unknown
+   * queryId / infinite query / no local entry). Emits `SetDataEvent` with
+   * `isRemote: false`, `source: 'set'` — cross-tab WILL rebroadcast.
+   */
+  setEntryData(
+    queryId: string,
+    keyArgs: readonly unknown[],
+    updater: (prev: unknown) => unknown,
+  ): void {
+    const query = lookupRegisteredQuery(queryId)
+    if (!query) return
+    if (query.__olas !== 'query') return
+    const internal = query as unknown as AnyQuery
+    const map = this.maps.get(internal)
+    if (!map) return
+    const hash = stableHash(keyArgs)
+    const entry = map.get(hash)
+    if (!entry) return
+    entry.entry.setData(updater as (prev: unknown) => never)
+    this.emitSetData(internal, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
   }
 
   applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void {
@@ -697,12 +758,40 @@ export class QueryClient {
     if (!entry) {
       const hydrated = this.hydratedData.get(hash) as { data: T; lastUpdatedAt: number } | undefined
       if (hydrated) this.hydratedData.delete(hash)
-      entry = new ClientEntry<T>(this, internal, args, keyArgs, internal.__spec, hydrated)
+      // Build the fetcher-success emitter here so `emitSetData` can stay
+      // `private` — `ClientEntry` doesn't reach back into the client to call
+      // it; the closure captures (query, keyArgs, this) in this scope and
+      // is consumed by `Entry.onSuccessData` from inside `applySuccess`.
+      const onFetchSuccess: ((data: T) => void) | undefined =
+        internal.__spec.queryId != null
+          ? (data) => this.emitSetData(internal, keyArgs, data, 'data', 'fetch')
+          : undefined
+      entry = new ClientEntry<T>(
+        this,
+        internal,
+        args,
+        keyArgs,
+        internal.__spec,
+        hydrated,
+        onFetchSuccess,
+      )
       map.set(hash, entry as ClientEntry<unknown>)
       // The entry is created without an immediate subscriber (callers like
       // `prefetch`/`setData`/`invalidate` reach `bindEntry` first; subscribing
       // callers then call `acquire()` right after, which clears the gc timer).
       entry.scheduleGcIfOrphan()
+      // Hydrated data lands in `initialData` on the new Entry — `applySuccess`
+      // is never called, so plugins observing fetch results (entities, ...)
+      // would otherwise miss every hydrated row. Emit a SetDataEvent with
+      // `source: 'fetch'` here once the entry is registered (and the plugin
+      // is already init'd, since the QueryClient constructor runs hydrate →
+      // plugin init before any subscriber can reach bindEntry). The fetch
+      // source is correct for layered consumers: each tab hydrates
+      // independently, so cross-tab's "skip 'fetch'" gate continues to do
+      // the right thing.
+      if (hydrated !== undefined) {
+        this.emitSetData(internal, keyArgs, hydrated.data, 'data', 'fetch')
+      }
     }
     return entry
   }
@@ -776,7 +865,7 @@ export class QueryClient {
     // Read the post-update value to broadcast — plugins want the new state,
     // not the updater function (which would be uncloneable across
     // BroadcastChannel).
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data')
+    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
     return snapshot
   }
 
@@ -868,7 +957,7 @@ export class QueryClient {
   ): Snapshot {
     const entry = this.bindInfiniteEntry(query, args)
     const snapshot = entry.entry.setData(updater)
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.pages.peek(), 'infinite')
+    this.emitSetData(entry.query, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
     return snapshot
   }
 

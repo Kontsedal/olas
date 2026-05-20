@@ -16,6 +16,21 @@ export type EntryOptions<T> = {
   retry?: RetryPolicy
   retryDelay?: RetryDelay
   events?: EntryEvents
+  /**
+   * Fired after a successful fetch result is written to `data`. Used by the
+   * `QueryClient` to emit a plugin-visible `SetDataEvent` with
+   * `source: 'fetch'` (devtools events live on `events` above). Distinct
+   * from `events.onFetchSuccess`, which carries timing info for the
+   * devtools bus.
+   *
+   * Privileged closure — set up by `ClientEntry` to call
+   * `client.emitSetData(...)`, which already individually try/catches every
+   * plugin via `callPlugin` and routes thrown exceptions through `onError`
+   * with `kind: 'plugin'`. Not wrapped here; an exception escaping this
+   * callback is a programming error in core (not a plugin) and SHOULD
+   * surface so the bug is visible.
+   */
+  onSuccessData?: (data: T) => void
 }
 
 type SnapshotRecord<T> = {
@@ -51,6 +66,9 @@ export class Entry<T> {
   private nextSnapshotId = 0
   private disposed = false
   private readonly events: EntryEvents
+  // Stored at `unknown` (not `T`) to keep `Entry<T>` covariant in `T`. The
+  // callback only forwards the value through; Entry never inspects it.
+  private readonly onSuccessData: ((data: unknown) => void) | undefined
   private fetchStartTime = 0
   /**
    * Promises returned by `firstValue()` that haven't settled. Rejected on
@@ -65,6 +83,7 @@ export class Entry<T> {
     this.retry = options.retry ?? 0
     this.retryDelay = options.retryDelay ?? 1000
     this.events = options.events ?? {}
+    this.onSuccessData = options.onSuccessData as ((data: unknown) => void) | undefined
     this.data = signal<T | undefined>(options.initialData)
     if (options.initialData !== undefined) {
       this.status = signal<AsyncStatus>('success')
@@ -176,6 +195,7 @@ export class Entry<T> {
     } catch {
       // devtools handlers must not break the program.
     }
+    this.onSuccessData?.(result)
     return result
   }
 
