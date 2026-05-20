@@ -1,0 +1,61 @@
+{
+  "name": "@kontsedal/olas-entities",
+  "version": "0.0.1-rc.1",
+  "description": "Entity-normalization plugin for Olas — extract entities from query results, subscribe per-id, patch every query holding an entity in one call.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "normalization",
+    "entities",
+    "cache",
+    "cross-query"
+  ],
+  "license": "MIT",
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/entities#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/entities"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.cts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@kontsedal/olas-core": "workspace:^"
+  },
+  "devDependencies": {
+    "@kontsedal/olas-core": "workspace:^"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

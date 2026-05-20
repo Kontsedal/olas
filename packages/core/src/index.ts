@@ -44,6 +44,11 @@ export type {
   InfiniteQuerySpec,
   InfiniteQuerySubscription,
 } from './query/infinite'
+// Key hashing — exported so plugins (entities, etc.) that need a stable
+// per-`keyArgs` index key reuse the canonical implementation instead of
+// rolling their own ad-hoc JSON.stringify (which mishandles Date, key
+// ordering, and `undefined`).
+export { stableHash } from './query/keys'
 export type {
   Mutation,
   MutationConcurrency,

@@ -478,6 +478,27 @@ describe('crossTabPlugin', () => {
     root.dispose()
   })
 
+  test('11a. fetch-success writes are NOT broadcast', async () => {
+    // Every tab runs its own fetcher; rebroadcasting fetch results would
+    // create N-tab quadratic noise without changing anyone's cache.
+    const queryA = makeUsersQuery('xtab-test/11a')
+    const queryB = makeUsersQuery('xtab-test/11a')
+    const tabs = mountTabs({ queryA, queryB })
+
+    // The initial fetch on both tabs has settled by now. If those fetch
+    // results were broadcast, postCount would be 2 (one per tab).
+    await settle()
+    expect(tabs.postCount()).toBe(0)
+
+    // Confirm setData still broadcasts (the gate is source-specific).
+    queryA.setData('1', () => ({ id: '1', name: 'after-set' }))
+    await settle()
+    expect(tabs.postCount()).toBe(1)
+
+    tabs.tabA.dispose()
+    tabs.tabB.dispose()
+  })
+
   test('11. plugin instance reused across two roots surfaces an onError', () => {
     // Per `ASSESSMENT.md`: a single `crossTabPlugin({...})` instance owns
     // one sourceId / channel / listener Map. Sharing across two roots would

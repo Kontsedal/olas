@@ -158,6 +158,11 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
     onSetData(event: SetDataEvent) {
       // Don't echo inbound writes — Layer-1 sender-side echo prevention.
       if (event.isRemote) return
+      // Fetch-success writes are a per-tab concern: every tab runs its own
+      // fetcher and would otherwise rebroadcast results to peers that just
+      // fetched the same data themselves. We only echo explicit `setData`
+      // calls (mutations, optimistic patches, entity backprop) cross-tab.
+      if (event.source === 'fetch') return
       // Infinite queries are deferred for v1 — see SPEC §13.2.
       if (event.kind !== 'data') return
       if (!shouldBroadcast(event.queryId)) return

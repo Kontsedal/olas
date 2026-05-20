@@ -15,7 +15,7 @@ edges:
   - { type: uses, target: query.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: persist.md }
-last_verified: 2026-05-19
+last_verified: 2026-05-20
 confidence: medium
 ---
 
@@ -64,11 +64,13 @@ type Message =
 
 `PROTOCOL_VERSION = 1`. Receivers drop messages whose `v` they don't understand. Channel names themselves are user-supplied — embed a version (e.g. `'app/cache/v2'`) in the name for clean cross-deploy isolation.
 
-## Echo prevention — three layers
+## Echo prevention — three layers + source filter
 
 1. **Sender-side, in core.** `QueryClient.applyRemoteSetData(...)` flips an internal `applyingRemote` flag while applying an inbound write. The resulting plugin `SetDataEvent` carries `isRemote: true`. The cross-tab plugin's `onSetData` returns early in that case — no rebroadcast. (`packages/core/src/query/client.ts` — `applyRemoteSetData`, `applyRemoteInvalidate`, `emitSetData`.)
 2. **Own-source drop.** Each plugin instance picks a random `sourceId` at construction. Receivers ignore messages with their own `sourceId` — catches transports that echo back to the sender's listeners.
 3. **`(sourceId, msgId)` dedup.** Senders use a monotonic per-source `msgId` counter. Receivers track `last seen msgId` per peer in a `Map<sourceId, number>` and drop messages with `msgId <= last`. This handles both duplicates and out-of-order delivery.
+
+In addition, `onSetData` skips events with `source: 'fetch'`. `SetDataEvent` carries `source: 'set' | 'fetch' | 'remote'` so layered plugins can distinguish explicit `setData` calls from fetcher-result writes. Cross-tab broadcasts only `source: 'set'` — every tab runs its own fetcher and rebroadcasting fetch results would be N-tab quadratic noise that doesn't change anyone's cache. See `packages/cross-tab/src/plugin.ts:161-165` (the `if (event.source === 'fetch') return` gate inside `onSetData`) and the regression test at `tests/plugin.test.ts` (`'11a. fetch-success writes are NOT broadcast'`).
 
 ## Per-query opt-in via `queryId`
 

@@ -301,6 +301,12 @@ importers:
         specifier: ^19.2.6
         version: 19.2.6(react@19.2.6)
 
+  packages/entities:
+    devDependencies:
+      '@kontsedal/olas-core':
+        specifier: workspace:^
+        version: link:../core
+
   packages/persist:
     devDependencies:
       '@kontsedal/olas-core':

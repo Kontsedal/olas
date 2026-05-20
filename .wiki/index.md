@@ -23,6 +23,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/persist.md](modules/persist.md) — `@kontsedal/olas-persist`: `usePersisted`
 - [modules/realtime.md](modules/realtime.md) — `@kontsedal/olas-realtime`: `useRealtimePatcher` + `defineLiveStream` over a consumer-supplied `RealtimeService`
 - [modules/cross-tab.md](modules/cross-tab.md) — `@kontsedal/olas-cross-tab`: `BroadcastChannel`-backed cross-tab in-memory query cache sync
+- [modules/entities.md](modules/entities.md) — `@kontsedal/olas-entities`: `defineEntity` + auto-walk + reverse-index backprop over `QueryClientPlugin`
 - [modules/react.md](modules/react.md) — `@kontsedal/olas-react`: provider + `useSyncExternalStore`-backed hooks
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
 - [modules/examples.md](modules/examples.md) — the four runnable example apps in `examples/`

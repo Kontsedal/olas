@@ -31,6 +31,28 @@ export type QueryClientPluginApi = {
   applyRemoteSetData(queryId: string, keyArgs: readonly unknown[], data: unknown): void
   applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void
   /**
+   * Apply a local-originated `setData` to the entry identified by
+   * `(queryId, keyArgs)`. The resulting plugin events fire with
+   * `isRemote: false` and `source: 'set'` — cross-tab plugins WILL
+   * rebroadcast (the write is treated as if a controller called
+   * `client.setData(...)` directly).
+   *
+   * Drops silently when the queryId is unknown, the registered query is
+   * infinite, or no local entry exists for that key. The `updater`
+   * receives the previous data (typed as `unknown` because plugins are
+   * type-erased) and returns the next.
+   *
+   * Use case: entity-normalization plugins that want to backpropagate an
+   * `entity.update(...)` patch into every query holding that entity.
+   * Mutations / optimistic updates already go through the public
+   * `client.setData` and don't need this API.
+   */
+  setEntryData(
+    queryId: string,
+    keyArgs: readonly unknown[],
+    updater: (prev: unknown) => unknown,
+  ): void
+  /**
    * Snapshot of currently bound entry keys for a query (by `queryId`). Empty
    * array when the query isn't registered, has no client entries, or the
    * `queryId` doesn't match any registered query.
@@ -69,6 +91,18 @@ export type SetDataEvent = {
    * skip rebroadcast in that case — otherwise the message would echo back.
    */
   isRemote: boolean
+  /**
+   * Origin of the write. `'set'` covers explicit `client.setData` (mutations,
+   * optimistic updates, plugin-initiated patches). `'fetch'` fires when the
+   * query fetcher resolved successfully and wrote the result into the entry
+   * — emitted after the data signal is settled. `'remote'` is the
+   * `applyRemoteSetData` path (cross-tab / server-push); equivalent to
+   * `isRemote === true`.
+   *
+   * Layered plugins use this to decide whether to react: cross-tab broadcasts
+   * only on `'set'`, an entity-normalization plugin observes all sources.
+   */
+  source: 'set' | 'fetch' | 'remote'
 }
 
 export type InvalidateEvent = {

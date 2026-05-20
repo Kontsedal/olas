@@ -13,6 +13,7 @@ export default defineConfig({
       '@kontsedal/olas-persist': resolve(__dirname, 'packages/persist/src/index.ts'),
       '@kontsedal/olas-realtime': resolve(__dirname, 'packages/realtime/src/index.ts'),
       '@kontsedal/olas-cross-tab': resolve(__dirname, 'packages/cross-tab/src/index.ts'),
+      '@kontsedal/olas-entities': resolve(__dirname, 'packages/entities/src/index.ts'),
       '@kontsedal/olas-zod': resolve(__dirname, 'packages/zod/src/index.ts'),
       '@kontsedal/olas-devtools': resolve(__dirname, 'packages/devtools/src/index.ts'),
     },

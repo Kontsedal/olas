@@ -1278,6 +1278,10 @@ In v1, only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) 
 
 **Echo prevention is layered:** (1) the `QueryClient` marks remote-applied writes with `isRemote: true` on `SetDataEvent` / `InvalidateEvent`, and plugins skip rebroadcast in that case; (2) messages carry a `sourceId`, and the plugin filters its own; (3) messages carry a monotonic `msgId`, and out-of-order or duplicate messages are dropped.
 
+`SetDataEvent` carries a `source: 'set' | 'fetch' | 'remote'` field so layered plugins can distinguish explicit `setData` calls from fetcher-result writes (`'fetch'`) and remote-applied writes (`'remote'`). The cross-tab plugin only rebroadcasts `source: 'set'` — fetcher results are a per-tab concern, since every tab runs its own fetcher and rebroadcasting would be quadratic noise. Plugins that need a holistic view of cache writes (entity normalization — see §18.1) observe all three.
+
+`QueryClientPluginApi` exposes `setEntryData(queryId, keyArgs, updater)` for plugins that need to write back into the cache via the local-write path (the resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast). Used by the entity-normalization plugin (§18.1) to patch every query holding a given entity in one batched round of writes.
+
 **Channel-name versioning.** Channel names are user-supplied. Receivers drop messages whose protocol `v` they don't understand; users who want clean cross-deploy isolation should include a version suffix in their `channelName` (e.g. `'my-app/cache/v2'`).
 
 **Non-cloneable values.** `BroadcastChannel` uses structured clone. Cache data carrying functions, class instances, or symbols cannot cross the boundary. The plugin catches the `DataCloneError`, calls `onWarn(...)`, and drops the message; the sender's cache is unaffected. Consumers should ensure their fetcher results are structured-cloneable when `crossTab: true`.
@@ -1752,13 +1756,13 @@ The following are deliberately out of scope. They aren't "we'll do them later" �
 - **Multi-item mutation orchestration.** The `Mutation` primitive tracks one logical operation. For "fire N mutations and track each result," compose them in a controller (§16.5).
 - **Offline-first sync / mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network; if you need a queue-then-sync model (Notion, Linear), build it as a layer over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`.
 
-### 18.1 Entity normalization — the boundary statement
+### 18.1 Entity normalization
 
-When the same entity (a `Post`, a `User`) appears in many independent queries — `newsfeedQuery`, `userProfileQuery`, `searchQuery`, `notificationsQuery`, `commentsQuery` — updating that entity (e.g. liking the post) means patching every query that contains it. Olas core does **not** ship normalized storage; each query owns its own data. The implication: if you need cross-query entity propagation, you write N `setData` calls, or N `invalidate` calls, or build a userland normalizing layer that translates entity updates into per-query patches.
+When the same entity (a `Post`, a `User`) appears in many independent queries — `newsfeedQuery`, `userProfileQuery`, `searchQuery`, `notificationsQuery`, `commentsQuery` — updating that entity (e.g. liking the post) means patching every query that contains it. Olas core does **not** ship normalized storage; each query owns its own data.
 
-This is a deliberate choice. Normalization is large, opinionated, and best done as a separate package (Apollo and Relay are entire frameworks built around this question). The architecture is structured so that a normalization layer can be added later without touching core (see `BACKLOG.md` → `@kontsedal/olas-entities`).
+Two equally-supported patterns:
 
-The canonical pattern for cross-query updates is: write a small helper per entity that knows which queries it lives in.
+**Userland helper (no extra dependency).** Write a small helper per entity that knows which queries it lives in. Verbose but explicit and grep-able:
 
 ```ts
 const patchPostEverywhere = (id: string, patch: Partial<Post>) => {
@@ -1769,7 +1773,29 @@ const patchPostEverywhere = (id: string, patch: Partial<Post>) => {
 }
 ```
 
-Verbose, but explicit and grep-able — every place a post lives is named in one file. For apps where this gets unwieldy, wait for `@kontsedal/olas-entities`.
+**`@kontsedal/olas-entities`.** A `QueryClientPlugin` that observes every cache write (via the `source: 'fetch' | 'set' | 'remote'` field on `SetDataEvent` — §13.2), walks the data via per-entity `idOf` predicates, maintains a normalized store, and exposes:
+
+- `defineEntity<T>({ name, idOf })` — module-scope entity descriptor.
+- `entitiesPlugin([Post, User, ...])` — install via `RootOptions.plugins[]`.
+- `entities.signal(Post, id) → ReadSignal<Post | undefined>` — reactive per-id reads.
+- `entities.update(Post, id, patchOrUpdater)` — accepts `Partial<T>` (shallow merge) or `(prev: T) => T` (updater). Backpropagates to every query holding the entity, batched into one round of subscriber notifications. Uses `QueryClientPluginApi.setEntryData` (§13.2) to write back.
+- `entities.upsert / get / invalidate / entries / bindings` — round out the surface (last two are devtools snapshots).
+
+```ts
+const Post = defineEntity<Post>({ name: 'Post', idOf: (v: any) => v?.id ?? null })
+createRoot(app, { plugins: [entitiesPlugin([Post])] })
+
+// In a component:
+const post = use(entities.signal(Post, 'p1'))   // reactive, normalized
+
+// In a mutation handler — shallow merge:
+entities.update(Post, 'p1', { liked: true })    // patches feedQuery, profileQuery, …
+
+// Or compute the next value from the previous (non-shallow updates):
+entities.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 1 }))
+```
+
+Both patterns share the same core; neither is a framework. The userland helper is the right choice for ~5 queries and few entity types; the plugin scales further by removing the per-touch-site boilerplate. v1 limitation: infinite-query payloads aren't walked (mirrors the §13.2 cross-tab v1 constraint); tracked in `BACKLOG.md`.
 
 Future-work ideas — additional packages, storage adapters, browser-extension devtools, cross-tab cache sync, normalization, lint rules — live in `BACKLOG.md`, not here. The spec describes what *is*.
 
@@ -1792,6 +1818,9 @@ Future-work ideas — additional packages, storage adapters, browser-extension d
 | `@kontsedal/olas-persist` | `usePersisted` composable, localStorage adapter.                                                                                    |
 | `@kontsedal/olas-zod`     | `zodValidator(schema)` and `formFromZod(ctx, schema)` — Zod schemas as the single source of truth for form types + validation.       |
 | `@kontsedal/olas-devtools` | In-app `<DevtoolsPanel>` + floating launcher consuming `root.__debug` — controller tree inspector, cache timeline, mutation log. **Adoption-critical at scale; no longer optional.** |
+| `@kontsedal/olas-cross-tab` | `BroadcastChannel`-backed `QueryClientPlugin` mirroring `setData` / `invalidate` writes across browser tabs. §13.2. |
+| `@kontsedal/olas-realtime` | Composables over a consumer-supplied `RealtimeService` — `useRealtimePatcher` (WebSocket / SSE → cache patch) and `useLiveStream` (tail-buffer with capacity + coalesced flush). §16.5. |
+| `@kontsedal/olas-entities` | `QueryClientPlugin` that walks query data via per-entity `idOf`, normalizes into a reactive per-id signal store, and backpropagates `entity.update(id, patch)` to every query holding the entity. §18.1. |
 
 Vanilla "adapter" — no package needed. Signals already expose `.subscribe()` / `.peek()`.
 
@@ -1823,6 +1852,9 @@ Declared explicitly so users dedupe correctly:
 - `@kontsedal/olas-react` — peer: `@kontsedal/olas-core ^1`, `react >= 18`.
 - `@kontsedal/olas-persist` — peer: `@kontsedal/olas-core ^1`.
 - `@kontsedal/olas-zod` — peer: `@kontsedal/olas-core ^1`, `zod ^3`.
+- `@kontsedal/olas-cross-tab` — peer: `@kontsedal/olas-core ^1`.
+- `@kontsedal/olas-realtime` — peer: `@kontsedal/olas-core ^1`.
+- `@kontsedal/olas-entities` — peer: `@kontsedal/olas-core ^1`.
 
 ### 19.8 Public entry per package
 

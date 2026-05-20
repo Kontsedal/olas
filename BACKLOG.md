@@ -26,16 +26,37 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 ## Packages
 
-### [planned] `@kontsedal/olas-entities` — entity normalization layer
+### [done] `@kontsedal/olas-entities` — entity normalization layer
 
-[SPEC §18.1] When the same entity (a `Post`, a `User`) appears in many queries — newsfeed, profile, search, notifications — updating that entity means patching every query that contains it. Olas core does **not** ship normalized storage; each query owns its own data. The architecture cleanly supports a future entity-normalization package:
+[from SPEC §18.1] Shipped as `@kontsedal/olas-entities` (`packages/entities/src/index.ts`). Built on `QueryClientPlugin`. To enable the package to observe data flowing into query caches, core gained `SetDataEvent.source: 'set' | 'fetch' | 'remote'` (so fetch results are visible, not just `setData` calls) and `QueryClientPluginApi.setEntryData(queryId, keyArgs, updater)` (so the plugin can patch arbitrary queries by `keyArgs` during backprop without recovering the original `callArgs`). Cross-tab now skips `source: 'fetch'`.
 
-- `defineEntity({ name: 'Post', idOf: p => p.id })`.
-- Hooks into `setData` and the fetcher pipeline to extract entities into a normalized store.
-- `entity.update(id, patch)` diffs and patches every query holding that entity.
-- `entity.subscribe(id): ReadSignal<Post | undefined>` for components reading a single entity reactively.
+Surface:
+- `defineEntity<T>({ name, idOf })` — module-scope entity descriptor.
+- `entitiesPlugin([Post, User, ...])` — `QueryClientPlugin` + per-entity store ops.
+- `entities.signal(Post, id) → ReadSignal<Post | undefined>` for reactive per-id reads.
+- `entities.upsert(Post, raw)` for non-query branding (events, preloads).
+- `entities.update(Post, id, patch)` — shallow-merge + backpropagate to every query holding the entity. Batched.
+- `entities.get` / `entities.invalidate` round out the surface.
 
-Until this lands, the canonical pattern is one tiny `patchPostEverywhere`-style helper per entity that enumerates the touch sites — verbose but grep-able. See SPEC §18.1 for the worked example.
+Walk strategy: recursive traversal of every `SetDataEvent`'s data, with each registered entity's `idOf` predicate run per subtree node. Reverse index `(entityId → bindings of (queryId, keyArgs, path[]))` rebuilds on every observation. Auto-walk dedup'd via `Object.is` so post-update walks don't loop.
+
+v1 constraints (tracked as new follow-ups below): infinite queries not walked; `update` is shallow-merge only; no per-entity LRU eviction; no `entity.subscribe(id)` outside React (use `signal.subscribe`). See `.wiki/modules/entities.md`.
+
+### [idea] `@kontsedal/olas-entities` — walk `kind: 'infinite'` query payloads
+
+v1 ignores `SetDataEvent`s where `kind === 'infinite'`. The walker would need to traverse `TPage[]` and find entities within each page; `setEntryData` would need an infinite-aware variant. Defer until someone hits the use case.
+
+### [idea] `@kontsedal/olas-entities` — deep-merge option on `update`
+
+Today `entities.update(Post, id, patch)` is `{ ...current, ...patch }`. Nested replacements force the caller to `upsert` a full new value. A `merge: 'shallow' | 'deep'` option (default `'shallow'`) would round out the API.
+
+### [idea] `@kontsedal/olas-entities` — per-entity LRU eviction
+
+Orphaned entity slots (entity once observed, no longer in any query) stay in the store until plugin dispose. For apps with very large entity catalogs, a per-entity-name LRU cap on the slot map would bound memory. Dev builds emit a one-shot warning when a single entity partition crosses 10k unique ids (see `SLOT_BLOAT_WARN_AT` in `packages/entities/src/index.ts`).
+
+### [idea] `SetDataEvent.source === 'remote'` is redundant with `isRemote === true`
+
+After §13.2 grew the `source: 'set' | 'fetch' | 'remote'` field, `source === 'remote'` carries the same information as `isRemote === true`. They're kept both for back-compat — existing plugins (cross-tab) gate on `isRemote`, new plugins (entities) can gate on `source`. Pick one in v2 and drop the other. Migration: keep `isRemote` (shorter, predates `source`) and reserve `source` strictly for `'set' | 'fetch'`.
 
 ### [done] `@kontsedal/olas-realtime` — realtime-to-cache patcher
 
