@@ -1,6 +1,6 @@
 ---
 name: realtime
-description: "@kontsedal/olas-realtime — useRealtimePatcher + defineLiveStream over a consumer-supplied RealtimeService dep."
+description: "@kontsedal/olas-realtime — useRealtimePatcher + useLiveStream over a consumer-supplied RealtimeService dep."
 type: module
 covers:
   - packages/realtime/src/index.ts
@@ -20,7 +20,7 @@ confidence: medium
 Two thin composables over a consumer-supplied `RealtimeService` (`ctx.deps.realtime`):
 
 - `useRealtimePatcher(ctx, channel, handlers)` — subscribe, dispatch each event to a type-keyed handler. Wraps SPEC §16.5 lines 1364-1391.
-- `defineLiveStream<TEvent>(ctx, channel, options?)` — tail-mode buffer with `capacity` + coalesced `flushMs` flushes, plus pause/resume/clear. Wraps SPEC §16.5 lines 1547-1597.
+- `useLiveStream<TEvent>(ctx, channel, options?)` — tail-mode buffer with `capacity` + coalesced `flushMs` flushes, plus pause/resume/clear. Wraps SPEC §16.5 lines 1547-1597.
 
 The package ships **no default transport** — apps inject their own (WebSocket / Pusher / Ably / Supabase / SSE) through deps.
 
@@ -29,7 +29,7 @@ The package ships **no default transport** — apps inject their own (WebSocket 
 | Name | Signature | Notes |
 |---|---|---|
 | `useRealtimePatcher<TEvent>` | `(ctx, channel, handlers) => void` | Handlers run inside `untracked(...)` so accidental signal reads don't add deps to the surrounding effect. |
-| `defineLiveStream<TEvent>` | `(ctx, channel, options?) => LiveStream<TEvent>` | `LiveStream = { events: ReadSignal<readonly TEvent[]>, isPaused: ReadSignal<boolean>, pause, resume, clear }` |
+| `useLiveStream<TEvent>` | `(ctx, channel, options?) => LiveStream<TEvent>` | `LiveStream = { events: ReadSignal<readonly TEvent[]>, isPaused: ReadSignal<boolean>, pause, resume, clear }` |
 | `RealtimeService` | `{ subscribe(channel, handler): { unsubscribe(): void } }` | Object form (not bare function) so it matches §16.5's example shape. |
 | `RealtimeDeps` | `{ realtime: RealtimeService }` | Slice of `ctx.deps` consumed by this package. |
 
@@ -58,8 +58,8 @@ After augmentation, `Ctx<AmbientDeps>` satisfies the `Ctx<RealtimeDeps>` paramet
 
 Both composables hold their subscription inside `ctx.effect(() => { ... return () => sub.unsubscribe() })`:
 
-- **Dispose**: effect cleanup unsubscribes; `defineLiveStream` also `clearTimeout`s any pending flush. See `packages/realtime/src/index.ts:158-164`.
-- **Pause / resume**: `defineLiveStream` reads `isPaused.value` at the top of the effect. The signal write triggered by `pause()` causes the effect to re-run with `isPaused === true`, which short-circuits before subscribing — the previous run's cleanup runs first and unsubscribes. `resume()` flips it back, the effect runs again, and a fresh subscription is established.
+- **Dispose**: effect cleanup unsubscribes; `useLiveStream` also `clearTimeout`s any pending flush. See `packages/realtime/src/index.ts:158-164`.
+- **Pause / resume**: `useLiveStream` reads `isPaused.value` at the top of the effect. The signal write triggered by `pause()` causes the effect to re-run with `isPaused === true`, which short-circuits before subscribing — the previous run's cleanup runs first and unsubscribes. `resume()` flips it back, the effect runs again, and a fresh subscription is established.
 - **Pending preserved across pause**: the `pending: TEvent[]` accumulator is not cleared on pause. Events buffered in the same tick a pause is requested still flush eventually (or when the next subscription delivers a new event and triggers another flush). One-line comment in source documents this.
 
 ## Tail-buffer semantics

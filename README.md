@@ -55,7 +55,7 @@ The practical wins:
 - **Logic without renderers.** A controller is a function. Tests pass in fake `deps`, call methods, and assert against signals. No `render(<App />)`, no Testing Library, no fake timers chasing effect flushes.
 - **Explicit lifetimes.** Every field, query, mutation, and child controller dies with its parent. No "what owns this subscription?" mystery.
 - **Shared queries by default.** Two controllers subscribing to the same query share one fetch and one cache entry. The same primitive scales from "one widget" to "every screen on the dashboard."
-- **Framework-agnostic core.** `@kontsedal/olas-core` never imports React. The React adapter is ~200 lines. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
+- **Framework-agnostic core.** `@kontsedal/olas-core` never imports React. The React adapter is ~230 lines on top of `useSyncExternalStore`. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
 
 ---
 
@@ -465,24 +465,28 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | [`@kontsedal/olas-persist`](packages/persist) | `usePersisted` + `localStorage` adapter. |
 | [`@kontsedal/olas-zod`](packages/zod) | `zodValidator(schema)` + `formFromZod(ctx, schema)`. |
 | [`@kontsedal/olas-devtools`](packages/devtools) | In-app `<DevtoolsPanel>` + floating launcher consuming `root.__debug`. |
+| [`@kontsedal/olas-cross-tab`](packages/cross-tab) | `BroadcastChannel`-backed cross-tab cache sync as a `QueryClientPlugin`. |
+| [`@kontsedal/olas-entities`](packages/entities) | `defineEntity` + auto-walk + reverse-index backprop for normalized entities across queries. |
+| [`@kontsedal/olas-realtime`](packages/realtime) | `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService`. |
 
-Outstanding work — additional storage adapters, normalization, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
+Outstanding work — additional storage adapters, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
 
 ---
 
 ## Examples
 
-Three runnable example apps live in [`examples/`](examples). Each is a real (small) application — not a snippet — with its own dev server and unit tests.
+Four runnable example apps live in [`examples/`](examples). Each is a real (small) application — not a snippet — with its own dev server and unit tests.
 
 | App | Stack | What it shows |
 |-----|-------|---------------|
 | [`stock-ticker`](examples/stock-ticker) | **Vanilla TS** — no UI framework | Signals, computed, effect, emitter, throttled/debounced, `defineQuery` + `refetchInterval`, `usePersisted` watchlist, SVG sparklines. |
-| [`kanban`](examples/kanban) | React + Devtools | All three mutation concurrency modes, optimistic snapshot rollback, `formFromZod` + `FieldArray`, `defineScope`, error-toast retry, activity feed, mounted `<DevtoolsPanel>`. |
+| [`kanban`](examples/kanban) | React + Devtools | All three mutation concurrency modes, optimistic snapshot rollback, `formFromZod` + `FieldArray`, `defineScope`, error-toast retry, activity feed, mounted `<DevtoolsLauncher>`. |
 | [`reader-ssr`](examples/reader-ssr) | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery`, `useSuspendOnHidden`, `usePersisted` × 3 (bookmarks, theme, reading progress), `onError` root option. |
+| [`virtualized-table`](examples/virtualized-table) | React | SPEC §11's "rows are data, not controllers" pattern — 50k-row virtualized table backed by `Map<id, Signal<Row>>`, per-row mutation, devtools-friendly. |
 
 ```bash
 pnpm install
-pnpm --filter @kontsedal/olas-example-kanban dev      # or stock-ticker, reader-ssr
+pnpm --filter @kontsedal/olas-example-kanban dev      # or stock-ticker, reader-ssr, virtualized-table
 pnpm --filter @kontsedal/olas-example-kanban test
 ```
 
@@ -530,7 +534,7 @@ pnpm build                                         # tsdown per package → dist
 pnpm wiki:lint                                     # check .wiki/ for broken refs
 ```
 
-CI = `install → typecheck → lint → test → build`. 255 tests, all green.
+CI = `install → typecheck → lint → test → build`. 436 tests across 37 files, all green.
 
 ---
 

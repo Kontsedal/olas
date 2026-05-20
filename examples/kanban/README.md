@@ -13,18 +13,22 @@ live Devtools panel.
 - **`formFromZod`** in the card editor — one Zod schema generates the entire form tree (title `Field<string>`, description `Field<string>`, subtasks `FieldArray<Form<...>>`), with validators auto-attached at every leaf.
 - **`defineScope`** + `ctx.provide` / `ctx.inject` — `currentBoardScope` lets the card editor controller learn its board id without taking it in props.
 - **`AmbientDeps`** module augmentation — `ctx.deps.api` is typed everywhere; no provider plumbing.
-- **`<DevtoolsPanel>`** mounted in the side panel — live controller tree, cache timeline, mutation log, field validations.
+- **`<DevtoolsLauncher>`** mounted at the app root — floating launcher with live controller tree, cache timeline, mutation log, field validations.
 - **Component testing with `fakeField`** in `tests/CardEditor.test.tsx` — render UI cells against shape-correct fakes; no jsdom-on-the-real-controller needed.
 
 ## Files
 
 - `src/api.ts` — in-memory board with tunable latency + `failNextWrite` flag.
 - `src/scopes.ts` — `currentBoardScope`.
-- `src/controller.ts` — `boardQuery`, `boardController`, `cardEditorController`, `cardSchema`. All business logic. No React.
-- `src/View/App.tsx` — top-level layout, OlasProvider, DevtoolsPanel.
+- `src/query.ts` — `boardQuery` (paginated, `keepPreviousData`).
+- `src/schema.ts` — Zod schema feeding `formFromZod` in the card editor.
+- `src/controllers/board.ts`, `controllers/cardEditor.ts` — business logic. No React.
+- `src/app.ts` — root controller composing the children + scope wiring.
+- `src/controller.ts` — barrel re-export for the things UI imports.
+- `src/View/App.tsx` — top-level layout, OlasProvider, DevtoolsLauncher.
 - `src/View/Board.tsx`, `Column.tsx`, `SearchBar.tsx`, `CardEditor.tsx` — leaf UI.
 - `src/main.tsx` — bootstrap.
-- `tests/controller.test.ts` — 7 tests covering moveCard rollback, parallel writes, latest-wins abort, serial ordering, and form validation.
+- `tests/controller.test.ts` — tests covering moveCard rollback, parallel writes, latest-wins abort, serial ordering, and form validation.
 - `tests/CardEditor.test.tsx` — component tests using `fakeField`.
 
 ## Run it

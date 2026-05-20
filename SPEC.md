@@ -151,14 +151,14 @@ const userProfile = defineController((ctx, id: string) => {
 
 ### 3.2 The `ctx` object
 
-`ctx` exposes every primitive a controller can construct (cache, use, mutation, emitter, field, form, fieldArray, child, collection, session, lazyChild, effect, on, provide, inject), the lifecycle hooks (`onDispose`, `onSuspend`, `onResume`), and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
+`ctx` exposes every primitive a controller can construct (cache, use, mutation, emitter, field, form, fieldArray, child, attach, collection, session, lazyChild, effect, on, provide, inject), the lifecycle hooks (`onDispose`, `onSuspend`, `onResume`), and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
 
 At a glance, the primitives split into four groups:
 
 - **Reactive state & async data:** `cache`, `use`, `mutation`, `effect`.
 - **Forms & input:** `field`, `form`, `fieldArray`.
 - **Events & communication:** `emitter`, `on`, `provide`, `inject`.
-- **Tree composition:** `child`, `collection`, `dynamicCollection`, `session`.
+- **Tree composition:** `child`, `attach`, `collection`, `dynamicCollection`, `session`.
 - **Lifecycle & DI:** `onDispose`, `onSuspend`, `onResume`, `deps`.
 
 **On `ctx`'s breadth.** `ctx` is intentionally broad — it's the single source of "things bound to this controller's lifetime." That's a coherent responsibility, but the surface is large (~19 methods). Two consequences worth knowing upfront:
@@ -190,7 +190,7 @@ function useUser(ctx: Ctx, id: () => string) {
 
 ### 3.4 When can `ctx.*` be called?
 
-All `ctx` primitives — `cache`, `mutation`, `emitter`, `field`, `form`, `fieldArray`, `child`, `collection`, `session`, `lazyChild`, `effect`, `use`, `on`, `provide` — are callable **any time during the controller's active lifetime**, not only during the initial factory run. Everything you create through `ctx` is owned by that controller and disposed when it disposes.
+All `ctx` primitives — `cache`, `mutation`, `emitter`, `field`, `form`, `fieldArray`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `use`, `on`, `provide` — are callable **any time during the controller's active lifetime**, not only during the initial factory run. Everything you create through `ctx` is owned by that controller and disposed when it disposes.
 
 This makes runtime-driven shapes natural:
 
@@ -539,21 +539,25 @@ A mutation is a controller-scoped async function with first-class loading state,
 
 ```ts
 type MutationSpec<V, R> = {
+  name?: string                                          // appears in devtools logs
   mutate: (vars: V, signal: AbortSignal) => Promise<R>
   onMutate?: (vars: V) => Snapshot | void
   onSuccess?: (result: R, vars: V) => void
-  onError?: (err: unknown, vars: V, snapshot: Snapshot) => void
+  onError?: (err: unknown, vars: V, snapshot: Snapshot | undefined) => void
   onSettled?: (result: R | undefined, err: unknown | undefined, vars: V) => void
-  concurrency?: 'parallel' | 'latest-wins' | 'serial' // default: 'parallel'
+  concurrency?: 'parallel' | 'latest-wins' | 'serial'    // default: 'parallel'
+  retry?: RetryPolicy                                    // see §5.2
+  retryDelay?: RetryDelay                                // see §5.2
 }
 
 type Mutation<V, R> = {
   run: (vars: V) => Promise<R>
-  data: Signal<R | undefined>
-  error: Signal<unknown | undefined>
-  isPending: Signal<boolean>
-  lastVariables: Signal<V | undefined>
-  reset: () => void
+  data: ReadSignal<R | undefined>
+  error: ReadSignal<unknown | undefined>
+  isPending: ReadSignal<boolean>
+  lastVariables: ReadSignal<V | undefined>
+  reset(): void
+  dispose(): void
 }
 ```
 
@@ -639,17 +643,21 @@ Three primitives cover the entire form story: `Field<T>` (one value), `Form<S>` 
 ```ts
 const draft = ctx.field('', [required(), maxLength(200)])
 
-draft.value          // ReadSignal<T> — current value (Field IS a ReadSignal)
+draft.value          // T — current value (Field<T> IS a ReadSignal<T>; .value is unwrapped)
 draft.errors         // ReadSignal<string[]>
 draft.isValid        // ReadSignal<boolean>
 draft.isDirty        // ReadSignal<boolean>
 draft.touched        // ReadSignal<boolean>
 draft.isValidating   // ReadSignal<boolean>
-draft.set(value)     // writes value, runs validators, marks dirty
-draft.reset()        // back to initial
+draft.set(value)              // writes value, runs validators, marks dirty
+draft.reset()                 // restore initial value, clear dirty/touched/errors
 draft.markTouched()
-draft.revalidate()   // re-run validators; resolves to post-run isValid
+draft.revalidate()            // re-run validators; resolves to post-run isValid
+draft.setAsInitial(value)     // bump the "initial" baseline (form-from-server pattern, §8.4)
+draft.dispose()               // explicit teardown when owned outside a ctx (rare)
 ```
+
+See §8.4 for when to reach for `setAsInitial`. See `pitfalls/field-value-shape.md` for the `field.value` vs `form.value` shape gotcha.
 
 `Validator<T>` signature:
 
@@ -1274,7 +1282,7 @@ createRoot(appController, {
 })
 ```
 
-In v1, only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) do not propagate cross-tab — the page-array payload is too heavy to be a safe default. Plugin events still fire with `kind: 'infinite'` for forward compatibility; the cross-tab plugin filters them out.
+Only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) do not propagate cross-tab — the page-array payload is too heavy to be a safe default. Plugin events still fire with `kind: 'infinite'` so future plugins can opt in; the built-in cross-tab plugin filters them out.
 
 **Echo prevention is layered:** (1) the `QueryClient` marks remote-applied writes with `isRemote: true` on `SetDataEvent` / `InvalidateEvent`, and plugins skip rebroadcast in that case; (2) messages carry a `sourceId`, and the plugin filters its own; (3) messages carry a monotonic `msgId`, and out-of-order or duplicate messages are dropped.
 
@@ -1795,7 +1803,7 @@ entities.update(Post, 'p1', { liked: true })    // patches feedQuery, profileQue
 entities.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 1 }))
 ```
 
-Both patterns share the same core; neither is a framework. The userland helper is the right choice for ~5 queries and few entity types; the plugin scales further by removing the per-touch-site boilerplate. v1 limitation: infinite-query payloads aren't walked (mirrors the §13.2 cross-tab v1 constraint); tracked in `BACKLOG.md`.
+Both patterns share the same core; neither is a framework. The userland helper is the right choice for ~5 queries and few entity types; the plugin scales further by removing the per-touch-site boilerplate. Infinite-query payloads aren't walked (mirrors the §13.2 cross-tab constraint).
 
 Future-work ideas — additional packages, storage adapters, browser-extension devtools, cross-tab cache sync, normalization, lint rules — live in `BACKLOG.md`, not here. The spec describes what *is*.
 
@@ -1828,11 +1836,15 @@ Vanilla "adapter" — no package needed. Signals already expose `.subscribe()` /
 
 Splitting into `signals` / `runtime` / `query` / `forms` would give marginal bundle-size wins and real DX cost (more imports, version-sync issues, more changesets per release). Tree-shaking handles unused exports inside a single package. Estimated full-bundle size ~6–8 kb gzip with `@preact/signals-core` included.
 
+### 19.4 Sub-path exports
+
+Each published package ships from a single `src/index.ts` (§19.8). The only sub-path export today is `@kontsedal/olas-core/testing` (test-only helpers, kept grep-able). New sub-paths require both a `package.json#exports` entry and a `tsdown` entry so the type and runtime files are emitted under the same alias.
+
 ### 19.5 Build tooling
 
 | Concern     | Choice                                                                                              |
 | ----------- | --------------------------------------------------------------------------------------------------- |
-| Bundler     | **tsup** — zero-config ESM+CJS+dts. Output `dist/index.{mjs,cjs,d.ts}` per package.                 |
+| Bundler     | **tsdown** — ESM+CJS+dts in one pass. Output `dist/{mjs,cjs,d.mts,d.cts}` per package.              |
 | Test runner | **vitest** — ESM-first, vite ecosystem, expect-style API.                                           |
 | Linter / formatter | **biome** — one Rust-based tool for lint + format.                                            |
 | Versioning  | **changesets** — automated bumps + changelogs for monorepos.                                        |
@@ -1842,7 +1854,7 @@ Splitting into `signals` / `runtime` / `query` / `forms` would give marginal bun
 
 ### 19.6 Module format
 
-Dual **ESM + CJS** via tsup `format: ['esm', 'cjs']`. ESM-only is cleaner ideologically but cuts off a chunk of users; ~5 minutes of build config to support both.
+Dual **ESM + CJS** via tsdown. ESM-only is cleaner ideologically but cuts off a chunk of users; the dual emission is one config line.
 
 ### 19.7 Peer dependencies
 
@@ -1876,19 +1888,28 @@ olas/
         index.ts               # single public entry
         signals/
         controller/
-        query/
+        query/                 # includes plugin.ts (QueryClientPlugin) and dehydrate/hydrate
         forms/
         timing/
         errors.ts
         devtools.ts
-        ssr.ts
+        testing.ts             # @kontsedal/olas-core/testing sub-path export
       tests/
-      tsup.config.ts
+      tsdown.config.ts
       tsconfig.json
       package.json
-    react/
-    persist/
-  examples/                    # placeholder; worked example added later
+    react/                     # OlasProvider, useRoot/use/useQuery/useField, KeepAlive
+    persist/                   # usePersisted + localStorage adapter
+    zod/                       # zodValidator, formFromZod
+    devtools/                  # in-app DevtoolsPanel + DevtoolsLauncher
+    cross-tab/                 # BroadcastChannel-backed cache-sync QueryClientPlugin
+    entities/                  # entity-normalization QueryClientPlugin
+    realtime/                  # useRealtimePatcher + useLiveStream
+  examples/
+    kanban/                    # React + mutations + zod forms + devtools
+    reader-ssr/                # React + SSR dehydrate/hydrate
+    stock-ticker/              # vanilla TS, no UI framework
+    virtualized-table/         # React + rows-are-data (§11.2) at 50k rows
   SPEC.md
   README.md
   LICENSE
@@ -1967,6 +1988,12 @@ type Ctx<TDeps = AmbientDeps> = {
     props: Props,
     options?: { deps?: Partial<TDeps> },
   ): Api
+
+  attach<Props, Api>(
+    def: ControllerDef<Props, Api>,
+    props: Props,
+    options?: { deps?: Partial<TDeps> },
+  ): { api: Api; dispose: () => void }
 
   collection<Item, Props, Api>(
     spec: CollectionSpec<Item, Props, Api>,
@@ -2184,8 +2211,8 @@ type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> 
   gcTime?: number
   retry?: RetryPolicy
   retryDelay?: RetryDelay
-  queryId?: string           // forward-compat (infinite cross-tab is deferred); see §13.2
-  crossTab?: boolean         // no-op for infinite queries in v1; see §13.2
+  queryId?: string           // accepted on infinite queries; cross-tab plugin ignores them — see §13.2
+  crossTab?: boolean         // accepted on infinite queries; cross-tab plugin filters them out — see §13.2
 }
 
 type InfiniteQuery<Args extends unknown[], TPage, TItem> = {

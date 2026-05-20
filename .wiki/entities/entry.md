@@ -10,7 +10,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../modules/signals.md }
   - { type: related, target: ../pitfalls/isstale-needs-timer.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-20
 confidence: high
 ---
 
@@ -58,14 +58,16 @@ A retried fetch is one logical fetch to the consumer — `isFetching` stays true
 
 ## Snapshot stack (optimistic updates, §6.4)
 
-`setData(updater)` records `{ id, prev: previousData, live: true }` and pushes onto `this.snapshots`. Returns `{ rollback }`. Rollback sets `data` back to that snapshot's captured `prev` and marks the snapshot dead.
+`setData(updater)` records `{ id, prev: previousData, live: true }` and pushes onto `this.snapshots`. Returns `{ rollback, finalize }` (`Snapshot`, see `entry.ts:248-287`). Rollback sets `data` back to that snapshot's captured `prev` and marks the snapshot dead. `finalize` (called by mutation `onSuccess`) drops the snapshot from the live set without reverting — `hasPendingMutations` clears when no live snapshots remain.
 
 The stack is what enables positional rollback: when mutation B's snapshot rolls back, data goes to "state after mutation A's update" because that was the value captured at the moment of B's setData. Spec §6.4.
 
-`finalizeSnapshot(snapshot)` (used by mutation `onSuccess` — not wired in current code) drops the snapshot from the live set without reverting; clears `hasPendingMutations` when no live snapshots remain.
-
 ## firstValue / dispose
 
-`firstValue()` resolves with the next successful data (or rejects on error). If already settled when called, resolves/rejects synchronously via `Promise.resolve` / `Promise.reject`.
+`firstValue()` resolves with the next successful data (or rejects on error). If already settled when called, resolves/rejects synchronously via `Promise.resolve` / `Promise.reject`. While pending, the resolver is tracked in `pendingFirstValueRejects: ((err: unknown) => void)[]` so `dispose()` can reject all outstanding `firstValue()` promises with `DOMException('Entry disposed', 'AbortError')` (see `entry.ts:289-316, 328-345`).
 
-`dispose()` aborts current fetch, clears the staleness timer, marks `disposed: true`. Idempotent.
+`dispose()` aborts current fetch, clears the staleness timer, marks `disposed: true`, and rejects pending `firstValue()` promises. Idempotent.
+
+## Hydrated entries
+
+When `client.bind(...)` finds a query already populated from `dehydrate`/`hydrate`, the entry constructor seeds `status: 'success'` and derives `isStale` from `Date.now() - lastUpdatedAt` (see `entry.ts:88-110`). If the data is fresh enough that the remaining stale window > 0, the constructor also schedules a partial-length `setTimeout` so the entry flips to stale at the correct wall-clock moment — preserving stale-time semantics across the SSR boundary.

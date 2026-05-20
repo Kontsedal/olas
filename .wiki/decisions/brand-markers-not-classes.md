@@ -7,7 +7,7 @@ covers:
   - packages/core/src/query/define.ts
 edges:
   - { type: uses, target: ../modules/forms.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-20
 confidence: medium
 ---
 

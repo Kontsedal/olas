@@ -6,14 +6,12 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 ## How to use this file
 
-- **Append-only by convention.** Don't reorder or rewrite history without a reason; tag items as the world moves around them.
 - **Status tags** at the start of each item's heading:
   - `[idea]` — sketch, not committed to.
   - `[planned]` — agreed on, not started.
   - `[in-progress]` — actively being worked.
-  - `[done]` — landed; left here with the commit / spec section that absorbed it, so the trail isn't lost.
   - `[dropped]` — explicitly decided against; the reasoning matters.
-- **Move out, don't delete.** When an item lands in the code, change its status to `[done]` and add a one-line pointer to where it lives now (commit hash, spec section, wiki page). When it's killed, mark `[dropped]` with the reason. Both are searchable later.
+- **Shipped items are removed.** Once an item lands in the code, delete the entry — the wiki and CHANGELOGs are the durable trail. Dropped items stay (tagged `[dropped]`) because the reasoning matters next time the idea resurfaces.
 - **One heading per item.** A short body — context, constraints, what would change, where it'd land. If it grows large, link out to a wiki page or a draft RFC.
 
 ## Conventions
@@ -25,22 +23,6 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 ---
 
 ## Packages
-
-### [done] `@kontsedal/olas-entities` — entity normalization layer
-
-[from SPEC §18.1] Shipped as `@kontsedal/olas-entities` (`packages/entities/src/index.ts`). Built on `QueryClientPlugin`. To enable the package to observe data flowing into query caches, core gained `SetDataEvent.source: 'set' | 'fetch' | 'remote'` (so fetch results are visible, not just `setData` calls) and `QueryClientPluginApi.setEntryData(queryId, keyArgs, updater)` (so the plugin can patch arbitrary queries by `keyArgs` during backprop without recovering the original `callArgs`). Cross-tab now skips `source: 'fetch'`.
-
-Surface:
-- `defineEntity<T>({ name, idOf })` — module-scope entity descriptor.
-- `entitiesPlugin([Post, User, ...])` — `QueryClientPlugin` + per-entity store ops.
-- `entities.signal(Post, id) → ReadSignal<Post | undefined>` for reactive per-id reads.
-- `entities.upsert(Post, raw)` for non-query branding (events, preloads).
-- `entities.update(Post, id, patch)` — shallow-merge + backpropagate to every query holding the entity. Batched.
-- `entities.get` / `entities.invalidate` round out the surface.
-
-Walk strategy: recursive traversal of every `SetDataEvent`'s data, with each registered entity's `idOf` predicate run per subtree node. Reverse index `(entityId → bindings of (queryId, keyArgs, path[]))` rebuilds on every observation. Auto-walk dedup'd via `Object.is` so post-update walks don't loop.
-
-v1 constraints (tracked as new follow-ups below): infinite queries not walked; `update` is shallow-merge only; no per-entity LRU eviction; no `entity.subscribe(id)` outside React (use `signal.subscribe`). See `.wiki/modules/entities.md`.
 
 ### [idea] `@kontsedal/olas-entities` — walk `kind: 'infinite'` query payloads
 
@@ -58,13 +40,9 @@ Orphaned entity slots (entity once observed, no longer in any query) stay in the
 
 After §13.2 grew the `source: 'set' | 'fetch' | 'remote'` field, `source === 'remote'` carries the same information as `isRemote === true`. They're kept both for back-compat — existing plugins (cross-tab) gate on `isRemote`, new plugins (entities) can gate on `source`. Pick one in v2 and drop the other. Migration: keep `isRemote` (shorter, predates `source`) and reserve `source` strictly for `'set' | 'fetch'`.
 
-### [done] `@kontsedal/olas-realtime` — realtime-to-cache patcher
+### [idea] `@kontsedal/olas-offline` — offline-first sync / mutation queueing + fetcher retry layer
 
-[from SPEC §16.5] The recurring shape "WebSocket / SSE event arrives → patch some queries". The framework primitive (`ctx.effect` + `setData`) is enough; the package wraps the typical dispatching boilerplate. Shipped as `@kontsedal/olas-realtime` (commit `38e2859`, `packages/realtime/src/index.ts`) with both helpers from SPEC §16.5: `useRealtimePatcher<TEvent>(ctx, channel, handlers)` (typed by `event.type` discriminant) and `defineLiveStream<TEvent>(ctx, channel, { capacity, flushMs })` (capped tail buffer + coalesced writes for high-rate streams). Consumers register a `RealtimeService` on `ctx.deps`; the package ships no default transport.
-
-### [idea] `@kontsedal/olas-offline` — offline-first sync / mutation queueing
-
-Persistent outbox + conflict-resolution + retry-on-reconnect for mutations. Today users can layer this themselves over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`. A canonical package would standardize the queue / merge / retry semantics for apps that want a Notion / Linear-style sync model.
+Persistent outbox + conflict-resolution + retry-on-reconnect for mutations, plus a reusable fetcher middleware (connection state + exponential backoff + jitter). Today users layer this themselves over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`; per-query `retry` / `retryDelay` cover the simple backoff cases inline. A canonical package would standardize the queue / merge / retry / reconnect semantics for apps that want a Notion / Linear-style sync model.
 
 ### [idea] `@kontsedal/olas-vue` — Vue adapter
 
@@ -96,20 +74,6 @@ Examples:
 
 `@kontsedal/olas-persist` ships a `localStorage` adapter today. IndexedDB is a natural next adapter for larger payloads or async-friendly storage.
 
-### [in-progress] Cross-tab cache sync via `BroadcastChannel`
-
-Lives in `@kontsedal/olas-cross-tab` (new package). `QueryClientPlugin` surface added to core. SPEC amendment at §13.2; new query-spec fields `crossTab` and `queryId` (§5.2). See `.wiki/modules/cross-tab.md`.
-
-### [idea] Offline / retry / backoff layer for fetchers
-
-Today users write their own retry logic inside the fetcher (or use the existing `retry` / `retryDelay` per-query options). A reusable middleware layer that handles connection state + exponential backoff + jitter would consolidate the pattern.
-
-## Devtools
-
-### [in-progress] Production build flag to strip `__debug` emission entirely
-
-[from SPEC §23] The devtools machinery is always present in `@kontsedal/olas-core`. `process.env.NODE_ENV !== 'production'` gating already turns subscribers off; the events themselves still fire (a no-op `Set` walk). A compile-time flag (`__DEV__`-style or a tsdown plugin) could elide the emission sites in prod builds.
-
 ## Forms
 
 ### [idea] Promote root-level Zod `.refine(...)` to a form-level validator in `formFromZod`
@@ -122,23 +86,27 @@ Today users write their own retry logic inside the fetcher (or use the existing 
 
 ## Controllers
 
+### [planned] Implement `ctx.collection` / `ctx.session` / `ctx.lazyChild`
+
+[from SPEC §11.1, §16.5] The spec describes three dynamic-child primitives that have no implementation yet:
+
+- **`ctx.collection`** (SPEC §11.1) — diff-by-key controller-per-item collection over a reactive source; homogeneous (`controller` + `propsOf`) or factory form (`factory: (item) => { controller, props }`). Drives plugin/block/widget containers (Notion blocks, dashboard widgets, IDE panels).
+- **`ctx.session`** (SPEC §11.1) — ephemeral child with explicit `dispose()`. For modals, inline edit sessions, wizards, command palette — child lifetime bounded by either explicit dispose or parent dispose, whichever comes first.
+- **`ctx.lazyChild`** (SPEC §16.5) — code-split child controller with lazy module loading + status tracking.
+
+`ctx.attach` (shipping) covers the "ephemeral child with handle" use case for a single item. The collection diffing engine and the factory-per-key shape are the new work. Today, callers building dynamic lists either iterate via `signal<Item[]>` + per-item subscriptions (SPEC §11.2 "rows are data") or open a discrete child via `ctx.attach`.
+
+Implementation requires: key-diff loop driven by an effect, child-per-key bookkeeping with disposal on key removal, factory-form discrimination per `factory(item).controller` identity (reconstruct on type change). Tests would mirror those for `ctx.child` plus diff scenarios.
+
 ### [idea] `root.replaceController(path, newDef)` — in-place HMR-friendly swap
 
 [from SPEC §16.5] Surgically replace one controller while preserving siblings and cache subscriptions. Significant complexity (subscription rebinding, prop reconciliation). The current recommended HMR shape (full root rebuild) sidesteps this; revisit only if rebuild ergonomics turn out to be a real friction point.
 
 ## Documentation / polish
 
-### [planned] Inline TSDoc on all exported types
+### [in-progress] Inline TSDoc on all exported types
 
-Public APIs are typed but not all carry TSDoc. Going through the public surface (per-package `index.ts` re-exports) and writing one or two sentences plus a `@example` per export would materially improve IDE hover.
-
-### [planned] Stdlib composables documentation
-
-`useDebounced`, `usePagination`, `useSubmit` — recurring shapes mentioned across the spec without a single dedicated page. Either a wiki "patterns" page or a `RECIPES.md` section enumerating them with reference implementations.
-
-### [planned] Migration notes
-
-Drafting guides for users coming from TanStack Query and Redux Toolkit (`MIGRATING.md` exists; expand). Specific equivalents: `useQuery` → `ctx.use(query)`, `useMutation` → `ctx.mutation`, slice/reducer → controller, selector → `computed`.
+The major exports carry one-line descriptions (e.g. `defineQuery`, `defineController`, `useField`). What's still missing: `@example` blocks attached to public surfaces and TSDoc on the long tail of utility exports. Going through each package's `index.ts` re-exports systematically and adding one `@example` per primitive would materially improve IDE hover. Worth doing alongside the next API.md sweep.
 
 ## Loose ends
 

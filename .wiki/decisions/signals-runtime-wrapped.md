@@ -8,7 +8,7 @@ covers:
 edges:
   - { type: uses, target: ../modules/signals.md }
   - { type: related, target: ../pitfalls/preact-signals-overload-return.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-20
 confidence: high
 ---
 

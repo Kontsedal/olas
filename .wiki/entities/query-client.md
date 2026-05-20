@@ -14,7 +14,7 @@ edges:
   - { type: uses, target: entry.md }
   - { type: uses, target: ../decisions/per-root-query-client.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-19
+last_verified: 2026-05-20
 confidence: medium
 ---
 
@@ -47,7 +47,7 @@ A `Query` is module-scoped. When `bindEntry` runs on this client for that query,
 
 ## Mutation inflight counter
 
-`mutationsInflight$: Signal<number>` lives on the client (not on individual mutations). `MutationImpl` receives a reference and `.update(n => n+1)` on each `executeRun` start, `.update(n => n-1)` on settle (in `finally`). `waitForIdle()` waits for this AND for all per-entry `isFetching` flags. Initial implementation in `client.ts:200-260`.
+`mutationsInflight$: Signal<number>` lives on the client (not on individual mutations). `MutationImpl` receives a reference and `.update(n => n+1)` on each `executeRun` start, `.update(n => n-1)` on settle (in `finally`). `waitForIdle()` waits for this AND for all per-entry `isFetching` flags. Counter signal at `client.ts:346`; `waitForIdle` at `client.ts:710-740`.
 
 ## SSR
 

@@ -28,8 +28,8 @@ Why: in TanStack, the "subscriber" is a component; component lifetime drives sub
 | `queryClient.prefetchQuery(...)`          | `userQuery.prefetch(...args)`                                          |
 | `QueryClientProvider`                     | `OlasProvider` (provides the root, which owns the QueryClient)        |
 | `useIsFetching`                           | Subscribe to `subscription.isFetching` directly via `use()`           |
-| Optimistic update with rollback           | `mutation.onMutate` returns `query.setData(...).rollback` for context |
-| `keepPreviousData: true`                  | `ctx.use(q, { key, ... })` with `keepPreviousData` on the query def   |
+| Optimistic update with rollback           | `mutation.onMutate` returns the `Snapshot` from `query.setData(...)`; `onError` calls `snapshot.rollback()` |
+| `keepPreviousData: true`                  | `keepPreviousData: true` on the `defineQuery` spec (per-query, not per-subscriber) |
 | `staleTime` / `gcTime`                    | Same names — declared per query in `defineQuery`                       |
 | `refetchOnWindowFocus`                    | Per-query option in `defineQuery` (off by default)                    |
 | `useQueries` for parallel queries         | Multiple `ctx.use(...)` calls in the same controller                  |

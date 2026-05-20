@@ -49,11 +49,23 @@ The **Clear** button empties the three event logs (the tree is live state, not a
 ## API
 
 ```ts
-function DevtoolsPanel(props: {
-  root: Root<unknown>
-  defaultTab?: 'tree' | 'cache' | 'mutations' | 'fields'
-  maxEntries?: number    // per-log cap, oldest drop first; default 100
+function DevtoolsLauncher(props: {
+  root: Pick<Root<unknown>, '__debug'>
+  defaultTab?: DevtoolsTab
+  maxEntries?: number       // per-log cap, oldest drop first; default 100
+  urlHashKey?: string       // forwarded to the panel; persists open-tab in the URL
+  storageKey?: string       // localStorage key for window position/size; default 'olas-devtools-window'
+  initial?: { x?: number; y?: number; w?: number; h?: number }
 }): JSX.Element
+
+function DevtoolsPanel(props: {
+  root: Pick<Root<unknown>, '__debug'>
+  defaultTab?: DevtoolsTab
+  maxEntries?: number
+  urlHashKey?: string
+}): JSX.Element
+
+type DevtoolsTab = 'tree' | 'cache' | 'mutations' | 'fields' | 'events'
 
 // Lower-level store — exported so consumers can build their own UI.
 class DevtoolsStore {
