@@ -1786,7 +1786,7 @@ const patchPostEverywhere = (id: string, patch: Partial<Post>) => {
 - `defineEntity<T>({ name, idOf })` — module-scope entity descriptor.
 - `entitiesPlugin([Post, User, ...])` — install via `RootOptions.plugins[]`.
 - `entities.signal(Post, id) → ReadSignal<Post | undefined>` — reactive per-id reads.
-- `entities.update(Post, id, patchOrUpdater)` — accepts `Partial<T>` (shallow merge) or `(prev: T) => T` (updater). Backpropagates to every query holding the entity, batched into one round of subscriber notifications. Uses `QueryClientPluginApi.setEntryData` (§13.2) to write back.
+- `entities.update(Post, id, patchOrUpdater, options?)` — accepts `Partial<T>` (default shallow merge; pass `{ merge: 'deep' }` to recursively merge plain objects, with arrays / non-plain values replacing) or `(prev: T) => T` (updater). Backpropagates to every query holding the entity, batched into one round of subscriber notifications. Uses `QueryClientPluginApi.setEntryData` (§13.2) to write back — including for infinite queries (page arrays are walked transparently).
 - `entities.upsert / get / invalidate / entries / bindings` — round out the surface (last two are devtools snapshots).
 
 ```ts
@@ -1803,7 +1803,7 @@ entities.update(Post, 'p1', { liked: true })    // patches feedQuery, profileQue
 entities.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 1 }))
 ```
 
-Both patterns share the same core; neither is a framework. The userland helper is the right choice for ~5 queries and few entity types; the plugin scales further by removing the per-touch-site boilerplate. Infinite-query payloads aren't walked (mirrors the §13.2 cross-tab constraint).
+Both patterns share the same core; neither is a framework. The userland helper is the right choice for ~5 queries and few entity types; the plugin scales further by removing the per-touch-site boilerplate. Infinite-query payloads ARE walked — the page-array shape traverses transparently, and `setEntryData` writes back through `InfiniteEntry.setData`. The cross-tab plugin still skips infinite payloads (§13.2) — different concern (payload weight on the wire).
 
 Future-work ideas — additional packages, storage adapters, browser-extension devtools, cross-tab cache sync, normalization, lint rules — live in `BACKLOG.md`, not here. The spec describes what *is*.
 
@@ -1993,7 +1993,7 @@ type Ctx<TDeps = AmbientDeps> = {
     def: ControllerDef<Props, Api>,
     props: Props,
     options?: { deps?: Partial<TDeps> },
-  ): { api: Api; dispose: () => void }
+  ): { api: Api; dispose: () => void; suspend: () => void; resume: () => void }
 
   collection<Item, Props, Api>(
     spec: CollectionSpec<Item, Props, Api>,

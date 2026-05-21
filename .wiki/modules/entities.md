@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: query.md }
   - { type: uses, target: signals.md }
   - { type: related, target: cross-tab.md }
-last_verified: 2026-05-20
+last_verified: 2026-05-21
 confidence: medium
 ---
 
@@ -28,7 +28,7 @@ Layered on the `QueryClientPlugin` surface (SPEC §13.2). Solves the cross-query
 | `plugin.signal<T>(entity, id)` | `(entity, id) => ReadSignal<T \| undefined>` | Lazily-allocated per-id signal. Stable across calls. Throws when `entity` wasn't registered (catches the mistake at the call site instead of leaking orphan signals). |
 | `plugin.get<T>(entity, id)` | `(entity, id) => T \| undefined` | Non-reactive peek. Same registration check. |
 | `plugin.upsert<T>(entity, value)` | `(entity, value) => void` | Explicit branding for non-query sources (WebSocket events, preloads). |
-| `plugin.update<T extends object>(entity, id, patchOrUpdater)` | `(entity, id, Partial<T> \| ((prev: T) => T)) => void` | Backpropagate to every query holding the id. Batched. Shallow-merge with `Partial<T>` or compute via `(prev) => next`. Warns in dev when the entity isn't in the store (no-op in prod). |
+| `plugin.update<T extends object>(entity, id, patchOrUpdater, options?)` | `(entity, id, Partial<T> \| ((prev: T) => T), { merge?: 'shallow' \| 'deep' }?) => void` | Backpropagate to every query holding the id. Batched. `Partial<T>` patch merges per `options.merge` (default `'shallow'`); `(prev) => next` updaters compute the result directly. `'deep'` recurses into plain objects (arrays / non-plain values replace). Warns in dev when the entity isn't in the store (no-op in prod). |
 | `plugin.invalidate<T>(entity, id)` | `(entity, id) => void` | Remove from store. Does NOT mutate queries. |
 | `plugin.entries<T>(entity)` | `(entity) => ReadonlyMap<string, T>` | Devtools snapshot. Fresh `Map<id, T>` per call — mutating it does not affect the store. |
 | `plugin.bindings<T>(entity, id)` | `(entity, id) => readonly EntityBinding[]` | Devtools view of the reverse index for one id. Deep-cloned; safe to mutate. Empty array when the entity isn't held by any query. |
@@ -76,7 +76,7 @@ This relies on `setAtPath` returning a structure that shares siblings by referen
 
 ## Constraints (v1)
 
-- **Regular queries only.** Infinite queries (`kind: 'infinite'`) are ignored by the walk in v1. Page-array shape walking is deferred to v2 (mirrors cross-tab's v1 constraint).
+- **Regular and infinite queries both walked.** Infinite payloads (`kind: 'infinite'`) traverse the `TPage[]` shape transparently — the walker's existing array branch handles page indices, and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData` (`packages/core/src/query/client.ts`). Cross-tab still skips infinite (different concern: payload size).
 - **One plugin instance per root.** Sharing a plugin instance across `createRoot(...)` calls would clobber the store and corrupt the reverse index. Construct a fresh `entitiesPlugin([...])` per root.
 - **Entity must be registered.** All public methods throw when called with an `EntityDef` not in the plugin's entities array. Catches the mistake at the call site instead of leaking orphan signals.
 - **`update` default is shallow-merge** (`Partial<T>`). The function form `update(id, prev => next)` covers non-shallow updates without forcing a third package.
@@ -90,7 +90,7 @@ Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the 
 
 - Per-id signals are interned in a `Map<entityName, Map<id, Signal>>`. They survive until plugin `dispose` (the slot Map is cleared all at once).
 - Reverse-index entries are tied to query entries. On `onGc(event)`, the bindings for the gc'd entry are dropped from the reverse index. The entity slot stays (a detail view subscribed to that entity should keep working even when its source query is gc'd).
-- Orphaned entity slots are bounded by `unique-entity-id` count for the app's lifetime. If this becomes a leak, add per-entity LRU eviction (BACKLOG follow-up).
+- Orphaned entity slots accumulate over the app's lifetime. Set `defineEntity({ maxSlots })` to cap the slot map: on overflow, the plugin evicts orphans (entities with no live bindings) in LRU order on the next slot insert. Bound entities are never evicted; if the cap is smaller than the bound-entity count, the cap is silently exceeded. A one-shot dev warning still fires at `SLOT_BLOAT_WARN_AT` (10k) for partitions without a cap.
 
 ## Tests
 

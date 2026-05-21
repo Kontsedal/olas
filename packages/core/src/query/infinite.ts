@@ -128,6 +128,13 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private readonly retry: RetryPolicy
   private readonly retryDelay: RetryDelay
   private readonly itemsOf?: (page: TPage) => TItem[]
+  /**
+   * Mirrors `Entry.onSuccessData`. Fires from `applyFetchSuccess`-equivalent
+   * branches AFTER `pages.set(...)` settles. Used by `InfiniteClientEntry`
+   * to emit `SetDataEvent { kind: 'infinite', source: 'fetch' }` for
+   * `QueryClientPlugin`s (e.g. entity normalization).
+   */
+  private readonly onSuccessData?: (pages: TPage[]) => void
 
   constructor(opts: {
     fetcher: (pageCtx: { pageParam: PageParam; signal: AbortSignal }) => Promise<TPage>
@@ -138,6 +145,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     staleTime?: number
     retry?: RetryPolicy
     retryDelay?: RetryDelay
+    onSuccessData?: (pages: TPage[]) => void
   }) {
     this.fetcher = opts.fetcher
     this.initialPageParam = opts.initialPageParam
@@ -147,6 +155,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.staleTime = opts.staleTime ?? 0
     this.retry = opts.retry ?? 0
     this.retryDelay = opts.retryDelay ?? 1000
+    this.onSuccessData = opts.onSuccessData
     this.pageParams = signal<PageParam[]>([])
     this.data = computed(() => {
       const ps = this.pages.value
@@ -207,6 +216,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           this.isStale.set(this.staleTime === 0)
         })
         if (this.staleTime > 0) this.scheduleStaleness()
+        this.onSuccessData?.(this.pages.peek())
       },
       'initial',
     )
@@ -244,6 +254,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           this.isFetching.set(false)
           this.lastUpdatedAt.set(Date.now())
         })
+        this.onSuccessData?.(this.pages.peek())
       },
       'next',
     ).then(() => {})
@@ -282,6 +293,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           this.isFetching.set(false)
           this.lastUpdatedAt.set(Date.now())
         })
+        this.onSuccessData?.(this.pages.peek())
       },
       'prev',
     ).then(() => {})

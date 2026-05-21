@@ -480,7 +480,7 @@ export class ControllerInstance {
         def: ControllerDef<Props, Api>,
         props: Props,
         options?: { deps?: Partial<Record<string, unknown>> },
-      ): { api: Api; dispose: () => void } {
+      ): { api: Api; dispose: () => void; suspend: () => void; resume: () => void } {
         const segment = self.makeChildSegment(getFactory(def), getName(def))
         const override = options?.deps
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
@@ -498,6 +498,33 @@ export class ControllerInstance {
             if (idx >= 0) self.entries.splice(idx, 1)
             try {
               childInstance.dispose()
+            } catch (err) {
+              dispatchError(self.rootShared.onError, err, {
+                kind: 'effect',
+                controllerPath: self.path,
+              })
+            }
+          },
+          // Suspend / resume cascade through the child instance's lifecycle
+          // entries (same code path as `root.suspend()`); the child's state
+          // machine handles the no-op cases (suspending a disposed child,
+          // resuming an active child) on its own — no need to track an
+          // extra flag here.
+          suspend: () => {
+            if (disposed) return
+            try {
+              childInstance.suspend()
+            } catch (err) {
+              dispatchError(self.rootShared.onError, err, {
+                kind: 'effect',
+                controllerPath: self.path,
+              })
+            }
+          },
+          resume: () => {
+            if (disposed) return
+            try {
+              childInstance.resume()
             } catch (err) {
               dispatchError(self.rootShared.onError, err, {
                 kind: 'effect',

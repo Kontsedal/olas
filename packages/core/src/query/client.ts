@@ -229,6 +229,13 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     callArgs: readonly unknown[],
     keyArgs: readonly unknown[],
     spec: InfiniteQuerySpec<any, PageParam, TPage, TItem>,
+    /**
+     * Prepared by `QueryClient.bindInfiniteEntry`. When the infinite query
+     * has a `queryId`, the closure calls back into `QueryClient.emitSetData`
+     * with `kind: 'infinite', source: 'fetch'` after every successful page
+     * write (initial, next, prev). Mirrors `ClientEntry.onFetchSuccess`.
+     */
+    onFetchSuccess: ((pages: TPage[]) => void) | undefined,
   ) {
     this.client = client
     this.query = query
@@ -248,6 +255,11 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       staleTime: spec.staleTime,
       retry: spec.retry as RetryPolicy | undefined,
       retryDelay: spec.retryDelay as RetryDelay | undefined,
+      // Fire SetDataEvent { kind: 'infinite', source: 'fetch' } whenever a
+      // fetch settles successfully. Plugins (e.g. entity normalization) use
+      // this to walk the pages and update their normalized stores. Mirrors
+      // the regular `ClientEntry`'s `onFetchSuccess` closure plumbing.
+      onSuccessData: onFetchSuccess,
     })
   }
 
@@ -578,15 +590,28 @@ export class QueryClient {
   ): void {
     const query = lookupRegisteredQuery(queryId)
     if (!query) return
-    if (query.__olas !== 'query') return
-    const internal = query as unknown as AnyQuery
-    const map = this.maps.get(internal)
-    if (!map) return
     const hash = stableHash(keyArgs)
+    if (query.__olas === 'query') {
+      const internal = query as unknown as AnyQuery
+      const map = this.maps.get(internal)
+      if (!map) return
+      const entry = map.get(hash)
+      if (!entry) return
+      entry.entry.setData(updater as (prev: unknown) => never)
+      this.emitSetData(internal, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
+      return
+    }
+    // Infinite query. The plugin's `SetDataEvent.data` for `kind: 'infinite'`
+    // is `TPage[]` (the pages array), so the same path-based walk + write
+    // mechanics apply — we just route through `InfiniteEntry.setData` and
+    // re-emit with `kind: 'infinite'`.
+    const internal = query as unknown as AnyInfiniteQuery
+    const map = this.infiniteMaps.get(internal)
+    if (!map) return
     const entry = map.get(hash)
     if (!entry) return
-    entry.entry.setData(updater as (prev: unknown) => never)
-    this.emitSetData(internal, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
+    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[])
+    this.emitSetData(internal, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
   }
 
   applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void {
@@ -885,12 +910,22 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as InfiniteClientEntry<TPage, TItem, unknown> | undefined
     if (!entry) {
+      // Mirror the regular-query plumbing in `bindEntry`: build the
+      // SetDataEvent emitter here so `emitSetData` stays private. The
+      // closure captures (query, keyArgs, this) and is consumed by
+      // `InfiniteEntry.onSuccessData` from inside each successful page
+      // batch (initial, next, prev).
+      const onFetchSuccess: ((pages: TPage[]) => void) | undefined =
+        internal.__spec.queryId != null
+          ? (pages) => this.emitSetData(internal, keyArgs, pages, 'infinite', 'fetch')
+          : undefined
       entry = new InfiniteClientEntry<TPage, TItem, unknown>(
         this,
         internal,
         args,
         keyArgs,
         internal.__spec,
+        onFetchSuccess,
       )
       map.set(hash, entry as InfiniteClientEntry<unknown, unknown, unknown>)
       entry.scheduleGcIfOrphan()

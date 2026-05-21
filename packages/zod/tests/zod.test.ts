@@ -84,6 +84,93 @@ describe('formFromZod', () => {
     root.dispose()
   })
 
+  test('extraValidators attaches an additional async rule on a specific leaf', async () => {
+    const schema = z.object({
+      title: z.string().min(1),
+      address: z.object({ street: z.string() }),
+    })
+    const reservedTitles = new Set(['admin', 'root'])
+    const def = defineController((ctx) => ({
+      form: formFromZod(ctx, schema, {
+        initials: { title: 'admin', address: { street: 'Main' } },
+        extraValidators: {
+          title: (value) => (reservedTitles.has(value as string) ? 'title is reserved' : null),
+        },
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    const titleField = (root.form.fields as { title: { errors: { value: string[] } } }).title
+    expect(titleField.errors.value).toContain('title is reserved')
+
+    // Sibling field unaffected.
+    const street = (
+      root.form.fields as {
+        address: { fields: { street: { errors: { value: string[] } } } }
+      }
+    ).address.fields.street
+    expect(street.errors.value).toEqual([])
+
+    root.dispose()
+  })
+
+  test('lifts root-level z.object().refine() into a form-level validator', async () => {
+    // Cross-field check: confirm must match password. Lives at the root,
+    // not on either leaf — a leaf-level `zodValidator(z.string())` can't
+    // see the sibling.
+    const schema = z
+      .object({
+        password: z.string().min(1),
+        confirm: z.string().min(1),
+      })
+      .refine((v) => v.password === v.confirm, { message: 'passwords must match' })
+
+    const def = defineController((ctx) => ({
+      form: formFromZod(ctx, schema as unknown as z.ZodObject<z.ZodRawShape>, {
+        initials: { password: 'abc', confirm: 'xyz' },
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    expect(root.form.isValid.value).toBe(false)
+    // Root issue surfaces on the form, not on any leaf.
+    expect(root.form.topLevelErrors.value).toContain('passwords must match')
+    // Sibling leaves stay clean (they each satisfy their own schema).
+    const fields = root.form.fields as unknown as {
+      password: { errors: { value: string[] } }
+      confirm: { errors: { value: string[] } }
+    }
+    expect(fields.password.errors.value).toEqual([])
+    expect(fields.confirm.errors.value).toEqual([])
+
+    root.dispose()
+  })
+
+  test('extraValidators on a nested leaf via dotted path', async () => {
+    const schema = z.object({
+      address: z.object({ city: z.string() }),
+    })
+    const def = defineController((ctx) => ({
+      form: formFromZod(ctx, schema, {
+        initials: { address: { city: 'forbidden' } },
+        extraValidators: {
+          'address.city': (value) => (value === 'forbidden' ? 'no go' : null),
+        },
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    const city = (
+      root.form.fields as { address: { fields: { city: { errors: { value: string[] } } } } }
+    ).address.fields.city
+    expect(city.errors.value).toContain('no go')
+
+    root.dispose()
+  })
+
   test('zod validators populate per-field errors', async () => {
     const schema = z.object({
       name: z.string().min(1),

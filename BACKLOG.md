@@ -24,18 +24,6 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 ## Packages
 
-### [idea] `@kontsedal/olas-entities` — walk `kind: 'infinite'` query payloads
-
-v1 ignores `SetDataEvent`s where `kind === 'infinite'`. The walker would need to traverse `TPage[]` and find entities within each page; `setEntryData` would need an infinite-aware variant. Defer until someone hits the use case.
-
-### [idea] `@kontsedal/olas-entities` — deep-merge option on `update`
-
-Today `entities.update(Post, id, patch)` is `{ ...current, ...patch }`. Nested replacements force the caller to `upsert` a full new value. A `merge: 'shallow' | 'deep'` option (default `'shallow'`) would round out the API.
-
-### [idea] `@kontsedal/olas-entities` — per-entity LRU eviction
-
-Orphaned entity slots (entity once observed, no longer in any query) stay in the store until plugin dispose. For apps with very large entity catalogs, a per-entity-name LRU cap on the slot map would bound memory. Dev builds emit a one-shot warning when a single entity partition crosses 10k unique ids (see `SLOT_BLOAT_WARN_AT` in `packages/entities/src/index.ts`).
-
 ### [idea] `SetDataEvent.source === 'remote'` is redundant with `isRemote === true`
 
 After §13.2 grew the `source: 'set' | 'fetch' | 'remote'` field, `source === 'remote'` carries the same information as `isRemote === true`. They're kept both for back-compat — existing plugins (cross-tab) gate on `isRemote`, new plugins (entities) can gate on `source`. Pick one in v2 and drop the other. Migration: keep `isRemote` (shorter, predates `source`) and reserve `source` strictly for `'set' | 'fetch'`.
@@ -75,10 +63,6 @@ Examples:
 `@kontsedal/olas-persist` ships a `localStorage` adapter today. IndexedDB is a natural next adapter for larger payloads or async-friendly storage.
 
 ## Forms
-
-### [idea] Promote root-level Zod `.refine(...)` to a form-level validator in `formFromZod`
-
-`formFromZod` walks `schema.shape` to build leaves; any `.refine(...)` rules on the root `z.object(...)` aren't lifted into a top-level form validator. Workaround: pass `{ validators: [zodValidator(schema)] }` manually to `ctx.form(...)`. Implementing it well needs to split Zod issues by path (root-only vs. field-scoped) so leaf rules aren't double-reported.
 
 ### [idea] Path-typed `form.fieldAt('a.b.c')` lookup
 
@@ -120,25 +104,6 @@ uplift, lift these out to `examples/_shared/ui/` and have each example
 extend the tokens. Already deliberately kept kanban-local for now to
 avoid premature abstraction — see the `cryptic-questing-twilight.md`
 plan for the rationale.
-
-### [idea] Surface `suspend` / `resume` on `ctx.attach` return shape
-
-`<KeepAlive controller={…}>` expects `{ suspend(), resume() }`. Today
-`ctx.attach(...)` returns only `{ api, dispose }` — child controllers
-have to expose suspend/resume manually as part of their `Api` (see
-`features/card-detail/card-detail.controller.ts` — it wraps an
-`isPaused` signal). Extending the attach return to include real
-suspend/resume that cascade through the child's lifecycle entries
-would let the React adapter consume any attached controller without a
-hand-rolled shim. Worth speccing as §11.x.
-
-### [idea] `formFromZod` — accept extra leaf validators
-
-`debouncedValidator` exists on Olas but `formFromZod(ctx, schema, options)`
-doesn't expose a way to attach extra validators per leaf — kanban's
-"title is already used" check is hand-wired with an effect. Add an
-`extraValidators: { [path: string]: Validator<T> }` option that the form
-walker installs on the matching field.
 
 ## Loose ends
 

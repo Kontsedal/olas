@@ -598,4 +598,47 @@ describe('ctx.attach — early-dispose child handle', () => {
     root.dispose()
     expect(teardownLog).toEqual(['leaf:disposed'])
   })
+
+  test('suspend / resume cascade through the attached child', () => {
+    const log: string[] = []
+    const leaf = defineController(
+      (ctx) => {
+        ctx.onSuspend(() => log.push('leaf:suspend'))
+        ctx.onResume(() => log.push('leaf:resume'))
+        ctx.onDispose(() => log.push('leaf:dispose'))
+        return {}
+      },
+      { name: 'leaf' },
+    )
+
+    let attached:
+      | { api: object; dispose: () => void; suspend: () => void; resume: () => void }
+      | undefined
+    const root = createRoot(
+      defineController((ctx) => {
+        attached = ctx.attach(leaf, undefined)
+        return {}
+      }),
+      { deps: {} },
+    )
+
+    attached!.suspend()
+    expect(log).toEqual(['leaf:suspend'])
+
+    // Idempotent: a second suspend while already suspended is a no-op.
+    attached!.suspend()
+    expect(log).toEqual(['leaf:suspend'])
+
+    attached!.resume()
+    expect(log).toEqual(['leaf:suspend', 'leaf:resume'])
+
+    // After dispose, suspend/resume no-op.
+    attached!.dispose()
+    expect(log).toEqual(['leaf:suspend', 'leaf:resume', 'leaf:dispose'])
+    attached!.suspend()
+    attached!.resume()
+    expect(log).toEqual(['leaf:suspend', 'leaf:resume', 'leaf:dispose'])
+
+    root.dispose()
+  })
 })
