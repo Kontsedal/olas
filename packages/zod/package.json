@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-zod",
-  "version": "0.0.1-rc.1",
+  "version": "0.0.1",
   "description": "Olas Zod integration — zodValidator and formFromZod for end-to-end typed forms.",
   "keywords": [
     "olas",
