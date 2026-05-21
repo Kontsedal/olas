@@ -6,6 +6,15 @@ export type StorageAdapter = {
   set(key: string, value: string): void | Promise<void>
   delete(key: string): void | Promise<void>
   onChange?(handler: (key: string, value: string | null) => void): () => void
+  /**
+   * Optional — list every key currently in storage. Consumers that need to
+   * enumerate keys (e.g. `@kontsedal/olas-mutation-queue` replaying the
+   * pending queue on init) require this extension; consumers that only
+   * `get` / `set` known keys (the typical `usePersisted` shape) don't need
+   * it. Both built-in adapters (`localStorageAdapter`, `indexedDbAdapter`)
+   * implement it.
+   */
+  keys?(): Iterable<string> | Promise<Iterable<string>>
 }
 
 export type PersistOptions<T> = {
@@ -177,6 +186,16 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
       ch.addEventListener('message', listener)
       return () => ch.removeEventListener('message', listener)
     },
+    async keys(): Promise<string[]> {
+      if (idbFactory === undefined) return []
+      try {
+        const result = await runRequest<IDBValidKey[]>('readonly', (s) => s.getAllKeys())
+        if (!Array.isArray(result)) return []
+        return result.filter((k): k is string => typeof k === 'string')
+      } catch {
+        return []
+      }
+    },
   }
 }
 
@@ -210,6 +229,15 @@ export const localStorageAdapter: StorageAdapter = {
     }
     window.addEventListener('storage', listener)
     return () => window.removeEventListener('storage', listener)
+  },
+  keys(): string[] {
+    if (typeof localStorage === 'undefined') return []
+    const out: string[] = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (k !== null) out.push(k)
+    }
+    return out
   },
 }
 

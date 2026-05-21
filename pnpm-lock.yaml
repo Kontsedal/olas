@@ -319,6 +319,15 @@ importers:
         specifier: workspace:^
         version: link:../core
 
+  packages/mutation-queue:
+    devDependencies:
+      '@kontsedal/olas-core':
+        specifier: workspace:^
+        version: link:../core
+      '@kontsedal/olas-persist':
+        specifier: workspace:^
+        version: link:../persist
+
   packages/persist:
     devDependencies:
       '@kontsedal/olas-core':

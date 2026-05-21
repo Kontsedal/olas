@@ -1,24 +1,25 @@
 {
-  "name": "@kontsedal/olas-persist",
+  "name": "@kontsedal/olas-mutation-queue",
   "version": "0.0.5",
-  "description": "Olas persistence composables — usePersisted with a localStorage adapter.",
+  "description": "Olas mutation queue — durable persistence + reload-safe replay for persistable mutations.",
   "keywords": [
     "olas",
     "controller-tree",
     "signals",
     "reactive",
     "state-management",
+    "mutation-queue",
+    "offline",
     "persistence",
-    "localStorage",
-    "cache-persistence"
+    "replay"
   ],
   "license": "MIT",
   "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
-  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/persist#readme",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/mutation-queue#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Kontsedal/olas.git",
-    "directory": "packages/persist"
+    "directory": "packages/mutation-queue"
   },
   "bugs": {
     "url": "https://github.com/Kontsedal/olas/issues"
@@ -49,10 +50,12 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": "workspace:^"
+    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-persist": "workspace:^"
   },
   "devDependencies": {
-    "@kontsedal/olas-core": "workspace:^"
+    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-persist": "workspace:^"
   },
   "publishConfig": {
     "access": "public"

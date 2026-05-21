@@ -1,5 +1,19 @@
 # @olas/example-kanban
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies
+  - @kontsedal/olas-core@0.0.5
+  - @kontsedal/olas-persist@0.0.5
+  - @kontsedal/olas-react@0.0.5
+  - @kontsedal/olas-zod@0.0.5
+  - @kontsedal/olas-devtools@0.0.5
+  - @kontsedal/olas-realtime@0.0.5
+  - @kontsedal/olas-cross-tab@0.0.5
+  - @kontsedal/olas-entities@0.0.5
+
 ## 0.0.4
 
 ### Patch Changes

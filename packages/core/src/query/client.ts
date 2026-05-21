@@ -520,6 +520,42 @@ export class QueryClient {
     }
   }
 
+  /**
+   * Fan out a `MutationEnqueueEvent` to every installed plugin. Called from
+   * `MutationImpl.executeRun` when `spec.persist === true`. Plugins use this
+   * to write the run to durable storage; the queue replays on reload. SPEC §13.3.
+   */
+  emitMutationEnqueue(event: {
+    mutationId: string
+    runId: string
+    variables: unknown
+    attempt: number
+  }): void {
+    if (this.plugins.length === 0) return
+    for (const plugin of this.plugins) {
+      if (plugin.onMutationEnqueue) {
+        const cb = plugin.onMutationEnqueue
+        this.callPlugin(() => cb.call(plugin, event))
+      }
+    }
+  }
+
+  /** Fan out a `MutationSettleEvent` to every installed plugin. SPEC §13.3. */
+  emitMutationSettle(event: {
+    mutationId: string
+    runId: string
+    outcome: 'success' | 'error' | 'cancelled'
+    error?: unknown
+  }): void {
+    if (this.plugins.length === 0) return
+    for (const plugin of this.plugins) {
+      if (plugin.onMutationSettle) {
+        const cb = plugin.onMutationSettle
+        this.callPlugin(() => cb.call(plugin, event))
+      }
+    }
+  }
+
   /** Resolve `queryId → live entry-map keys`. Empty array when unknown. */
   private subscribedKeysFor(queryId: string): readonly (readonly unknown[])[] {
     // Defer the registry lookup to avoid an eager circular import — `define.ts`

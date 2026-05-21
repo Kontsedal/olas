@@ -3,6 +3,7 @@ import { dispatchError, type ErrorHandler } from '../errors'
 import { batch, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
+import { registerMutationById } from './plugin'
 import type { RetryDelay, RetryPolicy, Snapshot } from './types'
 
 /**
@@ -40,6 +41,83 @@ export type MutationSpec<V, R> = {
   concurrency?: MutationConcurrency
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  /**
+   * Stable identifier used by the mutation-queue plugin
+   * (`@kontsedal/olas-mutation-queue`) to route persistable runs across a
+   * page reload. REQUIRED when `persist: true`. Recommended even without
+   * `persist` if you want devtools to group runs across mutation instances
+   * — same shape as `defineQuery({ queryId })`.
+   *
+   * Don't auto-derive from `name` or function identity; both are fragile
+   * under minification.
+   */
+  mutationId?: string
+  /**
+   * Opt this mutation into durable persistence. When `true`, the runner
+   * emits `onMutationEnqueue` to plugins before the user's `mutate` runs
+   * and `onMutationSettle` after retries exhaust. Requires `mutationId`.
+   * SPEC §13.3.
+   */
+  persist?: boolean
+}
+
+/**
+ * Module-scope handle for a persistable mutation. Returned by
+ * `defineMutation(...)`. Pass it to `ctx.mutation(...)` (spread or as-is)
+ * so per-controller lifecycle hooks (`onSuccess` / `onError` / ...) can be
+ * layered on top.
+ *
+ * Registering at module import time means the mutation-queue plugin can
+ * replay pending runs from durable storage during `init` — before any
+ * controller reconstructs.
+ */
+export type MutationDef<V, R> = MutationSpec<V, R> & {
+  readonly __olas: 'mutation'
+  readonly mutationId: string
+}
+
+/**
+ * Register a persistable mutation at module scope. Returns the spec
+ * unchanged (with a `__olas: 'mutation'` brand) so consumers can pass it
+ * to `ctx.mutation(...)`, optionally spreading per-controller hooks on
+ * top:
+ *
+ * ```ts
+ * // module-scope
+ * export const createOrder = defineMutation({
+ *   mutationId: 'order/create',
+ *   mutate: async (vars: OrderInput, { signal }) => api.createOrder(vars, { signal }),
+ * })
+ *
+ * // controller
+ * const m = ctx.mutation({
+ *   ...createOrder,
+ *   onSuccess: () => toast('Order placed'),
+ * })
+ * ```
+ *
+ * The `mutate` function MUST NOT close over controller-instance state — on
+ * replay there is no controller. Module-level dependencies (a shared `api`
+ * client, etc.) are fine.
+ */
+export function defineMutation<V, R>(
+  spec: MutationSpec<V, R> & { mutationId: string; persist?: boolean },
+): MutationDef<V, R> {
+  if (typeof spec.mutationId !== 'string' || spec.mutationId.length === 0) {
+    throw new Error('[olas] defineMutation requires a non-empty `mutationId`.')
+  }
+  // Default `persist: true` for defined mutations — that's the whole point
+  // of using the module-scope helper. Consumers who want a non-persistable
+  // module-scope handle can override with `persist: false`.
+  const persistSpec: MutationSpec<V, R> = { ...spec, persist: spec.persist ?? true }
+  registerMutationById(spec.mutationId, {
+    mutationId: spec.mutationId,
+    mutate: spec.mutate as (vars: unknown, signal: AbortSignal) => Promise<unknown>,
+  })
+  return Object.assign(persistSpec, {
+    __olas: 'mutation' as const,
+    mutationId: spec.mutationId,
+  })
 }
 
 /**
@@ -88,6 +166,26 @@ type SerialEntry<V, R> = {
   reject: (err: unknown) => void
 }
 
+/**
+ * Hooks for emitting persistable-mutation lifecycle events back to the
+ * `QueryClient`. Wired from `createMutation` when `spec.persist === true`.
+ * Internal — not part of any public surface.
+ */
+export type MutationLifecycleHooks = {
+  emitEnqueue(event: {
+    mutationId: string
+    runId: string
+    variables: unknown
+    attempt: number
+  }): void
+  emitSettle(event: {
+    mutationId: string
+    runId: string
+    outcome: 'success' | 'error' | 'cancelled'
+    error?: unknown
+  }): void
+}
+
 class MutationImpl<V, R> implements Mutation<V, R> {
   readonly data: Signal<R | undefined> = signal(undefined)
   readonly error: Signal<unknown | undefined> = signal(undefined)
@@ -107,7 +205,17 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       update(fn: (n: number) => number): void
     },
     private readonly devtools?: DevtoolsEmitter,
+    private readonly lifecycle?: MutationLifecycleHooks,
   ) {}
+
+  /**
+   * True iff this mutation should emit persistable-lifecycle events.
+   * Validated at construction time (in `createMutation`) so any malformed
+   * `persist: true`-without-`mutationId` config surfaces early.
+   */
+  private get isPersistable(): boolean {
+    return this.spec.persist === true && this.lifecycle !== undefined
+  }
 
   private emit(event: { type: 'mutation:run'; vars: unknown }): void
   private emit(event: { type: 'mutation:success'; result: unknown }): void
@@ -204,10 +312,30 @@ class MutationImpl<V, R> implements Mutation<V, R> {
 
     if (__DEV__) this.emit({ type: 'mutation:run', vars })
 
+    // Persistable mutations emit an enqueue event BEFORE the user's `mutate`
+    // runs. If the page reloads mid-mutation, the queue plugin replays from
+    // this entry. `runId` is unique per `executeRun` invocation; retries
+    // within `runWithRetry` reuse it via `attempt` bumps inside that loop.
+    const runId = this.isPersistable ? makeRunId() : ''
+    const mutationId = this.spec.mutationId
+    if (this.isPersistable && mutationId !== undefined) {
+      try {
+        this.lifecycle?.emitEnqueue({ mutationId, runId, variables: vars, attempt: 0 })
+      } catch (err) {
+        dispatchError(this.onError, err, {
+          kind: 'plugin',
+          controllerPath: this.controllerPath,
+        })
+      }
+    }
+
     try {
       const result = await raceAbort(this.runWithRetry(vars, abort.signal), abort.signal)
       if (abort.signal.aborted || this.disposed) {
         snapshot?.rollback()
+        if (this.isPersistable && mutationId !== undefined) {
+          this.safeEmitSettle({ mutationId, runId, outcome: 'cancelled' })
+        }
         throw new DOMException('Superseded', 'AbortError')
       }
       batch(() => {
@@ -221,10 +349,16 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       // Spec §6.4.
       snapshot?.finalize()
       this.safeCall(() => this.spec.onSettled?.(result, undefined, vars), 'mutation')
+      if (this.isPersistable && mutationId !== undefined) {
+        this.safeEmitSettle({ mutationId, runId, outcome: 'success' })
+      }
       return result
     } catch (err) {
       if (isAbortError(err) || abort.signal.aborted) {
         snapshot?.rollback()
+        if (this.isPersistable && mutationId !== undefined) {
+          this.safeEmitSettle({ mutationId, runId, outcome: 'cancelled' })
+        }
         // Reserve `error` signal for genuine failures.
         throw err
       }
@@ -236,6 +370,9 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       // turns the auto-call into a no-op. Spec §6.4.
       snapshot?.rollback()
       this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
+      if (this.isPersistable && mutationId !== undefined) {
+        this.safeEmitSettle({ mutationId, runId, outcome: 'error', error: err })
+      }
       throw err
     } finally {
       this.inflight.delete(handle)
@@ -243,6 +380,22 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       if (this.inflight.size === 0) {
         this.isPending.set(false)
       }
+    }
+  }
+
+  private safeEmitSettle(event: {
+    mutationId: string
+    runId: string
+    outcome: 'success' | 'error' | 'cancelled'
+    error?: unknown
+  }): void {
+    try {
+      this.lifecycle?.emitSettle(event)
+    } catch (err) {
+      dispatchError(this.onError, err, {
+        kind: 'plugin',
+        controllerPath: this.controllerPath,
+      })
     }
   }
 
@@ -334,8 +487,32 @@ export function createMutation<V, R>(
   controllerPath: readonly string[],
   inflightCounter?: { update(fn: (n: number) => number): void },
   devtools?: DevtoolsEmitter,
+  lifecycle?: MutationLifecycleHooks,
 ): Mutation<V, R> {
-  return new MutationImpl<V, R>(spec, onError, controllerPath, inflightCounter, devtools)
+  // Validate persistable-mutation config at construction time so misconfig
+  // surfaces synchronously rather than on first `run()`.
+  if (spec.persist === true) {
+    if (typeof spec.mutationId !== 'string' || spec.mutationId.length === 0) {
+      throw new Error(
+        '[olas] ctx.mutation({ persist: true, ... }) requires a non-empty `mutationId`.',
+      )
+    }
+  }
+  return new MutationImpl<V, R>(spec, onError, controllerPath, inflightCounter, devtools, lifecycle)
+}
+
+/**
+ * Generate a unique-enough run id for the persistable-mutation lifecycle.
+ * Uses `crypto.randomUUID` where available (Node 19+, modern browsers),
+ * with a timestamp+random fallback for older runtimes. Collisions only
+ * affect dedup at the plugin layer, not correctness, so the fallback's
+ * weakness is acceptable.
+ */
+function makeRunId(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } }
+  if (typeof g.crypto?.randomUUID === 'function') return g.crypto.randomUUID()
+  const rand = Math.random().toString(36).slice(2, 12)
+  return `${Date.now().toString(36)}-${rand}`
 }
 
 /**

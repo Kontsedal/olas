@@ -219,6 +219,64 @@ Requires a `realtime` service in deps with `subscribe(channel, handler)`. The fr
 
 ---
 
+## Persisted mutations — survive reloads with `@kontsedal/olas-mutation-queue`
+
+When a mutation hits the network and the user reloads (or the browser crashes) mid-request, you typically want the mutation to run again on the next page load — not silently drop. `@kontsedal/olas-mutation-queue` ships a `QueryClientPlugin` that writes pending mutations to a `StorageAdapter` and replays them on `init`.
+
+```ts
+// orders.ts — module scope. `defineMutation` registers `mutate` against
+// `mutationId` so the queue plugin can find it on replay, BEFORE
+// controllers reconstruct.
+import { defineMutation } from '@kontsedal/olas-core'
+
+export const createOrder = defineMutation({
+  mutationId: 'order/create',
+  mutate: async (vars: { sku: string; idempotencyKey: string }, signal) =>
+    api.createOrder(vars, { signal }),
+})
+```
+
+```ts
+// app entry
+import { localStorageAdapter } from '@kontsedal/olas-persist'
+import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
+
+const root = createRoot(appController, {
+  deps,
+  plugins: [
+    mutationQueuePlugin({
+      adapter: localStorageAdapter,        // or indexedDbAdapter() for large payloads
+      keyPrefix: 'my-app/mutations/v1',    // namespace
+      maxAttempts: 5,                      // bound replays per entry
+      onReplayError: (err, entry) => {
+        // Telemetry / user-facing toast on lost mutations.
+        Sentry.captureException(err, { extra: entry })
+      },
+    }),
+  ],
+})
+```
+
+```tsx
+// inside a controller
+const checkoutController = defineController((ctx) => {
+  const place = ctx.mutation({
+    ...createOrder,
+    onSuccess: () => toast('Order placed'),
+    onError: () => toast('We had trouble; we will retry automatically.'),
+  })
+  return { place }
+})
+```
+
+**Idempotency** is the consumer's responsibility. Include a stable `idempotencyKey` in your variables (UUID generated at the call site, stored alongside the mutation entry) and have your server dedupe by it. The queue gives **at-least-once-until-success**; without an idempotency key, a reload mid-network-call can result in a double charge.
+
+**`mutate` MUST NOT close over controller state.** On replay there is no controller — the queue calls the registered `mutate(vars, signal)` directly. Module-level `api` clients, environment-derived URLs, and the like are fine; anything that lives on the controller (a `ctx.deps` reference, a per-controller `signal`) is not.
+
+**Adapter capability.** Replay requires an adapter that implements `keys()`. The built-in `localStorageAdapter` and `indexedDbAdapter()` both do. Custom adapters that only implement `get`/`set`/`delete` work for **enqueue** but **not replay** — the plugin warns and disables the replay path.
+
+---
+
 ## Router integration
 
 Olas has no built-in router. Real apps wire one of the popular React routers (TanStack Router, React Router v6, Next pages router) by exposing the current route as a signal and feeding it to `ctx.use(...)`, `ctx.session(...)`, or `ctx.collection(...)`. The pattern is the same regardless of router; only the bridging glue differs.
