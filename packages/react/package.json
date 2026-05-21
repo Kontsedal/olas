@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-react",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Olas React adapter — OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.",
   "keywords": [
     "olas",

@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-example-kanban",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "private": true,
   "description": "React example — flagship project tracker showcasing entities, realtime, cross-tab, persist, infinite query, KeepAlive, mutations, scopes, forms, devtools",
   "license": "MIT",

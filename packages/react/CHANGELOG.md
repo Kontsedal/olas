@@ -1,5 +1,62 @@
 # @olas/react
 
+## 0.0.3
+
+### Patch Changes
+
+- Phase 0.1 — Standard Schema adapter, form.submit lifecycle, structural sharing on refetch, and select projection.
+
+  Treating as patch under the 0.x.y line — the changes are additive and don't break any pinned behavior.
+
+  **Standard Schema**
+
+  - New `validator(schema)` in `@kontsedal/olas-core` accepts any
+    `StandardSchemaV1`-compatible schema (Zod 4, Valibot 1, ArkType 2, …).
+    Sync vs async is handled transparently — the wrapper returns a Promise
+    only when the underlying schema does.
+  - `StandardSchemaV1` type is re-exported for consumers who want the type
+    without taking a dep on `@standard-schema/spec`.
+  - `zodValidator` in `@kontsedal/olas-zod` is now a thin alias over
+    `validator(...)` — Zod 4 implements Standard Schema, so the Zod-specific
+    path is now indirected through the cross-library one.
+
+  **Forms**
+
+  - `form.submit(handler, options?)` — first-class submission lifecycle.
+    Returns `{ ok, data?, error? }`. Pre-validates (skippable), marks every
+    field touched on invalid, captures handler throws to `submitError` and
+    refuses parallel submits.
+  - `form.isSubmitting` / `form.submitCount` / `form.submitError` signals.
+  - `field.setErrors(string[])` — pin externally-sourced errors (typically
+    from a failed submit). These live in a separate `serverErrors` channel,
+    survive validator re-runs, and auto-clear on the next user write to the
+    field.
+  - `form.setErrors({ 'user.email': [...], 'tags.1': [...] })` — same
+    channel as `field.setErrors`, routed by dot-separated path through
+    nested forms and field arrays (numeric segments are array indices).
+  - `field.reset()` and `form.reset()` clear the server-errors channel too.
+
+  **Queries**
+
+  - Structural sharing on refetch: `Entry.applySuccess` walks the previous
+    data and the new payload, returning the previous reference wherever a
+    sub-tree is deep-equal. Unchanged refetches now produce `===` results,
+    so downstream `computed`s and React snapshots stop thrashing. Bails on
+    `Map` / `Set` / `Date` / `RegExp` / class instances. Cycle-guarded with
+    a `WeakSet`. Also wired into `InfiniteEntry.startFetch` so the head
+    page's identity survives a no-op refresh.
+  - New `select` overload on `ctx.use(query, { key, select: (data) => U })`.
+    Projects the underlying `T` to a view `U` via a per-subscription
+    `computed`. Combined with structural sharing, a stable `select` over an
+    unchanged payload outputs the same reference — downstream consumers
+    dedupe via `Object.is` and don't re-render. `refetch()` and
+    `firstValue()` project through `select` too.
+
+  Tests: +50, total 563 passing.
+
+- Updated dependencies
+  - @kontsedal/olas-core@0.0.3
+
 ## 0.0.2
 
 ### Patch Changes

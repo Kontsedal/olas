@@ -2,17 +2,24 @@ import { computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import type { ClientEntry, InfiniteClientEntry, QueryClient } from './client'
 import type { InfiniteQuery, InfiniteQuerySpec, InfiniteQuerySubscription } from './infinite'
-import type { AsyncStatus, Query, QuerySpec, QuerySubscription, UseOptions } from './types'
+import type {
+  AsyncStatus,
+  Query,
+  QuerySpec,
+  QuerySubscription,
+  UseInternalOptions,
+  UseOptions,
+} from './types'
 
 type QueryInternal<Args extends unknown[], T> = Query<Args, T> & {
   readonly __spec: QuerySpec<Args, T>
 }
 
-class SubscriptionImpl<T> implements QuerySubscription<T> {
+class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
   private readonly current$: Signal<ClientEntry<T> | null> = signal(null)
   private readonly previousData$: Signal<T | undefined> = signal(undefined)
 
-  readonly data: ReadSignal<T | undefined>
+  readonly data: ReadSignal<U | undefined>
   readonly error: ReadSignal<unknown | undefined>
   readonly status: ReadSignal<AsyncStatus>
   readonly isLoading: ReadSignal<boolean>
@@ -21,14 +28,30 @@ class SubscriptionImpl<T> implements QuerySubscription<T> {
   readonly lastUpdatedAt: ReadSignal<number | undefined>
   readonly hasPendingMutations: ReadSignal<boolean>
 
-  constructor(private readonly keepPreviousData: boolean) {
-    this.data = computed(() => {
+  constructor(
+    private readonly keepPreviousData: boolean,
+    private readonly select?: (data: T) => U,
+  ) {
+    // The underlying entry stores `T`. The subscription's `data` is `U`
+    // (or `T` when no projection). We compute the raw `T` once, then layer
+    // `select` in a second computed so the projection's `Object.is` dedup
+    // applies BEFORE downstream subscribers run — combined with structural
+    // sharing on the entry, an unchanged payload + a stable `select`
+    // outputs the same `U` reference and doesn't churn the React tree.
+    const rawData = computed(() => {
       const cur = this.current$.value
       const curData = cur?.entry.data.value
       if (curData !== undefined) return curData
       if (keepPreviousData) return this.previousData$.value
       return undefined
     })
+    this.data =
+      select === undefined
+        ? (rawData as unknown as ReadSignal<U | undefined>)
+        : computed<U | undefined>(() => {
+            const raw = rawData.value
+            return raw === undefined ? undefined : select(raw)
+          })
     this.error = computed(() => this.current$.value?.entry.error.value)
     this.status = computed<AsyncStatus>(() => this.current$.value?.entry.status.value ?? 'idle')
     this.isLoading = computed(() => {
@@ -59,33 +82,42 @@ class SubscriptionImpl<T> implements QuerySubscription<T> {
     this.current$.set(null)
   }
 
-  refetch = (): Promise<T> => {
+  refetch = (): Promise<U> => {
     const cur = this.current$.peek()
     if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
-    return cur.entry.refetch()
+    return cur.entry.refetch().then((v) => this.project(v))
   }
 
   reset = (): void => {
     this.current$.peek()?.entry.reset()
   }
 
-  firstValue = (): Promise<T> => {
+  firstValue = (): Promise<U> => {
     const cur = this.current$.peek()
     if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
-    return cur.entry.firstValue()
+    return cur.entry.firstValue().then((v) => this.project(v))
+  }
+
+  private project(v: T): U {
+    return this.select === undefined ? (v as unknown as U) : this.select(v)
   }
 }
 
 /**
  * Build a subscription + the effect that keeps it bound to the right entry.
  * The controller container wires the disposer into the lifecycle.
+ *
+ * `keyOrOptions` may carry an optional `select` projection that maps the
+ * underlying `T` to a view `U`; the returned subscription's data shape
+ * widens accordingly. Without `select`, `U = T` and the projection
+ * computed is skipped.
  */
-export function createUse<Args extends unknown[], T>(
+export function createUse<Args extends unknown[], T, U = T>(
   client: QueryClient,
   query: Query<Args, T>,
-  keyOrOptions?: (() => Args) | UseOptions<Args>,
+  keyOrOptions?: (() => Args) | UseInternalOptions<Args, T, U>,
 ): {
-  subscription: QuerySubscription<T>
+  subscription: QuerySubscription<U>
   dispose: () => void
   /** Suspend the subscription — release the entry (its refetchInterval +
    *  focus/online listeners pause) without disposing it. Spec §4.1. */
@@ -100,8 +132,10 @@ export function createUse<Args extends unknown[], T>(
   const keyFn = typeof keyOrOptions === 'function' ? keyOrOptions : keyOrOptions?.key
   const enabledFn =
     typeof keyOrOptions === 'object' && keyOrOptions !== null ? keyOrOptions.enabled : undefined
+  const select =
+    typeof keyOrOptions === 'object' && keyOrOptions !== null ? keyOrOptions.select : undefined
 
-  const sub = new SubscriptionImpl<T>(keepPreviousData)
+  const sub = new SubscriptionImpl<T, U>(keepPreviousData, select)
   let currentEntry: ClientEntry<T> | null = null
   let suspended = false
 

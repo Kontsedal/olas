@@ -1,4 +1,35 @@
+import { isStandardSchema, type StandardSchemaV1 } from './standard-schema'
 import type { Validator } from './types'
+
+/**
+ * Wrap any Standard-Schema-compatible schema (Zod 4, Valibot 1, ArkType 2,
+ * …) as an Olas validator. The validator returns the first issue's message
+ * on failure (or `'Invalid'` if no issues are produced), `null` on success.
+ *
+ * Standard Schema validators may be sync or async; this wrapper threads
+ * through whichever the schema returns — `Promise<string|null>` only when
+ * the underlying validate call is itself async.
+ *
+ * `signal` is accepted to match the `Validator<T>` shape but isn't forwarded
+ * — Standard Schema v1 has no cancellation surface.
+ */
+export function validator<I, O>(schema: StandardSchemaV1<I, O>): Validator<I> {
+  return (value, signal) => {
+    void signal
+    const result = schema['~standard'].validate(value)
+    if (result instanceof Promise) {
+      return result.then(messageFromResult)
+    }
+    return messageFromResult(result)
+  }
+}
+
+function messageFromResult(result: { issues?: ReadonlyArray<{ message: string }> }): string | null {
+  if (result.issues === undefined || result.issues.length === 0) return null
+  return result.issues[0]?.message ?? 'Invalid'
+}
+
+export { isStandardSchema, type StandardSchemaV1 } from './standard-schema'
 
 const isEmpty = (value: unknown): boolean => {
   if (value === undefined || value === null) return true

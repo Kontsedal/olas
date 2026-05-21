@@ -90,6 +90,22 @@ export type Form<S extends FormSchema> = {
   readonly touched: ReadSignal<boolean>
   readonly isValidating: ReadSignal<boolean>
 
+  /**
+   * `true` while a `submit(...)` is in flight. Clears when the handler
+   * resolves, throws, or pre-submit validation fails.
+   */
+  readonly isSubmitting: ReadSignal<boolean>
+  /** Number of times `submit(...)` has been called. Bumps before the handler runs. */
+  readonly submitCount: ReadSignal<number>
+  /**
+   * The thrown value from the most recent failed submission, if any.
+   * Cleared at the start of each new `submit(...)` call and on `reset()`.
+   * Note that a validation failure ("submit blocked because the form is
+   * invalid") is NOT a thrown error — `submitError` stays whatever it
+   * was, and the returned promise resolves with `{ ok: false }`.
+   */
+  readonly submitError: ReadSignal<unknown>
+
   /** Deep-merge a partial value into the form, batched. */
   set(partial: DeepPartial<FormValue<S>>): void
   /**
@@ -105,6 +121,27 @@ export type Form<S extends FormSchema> = {
   markAllTouched(): void
   /** Re-run every leaf's validators. Resolves with true if all leaves are valid. */
   validate(): Promise<boolean>
+  /**
+   * Run a submission. Pre-validates the form (unless `validateBeforeSubmit: false`),
+   * then calls `handler(value)`. Maintains `isSubmitting` / `submitCount` /
+   * `submitError`. Returns `{ ok, data?, error? }` — see `FormImpl.submit`
+   * for the full contract.
+   */
+  submit(
+    handler: (value: FormValue<S>) => unknown | Promise<unknown>,
+    options?: {
+      validateBeforeSubmit?: boolean
+      resetOnSuccess?: boolean
+      onError?: 'rethrow' | 'capture'
+    },
+  ): Promise<{ ok: boolean; data?: unknown; error?: unknown }>
+  /**
+   * Pin externally-sourced errors on specific fields. Keys are dot-separated
+   * paths through nested forms / field arrays (numeric segments are array
+   * indices). Errors land in each field's `serverErrors` channel — kept
+   * separate from validator output and auto-cleared on the next user write.
+   */
+  setErrors(errors: Record<string, ReadonlyArray<string>>): void
   /** Idempotent. Called by the owning controller's dispose. */
   dispose(): void
 }

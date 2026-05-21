@@ -1,18 +1,22 @@
-import type { Ctx, Field, FieldArray, Form, Validator } from '@kontsedal/olas-core'
+import {
+  type Ctx,
+  type Field,
+  type FieldArray,
+  type Form,
+  type StandardSchemaV1,
+  validator as standardValidator,
+  type Validator,
+} from '@kontsedal/olas-core'
 import { z } from 'zod'
 
 /**
- * Wrap a Zod schema as an Olas validator. Returns a sync or async Validator
- * depending on whether the schema requires async parsing (e.g. `.refine(async ...)`).
+ * Wrap a Zod schema as an Olas validator. Zod 4 implements Standard Schema
+ * v1, so this is now a thin alias over the cross-library `validator(...)`
+ * from `@kontsedal/olas-core`. Kept under its existing name for back-compat
+ * and for code that intentionally signals "this is a Zod schema."
  */
 export function zodValidator<T>(schema: z.ZodType<T>): Validator<T> {
-  return (value, signal) => {
-    // signal isn't used by Zod (parsing is sync) — kept for interface parity.
-    void signal
-    const result = schema.safeParse(value)
-    if (result.success) return null
-    return result.error.issues[0]?.message ?? 'Invalid'
-  }
+  return standardValidator(schema as unknown as StandardSchemaV1<T, T>)
 }
 
 /**
