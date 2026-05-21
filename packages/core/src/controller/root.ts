@@ -47,6 +47,12 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     options.deps as Record<string, unknown>,
   )
 
+  // Pre-seed scopes from RootOptions before the factory runs so
+  // ctx.inject() resolves them from any descendant. SPEC §10.3.
+  if (options.scopes !== undefined && options.scopes.length > 0) {
+    instance.seedScopes(options.scopes)
+  }
+
   // Bootstrap failure throws straight out of createRoot. Spec §12.1.5.
   // Tear down the QueryClient and any plugins it spawned (window/storage
   // listeners, transports) before re-throwing so the failure doesn't leak.
