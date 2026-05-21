@@ -432,3 +432,28 @@ describe('refetchInterval', () => {
     root.dispose()
   })
 })
+
+describe('q.prefetch — public surface', () => {
+  test('reuses an in-flight subscription fetch instead of starting a new one', async () => {
+    const d = deferred<string>()
+    let starts = 0
+    const q = defineQuery({
+      queryId: 'prefetch.inflight',
+      key: () => [],
+      fetcher: () => {
+        starts++
+        return d.promise
+      },
+    })
+    const def = defineController((ctx) => ({ s: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(starts).toBe(1)
+
+    const p = q.prefetch()
+    expect(starts).toBe(1)
+    d.resolve('done')
+    await expect(p).resolves.toBe('done')
+    expect(starts).toBe(1)
+    root.dispose()
+  })
+})

@@ -186,4 +186,46 @@ describe('formFromZod', () => {
     expect(nameField.errors.value.length).toBeGreaterThan(0)
     root.dispose()
   })
+
+  test('unwraps z.optional and z.nullable to infer the leaf initial', () => {
+    const schema = z.object({
+      maybe: z.optional(z.string()),
+      nullable: z.nullable(z.number()),
+    })
+    const def = defineController((ctx) => ({
+      form: formFromZod(ctx, schema),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    // optional/nullable have no Zod default → defaultInitial returns ''
+    // for the inner string, 0 for the inner number.
+    expect(root.form.value.value).toEqual({ maybe: '', nullable: 0 })
+    root.dispose()
+  })
+
+  test('defaultInitial covers boolean / array / enum leaves', () => {
+    const schema = z.object({
+      flag: z.boolean(),
+      tags: z.array(z.string()),
+      kind: z.enum(['a', 'b', 'c']),
+    })
+    const def = defineController((ctx) => ({
+      form: formFromZod(ctx, schema),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.form.value.value).toEqual({ flag: false, tags: [], kind: 'a' })
+    root.dispose()
+  })
+
+  test('honors function-form z.default()', () => {
+    const schema = z.object({
+      now: z.number().default(() => 42),
+    })
+    const def = defineController((ctx) => ({
+      form: formFromZod(ctx, schema),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.form.value.value).toEqual({ now: 42 })
+    root.dispose()
+  })
 })
+

@@ -91,4 +91,19 @@ describe('pattern', () => {
     const v = pattern(/^[a-z]+$/, 'lowercase only')
     expect(await v('AB', sig)).toBe('lowercase only')
   })
+
+  test('accepts an empty / nullish value (use required() for emptiness)', async () => {
+    const v = pattern(/^\d+$/)
+    expect(await v('', sig)).toBeNull()
+    expect(await v(null as unknown as string, sig)).toBeNull()
+  })
+})
+
+describe('nullish skip rule (use required() to forbid empty)', () => {
+  test('minLength / maxLength / min / max all pass `null` through', async () => {
+    expect(await minLength(3)(null as unknown as string, sig)).toBeNull()
+    expect(await maxLength(3)(null as unknown as string, sig)).toBeNull()
+    expect(await min(3)(null as unknown as number, sig)).toBeNull()
+    expect(await max(3)(null as unknown as number, sig)).toBeNull()
+  })
 })
