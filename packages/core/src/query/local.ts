@@ -83,6 +83,7 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   refetch = (): Promise<T> => this.entry.refetch()
   reset = (): void => this.entry.reset()
   firstValue = (): Promise<T> => this.entry.firstValue()
+  promise = (): Promise<T> => this.entry.firstValue()
   invalidate = (): void => {
     this.entry.invalidate().catch(() => {})
   }

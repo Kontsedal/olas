@@ -185,21 +185,25 @@ export type Ctx<TDeps = AmbientDeps> = {
     },
   ): LocalCache<T>
 
+  // Select-projecting overload — picked when the options object has a
+  // required `select` field. `key`'s return is `readonly [...Args]` so
+  // callers writing `() => [id] as const` flow through cleanly.
+  use<Args extends unknown[], T, U>(
+    source: Query<Args, T>,
+    options: {
+      key?: () => readonly [...Args]
+      enabled?: () => boolean
+      select: (data: T) => U
+    },
+  ): QuerySubscription<U>
   use<Args extends unknown[], T>(
     source: Query<Args, T>,
-    keyOrOptions?: (() => Args) | UseOptions<Args>,
+    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
   ): QuerySubscription<T>
   use<Args extends unknown[], TPage, TItem>(
     source: InfiniteQuery<Args, TPage, TItem>,
-    keyOrOptions?: (() => Args) | UseOptions<Args>,
+    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
   ): InfiniteQuerySubscription<TPage, TItem>
-  // Overload — `select` projects T → U; the returned subscription's `data`
-  // is `U | undefined`. The required `select` field is the discriminator
-  // that picks this overload over the plain-key one above.
-  use<Args extends unknown[], T, U>(
-    source: Query<Args, T>,
-    options: { key?: () => Args; enabled?: () => boolean; select: (data: T) => U },
-  ): QuerySubscription<U>
 
   mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>
 

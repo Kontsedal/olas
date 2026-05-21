@@ -32,6 +32,13 @@ export type AsyncState<T> = {
   refetch: () => Promise<T>
   reset: () => void
   firstValue: () => Promise<T>
+  /**
+   * Alias of `firstValue()` — clearer name for Suspense / `React.use(...)`
+   * use cases. Resolves with `data` on first success (short-circuits if
+   * already settled), rejects with `error` on the first failure. Use this
+   * to suspend a React tree until the query lands its first value.
+   */
+  promise: () => Promise<T>
 }
 
 /**

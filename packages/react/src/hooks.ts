@@ -41,8 +41,49 @@ export function use<T>(signal: ReadSignal<T>): T {
  * Subscribe to all eight signals on an `AsyncState<T>` with a single
  * useSyncExternalStore call. Returns the plain values plus the action
  * functions. See spec §20.10.
+ *
+ * Pass `{ suspense: true }` to opt into React 18/19 Suspense semantics:
+ *
+ *  - While `status === 'pending'` (no data yet) the hook **throws**
+ *    `subscription.promise()` — caught by the nearest `<Suspense>` boundary.
+ *  - When `status === 'error'` the hook **throws** `subscription.error` —
+ *    caught by the nearest `<ErrorBoundary>` (React itself doesn't ship
+ *    one; use `react-error-boundary` or your own).
+ *  - On success the hook returns synchronously and `data` is narrowed to
+ *    `T` (never `undefined`).
+ *
+ *  Refetches AFTER a first success do NOT re-suspend — only the initial
+ *  load throws. To re-suspend programmatically, call `subscription.reset()`.
  */
 export function useQuery<T>(subscription: AsyncState<T>): {
+  data: T | undefined
+  error: unknown | undefined
+  status: AsyncStatus
+  isLoading: boolean
+  isFetching: boolean
+  isStale: boolean
+  lastUpdatedAt: number | undefined
+  hasPendingMutations: boolean
+  refetch: () => Promise<T>
+}
+export function useQuery<T>(
+  subscription: AsyncState<T>,
+  options: { suspense: true },
+): {
+  data: T
+  error: unknown | undefined
+  status: AsyncStatus
+  isLoading: boolean
+  isFetching: boolean
+  isStale: boolean
+  lastUpdatedAt: number | undefined
+  hasPendingMutations: boolean
+  refetch: () => Promise<T>
+}
+export function useQuery<T>(
+  subscription: AsyncState<T>,
+  options?: { suspense?: boolean },
+): {
   data: T | undefined
   error: unknown | undefined
   status: AsyncStatus
@@ -80,6 +121,21 @@ export function useQuery<T>(subscription: AsyncState<T>): {
   const getSnapshot = useCallback(() => versionRef.current, [])
   useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
+  if (options?.suspense === true) {
+    const status = subscription.status.peek()
+    const data = subscription.data.peek()
+    // Error first — Suspense will not catch this, ErrorBoundary will.
+    if (status === 'error') {
+      throw subscription.error.peek()
+    }
+    // First-load suspend: only when we genuinely have no data yet. After
+    // a successful settle, refetches keep `data` defined and the hook
+    // returns normally (matches TanStack Query's `suspense` semantics).
+    if (data === undefined && (status === 'pending' || status === 'idle')) {
+      throw subscription.promise()
+    }
+  }
+
   return {
     data: subscription.data.peek(),
     error: subscription.error.peek(),
@@ -109,6 +165,12 @@ export function useField<T>(field: Field<T>): {
   reset: () => void
   markTouched: () => void
   revalidate: () => Promise<boolean>
+  /**
+   * Pin externally-sourced errors on this field (typically server-side
+   * validation results). Kept separate from validator errors and cleared
+   * automatically on the next user write — same channel as `Field.setErrors`.
+   */
+  setErrors: (errors: ReadonlyArray<string>) => void
 } {
   const versionRef = useRef(0)
 
@@ -146,5 +208,6 @@ export function useField<T>(field: Field<T>): {
     reset: () => field.reset(),
     markTouched: () => field.markTouched(),
     revalidate: () => field.revalidate(),
+    setErrors: (errs: ReadonlyArray<string>) => field.setErrors(errs),
   }
 }
