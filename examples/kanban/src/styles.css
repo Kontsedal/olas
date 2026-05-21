@@ -1,61 +1,31 @@
 @import "tailwindcss";
 
-@theme {
-  --color-bg:           oklch(0.985 0.005 270);
-  --color-bg-elev:      oklch(1     0     0);
-  --color-bg-sunk:      oklch(0.965 0.005 270);
-  --color-border:       oklch(0.90  0.005 270);
-  --color-fg:           oklch(0.18  0.02  270);
-  --color-fg-mute:      oklch(0.50  0.02  270);
-  --color-accent:       oklch(0.55  0.20  264);
-  --color-accent-fg:    oklch(0.99  0     0);
-  --color-success:      oklch(0.62  0.17  142);
-  --color-danger:       oklch(0.60  0.21  25);
-  --color-warning:      oklch(0.71  0.17  82);
-  --shadow-card:        0 1px 2px rgb(0 0 0 / 0.04), 0 2px 8px rgb(0 0 0 / 0.06);
-  --shadow-pop:         0 4px 12px rgb(0 0 0 / 0.10), 0 12px 32px rgb(0 0 0 / 0.12);
-  --font-sans:          ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI", sans-serif;
-  --font-mono:          ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
+@import "./ui/tokens.css";
+@import "./ui/motion.css";
+@import "./ui/globals.css";
+@import "./ui/primitives.css";
 
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-bg:        oklch(0.16  0.012 270);
-    --color-bg-elev:   oklch(0.21  0.012 270);
-    --color-bg-sunk:   oklch(0.13  0.012 270);
-    --color-border:    oklch(0.30  0.015 270);
-    --color-fg:        oklch(0.95  0.005 270);
-    --color-fg-mute:   oklch(0.65  0.015 270);
-    --color-accent:    oklch(0.71  0.17  264);
-    --color-success:   oklch(0.72  0.18  142);
-    --color-danger:    oklch(0.70  0.22  25);
-    --color-warning:   oklch(0.82  0.15  82);
-    --shadow-card:     0 1px 2px rgb(0 0 0 / 0.40), 0 2px 8px rgb(0 0 0 / 0.40);
-    --shadow-pop:      0 4px 12px rgb(0 0 0 / 0.50), 0 12px 32px rgb(0 0 0 / 0.50);
-  }
-}
+@import "./features/board/board.css";
+@import "./features/board/column.css";
+@import "./features/board/card-tile.css";
+@import "./features/card-detail/detail.css";
+@import "./features/search/search.css";
+@import "./features/filters/filters.css";
+@import "./features/boards/sidebar.css";
+@import "./features/comments/comments.css";
+@import "./features/activity/activity.css";
+@import "./features/archive/archive.css";
+@import "./features/notifications/notifications.css";
+@import "./features/preferences/preferences.css";
+@import "./app.css";
 
-html,
-body {
-  background: var(--color-bg);
-  color: var(--color-fg);
-  font-family: var(--font-sans);
-}
-
-/* Hand the kanban's host palette to the devtools panel — the panel reads
-   the `--olas-*` CSS custom properties from `.olas-devtools` and re-themes
-   automatically. */
+/* Hand DevtoolsPanel the same tokens so it looks at home. */
 .olas-devtools {
-  --olas-bg: var(--color-bg-sunk);
   --olas-fg: var(--color-fg);
-  --olas-muted: var(--color-fg-mute);
-  --olas-accent: var(--color-accent);
+  --olas-fg-mute: var(--color-fg-mute);
+  --olas-bg: var(--color-bg);
+  --olas-bg-elev: var(--color-bg-elev);
+  --olas-bg-sunk: var(--color-bg-sunk);
   --olas-border: var(--color-border);
-  --olas-row: var(--color-bg-elev);
-  --olas-row-alt: var(--color-bg-sunk);
-  --olas-success: var(--color-success);
-  --olas-warn: var(--color-warning);
-  --olas-error: var(--color-danger);
-  border-radius: 0 !important;
-  border: 0 !important;
+  --olas-accent: var(--color-accent);
 }

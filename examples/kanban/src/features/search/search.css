@@ -1,0 +1,23 @@
+.olas-search {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  width: 260px; max-width: 50%;
+  background: var(--color-bg-sunk);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast), background var(--motion-fast);
+}
+.olas-search:focus-within {
+  background: var(--color-bg-elev);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px oklch(0.55 0.22 var(--hue-accent) / 0.14);
+}
+.olas-search-icon { color: var(--color-fg-mute); flex-shrink: 0; }
+.olas-search-input {
+  flex: 1; min-width: 0;
+  border: none; background: transparent; outline: none;
+  font: inherit; color: var(--color-fg);
+  font-size: 0.8125rem;
+}
+.olas-search-input::placeholder { color: var(--color-fg-dim); }

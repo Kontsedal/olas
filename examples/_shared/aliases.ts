@@ -20,6 +20,7 @@ export const olasAliases: Record<string, string> = {
   '@kontsedal/olas-devtools': resolve(repoRoot, 'packages/devtools/src/index.ts'),
   '@kontsedal/olas-realtime': resolve(repoRoot, 'packages/realtime/src/index.ts'),
   '@kontsedal/olas-cross-tab': resolve(repoRoot, 'packages/cross-tab/src/index.ts'),
+  '@kontsedal/olas-entities': resolve(repoRoot, 'packages/entities/src/index.ts'),
 }
 
 /**

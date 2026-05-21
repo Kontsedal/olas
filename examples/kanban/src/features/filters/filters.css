@@ -1,0 +1,37 @@
+.olas-filterchips {
+  display: inline-flex; align-items: center; gap: 3px;
+  flex-wrap: wrap;
+}
+.olas-chip {
+  display: inline-flex; align-items: center; gap: 3px;
+  height: 22px;
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-fg-mute);
+  font-size: 0.6875rem;
+  transition: background var(--motion-fast), color var(--motion-fast), border-color var(--motion-fast);
+}
+.olas-chip:hover { background: var(--color-bg-hover); color: var(--color-fg); }
+.olas-chip-on {
+  background: oklch(0.95 0.04 var(--chip-hue, 270));
+  color: oklch(0.42 0.14 var(--chip-hue, 270));
+  border-color: transparent;
+}
+:root[data-theme="dark"] .olas-chip-on,
+:root[data-theme="auto"] .olas-chip-on {
+  background: oklch(0.28 0.08 var(--chip-hue, 270));
+  color: oklch(0.82 0.14 var(--chip-hue, 270));
+}
+
+.olas-chip-clear {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 0 8px; height: 22px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-pill);
+  color: var(--color-fg-mute);
+  font-size: 0.6875rem;
+}
+.olas-chip-clear:hover { color: var(--color-danger); border-color: var(--color-danger); }

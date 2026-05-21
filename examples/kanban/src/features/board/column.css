@@ -1,0 +1,78 @@
+.olas-column {
+  display: flex;
+  flex-direction: column;
+  min-height: 120px;
+  max-height: calc(100vh - 140px);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  scroll-snap-align: start;
+  isolation: isolate;
+  transition: background var(--motion-base), border-color var(--motion-base);
+}
+
+.olas-column-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 4px 6px 6px;
+}
+.olas-column-pill {
+  width: 8px; height: 8px;
+  border-radius: 999px;
+  background: oklch(0.62 0.18 var(--column-hue, 270));
+  flex-shrink: 0;
+}
+.olas-column-title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--color-fg);
+}
+.olas-column-spacer { flex: 1; }
+
+.olas-column-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--density-gap-row);
+  padding: var(--density-pad-row);
+  overflow-y: auto;
+  flex: 1;
+  background: var(--color-bg-sunk);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  min-height: 64px;
+  transition: background var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast);
+}
+.olas-column-body-over {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  box-shadow: 0 0 0 1px var(--color-accent);
+}
+
+.olas-column-empty {
+  padding: 14px 10px;
+  color: var(--color-fg-dim);
+  font-size: 0.75rem;
+  text-align: center;
+  border-radius: var(--radius-sm);
+  border: 1px dashed transparent;
+}
+
+.olas-card-slot { transition: opacity var(--motion-fast); }
+.olas-card-slot-faded { opacity: 0.32; }
+.olas-card-slot-dragging .olas-card-tile {
+  opacity: 0.30;
+  background: var(--color-bg-sunk);
+}
+.olas-card-slot-dragging .olas-card-tile:hover {
+  background: var(--color-bg-sunk);
+}
+
+.olas-card-tile-overlay { cursor: grabbing; }
+.olas-card-tile-overlay .olas-card-tile {
+  box-shadow: var(--shadow-lift);
+  border-color: var(--color-accent);
+  transform: rotate(1.5deg);
+}
