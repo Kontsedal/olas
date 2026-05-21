@@ -64,6 +64,38 @@ Examples:
 
 [from SPEC §20.7] The current public API uses the nested `form.fields.a.fields.b.fields.c` access. A `fieldAt<P extends FormPath<S>>(path: P): FieldAt<S, P>` would be ergonomic for deep forms but needs template-literal-type machinery that's implementation-heavy. Nested access covers ~95% of cases today, so this is opportunistic, not blocking.
 
+### [planned] `form.submit(handler)` lifecycle + `setErrors` for server-side errors — phase 0.1
+
+Add: `form.submit(handler, { validateBeforeSubmit?, resetOnSuccess?, onError? })`, plus signals `isSubmitting` / `submitCount` / `submitError`. Handler runs after `validate()`; on invalid, `markAllTouched()` and bail without calling the handler. Plus `field.setErrors(string[])` and `form.setErrors({ path: [...] })` for server-side error injection — kept in a separate `serverErrors$` so a re-validate doesn't wipe them. Cleared on next user write to the field. RHF / TanStack-Form parity; biggest gap adopters hit today. Effort: 2–3 days.
+
+### [planned] Standard Schema adapter — phase 0.1
+
+Adopt the v1 `~standard` symbol (Zod 4, Valibot 1, ArkType 2). New `validator(schema)` in `@kontsedal/olas-core` accepts any `StandardSchemaV1`; `zodValidator` becomes an alias. `formFromZod` keeps Zod-specific introspection (no library-agnostic introspection exists yet in Standard Schema). Effort: 3–5 days.
+
+## Queries / data layer
+
+### [planned] Structural sharing on refetch + `select` projection — phase 0.1
+
+Refetches today produce a new object identity even when payload content is unchanged, so downstream `computed`s and React re-renders churn unnecessarily. Add `structuralShare(prev, next)` that walks both trees and returns a value re-using `prev`'s refs where the subtree is deep-equal; wire into `Entry.applySuccess` (and the infinite-entry equivalent) before `data.set(...)`. Bail on `Map`/`Set`/`Date`/class instances; cycle-guard with a `WeakSet` like the entities walker.
+
+Layer a `select?: (data: T) => U` option on `useQuery` / subscriptions — a per-subscriber `computed(() => select(subscription.data.value))`. Structural sharing upstream makes `select` outputs stable when their inputs are. Effort: ~1 wk including infinite-query coverage.
+
+### [planned] React 19 `use()` / Suspense integration — phase 0.2
+
+Expose `subscription.promise(): Promise<T>` over `Entry.firstValue()`; resolves on first non-pending settle, rejects on error. Add `useQuery(q, args, { suspense: true })` that throws the pending promise (caught by `<Suspense>`); on `status === 'error'` throw the error (caught by `<ErrorBoundary>`). Document the bare-`use(subscription.promise())` recipe too. Sequence after structural-sharing so concurrent renders see stable values across the suspend / resume boundary. Effort: 1–2 wk.
+
+### [planned] Router integration — phase 0.2
+
+Two layers shipped separately. Layer A: recipes for TanStack Router / React Router v6 / Next pages router in `RECIPES.md` showing the controller pattern (route signal → `ctx.session` switch). Layer B: small adapter packages `@kontsedal/olas-router-tanstack` and `-router-react-router` that provide `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope` as `ReadSignal`s + an `<OlasRouterBridge>` component. Next app-router story deferred to RSC. Effort: 3 d recipes + ~1 wk adapters.
+
+### [planned] Persisted mutation queue — phase 0.3
+
+A `RootPlugin` extension (the current `QueryClientPlugin` is too narrow) that captures `defineMutation({ persist: true, mutationId: '...' })` invocations to a `StorageAdapter` and replays them on next root init. Default replay is per-`mutationId`-serial; consumers add an `idempotencyKey` to variables to dedupe against the server. `onMutate` is skipped on replay by default (cache snapshots are gone post-reload); `onConflict` callback is the escape hatch. Touches the mutation API contract, so ship as 0.3 with a migration note. Effort: 1–2 wk.
+
+### [idea] RSC / Next app-router support — phase 0.4 (needs spec re-decision)
+
+SPEC currently rules this out ("Olas runs in the browser; not for RSC apps"). If re-opened: `'use client'` directives on every hook file; `@kontsedal/olas-react/server` entry exporting `dehydrate` + `<HydrationBoundary>` that splits hydration per Suspense boundary so streaming SSR can resolve progressively; `useActionState` adapter wrapping `Mutation` so `<form action={mutation.action}>` works. Per-request roots already exist, which is the structural win that makes this tractable. Effort: 2–3 wk; biggest risk is keeping controller-tree semantics intact across the server/client serialization line. Flag for re-decision before starting.
+
 ## Controllers
 
 ### [idea] `root.replaceController(path, newDef)` — in-place HMR-friendly swap

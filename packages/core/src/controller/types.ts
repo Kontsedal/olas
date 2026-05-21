@@ -42,6 +42,10 @@ export interface AmbientDeps {
  * `ctx.field(initial, validators?)`. Spec §8, §20.7.
  */
 export type Field<T> = ReadSignal<T> & {
+  /**
+   * All errors currently surfaced on this field — validator errors first,
+   * server errors after. See `setErrors` for the server-error channel.
+   */
   errors: ReadSignal<string[]>
   isValid: ReadSignal<boolean>
   isDirty: ReadSignal<boolean>
@@ -59,6 +63,15 @@ export type Field<T> = ReadSignal<T> & {
   reset(): void
   markTouched(): void
   revalidate(): Promise<boolean>
+  /**
+   * Pin externally-sourced errors on the field — typically server-side
+   * validation results returned from a failed submit. These errors live in
+   * a separate channel from validator output, so a re-run of local
+   * validators (triggered by a new value or `revalidate()`) does NOT clear
+   * them. They're cleared automatically the next time the user writes to
+   * the field (via `set`), or explicitly via `setErrors([])` / `reset()`.
+   */
+  setErrors(errors: ReadonlyArray<string>): void
   /** Idempotent. Called by the owning controller's dispose. */
   dispose(): void
 }
@@ -180,6 +193,13 @@ export type Ctx<TDeps = AmbientDeps> = {
     source: InfiniteQuery<Args, TPage, TItem>,
     keyOrOptions?: (() => Args) | UseOptions<Args>,
   ): InfiniteQuerySubscription<TPage, TItem>
+  // Overload — `select` projects T → U; the returned subscription's `data`
+  // is `U | undefined`. The required `select` field is the discriminator
+  // that picks this overload over the plain-key one above.
+  use<Args extends unknown[], T, U>(
+    source: Query<Args, T>,
+    options: { key?: () => Args; enabled?: () => boolean; select: (data: T) => U },
+  ): QuerySubscription<U>
 
   mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>
 

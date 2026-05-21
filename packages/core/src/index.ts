@@ -25,9 +25,19 @@ export type { DebugBus, DebugCacheEntry, DebugEvent } from './devtools'
 export type { Emitter, EmitterErrorReporter } from './emitter'
 export { createEmitter } from './emitter'
 export type { ErrorContext } from './errors'
-// Forms — stdlib validators + debouncedValidator
-export type { Validator } from './forms'
-export { email, max, maxLength, min, minLength, pattern, required } from './forms'
+// Forms — stdlib validators + Standard Schema adapter + debouncedValidator
+export type { StandardSchemaV1, Validator } from './forms'
+export {
+  email,
+  isStandardSchema,
+  max,
+  maxLength,
+  min,
+  minLength,
+  pattern,
+  required,
+  validator,
+} from './forms'
 export { debouncedValidator } from './forms/field'
 export type {
   DeepPartial,

@@ -159,10 +159,23 @@ export type QuerySubscription<T> = AsyncState<T>
 
 /**
  * Options passed to `ctx.use(query, opts)` to control the subscription
- * (reactive key, enabled-gating). The `key` thunk reads signals — re-evaluating
- * when they change re-keys the subscription.
+ * (reactive key, enabled-gating). The `key` thunk reads signals —
+ * re-evaluating when they change re-keys the subscription.
+ *
+ * A `select` projection that maps the underlying data shape to a view
+ * shape is accepted via a dedicated overload on `Ctx.use` rather than this
+ * options bag — the overload threads `T → U` types through cleanly.
  */
 export type UseOptions<Args extends readonly unknown[]> = {
   key?: () => Args
   enabled?: () => boolean
+}
+
+/**
+ * Internal shape — what `createUse` accepts. Includes the optional `select`
+ * field used by the `select` overload on `Ctx.use`. Not exported on the
+ * public surface; consumers use the typed overload.
+ */
+export type UseInternalOptions<Args extends readonly unknown[], T, U> = UseOptions<Args> & {
+  select?: (data: T) => U
 }

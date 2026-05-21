@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-example-stock-ticker",
-  "version": "0.0.1",
+  "version": "0.0.3",
   "private": true,
   "description": "Vanilla TS example — live stock ticker on signals + emitter + throttled, no UI framework",
   "license": "MIT",

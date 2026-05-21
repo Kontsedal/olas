@@ -1,6 +1,7 @@
 import { batch, computed, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
+import { structuralShare } from './structural-share'
 import type { AsyncState, AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 /**
@@ -205,8 +206,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.initialPageParam,
       (page, param) => {
         if (myId !== this.currentFetchId || this.disposed) return
+        // Structurally share with the previous first-page on refresh, so
+        // unchanged pages keep their refs. We only share the head page —
+        // initial fetch wipes the rest of the array by definition.
+        const prevPages = this.pages.peek()
+        const sharedPage =
+          prevPages.length > 0 ? structuralShare(prevPages[0] as TPage, page) : page
         batch(() => {
-          this.pages.set([page])
+          this.pages.set([sharedPage])
           this.pageParams.set([param])
           this.error.set(undefined)
           this.status.set('success')

@@ -47,6 +47,7 @@ export function fakeField<T>(
     reset: () => void
     markTouched: () => void
     revalidate: () => Promise<boolean>
+    setErrors: (errors: ReadonlyArray<string>) => void
     dispose: () => void
   }>,
 ): Field<T> {
@@ -85,6 +86,7 @@ export function fakeField<T>(
     reset: overrides?.reset ?? (() => value$.set(currentInitial)),
     markTouched: overrides?.markTouched ?? (() => touched$.set(true)),
     revalidate: overrides?.revalidate ?? (async () => errors$.peek().length === 0),
+    setErrors: overrides?.setErrors ?? ((errs) => errors$.set([...errs])),
     dispose: overrides?.dispose ?? (() => {}),
   }
   return fake

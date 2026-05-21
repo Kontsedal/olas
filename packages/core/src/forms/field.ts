@@ -36,7 +36,18 @@ export type ValidatorErrorReporter = (err: unknown) => void
 
 class FieldImpl<T> implements Field<T> {
   private readonly value$: Signal<T>
-  private readonly errors$: Signal<string[]>
+  /**
+   * Validator-produced errors. The public `errors` getter merges this with
+   * `serverErrors$` so consumers see a single flat array. Kept separate so a
+   * re-run of validators (after a new value) doesn't clobber server errors.
+   */
+  private readonly validatorErrors$: Signal<string[]>
+  /**
+   * Externally-injected errors — see `setErrors`. Cleared on the next user
+   * `set()`, on `reset()`, or via an explicit `setErrors([])`.
+   */
+  private readonly serverErrors$: Signal<string[]>
+  private readonly errors$: Computed<string[]>
   private readonly touched$: Signal<boolean>
   private readonly dirty$: Signal<boolean>
   private readonly validating$: Signal<boolean>
@@ -67,11 +78,19 @@ class FieldImpl<T> implements Field<T> {
     // post-construct hook so it can't catch the first run).
     this.onValidatorError = options?.onValidatorError ?? null
     this.value$ = signal(initial)
-    this.errors$ = signal<string[]>([])
+    this.validatorErrors$ = signal<string[]>([])
+    this.serverErrors$ = signal<string[]>([])
     this.touched$ = signal(false)
     this.dirty$ = signal(false)
     this.validating$ = signal(false)
     this.revalidateTrigger$ = signal(0)
+    this.errors$ = computed(() => {
+      const v = this.validatorErrors$.value
+      const s = this.serverErrors$.value
+      if (s.length === 0) return v
+      if (v.length === 0) return s
+      return [...v, ...s]
+    })
     this.isValid$ = computed(() => this.errors$.value.length === 0 && !this.validating$.value)
 
     if (validators.length > 0) {
@@ -126,8 +145,21 @@ class FieldImpl<T> implements Field<T> {
   // --- mutating methods ---
   set(value: T): void {
     if (this.disposed) return
-    this.value$.set(value)
-    this.dirty$.set(true)
+    batch(() => {
+      this.value$.set(value)
+      this.dirty$.set(true)
+      // Server errors are pinned externally and survive validator re-runs,
+      // but they MUST clear when the user edits the field — otherwise a
+      // server error like "username taken" would persist after the user
+      // typed a different username.
+      if (this.serverErrors$.peek().length > 0) this.serverErrors$.set([])
+    })
+  }
+
+  setErrors(errors: ReadonlyArray<string>): void {
+    if (this.disposed) return
+    const next = errors.length === 0 ? [] : [...errors]
+    this.serverErrors$.set(next)
   }
 
   /**
@@ -154,7 +186,8 @@ class FieldImpl<T> implements Field<T> {
       this.value$.set(this.initial)
       this.dirty$.set(false)
       this.touched$.set(false)
-      this.errors$.set([])
+      this.validatorErrors$.set([])
+      this.serverErrors$.set([])
       this.validating$.set(false)
     })
   }
@@ -262,7 +295,7 @@ class FieldImpl<T> implements Field<T> {
 
     if (syncErrors.length > 0) {
       batch(() => {
-        this.errors$.set(syncErrors)
+        this.validatorErrors$.set(syncErrors)
         this.validating$.set(false)
       })
       this.emitValidated(false, syncErrors)
@@ -271,7 +304,7 @@ class FieldImpl<T> implements Field<T> {
 
     if (asyncPromises.length === 0) {
       batch(() => {
-        this.errors$.set([])
+        this.validatorErrors$.set([])
         this.validating$.set(false)
       })
       this.emitValidated(true, [])
@@ -279,7 +312,7 @@ class FieldImpl<T> implements Field<T> {
     }
 
     batch(() => {
-      this.errors$.set([])
+      this.validatorErrors$.set([])
       this.validating$.set(true)
     })
 
@@ -295,7 +328,7 @@ class FieldImpl<T> implements Field<T> {
         }
       }
       batch(() => {
-        this.errors$.set(asyncErrors)
+        this.validatorErrors$.set(asyncErrors)
         this.validating$.set(false)
       })
       this.emitValidated(asyncErrors.length === 0, asyncErrors)

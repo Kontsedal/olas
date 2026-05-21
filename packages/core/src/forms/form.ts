@@ -51,6 +51,14 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   readonly topLevelErrors: ReadSignal<string[]> = this.topLevelErrors$
   private readonly topLevelValidating$: Signal<boolean> = signal(false)
 
+  // Submission lifecycle.
+  private readonly isSubmitting$: Signal<boolean> = signal(false)
+  private readonly submitCount$: Signal<number> = signal(0)
+  private readonly submitError$: Signal<unknown> = signal(undefined)
+  readonly isSubmitting: ReadSignal<boolean> = this.isSubmitting$
+  readonly submitCount: ReadSignal<number> = this.submitCount$
+  readonly submitError: ReadSignal<unknown> = this.submitError$
+
   private readonly validators: ReadonlyArray<FormValidator<S>>
   private readonly options: FormOptions<S> | undefined
   private validatorDispose: (() => void) | null = null
@@ -311,6 +319,116 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       })
     }
     return this.isValid.peek()
+  }
+
+  /**
+   * Run a submission against this form. Wraps `handler(value)` with:
+   * - `isSubmitting` set true while the handler is in flight.
+   * - `submitCount` incremented before the handler runs.
+   * - `submitError` set to the throw, if any.
+   * - Optional pre-submit `validate()` (default true). When invalid every
+   *   field is marked touched and the handler is skipped — the returned
+   *   promise resolves with `{ ok: false }` and `submitError` is left
+   *   untouched (validation failure is not a thrown error).
+   *
+   * The handler may return a value (synchronously or via Promise); it's
+   * captured in the resolved object's `data` field. Throws are captured
+   * unless `onError: 'rethrow'`. A `resetOnSuccess: true` option calls
+   * `reset()` after the handler resolves successfully.
+   */
+  async submit(
+    handler: (value: FormValue<S>) => unknown | Promise<unknown>,
+    options?: {
+      validateBeforeSubmit?: boolean
+      resetOnSuccess?: boolean
+      onError?: 'rethrow' | 'capture'
+    },
+  ): Promise<{ ok: boolean; data?: unknown; error?: unknown }> {
+    if (this.disposed) return { ok: false, error: new Error('form is disposed') }
+
+    // Double-submit guard — refusing to start a second submission while one
+    // is in flight matches RHF / TanStack-Form. Consumers wanting parallel
+    // submits should run them off the form directly.
+    if (this.isSubmitting$.peek()) {
+      return { ok: false, error: new Error('submit already in progress') }
+    }
+
+    const validateFirst = options?.validateBeforeSubmit ?? true
+    const onErrorMode = options?.onError ?? 'capture'
+
+    batch(() => {
+      this.submitCount$.update((n) => n + 1)
+      this.submitError$.set(undefined)
+      this.isSubmitting$.set(true)
+    })
+
+    try {
+      if (validateFirst) {
+        const ok = await this.validate()
+        if (!ok) {
+          this.markAllTouched()
+          this.isSubmitting$.set(false)
+          return { ok: false }
+        }
+      }
+      const result = await handler(this.value.peek())
+      if (options?.resetOnSuccess) this.reset()
+      this.isSubmitting$.set(false)
+      return { ok: true, data: result }
+    } catch (err) {
+      batch(() => {
+        this.submitError$.set(err)
+        this.isSubmitting$.set(false)
+      })
+      if (onErrorMode === 'rethrow') throw err
+      return { ok: false, error: err }
+    }
+  }
+
+  /**
+   * Pin externally-sourced errors on specific fields — typically server-side
+   * validation results from a failed submit. Paths are dot-separated and
+   * traverse nested `Form` / `FieldArray` children (numeric segments are
+   * array indices). Errors land in the field's `serverErrors` channel and
+   * clear automatically on the next user write to that field. Passing an
+   * empty array for a path clears that field's server errors immediately.
+   */
+  setErrors(errors: Record<string, ReadonlyArray<string>>): void {
+    if (this.disposed) return
+    batch(() => {
+      for (const [path, msgs] of Object.entries(errors)) {
+        const target = this.resolvePath(path)
+        if (target === undefined) continue
+        if ((target as { setErrors?: unknown }).setErrors === undefined) continue
+        ;(target as { setErrors: (e: ReadonlyArray<string>) => void }).setErrors(msgs)
+      }
+    })
+  }
+
+  private resolvePath(path: string): unknown {
+    if (path === '') return undefined
+    const segments = path.split('.')
+    let cursor: unknown = this
+    for (const seg of segments) {
+      if (cursor === undefined || cursor === null) return undefined
+      if (isForm(cursor)) {
+        cursor = (cursor.fields as Record<string, unknown>)[seg]
+        continue
+      }
+      if (isFieldArray(cursor)) {
+        const idx = Number(seg)
+        if (!Number.isInteger(idx) || idx < 0) return undefined
+        cursor = (cursor as { at(i: number): unknown }).at(idx)
+        continue
+      }
+      // Top-level dispatch — `this` is the FormImpl; walk via `fields`.
+      if (cursor === this) {
+        cursor = (this.fields as Record<string, unknown>)[seg]
+        continue
+      }
+      return undefined
+    }
+    return cursor
   }
 
   dispose(): void {

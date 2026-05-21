@@ -1,5 +1,6 @@
 import { batch, type Signal, signal } from '../signals'
 import { abortableSleep, isAbortError } from '../utils'
+import { structuralShare } from './structural-share'
 import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 export type EntryEvents = {
@@ -180,8 +181,14 @@ export class Entry<T> {
   }
 
   private applySuccess(result: T): T {
+    // Structurally share with the previous value so unchanged sub-trees
+    // keep their `===` identity. Downstream `computed`s and React snapshots
+    // stop thrashing on no-op refetches. Bails on Maps/Sets/class instances
+    // — see `structural-share.ts`.
+    const prev = this.data.peek() as T | undefined
+    const shared = prev === undefined ? result : structuralShare(prev, result)
     batch(() => {
-      this.data.set(result)
+      this.data.set(shared)
       this.error.set(undefined)
       this.status.set('success')
       this.isLoading.set(false)
@@ -195,8 +202,8 @@ export class Entry<T> {
     } catch {
       // devtools handlers must not break the program.
     }
-    this.onSuccessData?.(result)
-    return result
+    this.onSuccessData?.(shared)
+    return shared
   }
 
   private applyFailure(err: unknown): never {
