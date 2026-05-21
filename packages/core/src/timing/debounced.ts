@@ -5,15 +5,22 @@ import type { ReadSignal } from '../signals/types'
  * Lag a signal by `ms`. The returned signal updates only after the source has
  * been unchanged for `ms`. Each new write resets the timer.
  *
- * No lifecycle — the internal effect runs for the lifetime of the program.
- * Use inside a controller closure so it dies with the closure.
+ * Pass `options.signal` (an `AbortSignal`) to tie the internal effect to a
+ * lifecycle — when the signal aborts the effect disposes, the pending timer
+ * clears, and the subscriber chain on `source` drops. Without `signal`, the
+ * effect lives as long as `source` does; pass a signal whenever the source
+ * outlives the consumer.
  */
-export function debounced<T>(source: ReadSignal<T>, ms: number): ReadSignal<T> {
+export function debounced<T>(
+  source: ReadSignal<T>,
+  ms: number,
+  options?: { signal?: AbortSignal },
+): ReadSignal<T> {
   const out = signal<T>(source.peek())
   let timer: ReturnType<typeof setTimeout> | null = null
   let initial = true
 
-  effect(() => {
+  const dispose = effect(() => {
     const value = source.value
     if (initial) {
       // The first effect run reads the source for tracking; we already
@@ -27,6 +34,19 @@ export function debounced<T>(source: ReadSignal<T>, ms: number): ReadSignal<T> {
       timer = null
     }, ms)
   })
+
+  const sig = options?.signal
+  if (sig) {
+    const stop = () => {
+      if (timer != null) {
+        clearTimeout(timer)
+        timer = null
+      }
+      dispose()
+    }
+    if (sig.aborted) stop()
+    else sig.addEventListener('abort', stop, { once: true })
+  }
 
   return out
 }

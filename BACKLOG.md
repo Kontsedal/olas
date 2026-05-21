@@ -58,10 +58,6 @@ Examples:
 
 ## Storage / sync
 
-### [idea] IndexedDB storage adapter for `@kontsedal/olas-persist`
-
-`@kontsedal/olas-persist` ships a `localStorage` adapter today. IndexedDB is a natural next adapter for larger payloads or async-friendly storage.
-
 ## Forms
 
 ### [idea] Path-typed `form.fieldAt('a.b.c')` lookup
@@ -69,18 +65,6 @@ Examples:
 [from SPEC §20.7] The current public API uses the nested `form.fields.a.fields.b.fields.c` access. A `fieldAt<P extends FormPath<S>>(path: P): FieldAt<S, P>` would be ergonomic for deep forms but needs template-literal-type machinery that's implementation-heavy. Nested access covers ~95% of cases today, so this is opportunistic, not blocking.
 
 ## Controllers
-
-### [planned] Implement `ctx.collection` / `ctx.session` / `ctx.lazyChild`
-
-[from SPEC §11.1, §16.5] The spec describes three dynamic-child primitives that have no implementation yet:
-
-- **`ctx.collection`** (SPEC §11.1) — diff-by-key controller-per-item collection over a reactive source; homogeneous (`controller` + `propsOf`) or factory form (`factory: (item) => { controller, props }`). Drives plugin/block/widget containers (Notion blocks, dashboard widgets, IDE panels).
-- **`ctx.session`** (SPEC §11.1) — ephemeral child with explicit `dispose()`. For modals, inline edit sessions, wizards, command palette — child lifetime bounded by either explicit dispose or parent dispose, whichever comes first.
-- **`ctx.lazyChild`** (SPEC §16.5) — code-split child controller with lazy module loading + status tracking.
-
-`ctx.attach` (shipping) covers the "ephemeral child with handle" use case for a single item. The collection diffing engine and the factory-per-key shape are the new work. Today, callers building dynamic lists either iterate via `signal<Item[]>` + per-item subscriptions (SPEC §11.2 "rows are data") or open a discrete child via `ctx.attach`.
-
-Implementation requires: key-diff loop driven by an effect, child-per-key bookkeeping with disposal on key removal, factory-form discrimination per `factory(item).controller` identity (reconstruct on type change). Tests would mirror those for `ctx.child` plus diff scenarios.
 
 ### [idea] `root.replaceController(path, newDef)` — in-place HMR-friendly swap
 

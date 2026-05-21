@@ -87,9 +87,30 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
 
   const sourceId = makeSourceId()
   let msgIdCounter = 0
+  // Per-peer monotonic-id cursor for out-of-order / duplicate drops. We cap
+  // the number of distinct peers we remember so a long-lived root that sees
+  // many short-lived peers (tabs that open, write once, and close) doesn't
+  // grow this Map without bound. When the cap is hit we evict in insertion-
+  // order (LRU-ish — peers we haven't heard from in the longest time go
+  // first). A peer we later hear from again will simply start with `last=-1`
+  // and accept its next message; the only cost of eviction is a one-message
+  // dedup miss in the rare case the transport actually echoes that exact
+  // peer's last-seen message back to us, which `BroadcastChannel` does not.
+  const MAX_PEERS = 64
   const seenByPeer = new Map<string, number>()
   let api: QueryClientPluginApi | null = null
   let channel: ChannelLike | null = null
+
+  const recordPeerMsg = (peerId: string, msgId: number): void => {
+    // LRU touch — delete + set re-inserts at the tail so the oldest peers
+    // sit at the head of the iterator.
+    if (seenByPeer.has(peerId)) seenByPeer.delete(peerId)
+    seenByPeer.set(peerId, msgId)
+    if (seenByPeer.size > MAX_PEERS) {
+      const oldest = seenByPeer.keys().next().value
+      if (oldest !== undefined) seenByPeer.delete(oldest)
+    }
+  }
 
   const listener = (event: { data: unknown }) => {
     const msg = event.data as Partial<Message> | null
@@ -102,7 +123,7 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
     if (typeof msg.sourceId !== 'string' || typeof msg.msgId !== 'number') return
     const last = seenByPeer.get(msg.sourceId) ?? -1
     if (msg.msgId <= last) return
-    seenByPeer.set(msg.sourceId, msg.msgId)
+    recordPeerMsg(msg.sourceId, msg.msgId)
 
     if (msg.type === 'setData') {
       if (typeof msg.queryId !== 'string' || !Array.isArray(msg.keyArgs)) {
@@ -205,6 +226,7 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
         channel = null
       }
       api = null
+      seenByPeer.clear()
       // Allow re-`init` only if a future runtime explicitly reattaches; today
       // `QueryClient.dispose` is final, so this is mostly defensive.
       initialized = false

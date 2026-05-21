@@ -80,6 +80,80 @@ export type CtrlProps<C> = C extends ControllerDef<infer P, unknown> ? P : never
 export type CtrlApi<C> = C extends ControllerDef<unknown, infer A> ? A : never
 
 /**
+ * The reactive surface returned by `ctx.collection(...)`. `items` is the
+ * canonical ordered view (source-order, with any construction-failed items
+ * filtered out); `size` mirrors `items.length`; `get` / `has` are
+ * imperative key lookups. SPEC §11.1.
+ */
+export type Collection<K, Api> = {
+  readonly items: ReadSignal<ReadonlyArray<{ readonly key: K; readonly api: Api }>>
+  readonly size: ReadSignal<number>
+  get(key: K): Api | undefined
+  has(key: K): boolean
+}
+
+/**
+ * Homogeneous form of `ctx.collection`: one controller def for every item,
+ * with `propsOf` projecting each item to the controller's `Props`. Construct
+ * happens once per new key — `propsOf` is **not** re-applied for unchanged
+ * keys.
+ */
+export type CollectionHomogeneousOptions<Item, K, Props, Api, TDeps = AmbientDeps> = {
+  readonly source: ReadSignal<readonly Item[]>
+  readonly keyOf: (item: Item) => K
+  readonly controller: ControllerDef<Props, Api>
+  readonly propsOf: (item: Item) => Props
+  readonly factory?: never
+  readonly propsFor?: never
+  readonly deps?: Partial<TDeps>
+}
+
+/**
+ * Heterogeneous form of `ctx.collection`: a single `factory` decides per-item
+ * which controller + props to construct. When a key's factory result picks a
+ * *different* controller than last time, the existing child is disposed and
+ * the new one constructed (type-discriminant rebuild).
+ *
+ * `R` is the factory's *return type* (typically inferred as the union of the
+ * branches' `{ controller, props }` shapes). `Api` is then projected out as
+ * the union of every branch's controller Api via `CollectionFactoryApi<R>` —
+ * unlike a single `Api` generic, the union doesn't collapse to the first
+ * branch.
+ */
+export type CollectionFactoryOptions<Item, K, R, TDeps = AmbientDeps> = {
+  readonly source: ReadSignal<readonly Item[]>
+  readonly keyOf: (item: Item) => K
+  readonly controller?: never
+  readonly propsOf?: never
+  readonly factory: (item: Item) => R
+  readonly deps?: Partial<TDeps>
+}
+
+/** Constraint for the factory form's return shape. */
+// biome-ignore lint/suspicious/noExplicitAny: per-branch types vary
+export type CollectionFactoryResult = { controller: ControllerDef<any, any>; props: any }
+
+/** Extract the union of every branch's controller Api. Distributes over R. */
+export type CollectionFactoryApi<R> = R extends {
+  // biome-ignore lint/suspicious/noExplicitAny: distributive infer across the union
+  controller: ControllerDef<any, infer A>
+}
+  ? A
+  : never
+
+/**
+ * Handle returned by `ctx.lazyChild(...)`. `status` walks `idle → loading →
+ * (ready | error)`; `api` becomes defined once `status === 'ready'`. SPEC §16.5.
+ */
+export type LazyChild<Api> = {
+  readonly status: ReadSignal<'idle' | 'loading' | 'ready' | 'error'>
+  readonly api: ReadSignal<Api | undefined>
+  readonly error: ReadSignal<unknown | undefined>
+  load(): Promise<Api>
+  dispose(): void
+}
+
+/**
  * `ctx` is the lifecycle-bound surface every controller factory receives.
  * Every primitive constructed through `ctx` is owned by the controller and
  * disposed when the controller disposes.
@@ -149,6 +223,63 @@ export type Ctx<TDeps = AmbientDeps> = {
     props: Props,
     options?: { deps?: Partial<TDeps> },
   ): { api: Api; dispose: () => void; suspend: () => void; resume: () => void }
+
+  /**
+   * Ephemeral child controller bound to either (a) the explicit `dispose()`
+   * call returned in the tuple, or (b) the parent's disposal — whichever
+   * comes first. Same lifecycle semantics as `ctx.attach` minus suspend /
+   * resume (sessions are short-lived, not pause-able). Returns a `[api,
+   * dispose]` tuple so the api shape is exactly the controller's return
+   * type, with no wrapper to unpack.
+   *
+   * Use cases: modal forms, inline edit sessions, wizards, command palette.
+   * SPEC §11.1.
+   */
+  session<Props, Api>(
+    def: ControllerDef<Props, Api>,
+    props: Props,
+    options?: { deps?: Partial<TDeps> },
+  ): readonly [api: Api, dispose: () => void]
+
+  /**
+   * Diff-by-key set of child controllers driven by a reactive `source`.
+   * On every change to `source`, the collection:
+   *   - **new keys** → construct a child via `controller` + `propsOf(item)`
+   *     (or `factory(item)` for the heterogeneous form);
+   *   - **removed keys** → dispose that child;
+   *   - **unchanged keys** → leave it alone (`propsOf` is NOT re-applied).
+   *
+   * For per-item type-discriminated children, use the `factory` form —
+   * type changes for an existing key dispose and reconstruct.
+   *
+   * Construction errors (factory or controller throw) are routed to
+   * `onError` with `kind: 'construction'` and the item is **skipped** —
+   * the collection's surface shows one fewer entry. The diff loop does
+   * not re-throw. SPEC §11.1, §12.1.6.
+   */
+  collection<Item, K, Props, Api>(
+    options: CollectionHomogeneousOptions<Item, K, Props, Api, TDeps>,
+  ): Collection<K, Api>
+  collection<Item, K, R extends CollectionFactoryResult>(
+    options: CollectionFactoryOptions<Item, K, R, TDeps>,
+  ): Collection<K, CollectionFactoryApi<R>>
+
+  /**
+   * Code-split child controller. The loader is invoked on `load()`
+   * (idempotent), then the controller is constructed with the supplied
+   * `props`. `status` / `api` / `error` are reactive signals; subscribe
+   * via `use(child.api)` in your view layer.
+   *
+   * Parent disposal disposes the loaded child (if any) and flags any
+   * in-flight load so its eventual settle is dropped on the floor.
+   * Construction or import failures route through `onError` with
+   * `kind: 'construction'`. SPEC §16.5.
+   */
+  lazyChild<Props, Api>(
+    loader: () => Promise<ControllerDef<Props, Api>>,
+    props: Props,
+    options?: { deps?: Partial<TDeps> },
+  ): LazyChild<Api>
 
   effect(fn: () => void | (() => void)): void
 

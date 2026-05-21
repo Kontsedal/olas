@@ -6,16 +6,22 @@ import type { ReadSignal } from '../signals/types'
  * The first change passes through immediately. Subsequent changes within the
  * window are coalesced; the latest value is emitted when the window expires.
  *
- * No lifecycle — see debounced() note.
+ * Pass `options.signal` to tie the internal effect to a lifecycle — when the
+ * signal aborts the effect disposes and any pending trailing timer clears.
+ * Without `signal`, the effect lives as long as `source` does.
  */
-export function throttled<T>(source: ReadSignal<T>, ms: number): ReadSignal<T> {
+export function throttled<T>(
+  source: ReadSignal<T>,
+  ms: number,
+  options?: { signal?: AbortSignal },
+): ReadSignal<T> {
   const out = signal<T>(source.peek())
   let lastEmit = Number.NEGATIVE_INFINITY
   let trailingTimer: ReturnType<typeof setTimeout> | null = null
   let trailingValue: T = source.peek()
   let initial = true
 
-  effect(() => {
+  const dispose = effect(() => {
     const value = source.value
     if (initial) {
       initial = false
@@ -41,6 +47,19 @@ export function throttled<T>(source: ReadSignal<T>, ms: number): ReadSignal<T> {
       }
     }
   })
+
+  const sig = options?.signal
+  if (sig) {
+    const stop = () => {
+      if (trailingTimer != null) {
+        clearTimeout(trailingTimer)
+        trailingTimer = null
+      }
+      dispose()
+    }
+    if (sig.aborted) stop()
+    else sig.addEventListener('abort', stop, { once: true })
+  }
 
   return out
 }

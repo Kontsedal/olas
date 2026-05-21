@@ -7,6 +7,7 @@ covers:
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/persist/tests/persist.test.ts }
+  - { type: tested-by, target: ../../packages/persist/tests/indexeddb-adapter.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: controller.md }
 last_verified: 2026-05-21
@@ -50,8 +51,16 @@ Signal-core's `source.subscribe(handler)` fires immediately with the current val
 
 `crossTab: true` requires `storage.onChange?(handler)` to be defined. The default `localStorageAdapter` uses the browser `storage` event. On a remote change, deserialize and call `source.set(value)` (with `writingFromLoad` set so we don't echo the write back).
 
+## Adapters
+
+The package ships two `StorageAdapter` implementations:
+
+- **`localStorageAdapter`** — sync `get` / `set` / `delete` via the browser `localStorage`. `onChange` listens to the `storage` event (fires only for writes in OTHER tabs — matches the platform). SSR-safe: no-ops when `localStorage` is undefined.
+- **`indexedDbAdapter(options?)`** — async `get` / `set` / `delete` via IndexedDB. Single key/value object store; database / store / channel names are configurable. IDB has no native change event, so `onChange` is layered via `BroadcastChannel`: every write through this adapter posts a `{ key, value }` message; other adapter instances on the same channel (including in other tabs) dispatch it to their `onChange` handlers. Like `BroadcastChannel`, the message does **not** echo back to the sender's tab. SSR-safe: when no `IDBFactory` is available and no override is passed, every method resolves to a no-op. The `indexedDB` option lets callers inject a custom IDB factory (used by tests; useful for non-browser runtimes that ship their own implementation).
+
+Both adapters share the same `StorageAdapter` shape, so `usePersisted` is agnostic. IndexedDB is the right pick for larger payloads (above ~5MB localStorage quota), payloads with characters that bloat string serialization, or anywhere async storage is acceptable.
+
 ## What's NOT included
 
-- IndexedDB adapter (deferred per spec §13).
 - Schema versioning / migrations.
 - Encryption.

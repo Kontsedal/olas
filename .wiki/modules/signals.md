@@ -12,7 +12,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/signals.test.ts }
   - { type: uses, target: ../decisions/signals-runtime-wrapped.md }
   - { type: related, target: ../pitfalls/preact-signals-overload-return.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 
@@ -40,7 +40,7 @@ type Computed<T>   = ReadSignal<T>
 
 ## Internal helper
 
-`readOnly(source)` in `signals/readonly.ts` returns a fresh `ReadSignal<T>` view that hides `set` / `update` / writable `.value` at runtime. Use this when exposing a `Signal` as a `ReadSignal` on a public surface — TypeScript alone is not a runtime barrier.
+`readOnly(source)` in `signals/readonly.ts` returns a fresh `ReadSignal<T>` view that omits `set` / `update` / writable `.value`. The returned object is `Object.freeze`d, so a `(ro as any).value = …` assignment throws in strict mode and is a no-op in sloppy mode — defense-in-depth on top of the type system, not a substitute for it. Use when exposing a `Signal` as a `ReadSignal` on a public surface.
 
 ## Subscribe semantics
 

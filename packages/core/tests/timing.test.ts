@@ -145,3 +145,49 @@ describe('throttled', () => {
     expect(t.value).toBe(2)
   })
 })
+
+describe('lifecycle / AbortSignal', () => {
+  test('debounced: abort drops the pending timer and stops further updates', () => {
+    const a = signal('a')
+    const c = new AbortController()
+    const d = debounced(a, 100, { signal: c.signal })
+
+    a.set('b')
+    vi.advanceTimersByTime(50)
+    c.abort()
+    // Aborted during the pending window — the trailing emit must not fire
+    // and subsequent source writes must not reach `d`.
+    vi.advanceTimersByTime(100)
+    expect(d.value).toBe('a')
+    a.set('c')
+    vi.advanceTimersByTime(100)
+    expect(d.value).toBe('a')
+  })
+
+  test('debounced: pre-aborted signal disposes immediately', () => {
+    const a = signal('a')
+    const c = new AbortController()
+    c.abort()
+    const d = debounced(a, 100, { signal: c.signal })
+    a.set('b')
+    vi.advanceTimersByTime(200)
+    expect(d.value).toBe('a')
+  })
+
+  test('throttled: abort clears the pending trailing timer', () => {
+    vi.setSystemTime(1000)
+    const a = signal(0)
+    const c = new AbortController()
+    const t = throttled(a, 100, { signal: c.signal })
+    a.set(1) // leading fires
+    expect(t.value).toBe(1)
+    vi.advanceTimersByTime(20)
+    a.set(2) // schedules trailing
+    c.abort()
+    vi.advanceTimersByTime(200)
+    expect(t.value).toBe(1)
+    a.set(3)
+    vi.advanceTimersByTime(200)
+    expect(t.value).toBe(1)
+  })
+})

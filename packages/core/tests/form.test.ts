@@ -345,6 +345,84 @@ describe('ctx.fieldArray', () => {
     expect(root.form.value.value).toEqual({ name: 'B', tags: ['p', 'q', 'r'] })
     root.dispose()
   })
+
+  test('form.set preserves item identity + touched/dirty on overlapping indices', () => {
+    // Repro: pre-fix `form.set({ tags: [...] })` did `clear() + add(...)` —
+    // every item was a fresh field. Touched/dirty flags from the user's
+    // in-progress edits on items 0/1 were wiped out by the set. With the
+    // fix, overlapping indices keep their Field instance and only the
+    // tail is grown/shrunk.
+    const def = defineController((ctx) => ({
+      form: ctx.form({
+        tags: ctx.fieldArray((initial) => ctx.field(initial ?? '')),
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.form.fields.tags.add('x')
+    root.form.fields.tags.add('y')
+    const beforeFirst = root.form.fields.tags.at(0)
+    const beforeSecond = root.form.fields.tags.at(1)
+    // Make item-0 touched + dirty.
+    beforeFirst?.markTouched()
+    beforeFirst?.set('x-edited')
+    expect(beforeFirst?.touched.value).toBe(true)
+    expect(beforeFirst?.isDirty.value).toBe(true)
+
+    // Patch the array — overlap on indices 0/1, grow tail by one.
+    root.form.set({ tags: ['x-edited', 'y-new', 'z'] })
+
+    const afterFirst = root.form.fields.tags.at(0)
+    const afterSecond = root.form.fields.tags.at(1)
+    const afterThird = root.form.fields.tags.at(2)
+    // Identity preserved on overlap; touched/dirty survive.
+    expect(afterFirst).toBe(beforeFirst)
+    expect(afterSecond).toBe(beforeSecond)
+    expect(afterFirst?.touched.value).toBe(true)
+    // Item-2 is a freshly-added field.
+    expect(afterThird).toBeDefined()
+    expect(afterThird).not.toBe(beforeFirst)
+
+    // Values reflect the patch.
+    expect(root.form.value.value).toEqual({ tags: ['x-edited', 'y-new', 'z'] })
+    root.dispose()
+  })
+
+  test('form.resetWithInitial re-anchors initialItems so reset() returns there', () => {
+    // Reaching `resetWithInitial` requires Form.options.initial as a
+    // function so it can return a different shape on the second pass —
+    // simulating loading server data after the form was created with a
+    // placeholder. Pre-fix, the array's `initialItems` was never updated,
+    // so a later `reset()` reverted to the construction-time shape `[]`
+    // rather than the loaded one.
+    let serverData: { tags: string[] } = { tags: ['a', 'b'] }
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        {
+          tags: ctx.fieldArray((initial: string | undefined) => ctx.field(initial ?? '')),
+        },
+        { initial: () => serverData },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.form.value.value).toEqual({ tags: ['a', 'b'] })
+
+    // "Server reloaded" — apply via resetWithInitial path. We trigger it by
+    // mutating the source and calling reset() (which re-applies `initial`).
+    serverData = { tags: ['x', 'y', 'z'] }
+    root.form.reset()
+    expect(root.form.value.value).toEqual({ tags: ['x', 'y', 'z'] })
+
+    // User edits — then reset should revert to the most-recently-applied
+    // initial, NOT the construction-time initial ['a','b'].
+    root.form.fields.tags.add('w')
+    expect(root.form.value.value.tags).toEqual(['x', 'y', 'z', 'w'])
+    // `reset()` re-applies the form's `initial` (which now returns
+    // ['x','y','z']) — so it'll go back there regardless. To exercise the
+    // initialItems-anchor path we call the FieldArray's own reset:
+    root.form.fields.tags.reset()
+    expect(root.form.value.value.tags).toEqual(['x', 'y', 'z'])
+    root.dispose()
+  })
 })
 
 describe('async form-level + field-array-level validators', () => {

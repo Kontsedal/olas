@@ -1,13 +1,17 @@
 /**
- * True iff `err` is an AbortError. Used to filter superseded latest-wins
- * mutations and aborted fetches from genuine failures.
+ * True iff `err` looks like an AbortError. Matches the standard `DOMException`
+ * shape thrown by `AbortController` AND any object whose `name === 'AbortError'`
+ * — that covers axios / msw / user-thrown plain Errors that signal abort.
  *
- * Spec: §20.12 — checks `err instanceof DOMException && err.name === 'AbortError'`.
- * Node 17+ exposes a global DOMException, so this works server-side too.
+ * Spec: §20.12. Node 17+ exposes a global DOMException, so the instanceof
+ * branch works server-side; the name-based branch is the portable fallback.
  */
 export function isAbortError(err: unknown): boolean {
   if (typeof DOMException !== 'undefined' && err instanceof DOMException) {
     return err.name === 'AbortError'
+  }
+  if (err != null && typeof err === 'object' && 'name' in err) {
+    return (err as { name: unknown }).name === 'AbortError'
   }
   return false
 }

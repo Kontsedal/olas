@@ -8,15 +8,15 @@ import type { ReadSignal } from './types'
  * Internal helper — not exported from the package's public surface.
  */
 export function readOnly<T>(source: ReadSignal<T>): ReadSignal<T> {
-  return {
+  return Object.freeze({
     get value() {
       return source.value
     },
     peek() {
       return source.peek()
     },
-    subscribe(handler) {
+    subscribe(handler: (value: T) => void) {
       return source.subscribe(handler)
     },
-  }
+  })
 }

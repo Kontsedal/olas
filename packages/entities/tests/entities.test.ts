@@ -255,6 +255,35 @@ describe('entitiesPlugin', () => {
     root.dispose()
   })
 
+  test('update on a missing entity does not allocate a slot or trip LRU eviction', () => {
+    // Repro: with `maxSlots` set, a no-op update used to allocate an empty
+    // slot via `getSlot` and LRU-touch it — under cap pressure that could
+    // evict a real entity. After the fix the missing-entity update is a true
+    // no-op: no slot allocated, no eviction triggered.
+    const SmallEntity = defineEntity<{ id: string; n: number }>({
+      name: 'SmallEntity',
+      idOf: (v) =>
+        v != null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'n' in v
+          ? v.id
+          : null,
+      maxSlots: 2,
+    })
+    const plugin = entitiesPlugin([SmallEntity])
+    const def = defineController(() => ({}))
+    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+
+    plugin.upsert(SmallEntity, { id: 'a', n: 1 })
+    plugin.upsert(SmallEntity, { id: 'b', n: 2 })
+    // The no-op update on a never-seen id must not push an empty slot — if
+    // it did, the partition would hit cap=2 and evict `a` to make room.
+    plugin.update(SmallEntity, 'never-seen', { n: 99 })
+    expect(plugin.get(SmallEntity, 'a')).toEqual({ id: 'a', n: 1 })
+    expect(plugin.get(SmallEntity, 'b')).toEqual({ id: 'b', n: 2 })
+    expect(plugin.get(SmallEntity, 'never-seen')).toBeUndefined()
+
+    root.dispose()
+  })
+
   test('subscribers re-render exactly once per update across N affected queries', async () => {
     const feedQuery = defineQuery({
       queryId: 'ent-test/6/feed',
