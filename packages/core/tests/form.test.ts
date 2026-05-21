@@ -318,9 +318,7 @@ describe('ctx.fieldArray', () => {
 
   test('FieldArray.markAllTouched cascades into sub-form items', () => {
     const def = defineController((ctx) => ({
-      items: ctx.fieldArray(() =>
-        ctx.form({ sku: ctx.field<string>('', [required()]) }),
-      ),
+      items: ctx.fieldArray(() => ctx.form({ sku: ctx.field<string>('', [required()]) })),
     }))
     const root = createRoot(def, { deps: emptyDeps })
     root.items.add({ sku: '' })
@@ -377,10 +375,8 @@ describe('async form-level + field-array-level validators', () => {
   })
 
   test('Form validator that throws is reported via internal onValidatorError without crashing', async () => {
-    const onErr = vi.fn()
-    // The internal hook is reached via ctx.form's wiring; we observe it
-    // indirectly through the form NOT throwing and the error landing in
-    // topLevelErrors as the thrown message.
+    // The thrown error coerces to a string and lands in `topLevelErrors`;
+    // the form keeps running (no top-level crash).
     const def = defineController((ctx) => ({
       form: ctx.form(
         { a: ctx.field('x') },
@@ -397,7 +393,6 @@ describe('async form-level + field-array-level validators', () => {
     await vi.waitFor(() =>
       expect(root.form.topLevelErrors.value).toEqual(expect.arrayContaining(['boom'])),
     )
-    onErr // unused — keeping the vi import live without an additional test asserting onError dispatch (which lives on the root).
     root.dispose()
   })
 
