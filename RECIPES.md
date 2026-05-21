@@ -279,7 +279,7 @@ const checkoutController = defineController((ctx) => {
 
 ## Router integration
 
-Olas has no built-in router. Real apps wire one of the popular React routers (TanStack Router, React Router v6, Next pages router) by exposing the current route as a signal and feeding it to `ctx.use(...)`, `ctx.session(...)`, or `ctx.collection(...)`. The pattern is the same regardless of router; only the bridging glue differs.
+Olas has no built-in router. Real apps wire a client-side router (TanStack Router, React Router v6, or similar) by exposing the current route as a signal and feeding it to `ctx.use(...)`, `ctx.session(...)`, or `ctx.collection(...)`. The pattern is the same regardless of router; only the bridging glue differs. **Next.js is not supported** — see `BACKLOG.md` for the philosophy reasoning.
 
 ### Pattern A — route params as a `ReadSignal`
 
@@ -353,22 +353,10 @@ function RouteParamsBridge({ children }: { children: React.ReactNode }) {
 }
 ```
 
-### Bridging — Next pages router
-
-```tsx
-import { useRouter } from 'next/router'
-
-function RouteParamsBridge({ children }: { children: React.ReactNode }) {
-  const { query, isReady } = useRouter()
-  useEffect(() => {
-    if (!isReady) return
-    params$.set(query as RouteParams)
-  }, [query, isReady])
-  return <>{children}</>
-}
-```
-
-(Next app-router / RSC is not yet supported — see `BACKLOG.md`.)
+Other bridges follow the same shape — any router with a "current params"
+accessor can drive `params$.set(...)` in an effect. **Next.js is not
+supported**; the controller-tree model is misaligned with RSC and Next's
+data-fetching idioms, see `BACKLOG.md`.
 
 ### Pattern B — controller-per-route via `ctx.session`
 
