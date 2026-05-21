@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-devtools",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "Olas in-app devtools — controller tree inspector, cache timeline, mutation log, signal graph.",
   "keywords": [
     "olas",

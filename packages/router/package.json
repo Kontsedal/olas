@@ -1,25 +1,24 @@
 {
-  "name": "@kontsedal/olas-mutation-queue",
+  "name": "@kontsedal/olas-router",
   "version": "0.0.6",
-  "description": "Olas mutation queue — durable persistence + reload-safe replay for persistable mutations.",
+  "description": "Olas router bridge — scopes + a generic Bridge component for wiring any client-side router (TanStack Router, React Router v6) into the controller tree.",
   "keywords": [
     "olas",
     "controller-tree",
     "signals",
     "reactive",
     "state-management",
-    "mutation-queue",
-    "offline",
-    "persistence",
-    "replay"
+    "router",
+    "tanstack-router",
+    "react-router"
   ],
   "license": "MIT",
   "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
-  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/mutation-queue#readme",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/router#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Kontsedal/olas.git",
-    "directory": "packages/mutation-queue"
+    "directory": "packages/router"
   },
   "bugs": {
     "url": "https://github.com/Kontsedal/olas/issues"
@@ -51,11 +50,16 @@
   },
   "peerDependencies": {
     "@kontsedal/olas-core": "workspace:^",
-    "@kontsedal/olas-persist": "workspace:^"
+    "react": ">=18"
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^",
-    "@kontsedal/olas-persist": "workspace:^"
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   },
   "publishConfig": {
     "access": "public"

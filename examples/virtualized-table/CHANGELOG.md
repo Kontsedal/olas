@@ -1,5 +1,14 @@
 # @olas/example-virtualized-table
 
+## 0.0.6
+
+### Patch Changes
+
+- Updated dependencies
+  - @kontsedal/olas-core@0.0.6
+  - @kontsedal/olas-react@0.0.6
+  - @kontsedal/olas-devtools@0.0.6
+
 ## 0.0.5
 
 ### Patch Changes

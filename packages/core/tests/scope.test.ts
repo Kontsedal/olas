@@ -165,3 +165,78 @@ describe('ctx.provide / ctx.inject', () => {
     expect(true).toBe(true)
   })
 })
+
+describe('RootOptions.scopes — seed scopes from outside the factory', () => {
+  test('seeded scopes are visible to ctx.inject from the root factory', () => {
+    const themeScope = defineScope<string>({ name: 'theme' })
+    let seenTheme: string | undefined
+    const root = defineController((ctx) => {
+      seenTheme = ctx.inject(themeScope)
+      return {}
+    })
+    const r = createRoot(root, { deps: {}, scopes: [[themeScope, 'dark']] })
+    expect(seenTheme).toBe('dark')
+    r.dispose()
+  })
+
+  test('seeded scopes propagate to descendants via the parent walk', () => {
+    const userIdScope = defineScope<string>({ name: 'userId' })
+    let leafSaw: string | undefined
+    const leaf = defineController((ctx) => {
+      leafSaw = ctx.inject(userIdScope)
+      return {}
+    })
+    const root = defineController((ctx) => {
+      ctx.child(leaf, undefined)
+      return {}
+    })
+    const r = createRoot(root, { deps: {}, scopes: [[userIdScope, 'u-42']] })
+    expect(leafSaw).toBe('u-42')
+    r.dispose()
+  })
+
+  test('a controller can override a seeded scope for its subtree', () => {
+    const tenantScope = defineScope<string>({ name: 'tenant' })
+    let outerSaw: string | undefined
+    let innerSaw: string | undefined
+    const inner = defineController((ctx) => {
+      innerSaw = ctx.inject(tenantScope)
+      return {}
+    })
+    const outer = defineController((ctx) => {
+      outerSaw = ctx.inject(tenantScope)
+      ctx.child(
+        defineController((c) => {
+          c.provide(tenantScope, 'override')
+          c.child(inner, undefined)
+          return {}
+        }),
+        undefined,
+      )
+      return {}
+    })
+    const r = createRoot(outer, { deps: {}, scopes: [[tenantScope, 'seeded']] })
+    expect(outerSaw).toBe('seeded')
+    expect(innerSaw).toBe('override')
+    r.dispose()
+  })
+
+  test('later seeded binding wins on duplicate scope', () => {
+    const s = defineScope<number>({ name: 'priority' })
+    let saw: number | undefined
+    const root = defineController((ctx) => {
+      saw = ctx.inject(s)
+      return {}
+    })
+    const r = createRoot(root, {
+      deps: {},
+      scopes: [
+        [s, 1],
+        [s, 2],
+        [s, 3],
+      ],
+    })
+    expect(saw).toBe(3)
+    r.dispose()
+  })
+})

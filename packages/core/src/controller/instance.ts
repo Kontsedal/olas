@@ -82,6 +82,21 @@ export class ControllerInstance {
   /** Scope values provided on this instance, keyed by `Scope.__id`. */
   private scopes: Map<symbol, unknown> | null = null
 
+  /**
+   * Pre-seed scopes from outside the factory — used by `createRoot`'s
+   * `scopes:` option so an adapter (e.g. `@kontsedal/olas-router-tanstack`)
+   * can publish cross-cutting values without forcing the user to call
+   * `ctx.provide(...)` in their root controller. Idempotent per scope id:
+   * later calls override.
+   */
+  seedScopes(bindings: ReadonlyArray<readonly [{ __id: symbol }, unknown]>): void {
+    if (bindings.length === 0) return
+    if (this.scopes === null) this.scopes = new Map()
+    for (const [scope, value] of bindings) {
+      this.scopes.set(scope.__id, value)
+    }
+  }
+
   constructor(
     parent: ControllerInstance | null,
     rootShared: RootShared,

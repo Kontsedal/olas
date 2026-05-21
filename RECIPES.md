@@ -279,22 +279,74 @@ const checkoutController = defineController((ctx) => {
 
 ## Router integration
 
-Olas has no built-in router. Real apps wire a client-side router (TanStack Router, React Router v6, or similar) by exposing the current route as a signal and feeding it to `ctx.use(...)`, `ctx.session(...)`, or `ctx.collection(...)`. The pattern is the same regardless of router; only the bridging glue differs. **Next.js is not supported** — see `BACKLOG.md` for the philosophy reasoning.
+Use `@kontsedal/olas-router` — a generic adapter that exposes
+`RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope` and a
+`Bridge` component that pushes the router's state into those scopes.
+Works with any client-side router (TanStack Router, React Router v6, or
+your own). **Next.js is not supported** — see `BACKLOG.md` for the
+philosophy reasoning.
 
-### Pattern A — route params as a `ReadSignal`
+### Setup
 
-Define a scope. Provide it once at the root. Inject it anywhere a controller needs the live route.
+```tsx
+import { createRouterAdapter, RouteParamsScope } from '@kontsedal/olas-router'
 
-```ts
-// scopes/route.ts
-import { defineScope, type ReadSignal } from '@kontsedal/olas-core'
+const adapter = createRouterAdapter()
 
-export type RouteParams = Record<string, string>
-export const RouteParamsScope = defineScope<ReadSignal<RouteParams>>('route:params')
+const root = createRoot(appController, {
+  deps,
+  scopes: adapter.scopes, // seeds the three route scopes on the root
+})
 ```
 
+### Bridging — TanStack Router
+
+```tsx
+import { useLocation, useParams, useSearch } from '@tanstack/react-router'
+
+function App() {
+  const params = useParams({ strict: false })
+  const search = useSearch({ strict: false })
+  const location = useLocation()
+  return (
+    <OlasProvider root={root}>
+      <adapter.Bridge params={params} search={search} pathname={location.pathname}>
+        <YourRoutes />
+      </adapter.Bridge>
+    </OlasProvider>
+  )
+}
+```
+
+### Bridging — React Router v6
+
+```tsx
+import { useLocation, useParams, useSearchParams } from 'react-router-dom'
+
+function App() {
+  const params = useParams() as Record<string, string>
+  const [sp] = useSearchParams()
+  const { pathname } = useLocation()
+  const search = Object.fromEntries(sp.entries())
+  return (
+    <OlasProvider root={root}>
+      <adapter.Bridge params={params} search={search} pathname={pathname}>
+        <YourRoutes />
+      </adapter.Bridge>
+    </OlasProvider>
+  )
+}
+```
+
+The `Bridge` shallow-equals the incoming `params` / `search` records, so
+fresh-object-every-render (the typical router pattern) doesn't churn
+downstream consumers.
+
+### Consume in any controller
+
 ```ts
-// any controller that depends on the route
+import { RouteParamsScope } from '@kontsedal/olas-router'
+
 const profileController = defineController((ctx) => {
   const params = ctx.inject(RouteParamsScope)
   const user = ctx.use(userQuery, () => [params.value.userId])
@@ -302,61 +354,8 @@ const profileController = defineController((ctx) => {
 })
 ```
 
-`ctx.use`'s key thunk reads `params.value` — route changes auto-rekey the subscription. No effects, no manual subscriptions.
-
-### Bridging — TanStack Router
-
-TanStack Router exposes params via a hook. Bridge it to a signal once, near the root.
-
-```tsx
-import { useParams } from '@tanstack/react-router'
-import { useEffect } from 'react'
-import { signal } from '@kontsedal/olas-core'
-
-const params$ = signal<RouteParams>({})
-
-function RouteParamsBridge({ children }: { children: React.ReactNode }) {
-  const params = useParams({ strict: false })
-  useEffect(() => {
-    params$.set(params as RouteParams)
-  }, [params])
-  return <>{children}</>
-}
-
-// in root setup:
-const root = createRoot(appController, {
-  deps,
-  scopes: [[RouteParamsScope, params$]], // provide once at root construction
-})
-
-// mount:
-<OlasProvider root={root}>
-  <RouteParamsBridge>
-    <YourRoutes />
-  </RouteParamsBridge>
-</OlasProvider>
-```
-
-### Bridging — React Router v6
-
-`useParams` from `react-router-dom`, same shape:
-
-```tsx
-import { useParams } from 'react-router-dom'
-
-function RouteParamsBridge({ children }: { children: React.ReactNode }) {
-  const params = useParams()
-  useEffect(() => {
-    params$.set(params as RouteParams)
-  }, [params])
-  return <>{children}</>
-}
-```
-
-Other bridges follow the same shape — any router with a "current params"
-accessor can drive `params$.set(...)` in an effect. **Next.js is not
-supported**; the controller-tree model is misaligned with RSC and Next's
-data-fetching idioms, see `BACKLOG.md`.
+`ctx.use`'s key thunk reads `params.value` — route changes auto-rekey
+the subscription. No effects, no manual subscriptions.
 
 ### Pattern B — controller-per-route via `ctx.session`
 

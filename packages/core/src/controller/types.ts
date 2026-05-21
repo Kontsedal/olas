@@ -343,6 +343,17 @@ export type RootOptions<TDeps> = {
    * the root disposes. SPEC §13.2.
    */
   plugins?: QueryClientPlugin[]
+  /**
+   * Pre-seed scopes on the root controller before its factory runs. Useful
+   * for cross-cutting values an adapter wants to provide once (route
+   * params from a router bridge, theme tokens, etc.) without forcing the
+   * user's root controller to call `ctx.provide(...)`.
+   *
+   * Bindings are flat `[scope, value]` tuples; later bindings for the
+   * same scope override earlier ones. `ctx.inject` from any descendant
+   * resolves these via the normal scope chain walk. SPEC §10.3.
+   */
+  scopes?: ReadonlyArray<readonly [Scope<unknown>, unknown]>
 }
 
 /**
