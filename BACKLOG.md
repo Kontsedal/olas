@@ -74,23 +74,17 @@ Adopt the v1 `~standard` symbol (Zod 4, Valibot 1, ArkType 2). New `validator(sc
 
 ## Queries / data layer
 
-### [planned] Structural sharing on refetch + `select` projection — phase 0.1
+### [planned] Router adapter packages — phase 0.2b
 
-Refetches today produce a new object identity even when payload content is unchanged, so downstream `computed`s and React re-renders churn unnecessarily. Add `structuralShare(prev, next)` that walks both trees and returns a value re-using `prev`'s refs where the subtree is deep-equal; wire into `Entry.applySuccess` (and the infinite-entry equivalent) before `data.set(...)`. Bail on `Map`/`Set`/`Date`/class instances; cycle-guard with a `WeakSet` like the entities walker.
+`RECIPES.md` already documents the router-bridge pattern (TanStack Router + React Router v6) — recipes are sufficient for most apps. The dedicated `@kontsedal/olas-router-tanstack` and `@kontsedal/olas-router-react-router` packages still pending: each ships a small `<OlasRouterBridge>` component plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Effort: ~1 wk total. Low priority — recipes cover the 90% case.
 
-Layer a `select?: (data: T) => U` option on `useQuery` / subscriptions — a per-subscriber `computed(() => select(subscription.data.value))`. Structural sharing upstream makes `select` outputs stable when their inputs are. Effort: ~1 wk including infinite-query coverage.
+### [dropped] Next.js app-router / RSC support
 
-### [planned] React 19 `use()` / Suspense integration — phase 0.2
+Next.js is fundamentally misaligned with olas's philosophy: the controller-tree model assumes a client-driven, signal-reactive runtime where lifecycle, dispose, and `ctx.use` keying live in user space. RSC inverts that — the server owns rendering, components are render functions of props, and the framework dictates data-fetching boundaries. Trying to bolt olas onto that model would either (a) make olas a thin pass-through to whatever Next.js already does, defeating the point, or (b) require a parallel server-side controller runtime, doubling the surface area for an audience that's already well served by TanStack Query and `'use server'` actions.
 
-Expose `subscription.promise(): Promise<T>` over `Entry.firstValue()`; resolves on first non-pending settle, rejects on error. Add `useQuery(q, args, { suspense: true })` that throws the pending promise (caught by `<Suspense>`); on `status === 'error'` throw the error (caught by `<ErrorBoundary>`). Document the bare-`use(subscription.promise())` recipe too. Sequence after structural-sharing so concurrent renders see stable values across the suspend / resume boundary. Effort: 1–2 wk.
+**We don't need Next.js.** Olas is for logic-heavy client-driven apps (Linear/Notion class) where the controller tree carries real weight. Pages-router SSR via `dehydrate`/`hydrate` (already shipped, spec §11) covers the SSR case for the apps that benefit from it. RSC consumers should reach for the framework's native data-fetching story.
 
-### [planned] Router integration — phase 0.2
-
-Two layers shipped separately. Layer A: recipes for TanStack Router / React Router v6 / Next pages router in `RECIPES.md` showing the controller pattern (route signal → `ctx.session` switch). Layer B: small adapter packages `@kontsedal/olas-router-tanstack` and `-router-react-router` that provide `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope` as `ReadSignal`s + an `<OlasRouterBridge>` component. Next app-router story deferred to RSC. Effort: 3 d recipes + ~1 wk adapters.
-
-### [idea] RSC / Next app-router support — phase 0.4 (needs spec re-decision)
-
-SPEC currently rules this out ("Olas runs in the browser; not for RSC apps"). If re-opened: `'use client'` directives on every hook file; `@kontsedal/olas-react/server` entry exporting `dehydrate` + `<HydrationBoundary>` that splits hydration per Suspense boundary so streaming SSR can resolve progressively; `useActionState` adapter wrapping `Mutation` so `<form action={mutation.action}>` works. Per-request roots already exist, which is the structural win that makes this tractable. Effort: 2–3 wk; biggest risk is keeping controller-tree semantics intact across the server/client serialization line. Flag for re-decision before starting.
+Keep this entry as a reference: future contributors will ask "why not Next?" and the answer needs to be findable.
 
 ## Controllers
 
