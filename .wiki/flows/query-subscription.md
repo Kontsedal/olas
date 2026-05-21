@@ -5,15 +5,15 @@ type: flow
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/controller/instance.ts:295-330
+  - packages/core/src/controller/instance.ts:302-330
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/entry.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-20
-confidence: medium
+last_verified: 2026-05-21
+confidence: high
 ---
 
 # Flow: query subscription
@@ -78,7 +78,7 @@ Key tricks:
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
 - We refetch on subscribe only if status is `idle` / stale / errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
 
-### 3. `client.bindEntry(query, args)` — `client.ts:746`
+### 3. `client.bindEntry(query, args)` — `client.ts:771`
 
 Looks up the entry in `client.maps`. If absent:
 
@@ -91,7 +91,7 @@ Looks up the entry in `client.maps`. If absent:
 
 `ClientEntry`'s constructor builds an `Entry<T>` with a fetcher closure that captures the original `args` (the user's call args, not the hash key — these are distinct, see `../pitfalls/callargs-vs-keyargs.md`).
 
-### 4. `entry.acquire()` — `client.ts:254`
+### 4. `entry.acquire()` — `client.ts:104`
 
 Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer.
 

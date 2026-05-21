@@ -3,12 +3,12 @@ name: callargs-vs-keyargs
 description: Two arg arrays inside ClientEntry. One goes to the fetcher; one goes to the hash. They are not the same.
 type: pitfall
 covers:
-  - packages/core/src/query/client.ts:31-105
-  - packages/core/src/query/client.ts:216-260
+  - packages/core/src/query/client.ts:31-102
+  - packages/core/src/query/client.ts:214-265
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-05-20
+last_verified: 2026-05-21
 confidence: high
 ---
 

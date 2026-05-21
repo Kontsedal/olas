@@ -3,11 +3,11 @@ name: literal-type-narrowing
 description: ctx.field('') infers Field<''> because of literal narrowing. Annotate the type parameter.
 type: pitfall
 covers:
-  - packages/core/src/controller/types.ts:71
+  - packages/core/src/controller/types.ts:114
   - packages/core/src/controller/define.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

@@ -10,7 +10,7 @@ edges:
   - { type: uses, target: ctx.md }
   - { type: uses, target: ../flows/construction-rollback.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 
@@ -29,6 +29,7 @@ class ControllerInstance {
   private readonly rootShared: RootShared    # devtools, onError, queryClient
   private readonly parent: ControllerInstance | null
   private childCounter = 0                   # used for path segment names
+  private scopes: Map<symbol, unknown> | null = null   # ctx.provide/inject backing store
 }
 ```
 
@@ -36,14 +37,17 @@ class ControllerInstance {
 
 ```ts
 type LifecycleEntry =
-  | { kind: 'effect',        factory: () => void | (() => void), dispose: (() => void) | null }
-  | { kind: 'cleanup',       dispose: () => void }
-  | { kind: 'child',         instance: ControllerInstance }
-  | { kind: 'subscription',  unsubscribe: () => void }
-  | { kind: 'onDispose',     fn: () => void }
-  | { kind: 'onSuspend',     fn: () => void }
-  | { kind: 'onResume',      fn: () => void }
+  | { kind: 'effect',             factory: () => void | (() => void), dispose: (() => void) | null }
+  | { kind: 'cleanup',            dispose: () => void }
+  | { kind: 'subscription-cache', dispose: () => void, suspend: () => void, resume: () => void }
+  | { kind: 'child',              instance: ControllerInstance }
+  | { kind: 'subscription',       unsubscribe: () => void }
+  | { kind: 'onDispose',          fn: () => void }
+  | { kind: 'onSuspend',          fn: () => void }
+  | { kind: 'onResume',           fn: () => void }
 ```
+
+`subscription-cache` is `ctx.use(...)`'s entry — distinct from `cleanup` because `suspend()` / `resume()` need to pause/restart the underlying `ClientEntry` (refetchInterval + focus/online listeners + release of the entry from this subscriber). Spec §4.1.
 
 `factory` on the `effect` variant is the user's effect function (wrapped with `dispatchError`). We retain it so suspend → resume can re-instantiate the effect via `standaloneEffect(factory)`.
 
@@ -62,3 +66,7 @@ type LifecycleEntry =
 ## Path naming
 
 `makeChildSegment(factory)` produces `${factory.name || 'anonymous'}[${index}]`. The counter is per-parent. So `defineController(function userProfile(ctx) {...})` makes children show up as `['root', 'userProfile[0]']`. Anonymous arrow factories get `['root', 'anonymous[0]']`. The DevtoolsEmitter uses `path` for its events.
+
+## `ctx.attach(def, props)` handle
+
+Returns `{ api, dispose, suspend, resume }`. `dispose` tears the child down early and removes the lifecycle entry from the parent (so a later parent-dispose doesn't double-dispose). `suspend` / `resume` cascade through the child's own lifecycle entries — same code path as `root.suspend()` / `root.resume()`. All four are idempotent and try/catch-wrapped via `dispatchError` with `kind: 'effect'`. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. Spec §4.1, §16.5.

@@ -5,6 +5,8 @@ type: module
 covers:
   - packages/devtools/src/index.ts
   - packages/devtools/src/DevtoolsPanel.tsx
+  - packages/devtools/src/DevtoolsLauncher.tsx
+  - packages/devtools/src/JsonView.tsx
   - packages/devtools/src/store.ts
   - packages/devtools/src/format.ts
   - packages/devtools/src/styles.ts
@@ -14,13 +16,13 @@ edges:
   - { type: tested-by, target: ../../packages/devtools/tests/panel.test.tsx }
   - { type: uses, target: devtools.md }
   - { type: uses, target: react.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 
 # `@kontsedal/olas-devtools`
 
-Drop-in React panel that subscribes to a root's `__debug` bus and renders four live views: controller Tree, Cache, Mutations, Fields. Phase 13 in-app variant; spec §13.
+Drop-in React panel that subscribes to a root's `__debug` bus and renders four live views: controller Tree, Cache, Mutations, Fields. Plus a floating `<DevtoolsLauncher>` that hosts the panel inside a draggable / resizable window with state persisted to `localStorage`. Spec §13.
 
 ## Public surface
 
@@ -29,6 +31,15 @@ function DevtoolsPanel(props: {
   root: Pick<Root<unknown>, '__debug'>
   defaultTab?: 'tree' | 'cache' | 'mutations' | 'fields'
   maxEntries?: number
+}): JSX.Element
+
+function DevtoolsLauncher(props: {
+  root: Pick<Root<unknown>, '__debug'>
+  defaultTab?: DevtoolsTab
+  maxEntries?: number
+  urlHashKey?: string
+  storageKey?: string
+  initial?: { x?: number; y?: number; w?: number; h?: number }
 }): JSX.Element
 
 class DevtoolsStore {

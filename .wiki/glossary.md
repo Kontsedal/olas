@@ -4,7 +4,7 @@ description: Domain vocabulary used across the codebase and spec.
 type: glossary
 covers:
   - SPEC.md
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

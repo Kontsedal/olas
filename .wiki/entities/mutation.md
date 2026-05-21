@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../flows/mutation-concurrency.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 
@@ -71,6 +71,7 @@ Notes:
 - **`raceAbort(promise, signal)`** — if the user's `mutate` ignores its `AbortSignal`, the wrapper still rejects with AbortError when superseded. Without this, misbehaving fetchers could leave runs hanging forever. See `../pitfalls/raceabort-for-misbehaving-mutate.md`.
 - **Supersede ≠ failure.** AbortError doesn't populate `mutation.error`, doesn't invoke `onError`, doesn't invoke `onSettled`. Spec §6.1 is explicit.
 - **`onMutate` runs synchronously in `run()`** before the await. Snapshots are recorded before any I/O.
+- **Snapshots are wrapped single-consume.** `wrapSnapshot` makes `rollback()` / `finalize()` idempotent across each other — whichever fires first wins. On success the path auto-calls `snapshot.finalize()` (clears `hasPendingMutations`); on error it auto-calls `snapshot.rollback()` after the user's `onError` (no-op if `onError` already called `rollback`). Spec §6.4.
 
 ## Retry
 

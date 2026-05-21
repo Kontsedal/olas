@@ -3,11 +3,11 @@ name: isstale-needs-timer
 description: isStale cannot be a computed of Date.now() — its dependencies don't change as time passes. Use a Signal with a setTimeout.
 type: pitfall
 covers:
-  - packages/core/src/query/entry.ts:32-100
+  - packages/core/src/query/entry.ts:48-110
 edges:
   - { type: tested-by, target: ../../packages/core/tests/cache.test.ts }
   - { type: uses, target: ../entities/entry.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

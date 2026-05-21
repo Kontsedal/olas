@@ -17,8 +17,8 @@ edges:
   - { type: uses, target: ../decisions/brand-markers-not-classes.md }
   - { type: related, target: ../pitfalls/field-value-shape.md }
   - { type: related, target: ../pitfalls/fieldarray-factory-uses-initial.md }
-last_verified: 2026-05-18
-confidence: medium
+last_verified: 2026-05-21
+confidence: high
 ---
 
 # `packages/core/src/forms/`

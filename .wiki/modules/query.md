@@ -25,8 +25,8 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-20
-confidence: medium
+last_verified: 2026-05-21
+confidence: high
 ---
 
 # `packages/core/src/query/`
@@ -82,14 +82,14 @@ A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it re
 
 ## SSR
 
-`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`. Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map; the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry`. The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md` and `client.ts:756-770`.
+`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`. Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map; the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry`. The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md` and `client.ts:808-819`.
 
 ## Plugin slot
 
 The `QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`). Plugins observe `setData` / `invalidate` / `gc` and can push remote-originated writes back through the cache via `QueryClientPluginApi.applyRemoteSetData` / `applyRemoteInvalidate` / `setEntryData`. Spec §13.2. Surface:
 
 - **`init(api)`** — called once after construction. Wire transports here. The `api` is closed over the client; safe to retain.
-- **`onSetData(event)`** — fires on every cache write. `event.source` discriminates origin: `'set'` (explicit `client.setData` / mutation / plugin-initiated `setEntryData`), `'fetch'` (fetcher resolved successfully via `Entry.applySuccess`, OR a hydrated entry was first bound via `bindEntry`), or `'remote'` (`applyRemoteSetData`). `event.isRemote` is `true` only for `'remote'` — `source === 'remote' ⇔ isRemote === true`, kept dual for back-compat (cross-tab gates on `isRemote`, entities gates on `source`). Infinite queries also fire with `kind: 'infinite'` for explicit `setData` but DO NOT yet fire on fetch — `kind: 'infinite' + source: 'fetch'` is reserved (cross-tab and entities both skip infinite in v1).
+- **`onSetData(event)`** — fires on every cache write. `event.source` discriminates origin: `'set'` (explicit `client.setData` / mutation / plugin-initiated `setEntryData`), `'fetch'` (fetcher resolved successfully via `Entry.applySuccess`, OR a hydrated entry was first bound via `bindEntry`), or `'remote'` (`applyRemoteSetData`). `event.isRemote` is `true` only for `'remote'` — `source === 'remote' ⇔ isRemote === true`, kept dual for back-compat (cross-tab gates on `isRemote`, entities gates on `source`). Infinite queries fire with `kind: 'infinite'` for BOTH explicit `setData` (`'set'`) AND successful page fetches (`'fetch'` — initial, next, prev — via the `onSuccessData` closure handed to `InfiniteEntry`). `cross-tab` skips `kind: 'infinite'`; `entities` walks it (`event.data` is `TPage[]`, so the path accumulator records `[pageIdx, ...inPagePath]` and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData`).
 - **`onInvalidate(event)`** — every invalidate (regular + infinite). Same `isRemote` semantics.
 - **`onGc(event)`** — every entry drop. No `isRemote` (gc is local).
 - **`dispose()`** — called from `QueryClient.dispose`. Tear down transports.

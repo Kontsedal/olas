@@ -12,7 +12,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/signals.test.ts }
   - { type: uses, target: ../decisions/signals-runtime-wrapped.md }
   - { type: related, target: ../pitfalls/preact-signals-overload-return.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

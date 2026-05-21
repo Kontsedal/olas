@@ -14,8 +14,8 @@ edges:
   - { type: uses, target: entry.md }
   - { type: uses, target: ../decisions/per-root-query-client.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-20
-confidence: medium
+last_verified: 2026-05-21
+confidence: high
 ---
 
 # `QueryClient`
@@ -67,10 +67,11 @@ Disposes every `ClientEntry`/`InfiniteClientEntry` (clearing their timers and ab
 
 Plugin api:
 
-- `applyRemoteSetData(queryId, keyArgs, data)` — resolves the query via the `queryId` registry in `plugin.ts`. No-op when no local entry exists for that key (no `callArgs` available to refetch later, and seeding rows the user never subscribed to would be leaky). Sets `applyingRemote = true` while the underlying `Entry.setData` runs; `emitSetData` reads the flag for the `isRemote` field.
+- `applyRemoteSetData(queryId, keyArgs, data)` — resolves the query via the `queryId` registry in `plugin.ts`. No-op when no local entry exists for that key (no `callArgs` available to refetch later, and seeding rows the user never subscribed to would be leaky). Sets `applyingRemote = true` while the underlying `Entry.setData` runs; `emitSetData` reads the flag for the `isRemote` field. Infinite queries are dropped silently (deferred for v1 cross-tab).
 - `applyRemoteInvalidate(queryId, keyArgs)` — same shape, invalidates the local entry if present.
+- `setEntryData(queryId, keyArgs, updater)` — local-originated write keyed by `(queryId, keyArgs)`. Routes regular queries through `Entry.setData` and infinite queries through `InfiniteEntry.setData` (the `data` on the resulting `SetDataEvent` is `TPage[]` for infinite, matching `kind: 'infinite'`). Used by the `@kontsedal/olas-entities` plugin to backpropagate entity patches into every query holding the entity — including paginated/infinite ones — without forcing the plugin to recover the original `callArgs`. Emits with `isRemote: false`, `source: 'set'`; cross-tab WILL rebroadcast.
 - `subscribedKeys(queryId)` — walks the client's `maps` (or `infiniteMaps`) for the matching query and returns every bound entry's `keyArgs`. Used by cross-tab plugins to scope outbound traffic. Returns `[]` for unknown `queryId`s.
 
 Every plugin callback is wrapped in try/catch — exceptions go through `dispatchError(this.onError, err, { kind: 'plugin' })`. A plugin bug never tears down the cache. The `'plugin'` kind is new in `ErrorContext` (§20.9) — pre-existing `cache` / `mutation` semantics unchanged.
 
-Infinite-query plugin events fire with `kind: 'infinite'` for forward compatibility. The current `@kontsedal/olas-cross-tab` plugin filters them out (§13.2 v1 limitation).
+Infinite-query plugin events fire with `kind: 'infinite'` for forward compatibility — on every successful page settle (initial, next, prev) via `InfiniteClientEntry`'s `onSuccessData` closure, and on every `setInfiniteData` / `setEntryData` write that targets an infinite query. The current `@kontsedal/olas-cross-tab` plugin filters them out (§13.2 v1 limitation), but `@kontsedal/olas-entities` consumes them to walk infinite-query payloads for backprop.
