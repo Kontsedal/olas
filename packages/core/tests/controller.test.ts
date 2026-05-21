@@ -438,7 +438,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
     for (const reserved of ['dispose', 'suspend', 'resume', '__debug'] as const) {
       const def = defineController(() => ({ [reserved]: () => {} }) as Record<string, () => void>)
       expect(() => createRoot(def, { deps: noopApi })).toThrowError(
-        new RegExp(`conflicts with the root controls`),
+        /conflicts with the root controls/,
       )
     }
   })
