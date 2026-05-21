@@ -1,5 +1,13 @@
 # @olas/example-stock-ticker
 
+## 0.0.5
+
+### Patch Changes
+
+- Updated dependencies
+  - @kontsedal/olas-core@0.0.5
+  - @kontsedal/olas-persist@0.0.5
+
 ## 0.0.4
 
 ### Patch Changes

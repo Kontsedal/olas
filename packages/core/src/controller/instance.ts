@@ -340,12 +340,22 @@ export class ControllerInstance {
       },
 
       mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R> {
+        const queryClient = self.rootShared.queryClient
         const m = createMutation<V, R>(
           spec,
           self.rootShared.onError,
           self.path,
-          self.rootShared.queryClient.mutationsInflight$,
+          queryClient.mutationsInflight$,
           self.rootShared.devtools,
+          // Lifecycle hooks for persistable mutations — only wired when
+          // `spec.persist === true`. `createMutation` validates the
+          // `mutationId` requirement before construction.
+          spec.persist === true
+            ? {
+                emitEnqueue: (ev) => queryClient.emitMutationEnqueue(ev),
+                emitSettle: (ev) => queryClient.emitMutationSettle(ev),
+              }
+            : undefined,
         )
         self.entries.push({ kind: 'cleanup', dispose: () => m.dispose() })
         return m

@@ -68,18 +68,27 @@ export { stableHash } from './query/keys'
 export type {
   Mutation,
   MutationConcurrency,
+  MutationDef,
   MutationSpec,
 } from './query/mutation'
-// Query-client plugins (§13.2)
+export { defineMutation } from './query/mutation'
+// Query-client plugins (§13.2 / §13.3)
 export type {
   GcEvent,
   InvalidateEvent,
+  MutationEnqueueEvent,
+  MutationSettleEvent,
   QueryClientPlugin,
   QueryClientPluginApi,
+  RegisteredMutation,
   RegisteredQuery,
   SetDataEvent,
 } from './query/plugin'
-export { lookupRegisteredQuery } from './query/plugin'
+export {
+  _unregisterMutationById,
+  lookupRegisteredMutation,
+  lookupRegisteredQuery,
+} from './query/plugin'
 // Query primitives
 export type {
   AsyncState,

@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-example-reader-ssr",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "private": true,
   "description": "React + SSR example — infinite feed with dehydrate/hydrate, useSuspendOnHidden, persisted reading progress",
   "license": "MIT",

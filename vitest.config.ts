@@ -16,6 +16,7 @@ export default defineConfig({
       '@kontsedal/olas-entities': resolve(__dirname, 'packages/entities/src/index.ts'),
       '@kontsedal/olas-zod': resolve(__dirname, 'packages/zod/src/index.ts'),
       '@kontsedal/olas-devtools': resolve(__dirname, 'packages/devtools/src/index.ts'),
+      '@kontsedal/olas-mutation-queue': resolve(__dirname, 'packages/mutation-queue/src/index.ts'),
     },
   },
   test: {

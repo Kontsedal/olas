@@ -119,6 +119,36 @@ export type GcEvent = {
 }
 
 /**
+ * Emitted when a persistable mutation (`spec.persist === true`) starts
+ * executing — before the user's `mutate` is invoked. Plugins use this to
+ * persist the variables to durable storage; if the page reloads mid-run,
+ * the queue replays from these entries.
+ *
+ * `runId` is unique per execution (a single `mutation.run(...)` call OR a
+ * replay attempt). `attempt` counts retry passes within a single runId.
+ */
+export type MutationEnqueueEvent = {
+  mutationId: string
+  runId: string
+  variables: unknown
+  attempt: number
+}
+
+/**
+ * Emitted after a persistable mutation settles. Plugins use this to drop
+ * the run from the durable queue (on `'success'` or `'error'` after retries
+ * exhaust), or to leave it pending (on `'cancelled'` — e.g. parent dispose
+ * mid-flight).
+ */
+export type MutationSettleEvent = {
+  mutationId: string
+  runId: string
+  outcome: 'success' | 'error' | 'cancelled'
+  /** Only present on `'error'` — the final thrown value after retries. */
+  error?: unknown
+}
+
+/**
  * Plugin contract. Every hook is optional. Hooks are wrapped in try/catch
  * by `QueryClient`; thrown exceptions are routed through the root's
  * `onError` handler with `kind: 'plugin'`.
@@ -126,12 +156,24 @@ export type GcEvent = {
 export type QueryClientPlugin = {
   /**
    * Called once after the `QueryClient` is constructed. Use it to wire up
-   * transport listeners and capture the `QueryClientPluginApi`.
+   * transport listeners and capture the `QueryClientPluginApi`. SPEC §13.2.
+   *
+   * Persistable-mutation replay typically happens HERE — module-scope
+   * `defineMutation(...)` calls have already registered their handlers by
+   * the time `createRoot(...)` runs, so `init` can walk durable storage
+   * and re-invoke registered mutates for any pending entries.
    */
   init?(api: QueryClientPluginApi): void
   onSetData?(event: SetDataEvent): void
   onInvalidate?(event: InvalidateEvent): void
   onGc?(event: GcEvent): void
+  /**
+   * Fired when a persistable mutation (`spec.persist === true`) starts
+   * executing. SPEC §13.3.
+   */
+  onMutationEnqueue?(event: MutationEnqueueEvent): void
+  /** Fired after a persistable mutation settles. SPEC §13.3. */
+  onMutationSettle?(event: MutationSettleEvent): void
   /** Called from `QueryClient.dispose`. Tear down transports / listeners here. */
   dispose?(): void
 }
@@ -182,4 +224,52 @@ export function lookupRegisteredQuery(queryId: string): RegisteredQuery | undefi
  */
 export function _unregisterQueryById(queryId: string): void {
   queryRegistry.delete(queryId)
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Mutation registry — parallel to query registry. Persistable mutations
+// (`spec.persist === true`) register themselves at module-import time via
+// `defineMutation(...)` so the mutation-queue plugin can replay pending
+// runs at `init` time, BEFORE controllers reconstruct.
+// ────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Shape stored in the `mutationId → handler` registry. Only the `mutate`
+ * function and the id are needed for replay — lifecycle hooks like
+ * `onSuccess` / `onError` are per-controller and can't be safely replayed
+ * across page reloads (the controller doesn't exist yet).
+ */
+export type RegisteredMutation = {
+  readonly mutationId: string
+  /**
+   * Replay-safe `mutate`. Matches `MutationSpec.mutate` 1:1 — receives the
+   * variables and an `AbortSignal`. The mutation-queue plugin invokes this
+   * directly on replay, so the implementation MUST NOT close over
+   * controller-instance state. Module-level deps (a shared `api` client,
+   * etc.) are fine.
+   */
+  readonly mutate: (vars: unknown, signal: AbortSignal) => Promise<unknown>
+}
+
+const mutationRegistry = new Map<string, RegisteredMutation>()
+
+/** Register a mutation by its `mutationId`. Internal — called from `defineMutation`. */
+export function registerMutationById(mutationId: string, entry: RegisteredMutation): void {
+  mutationRegistry.set(mutationId, entry)
+}
+
+/**
+ * Look up a registered mutation by id. Returns `undefined` when no
+ * mutation with that id has been defined — typical when a queue entry
+ * references a mutation whose module hasn't been imported (e.g. a
+ * code-split route boundary). The plugin should leave such entries in
+ * place and retry once the module loads.
+ */
+export function lookupRegisteredMutation(mutationId: string): RegisteredMutation | undefined {
+  return mutationRegistry.get(mutationId)
+}
+
+/** Test-only — drop a registered mutation. Not exported from the package. */
+export function _unregisterMutationById(mutationId: string): void {
+  mutationRegistry.delete(mutationId)
 }

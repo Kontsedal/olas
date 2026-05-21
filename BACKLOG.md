@@ -28,9 +28,9 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 After §13.2 grew the `source: 'set' | 'fetch' | 'remote'` field, `source === 'remote'` carries the same information as `isRemote === true`. They're kept both for back-compat — existing plugins (cross-tab) gate on `isRemote`, new plugins (entities) can gate on `source`. Pick one in v2 and drop the other. Migration: keep `isRemote` (shorter, predates `source`) and reserve `source` strictly for `'set' | 'fetch'`.
 
-### [idea] `@kontsedal/olas-offline` — offline-first sync / mutation queueing + fetcher retry layer
+### [idea] `@kontsedal/olas-offline` — offline-first reconnection layer atop the mutation queue
 
-Persistent outbox + conflict-resolution + retry-on-reconnect for mutations, plus a reusable fetcher middleware (connection state + exponential backoff + jitter). Today users layer this themselves over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`; per-query `retry` / `retryDelay` cover the simple backoff cases inline. A canonical package would standardize the queue / merge / retry / reconnect semantics for apps that want a Notion / Linear-style sync model.
+`@kontsedal/olas-mutation-queue` (shipped 0.0.5) covers durable enqueue + reload-replay for `defineMutation({ persist: true })`. The remaining offline layer would add: navigator-online detection, connection-state signal, conflict-resolution helpers, exponential-backoff schedule for inter-attempt waits, and an opinionated retry policy mid-session (today the queue only retries across page loads). Likely a thin package layered on top of `mutation-queue` + `@kontsedal/olas-persist`.
 
 ### [idea] `@kontsedal/olas-vue` — Vue adapter
 
@@ -87,10 +87,6 @@ Expose `subscription.promise(): Promise<T>` over `Entry.firstValue()`; resolves 
 ### [planned] Router integration — phase 0.2
 
 Two layers shipped separately. Layer A: recipes for TanStack Router / React Router v6 / Next pages router in `RECIPES.md` showing the controller pattern (route signal → `ctx.session` switch). Layer B: small adapter packages `@kontsedal/olas-router-tanstack` and `-router-react-router` that provide `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope` as `ReadSignal`s + an `<OlasRouterBridge>` component. Next app-router story deferred to RSC. Effort: 3 d recipes + ~1 wk adapters.
-
-### [planned] Persisted mutation queue — phase 0.3
-
-A `RootPlugin` extension (the current `QueryClientPlugin` is too narrow) that captures `defineMutation({ persist: true, mutationId: '...' })` invocations to a `StorageAdapter` and replays them on next root init. Default replay is per-`mutationId`-serial; consumers add an `idempotencyKey` to variables to dedupe against the server. `onMutate` is skipped on replay by default (cache snapshots are gone post-reload); `onConflict` callback is the escape hatch. Touches the mutation API contract, so ship as 0.3 with a migration note. Effort: 1–2 wk.
 
 ### [idea] RSC / Next app-router support — phase 0.4 (needs spec re-decision)
 
