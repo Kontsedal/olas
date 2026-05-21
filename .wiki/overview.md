@@ -10,7 +10,7 @@ covers:
 edges:
   - { type: documented-in, target: ../SPEC.md }
   - { type: related, target: glossary.md }
-last_verified: 2026-05-19
+last_verified: 2026-05-21
 confidence: high
 ---
 
@@ -41,13 +41,16 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 
 | Package | Status | Purpose |
 |---------|--------|---------|
-| `@kontsedal/olas-core` | Implemented (phases 0–12) | Signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus |
-| `@kontsedal/olas-zod` | Implemented (phase 9) | `zodValidator` + `formFromZod` |
-| `@kontsedal/olas-persist` | Implemented (phase 11) | `usePersisted` + localStorage adapter |
-| `@kontsedal/olas-react` | Implemented (phase 10) | `OlasProvider`, `useRoot`, `use`/`useQuery`/`useField`, `KeepAlive` |
-| `@kontsedal/olas-devtools` | Implemented (phase 13, in-app variant) | `<DevtoolsPanel>` + `DevtoolsStore` over `root.__debug` |
+| `@kontsedal/olas-core` | Implemented | Signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus, `defineScope` |
+| `@kontsedal/olas-react` | Implemented | `OlasProvider`, `useRoot`, `useController`, `useQuery`/`useField`, `KeepAlive`, `useSuspendOnHidden` |
+| `@kontsedal/olas-zod` | Implemented | `zodValidator` + `zodValidatorAsync` + `rootOnlyZodValidator` + `formFromZod` (now takes `{ extraValidators }`) |
+| `@kontsedal/olas-persist` | Implemented | `usePersisted` + localStorage adapter |
+| `@kontsedal/olas-devtools` | Implemented | `<DevtoolsPanel>` + `<DevtoolsLauncher>` + `DevtoolsStore` over `root.__debug` |
+| `@kontsedal/olas-cross-tab` | Implemented | `crossTabPlugin` — BroadcastChannel-backed cache sync (`QueryClientPlugin`) |
+| `@kontsedal/olas-entities` | Implemented | `defineEntity` + `entitiesPlugin` — normalized entity store with reverse-index backprop into both regular AND infinite queries |
+| `@kontsedal/olas-realtime` | Implemented | `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService` |
 
-Phase 14 (polish & docs) landed: READMEs, `MIGRATING.md`, `RECIPES.md`, TSDoc, and `examples/user-profile/`. Phase 13 shipped as an in-app `<DevtoolsPanel>` plus the runtime wiring for cache + mutation devtools events. A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
+Polish & docs landed: READMEs, `MIGRATING.md`, `RECIPES.md`, TSDoc, four runnable example apps (kanban flagship, stock-ticker, reader-ssr, virtualized-table). A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
 
 ## Core module map
 
@@ -88,4 +91,4 @@ See `modules/*.md` for per-directory details.
 
 ## Build & verify
 
-CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 255 tests pass. See `../CLAUDE.md` for the full command list.
+CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 482 lib tests across 39 files pass (kanban example ships its own controller-level tests on top). See `../CLAUDE.md` for the full command list.

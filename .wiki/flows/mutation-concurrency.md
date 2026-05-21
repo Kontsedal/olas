@@ -10,8 +10,8 @@ edges:
   - { type: uses, target: ../entities/mutation.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-05-18
-confidence: medium
+last_verified: 2026-05-21
+confidence: high
 ---
 
 # Flow: mutation concurrency

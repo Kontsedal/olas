@@ -3,12 +3,12 @@ name: raceabort-for-misbehaving-mutate
 description: Wrap the mutate fn's promise in a raceAbort against the abort signal. Otherwise misbehaving mutates can hang forever.
 type: pitfall
 covers:
-  - packages/core/src/query/mutation.ts:130-180
-  - packages/core/src/query/mutation.ts:220-260
+  - packages/core/src/query/mutation.ts:184-247
+  - packages/core/src/query/mutation.ts:347-374
 edges:
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

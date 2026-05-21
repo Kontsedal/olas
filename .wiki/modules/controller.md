@@ -16,8 +16,8 @@ edges:
   - { type: uses, target: ../entities/ctx.md }
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: uses, target: ../flows/construction-rollback.md }
-last_verified: 2026-05-18
-confidence: medium
+last_verified: 2026-05-21
+confidence: high
 ---
 
 # `packages/core/src/controller/`
@@ -30,8 +30,8 @@ Implements the controller container: `defineController`, `createRoot`, the `Ctx`
 
 - **`types.ts`** — `Ctx<TDeps>`, `Root<Api>`, `ControllerDef`, `RootOptions`, `AmbientDeps`, `Field` interface.
 - **`define.ts`** — `defineController` (one signature with `Props = void` default; this dodges TS overload pitfalls — see `pitfalls/literal-type-narrowing.md` context). `getFactory` extracts the internal `__factory` from a `ControllerDef`.
-- **`instance.ts`** — `ControllerInstance` class. Owns the `entries: LifecycleEntry[]` list and the `Ctx` factory. ~370 lines; the lifecycle implementation lives here.
-- **`root.ts`** — `createRoot` / `createRootWithProps`. Wraps the root `ControllerInstance` with `dispose / suspend / resume / dehydrate / waitForIdle / __debug` non-enumerable methods on the returned api.
+- **`instance.ts`** — `ControllerInstance` class. Owns the `entries: LifecycleEntry[]` list and the `Ctx` factory. ~600 lines; the lifecycle implementation lives here.
+- **`root.ts`** — `createRoot` / `createRootWithProps`. Wraps the root `ControllerInstance` with `dispose / suspend / resume / dehydrate / waitForIdle / __debug` non-enumerable methods on the returned api (see `attachRootControls` in `root.ts:71-157`).
 - **`index.ts`** — public re-exports.
 
 `testing.ts` (root of `core/src/`) lives at `@kontsedal/olas-core/testing` — exports `createTestController(def, { deps, props })`, equivalent to `createRootWithProps` but more ergonomic for tests.
@@ -53,9 +53,15 @@ type Ctx<TDeps = AmbientDeps> = {
 
   // composition
   child<Props, Api>(def, props, options?): Api
+  attach<Props, Api>(def, props, options?):
+    { api: Api; dispose: () => void; suspend: () => void; resume: () => void }
   effect(fn): void
   emitter<T>(): Emitter<T>
   on<T>(emitter, handler): void
+
+  // scopes (§10.3)
+  provide<T>(scope, value): void
+  inject<T>(scope): T
 
   // lifecycle
   onDispose(fn): void
@@ -67,7 +73,9 @@ type Ctx<TDeps = AmbientDeps> = {
 }
 ```
 
-What's **not yet** on Ctx: `collection`, `session`, `lazyChild`, `provide`, `inject`, `dynamicCollection`. Those are in spec §20.2 but belong to phases 10+.
+`ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes the `{ suspend, resume }` pair directly — no hand-rolled `isPaused` signal on the child. `suspend` / `resume` cascade through the attached sub-tree's `LifecycleEntry[]`, paused effects re-instantiate on resume, suspended cache subscriptions release their entry.
+
+What's **not yet** on Ctx: `collection`, `session`, `lazyChild`, `dynamicCollection`. Those are in spec §20.2 but unimplemented.
 
 ## Lifecycle architecture
 
@@ -87,7 +95,7 @@ Dispose iterates **reverse** order, suspend iterates reverse, resume iterates **
 
 ## Root controls
 
-`attachRootControls(api, instance, devtools, queryClient)` in `root.ts:50-130` defines six non-enumerable properties on the api object: `dispose`, `suspend`, `resume`, `dehydrate`, `waitForIdle`, `__debug`. Conflicts with controller-supplied keys throw at construction.
+`attachRootControls(api, instance, devtools, queryClient)` in `root.ts:71-157` defines six non-enumerable properties on the api object: `dispose`, `suspend`, `resume`, `dehydrate`, `waitForIdle`, `__debug`. Conflicts with controller-supplied keys throw at construction.
 
 `suspend({ maxIdle: ms })` — schedules a `setTimeout` to dispose if not resumed within `ms`. `resume()` cancels it.
 

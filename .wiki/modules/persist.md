@@ -9,7 +9,7 @@ edges:
   - { type: tested-by, target: ../../packages/persist/tests/persist.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: controller.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

@@ -3,13 +3,13 @@ name: ctx
 description: The lifecycle-bound primitive factory passed to every controller factory.
 type: entity
 covers:
-  - packages/core/src/controller/types.ts:69-122
-  - packages/core/src/controller/instance.ts:223-422
+  - packages/core/src/controller/types.ts:90-166
+  - packages/core/src/controller/instance.ts:257-587
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 
@@ -28,7 +28,7 @@ type Ctx<TDeps = AmbientDeps> = {
   field, form, fieldArray
 
   // composition
-  child, effect, emitter, on
+  child, attach, effect, emitter, on
 
   // scopes (Phase 10)
   provide, inject
@@ -41,7 +41,7 @@ type Ctx<TDeps = AmbientDeps> = {
 }
 ```
 
-The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:223`). Each method has the same general shape:
+The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:257`). Each method has the same general shape:
 
 1. Create the primitive.
 2. Push a `LifecycleEntry` onto `self.entries`.
@@ -70,6 +70,10 @@ return createUse(...)
 ```
 
 The TS overloads in `Ctx<TDeps>` declare two signatures: one for `Query`, one for `InfiniteQuery`. Consumers see the right return shape.
+
+## `ctx.attach` vs `ctx.child`
+
+`ctx.child(def, props)` returns just `api` — the child's lifecycle is fully owned by the parent (dispose cascades, no manual control). `ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`: the child is still parent-owned (dispose cascades automatically), but the caller gets explicit handles to tear it down early or freeze/thaw it. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. See `controller-instance.md` for cascade semantics.
 
 ## What's NOT yet on Ctx
 

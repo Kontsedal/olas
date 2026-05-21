@@ -20,7 +20,7 @@ edges:
   - { type: uses, target: ../modules/persist.md }
   - { type: uses, target: ../flows/ssr.md }
   - { type: uses, target: ../flows/mutation-concurrency.md }
-last_verified: 2026-05-20
+last_verified: 2026-05-21
 confidence: high
 ---
 
@@ -122,14 +122,16 @@ they imply a library change.
    drawer keeps cursor-paged history per-tab; SSR is out of scope for it.
 3. **`formFromZod` does NOT promote array-level `.min(N)` rules** from the
    outer Zod schema to a `FieldArray`-level validator. Leaf fields and nested
-   object schemas walk correctly.
-4. **`formFromZod` doesn't accept extra leaf validators.** Kanban's
-   "title-is-unique" async check is hand-wired via an effect that runs the
-   `debouncedValidator` and writes to a separate signal. Filed BACKLOG.
-5. **`ctx.attach` returns `{ api, dispose }` only — no `suspend / resume`.**
-   `<KeepAlive>` expects `{ suspend, resume }`. Children that need it expose
-   their own (an `isPaused` signal toggle inside the controller). Filed
-   BACKLOG.
+   object schemas walk correctly. Root-level `.refine(...)` on the top-level
+   `z.object({...})` IS lifted (via `rootOnlyZodValidator`).
+4. **`formFromZod` accepts extra leaf validators** via
+   `formFromZod(ctx, schema, { extraValidators: { 'title': uniqueAsync } })`
+   — keyed by dotted path. Resolved against the kanban "title-is-unique"
+   need.
+5. **`ctx.attach` returns `{ api, dispose, suspend, resume }`** — the
+   `suspend / resume` pair cascades through the attached sub-tree's
+   lifecycle entries, so `<KeepAlive controller={...}>` consumes it
+   directly. Resolved.
 
 ## Running them
 

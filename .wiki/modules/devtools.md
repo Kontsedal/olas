@@ -4,9 +4,9 @@ description: DebugEvent union + per-root DevtoolsEmitter. Free when no one is su
 type: module
 covers:
   - packages/core/src/devtools.ts
-  - packages/core/src/query/entry.ts:5-12
-  - packages/core/src/query/client.ts:48-83
-  - packages/core/src/query/mutation.ts:91-128
+  - packages/core/src/query/entry.ts:5-9
+  - packages/core/src/query/client.ts:48-102
+  - packages/core/src/query/mutation.ts:109-165
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/devtools.test.ts }
@@ -14,7 +14,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/dev-flag.test.ts }
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: related, target: devtools-panel.md }
-last_verified: 2026-05-19
+last_verified: 2026-05-21
 confidence: high
 ---
 
@@ -40,13 +40,13 @@ One per root. Held inside `RootShared.devtools`. Emits are routed from `Controll
 
 ## How events reach the bus
 
-Lifecycle events from `ControllerInstance` go straight through `rootShared.devtools.emit(...)` — see `instance.ts:86, 131, 193, 225` (each call site wrapped in `if (__DEV__)` so production builds elide it; see SPEC §23 *Devtools / `__debug` and production builds*).
+Lifecycle events from `ControllerInstance` go straight through `rootShared.devtools.emit(...)` — see `instance.ts:101-107, 145-147, 213-215, 250-252` (each call site wrapped in `if (__DEV__)` so production builds elide it; see SPEC §23 *Devtools / `__debug` and production builds*).
 
 **Cache events** (Phase 13). `QueryClient` holds a `devtools?: DevtoolsEmitter`. `ClientEntry`'s constructor builds an `EntryEvents` callback bundle and passes it to `Entry`. `Entry` fires `onFetchStart` in `startFetch()`, `onFetchSuccess(durationMs)` in `applySuccess()`, `onFetchError(durationMs, error)` in `applyFailure()`. The bundle is `undefined` if `devtools` is `undefined`, so the cost when no devtools is one extra constructor field. `QueryClient.invalidate` / `invalidateAll` / `dropEntry` emit directly.
 
 **Mutation events** (Phase 13). `MutationImpl` takes an optional `DevtoolsEmitter` constructor argument from `ctx.mutation` (via `instance.ts`). `mutation:run` fires after `onMutate` succeeds and counters are bumped. `mutation:success` fires before user `onSuccess`. `mutation:error` fires before user `onError`. `mutation:rollback` fires via a wrapped `Snapshot` — both the auto-rollback paths (supersede / dispose) AND any user-driven `snapshot.rollback()` from inside `onError` emit it, exactly once per snapshot.
 
-**Field validation events** are declared in `DebugEvent` but not yet wired. `ctx.field` doesn't currently know its path; threading that would add complexity for marginal value. Consumers wanting field telemetry can call `store.handle({ type: 'field:validated', ... })` directly.
+**Field validation events** are wired. `ctx.field` calls `bindFieldDevtoolsOwner` so standalone fields publish `field:validated` with the owning controller path + a synthetic `(field)` name. `ctx.form` / `ctx.fieldArray` walk their trees via `bindTreeToDevtools` to publish events with the leaf's dotted path inside the form. See `forms/field.ts` (`bindFieldDevtoolsOwner`) and `forms/form.ts` (`bindTreeToDevtools`).
 
 ## What's emitted today
 
@@ -57,6 +57,6 @@ Lifecycle events from `ControllerInstance` go straight through `rootShared.devto
 | `cache:invalidated / gc` | ✓ wired in `QueryClient` |
 | `cache:subscribed` | declared, not yet wired |
 | `mutation:run / success / error / rollback` | ✓ wired in `MutationImpl` |
-| `field:validated` | declared, not yet wired |
+| `field:validated` | ✓ wired via `bindFieldDevtoolsOwner` / `bindTreeToDevtools` |
 
 The discriminated union is non-breaking to extend — consumers `switch` on `type` and ignore unknowns.

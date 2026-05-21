@@ -3,12 +3,12 @@ name: field-value-shape
 description: Field.value returns T directly; Form.value and FieldArray.value are ReadSignal<...>. They are not parallel.
 type: pitfall
 covers:
-  - packages/core/src/forms/field.ts:40-55
-  - packages/core/src/forms/form.ts:90-105
+  - packages/core/src/forms/field.ts:37-75
+  - packages/core/src/forms/form.ts:138-149
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: uses, target: ../modules/forms.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

@@ -3,12 +3,12 @@ name: latest-wins-rollback-order
 description: For latest-wins mutations, roll back the previous snapshot BEFORE invoking the new onMutate. Order matters.
 type: pitfall
 covers:
-  - packages/core/src/query/mutation.ts:60-80
+  - packages/core/src/query/mutation.ts:138-154
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 

@@ -8,33 +8,52 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/zod/tests/zod.test.ts }
   - { type: uses, target: forms.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-21
 confidence: high
 ---
 
 # `@kontsedal/olas-zod`
 
-Two exports: `zodValidator(schema)` and `formFromZod(ctx, schema, options?)`. Plus `zodValidatorAsync` for `.refine(async ...)` schemas. Spec §8.7, §10.
+Four exports: `zodValidator(schema)`, `zodValidatorAsync(schema)`, `rootOnlyZodValidator(schema)`, and `formFromZod(ctx, schema, options?)`. Spec §8.7, §10.
 
-## zodValidator
+## zodValidator / zodValidatorAsync
 
 ```ts
 zodValidator<T>(schema: z.ZodType<T>): Validator<T>
+zodValidatorAsync<T>(schema: z.ZodType<T>): Validator<T>
 ```
 
-Wraps a Zod schema as an Olas `Validator`. Synchronous (`safeParse`). Returns the first issue's message, or `null` if valid. `zodValidatorAsync` is the `safeParseAsync` variant.
+Wraps a Zod schema as an Olas `Validator`. Sync (`safeParse`) and async (`safeParseAsync`) variants. Returns the first issue's message, or `null` if valid.
+
+## rootOnlyZodValidator
+
+```ts
+rootOnlyZodValidator<T>(schema: z.ZodType<T>): Validator<T>
+```
+
+Runs the schema and reports ONLY root-level issues (those with empty `path`) — leaf issues are dropped because each leaf already has its own `zodValidator(propSchema)`. Used by `formFromZod` to lift `z.object({...}).refine(fn)` rules into a form-level validator without double-reporting leaf failures.
 
 ## formFromZod
 
-Walks a `z.object` schema and builds the corresponding `Form` / `FieldArray` / `Field` tree with Zod validators auto-attached.
+```ts
+formFromZod<T extends z.ZodObject<...>>(
+  ctx: Ctx,
+  schema: T,
+  options?: { initials?: Partial<z.infer<T>>; extraValidators?: Record<string, Validator<any>> }
+): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]> }>
+```
 
-- `z.object(...)` → `Form` (recurse).
+Walks a `z.object` schema and builds the corresponding `Form` / `FieldArray` / `Field` tree with Zod validators auto-attached. Return type is structurally precise — no hand-written `Form<{...}>` shape required.
+
+- `z.object(...)` → `Form` (recurse). The root form gets `rootOnlyZodValidator(rootSchema)` attached so top-level `.refine(...)` rules surface as form-level errors.
 - `z.array(...)` → `FieldArray` (recurse on the element).
 - anything else → `Field` with `zodValidator(schema)`.
 
-`unwrap(schema)` strips outer `ZodDefault` / `ZodOptional` / `ZodNullable` wrappers (up to 5 deep) to find the inner type for `defaultInitial(...)` and recursion. The default initial is the Zod default if present, else the empty value for the type (`''` for string, `0` for number, `false` for bool, `[]` for array, first option for enum, `undefined` otherwise).
+`unwrap(schema)` strips outer `ZodDefault` / `ZodOptional` / `ZodNullable` wrappers (up to 5 deep) to find the inner type. Default initial is the Zod default if present, else the empty value for the type (`''` for string, `0` for number, `false` for bool, `[]` for array, first option for enum, `undefined` otherwise).
 
-The Phase 9 implementation **does not** yet collect top-level `z.object().refine(...)` into form-level validators. The hook is in `buildForm` (commented). Spec §8.7 calls this out; implementation can land when needed.
+`extraValidators` is keyed by dotted leaf path (`'title'`, `'address.street'`). Each entry's validator is appended to that leaf's validators list alongside the Zod check — both must pass. `FieldArray` items aren't separately addressable (one factory per array).
+
+What's still NOT lifted: array-level `.min(N)` from the outer Zod schema doesn't promote to a `FieldArray`-level validator (per-element rules already attach via the element schema).
 
 ## Peer dep contract
 
