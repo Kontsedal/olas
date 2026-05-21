@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-core",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Olas core — controller-tree state management with signals, queries, mutations, and forms. Framework-agnostic.",
   "keywords": [
     "olas",

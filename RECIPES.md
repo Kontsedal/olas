@@ -219,6 +219,133 @@ Requires a `realtime` service in deps with `subscribe(channel, handler)`. The fr
 
 ---
 
+## Router integration
+
+Olas has no built-in router. Real apps wire one of the popular React routers (TanStack Router, React Router v6, Next pages router) by exposing the current route as a signal and feeding it to `ctx.use(...)`, `ctx.session(...)`, or `ctx.collection(...)`. The pattern is the same regardless of router; only the bridging glue differs.
+
+### Pattern A — route params as a `ReadSignal`
+
+Define a scope. Provide it once at the root. Inject it anywhere a controller needs the live route.
+
+```ts
+// scopes/route.ts
+import { defineScope, type ReadSignal } from '@kontsedal/olas-core'
+
+export type RouteParams = Record<string, string>
+export const RouteParamsScope = defineScope<ReadSignal<RouteParams>>('route:params')
+```
+
+```ts
+// any controller that depends on the route
+const profileController = defineController((ctx) => {
+  const params = ctx.inject(RouteParamsScope)
+  const user = ctx.use(userQuery, () => [params.value.userId])
+  return { user }
+})
+```
+
+`ctx.use`'s key thunk reads `params.value` — route changes auto-rekey the subscription. No effects, no manual subscriptions.
+
+### Bridging — TanStack Router
+
+TanStack Router exposes params via a hook. Bridge it to a signal once, near the root.
+
+```tsx
+import { useParams } from '@tanstack/react-router'
+import { useEffect } from 'react'
+import { signal } from '@kontsedal/olas-core'
+
+const params$ = signal<RouteParams>({})
+
+function RouteParamsBridge({ children }: { children: React.ReactNode }) {
+  const params = useParams({ strict: false })
+  useEffect(() => {
+    params$.set(params as RouteParams)
+  }, [params])
+  return <>{children}</>
+}
+
+// in root setup:
+const root = createRoot(appController, {
+  deps,
+  scopes: [[RouteParamsScope, params$]], // provide once at root construction
+})
+
+// mount:
+<OlasProvider root={root}>
+  <RouteParamsBridge>
+    <YourRoutes />
+  </RouteParamsBridge>
+</OlasProvider>
+```
+
+### Bridging — React Router v6
+
+`useParams` from `react-router-dom`, same shape:
+
+```tsx
+import { useParams } from 'react-router-dom'
+
+function RouteParamsBridge({ children }: { children: React.ReactNode }) {
+  const params = useParams()
+  useEffect(() => {
+    params$.set(params as RouteParams)
+  }, [params])
+  return <>{children}</>
+}
+```
+
+### Bridging — Next pages router
+
+```tsx
+import { useRouter } from 'next/router'
+
+function RouteParamsBridge({ children }: { children: React.ReactNode }) {
+  const { query, isReady } = useRouter()
+  useEffect(() => {
+    if (!isReady) return
+    params$.set(query as RouteParams)
+  }, [query, isReady])
+  return <>{children}</>
+}
+```
+
+(Next app-router / RSC is not yet supported — see `BACKLOG.md`.)
+
+### Pattern B — controller-per-route via `ctx.session`
+
+For "the whole controller tree under a route changes when the user navigates," lean on `ctx.session`. The session swaps the child controller atomically when its key changes — old subscriptions tear down, new ones boot.
+
+```ts
+const appController = defineController((ctx) => {
+  const params = ctx.inject(RouteParamsScope)
+  // `userId` keys the session — change it, and the page controller is
+  // disposed-and-rebuilt with the new prop.
+  const page = ctx.session(profilePageController, () => ({
+    userId: params.value.userId,
+  }))
+  return { page }
+})
+```
+
+`ctx.session(def, propsFn)` accepts a thunk that reads signals; when the props object changes by identity, the child is torn down and rebuilt — matches the typical route-change semantics. For routes whose key derives from path *and* search params, the thunk reads both and the session reacts to either changing.
+
+### Pattern C — pre-fetching on route enter
+
+Use the router's loader / `beforeLoad` hook to call `query.prefetch(...)` — the data lands in the cache before the component mounts, so `ctx.use` returns it synchronously. (See "structural sharing" in §6 of `SPEC.md` for the ref-stability guarantees this gives you.)
+
+```tsx
+// TanStack Router route definition
+const userRoute = createRoute({
+  path: '/users/$userId',
+  loader: ({ params }) => userQuery.prefetch(params.userId),
+})
+```
+
+Combined with `useQuery(sub, { suspense: true })`, the suspense fallback is skipped because data is already in cache by the time React reads it.
+
+---
+
 ## When to lift to a package
 
 If a composable ends up:

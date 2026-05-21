@@ -98,6 +98,9 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     return cur.entry.firstValue().then((v) => this.project(v))
   }
 
+  // Alias surfaced on `AsyncState` for Suspense / React 19 `use(...)`.
+  promise = (): Promise<U> => this.firstValue()
+
   private project(v: T): U {
     return this.select === undefined ? (v as unknown as U) : this.select(v)
   }
@@ -324,6 +327,9 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
     return cur.entry.firstValue()
   }
+
+  // Alias of firstValue() for Suspense / React 19 `use(...)` ergonomics.
+  promise = (): Promise<TPage[]> => this.firstValue()
 
   fetchNextPage = (): Promise<void> => {
     const cur = this.current$.peek()

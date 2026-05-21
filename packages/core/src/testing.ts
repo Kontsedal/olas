@@ -111,6 +111,7 @@ export function fakeAsyncState<T>(
     refetch: () => Promise<T>
     reset: () => void
     firstValue: () => Promise<T>
+    promise: () => Promise<T>
   }>,
 ): AsyncState<T> {
   const data$: ReadSignal<T | undefined> = signal(overrides?.data)
@@ -127,6 +128,7 @@ export function fakeAsyncState<T>(
   const refetch = overrides?.refetch ?? (async () => data$.peek() as T)
   const reset = overrides?.reset ?? (() => {})
   const firstValue = overrides?.firstValue ?? (async () => data$.peek() as T)
+  const promise = overrides?.promise ?? firstValue
 
   return {
     data: data$,
@@ -140,5 +142,6 @@ export function fakeAsyncState<T>(
     refetch,
     reset,
     firstValue,
+    promise,
   }
 }

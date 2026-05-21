@@ -1,5 +1,56 @@
 # @olas/react
 
+## 0.0.4
+
+### Patch Changes
+
+- Phase 0.2 — React Suspense + ErrorBoundary integration, `subscription.promise()`, and router-integration recipes.
+
+  Treated as patch under the 0.x.y line — purely additive.
+
+  **React Suspense**
+
+  - `useQuery(subscription, { suspense: true })` in `@kontsedal/olas-react`.
+    Throws `subscription.promise()` while pending (caught by `<Suspense>`),
+    throws `subscription.error` on error state (caught by `<ErrorBoundary>`),
+    returns synchronously on success with `data` narrowed to `T` (never
+    `undefined`).
+  - Only the **first load** suspends — refetches after a first success keep
+    `data` defined and the hook returns normally. Matches TanStack Query's
+    suspense semantics.
+
+  **Core**
+
+  - `subscription.promise()` — alias of `firstValue()` with a clearer name
+    for Suspense / `React.use(...)` ergonomics. Resolves on first success
+    (short-circuits if already settled), rejects on error. Exposed on
+    `AsyncState<T>`, so it's available on `QuerySubscription`, `LocalCache`,
+    and `InfiniteQuerySubscription`.
+  - `ctx.use`'s overloads now accept readonly key tuples (`() => [...] as const`)
+    on the no-select and select-projecting forms — fixes a regression where
+    the select overload couldn't be picked when the key thunk returned a
+    readonly array.
+
+  **React adapter**
+
+  - `useField` now exposes `setErrors(string[])` so a `<form>` component can
+    inject server-side validation results without reaching into the field
+    directly.
+
+  **Recipes**
+
+  - `RECIPES.md` gains a Router-integration section covering TanStack Router,
+    React Router v6, and Next pages router. The pattern is consistent across
+    routers: bridge the router's params to a `signal`, expose it via a
+    `Scope`, and consume from `ctx.inject(...)` in any controller that
+    depends on the route. Includes patterns for route-scoped controllers via
+    `ctx.session` and route-loader-driven prefetch.
+
+  Tests: +6, total 569 passing. Typecheck clean. Biome clean (0 errors).
+
+- Updated dependencies
+  - @kontsedal/olas-core@0.0.4
+
 ## 0.0.3
 
 ### Patch Changes
