@@ -39,7 +39,7 @@ export function createAppRoot(opts?: { api?: Api; broadcaster?: Broadcaster }) {
         id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
         kind: 'error',
         title: 'Something went wrong',
-        message: `[${context.kind}${context.controllerPath.length > 0 ? ' / ' + context.controllerPath.join('/') : ''}] ${message}`,
+        message: `[${context.kind}${context.controllerPath.length > 0 ? ` / ${context.controllerPath.join('/')}` : ''}] ${message}`,
       })
     },
   })

@@ -14,7 +14,7 @@
  * archive pages cache after success.
  */
 
-import { type Ctx, defineController, defineInfiniteQuery, effect } from '@kontsedal/olas-core'
+import { type Ctx, defineController, defineInfiniteQuery } from '@kontsedal/olas-core'
 import type { ArchivePage, Card } from '../../api'
 import { activeBoardScope, activityScope, notificationsScope } from '../../scopes'
 import { boardQuery } from '../board/board.query'

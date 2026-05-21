@@ -13,6 +13,7 @@
     "build:dev": "pnpm -r --filter \"./packages/*\" build",
     "typecheck": "pnpm -r --filter \"./packages/*\" --filter \"./examples/*\" typecheck",
     "test": "vitest run --passWithNoTests",
+    "test:coverage": "npm run test -- --coverage",
     "test:watch": "vitest",
     "lint": "biome check .",
     "format": "biome format --write .",
