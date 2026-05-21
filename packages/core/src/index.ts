@@ -3,11 +3,17 @@
 // Controller container
 export type {
   AmbientDeps,
+  Collection,
+  CollectionFactoryApi,
+  CollectionFactoryOptions,
+  CollectionFactoryResult,
+  CollectionHomogeneousOptions,
   ControllerDef,
   CtrlApi,
   CtrlProps,
   Ctx,
   Field,
+  LazyChild,
   Root,
   RootOptions,
 } from './controller'
@@ -16,7 +22,7 @@ export { createRoot, defineController } from './controller'
 export type { DebugBus, DebugCacheEntry, DebugEvent } from './devtools'
 
 // Emitter
-export type { Emitter } from './emitter'
+export type { Emitter, EmitterErrorReporter } from './emitter'
 export { createEmitter } from './emitter'
 export type { ErrorContext } from './errors'
 // Forms — stdlib validators + debouncedValidator

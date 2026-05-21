@@ -202,10 +202,42 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         }
       } else if (isFieldArray(child)) {
         const arr = child
-        // Replace items: clear, then add each
-        arr.clear()
-        for (const itemVal of val as unknown[]) {
-          arr.add(itemVal as ItemInitial<Field<unknown>>)
+        const newValues = val as unknown[]
+        if (asInitial) {
+          // Reset-style application: replace items wholesale and re-anchor
+          // them as the new initial so a later `reset()` returns here.
+          arr.clear()
+          for (const itemVal of newValues) {
+            arr.add(itemVal as ItemInitial<Field<unknown>>)
+          }
+          // Internal: re-anchor the initialItems list. `replaceInitialItems`
+          // is only exposed for this exact use case.
+          ;(
+            arr as unknown as {
+              replaceInitialItems: (items: ReadonlyArray<unknown>) => void
+            }
+          ).replaceInitialItems(newValues)
+        } else {
+          // User-driven patch: preserve item identity where the lengths
+          // overlap so touched / dirty / in-flight validators on existing
+          // items survive. Tail diff handles grow / shrink.
+          const current = arr.items.peek() as ReadonlyArray<Field<unknown> | Form<FormSchema>>
+          const overlap = Math.min(current.length, newValues.length)
+          for (let i = 0; i < overlap; i++) {
+            const item = current[i]
+            const v = newValues[i]
+            if (isForm(item)) {
+              item.set(v as DeepPartial<FormValue<FormSchema>>)
+            } else {
+              ;(item as Field<unknown>).set(v)
+            }
+          }
+          for (let i = current.length; i < newValues.length; i++) {
+            arr.add(newValues[i] as ItemInitial<Field<unknown>>)
+          }
+          for (let i = current.length - 1; i >= newValues.length; i--) {
+            arr.remove(i)
+          }
         }
       } else {
         const f = child as Field<unknown>
@@ -403,7 +435,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   private readonly topLevelValidating$: Signal<boolean> = signal(false)
 
   private readonly itemFactory: (initial?: ItemInitial<I>) => I
-  private readonly initialItems: Array<ItemInitial<I>> = []
+  private initialItems: Array<ItemInitial<I>> = []
   private readonly validators: ReadonlyArray<FieldArrayValidator<I>>
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
@@ -526,6 +558,16 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       ;(item as { dispose?: () => void }).dispose?.()
     }
     this.items$.set([])
+  }
+
+  /**
+   * Internal — used by `Form.resetWithInitial` to re-anchor the array's
+   * initial items after a parent-driven `applyPartial(..., asInitial: true)`.
+   * Without this, a subsequent `reset()` would revert to the construction-
+   * time initials rather than the most-recently-applied ones.
+   */
+  replaceInitialItems(items: ReadonlyArray<ItemInitial<I>>): void {
+    this.initialItems = [...items]
   }
 
   reset(): void {

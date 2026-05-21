@@ -20,9 +20,19 @@ export type Emitter<T> = {
 
 type AnyHandler = (value: unknown) => void
 
+/**
+ * Optional escape hatch for emit-time handler throws. If supplied, a thrown
+ * handler is reported here and emission continues with the remaining handlers
+ * (spec §20.6 — one throwing handler must not block the rest). If absent,
+ * the throw is logged via `console.error`.
+ */
+export type EmitterErrorReporter = (err: unknown) => void
+
 class EmitterImpl<T> {
   private handlers = new Set<AnyHandler>()
   private disposed = false
+
+  constructor(private onError?: EmitterErrorReporter) {}
 
   emit(value: T): void {
     if (this.disposed) return
@@ -30,7 +40,23 @@ class EmitterImpl<T> {
     // mutate the set mid-iteration.
     const snapshot = Array.from(this.handlers)
     for (const handler of snapshot) {
-      handler(value as unknown)
+      try {
+        handler(value as unknown)
+      } catch (err) {
+        // Spec §20.6: isolate handler throws so siblings still fire.
+        if (this.onError) {
+          try {
+            this.onError(err)
+          } catch {
+            // Reporter itself threw — last resort.
+            // eslint-disable-next-line no-console
+            console.error('[olas] emitter handler threw and reporter threw:', err)
+          }
+        } else {
+          // eslint-disable-next-line no-console
+          console.error('[olas] emitter handler threw:', err)
+        }
+      }
     }
   }
 
@@ -67,9 +93,14 @@ class EmitterImpl<T> {
  * (or the emitter is disposed). Use this for emitters that live outside any
  * single controller — typically in deps. Use `ctx.emitter()` for emitters that
  * should auto-clean with a controller.
+ *
+ * Pass `onError` to receive emit-time handler throws (spec §20.6 — one
+ * throwing handler must not block the rest of the fan-out). `ctx.emitter()`
+ * wires this to the root's `onError` so deps-level emitters get isolation
+ * by default when constructed via `ctx`.
  */
-export function createEmitter<T = void>(): Emitter<T> {
-  const impl = new EmitterImpl<T>()
+export function createEmitter<T = void>(options?: { onError?: EmitterErrorReporter }): Emitter<T> {
+  const impl = new EmitterImpl<T>(options?.onError)
   return {
     emit: ((value?: T) => impl.emit(value as T)) as Emitter<T>['emit'],
     on: (handler) => impl.on(handler),

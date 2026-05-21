@@ -31,6 +31,163 @@ export type PersistableSource<T> = {
   subscribe(handler: (value: T) => void): () => void
 }
 
+/**
+ * Configuration for `indexedDbAdapter`. All fields optional; sane defaults
+ * picked for typical app use.
+ */
+export type IndexedDbAdapterOptions = {
+  /** Database name. Defaults to `'olas-persist'`. */
+  databaseName?: string
+  /** Object store inside the database. Defaults to `'kv'`. */
+  storeName?: string
+  /**
+   * `BroadcastChannel` name used to notify other tabs of writes through this
+   * adapter (so `onChange` works cross-tab — IDB itself has no built-in
+   * change event). Defaults to `'olas-persist:' + databaseName + '/' +
+   * storeName`. Set to `null` to disable cross-tab notifications.
+   */
+  channelName?: string | null
+  /**
+   * Override the `IDBFactory` — defaults to `globalThis.indexedDB`. Useful
+   * for testing (inject a fake) or runtimes that ship their own IDB
+   * implementation. When undefined and no global `indexedDB`, the adapter
+   * no-ops (SSR-safe).
+   */
+  indexedDB?: IDBFactory
+  /**
+   * Override the `BroadcastChannel` constructor. Defaults to
+   * `globalThis.BroadcastChannel`. When undefined and no global, `onChange`
+   * subscriptions still register but never fire.
+   */
+  broadcastChannel?: typeof BroadcastChannel
+}
+
+/**
+ * IndexedDB-backed `StorageAdapter`. Async on every operation; cross-tab
+ * change notifications layered via `BroadcastChannel` (IDB has no native
+ * change event, so external IDB writes by code that doesn't go through
+ * this adapter are *not* observed). When no `IDBFactory` is available
+ * (SSR, restricted environments), every method resolves to a no-op.
+ *
+ * Storage is a single key/value object store inside a single database;
+ * fine for the persisted-signal use case `usePersisted` is built around.
+ * For larger or schema-shaped data, write a custom adapter against your
+ * own IDB layout.
+ */
+export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdapter {
+  const dbName = options?.databaseName ?? 'olas-persist'
+  const storeName = options?.storeName ?? 'kv'
+  const idbFactory = options?.indexedDB ?? getGlobalIndexedDb()
+  const bcCtor = options?.broadcastChannel ?? getGlobalBroadcastChannel()
+  const channelName =
+    options?.channelName === null
+      ? null
+      : (options?.channelName ?? `olas-persist:${dbName}/${storeName}`)
+
+  let dbPromise: Promise<IDBDatabase> | null = null
+  let channel: BroadcastChannel | null = null
+
+  const ensureChannel = (): BroadcastChannel | null => {
+    if (channel !== null) return channel
+    if (bcCtor === undefined || channelName === null) return null
+    try {
+      channel = new bcCtor(channelName)
+      return channel
+    } catch {
+      return null
+    }
+  }
+
+  const openDb = (): Promise<IDBDatabase> | null => {
+    if (idbFactory === undefined) return null
+    if (dbPromise !== null) return dbPromise
+    dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+      const req = idbFactory.open(dbName, 1)
+      req.onupgradeneeded = () => {
+        const db = req.result
+        if (!db.objectStoreNames.contains(storeName)) {
+          db.createObjectStore(storeName)
+        }
+      }
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error ?? new Error('[olas-persist] IDB open failed'))
+    })
+    // Lazy connection — if the open fails, future calls retry rather than
+    // staying stuck on a poisoned promise.
+    dbPromise.catch(() => {
+      dbPromise = null
+    })
+    return dbPromise
+  }
+
+  const runRequest = async <T>(
+    mode: IDBTransactionMode,
+    build: (store: IDBObjectStore) => IDBRequest<T>,
+  ): Promise<T | undefined> => {
+    const db = await openDb()
+    if (db === null) return undefined
+    return new Promise<T | undefined>((resolve, reject) => {
+      const tx = db.transaction(storeName, mode)
+      const store = tx.objectStore(storeName)
+      const req = build(store)
+      req.onsuccess = () => resolve(req.result)
+      req.onerror = () => reject(req.error ?? new Error('[olas-persist] IDB request failed'))
+    })
+  }
+
+  return {
+    async get(key: string): Promise<string | null> {
+      if (idbFactory === undefined) return null
+      try {
+        const result = await runRequest<unknown>('readonly', (s) => s.get(key))
+        return typeof result === 'string' ? result : null
+      } catch {
+        return null
+      }
+    },
+    async set(key: string, value: string): Promise<void> {
+      if (idbFactory === undefined) return
+      try {
+        await runRequest('readwrite', (s) => s.put(value, key))
+        ensureChannel()?.postMessage({ key, value })
+      } catch {
+        // Quota / version / closed-db errors — leave to caller's higher-level
+        // handling; persist's usePersisted swallows write rejections too.
+      }
+    },
+    async delete(key: string): Promise<void> {
+      if (idbFactory === undefined) return
+      try {
+        await runRequest('readwrite', (s) => s.delete(key))
+        ensureChannel()?.postMessage({ key, value: null })
+      } catch {
+        /* swallow — see set() */
+      }
+    },
+    onChange(handler: (key: string, value: string | null) => void): () => void {
+      const ch = ensureChannel()
+      if (ch === null) return () => {}
+      const listener = (event: MessageEvent<{ key: string; value: string | null }>) => {
+        try {
+          handler(event.data.key, event.data.value)
+        } catch {
+          /* swallow — onChange handlers shouldn't take down the adapter */
+        }
+      }
+      ch.addEventListener('message', listener)
+      return () => ch.removeEventListener('message', listener)
+    },
+  }
+}
+
+function getGlobalIndexedDb(): IDBFactory | undefined {
+  return typeof indexedDB === 'undefined' ? undefined : indexedDB
+}
+
+function getGlobalBroadcastChannel(): typeof BroadcastChannel | undefined {
+  return typeof BroadcastChannel === 'undefined' ? undefined : BroadcastChannel
+}
+
 /** Default localStorage adapter — only viable in the browser. */
 export const localStorageAdapter: StorageAdapter = {
   get(key: string): string | null {

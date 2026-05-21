@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-example-virtualized-table",
-  "version": "0.0.1-rc.0",
+  "version": "0.0.1",
   "private": true,
   "description": "React example — 50k-row virtualized table demonstrating the SPEC §11 rows-are-data pattern: Map<id, Signal<Item>> for fine-grained reactivity",
   "license": "MIT",

@@ -125,4 +125,40 @@ describe('createEmitter', () => {
     e.emit()
     expect(handler).toHaveBeenCalledTimes(1)
   })
+
+  test('a throwing handler does not block subsequent handlers (spec §20.6)', () => {
+    const errs: unknown[] = []
+    const e = createEmitter<number>({ onError: (err) => errs.push(err) })
+    const a = vi.fn()
+    const b = vi.fn(() => {
+      throw new Error('boom')
+    })
+    const c = vi.fn()
+    e.on(a)
+    e.on(b)
+    e.on(c)
+    e.emit(1)
+    expect(a).toHaveBeenCalledWith(1)
+    expect(b).toHaveBeenCalledWith(1)
+    expect(c).toHaveBeenCalledWith(1)
+    expect(errs).toHaveLength(1)
+    expect((errs[0] as Error).message).toBe('boom')
+  })
+
+  test('handler throws fall back to console.error when no onError is supplied', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const e = createEmitter<void>()
+      const a = vi.fn()
+      e.on(() => {
+        throw new Error('boom')
+      })
+      e.on(a)
+      e.emit()
+      expect(a).toHaveBeenCalled()
+      expect(spy).toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
 })

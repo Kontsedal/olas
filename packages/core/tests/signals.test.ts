@@ -299,4 +299,18 @@ describe('readOnly', () => {
     expect(seen).toEqual(['a', 'b'])
     unsub()
   })
+
+  test('the returned object is frozen — no runtime mutation', () => {
+    const s = signal(1)
+    const ro = readOnly(s)
+    expect(Object.isFrozen(ro)).toBe(true)
+    // In strict mode (ESM modules use strict mode), assigning to a frozen
+    // object's property throws TypeError. In sloppy mode it would silently
+    // no-op — either way, the underlying signal is unchanged.
+    expect(() => {
+      ;(ro as unknown as { value: number }).value = 99
+    }).toThrow(TypeError)
+    expect(s.peek()).toBe(1)
+    expect(ro.value).toBe(1)
+  })
 })

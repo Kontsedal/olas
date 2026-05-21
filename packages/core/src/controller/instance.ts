@@ -24,9 +24,19 @@ import { createMutation, type Mutation, type MutationSpec } from '../query/mutat
 import type { LocalCache, Query } from '../query/types'
 import { createInfiniteUse, createUse } from '../query/use'
 import type { Scope } from '../scope'
-import { effect as standaloneEffect } from '../signals'
+import { computed, signal, effect as standaloneEffect } from '../signals'
 import { getFactory, getName } from './define'
-import type { ControllerDef, Ctx, Field } from './types'
+import type {
+  Collection,
+  CollectionFactoryApi,
+  CollectionFactoryOptions,
+  CollectionFactoryResult,
+  CollectionHomogeneousOptions,
+  ControllerDef,
+  Ctx,
+  Field,
+  LazyChild,
+} from './types'
 
 export type RootShared = {
   readonly devtools: DevtoolsEmitter
@@ -342,7 +352,17 @@ export class ControllerInstance {
       },
 
       emitter<T>(): Emitter<T> {
-        const e = createEmitter<T>()
+        const e = createEmitter<T>({
+          // Spec §20.6: emit-time handler throws must not block sibling
+          // handlers. Route to the root's onError with kind: 'emitter' and
+          // this controller's path.
+          onError: (err) => {
+            dispatchError(self.rootShared.onError, err, {
+              kind: 'emitter',
+              controllerPath: self.path,
+            })
+          },
+        })
         self.entries.push({ kind: 'cleanup', dispose: () => e.dispose() })
         return e
       },
@@ -532,6 +552,300 @@ export class ControllerInstance {
               })
             }
           },
+        }
+      },
+
+      session<Props, Api>(
+        def: ControllerDef<Props, Api>,
+        props: Props,
+        options?: { deps?: Partial<Record<string, unknown>> },
+      ): readonly [Api, () => void] {
+        const segment = self.makeChildSegment(getFactory(def), getName(def))
+        const override = options?.deps
+        const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
+        const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
+        const api = childInstance.construct(getFactory(def), props)
+        const entry: LifecycleEntry = { kind: 'child', instance: childInstance }
+        self.entries.push(entry)
+        let disposed = false
+        const dispose = (): void => {
+          if (disposed) return
+          disposed = true
+          const idx = self.entries.indexOf(entry)
+          if (idx >= 0) self.entries.splice(idx, 1)
+          try {
+            childInstance.dispose()
+          } catch (err) {
+            dispatchError(self.rootShared.onError, err, {
+              kind: 'effect',
+              controllerPath: self.path,
+            })
+          }
+        }
+        return [api, dispose] as const
+      },
+
+      collection<Item, K, Props, Api, R extends CollectionFactoryResult>(
+        options:
+          | CollectionHomogeneousOptions<Item, K, Props, Api>
+          | CollectionFactoryOptions<Item, K, R>,
+      ): Collection<K, Api> | Collection<K, CollectionFactoryApi<R>> {
+        type ChildInfo = {
+          instance: ControllerInstance
+          api: Api
+          entry: LifecycleEntry
+          // For factory form: the controller def used to construct this child.
+          // A different def on a future render means "rebuild with new type".
+          def: ControllerDef<unknown, unknown>
+        }
+        const childMap = new Map<K, ChildInfo>()
+        const items$ = signal<ReadonlyArray<{ key: K; api: Api }>>([])
+        const size$ = computed(() => items$.value.length)
+
+        const isFactoryForm =
+          (options as CollectionFactoryOptions<Item, K, R>).factory !== undefined
+
+        const buildChild = (
+          item: Item,
+        ): {
+          instance: ControllerInstance
+          api: Api
+          def: ControllerDef<unknown, unknown>
+        } | null => {
+          let def: ControllerDef<unknown, unknown>
+          let childProps: unknown
+          if (isFactoryForm) {
+            const factoryOpts = options as CollectionFactoryOptions<Item, K, R>
+            const result = factoryOpts.factory(item) as CollectionFactoryResult
+            def = result.controller as ControllerDef<unknown, unknown>
+            childProps = result.props
+          } else {
+            const homoOpts = options as CollectionHomogeneousOptions<Item, K, Props, Api>
+            def = homoOpts.controller as unknown as ControllerDef<unknown, unknown>
+            childProps = homoOpts.propsOf(item)
+          }
+          const segment = self.makeChildSegment(getFactory(def), getName(def))
+          const childDeps =
+            options.deps !== undefined ? { ...self.deps, ...options.deps } : self.deps
+          const instance = new ControllerInstance(self, self.rootShared, segment, childDeps)
+          try {
+            const api = instance.construct(
+              getFactory(def) as (ctx: Ctx, props: unknown) => Api,
+              childProps,
+            )
+            return { instance, api, def }
+          } catch (err) {
+            // SPEC §12.1.6: runtime construction errors in collection items
+            // route to onError; the bad item is skipped.
+            dispatchError(self.rootShared.onError, err, {
+              kind: 'construction',
+              controllerPath: self.path,
+            })
+            return null
+          }
+        }
+
+        const removeKey = (key: K): void => {
+          const info = childMap.get(key)
+          if (info === undefined) return
+          childMap.delete(key)
+          const idx = self.entries.indexOf(info.entry)
+          if (idx >= 0) self.entries.splice(idx, 1)
+          try {
+            info.instance.dispose()
+          } catch (err) {
+            dispatchError(self.rootShared.onError, err, {
+              kind: 'effect',
+              controllerPath: self.path,
+            })
+          }
+        }
+
+        const reconcile = (): void => {
+          const source = options.source.value
+          const itemByKey = new Map<K, Item>()
+          for (const item of source) {
+            const key = options.keyOf(item)
+            if (!itemByKey.has(key)) itemByKey.set(key, item)
+          }
+
+          // Drop removed keys.
+          for (const key of [...childMap.keys()]) {
+            if (!itemByKey.has(key)) removeKey(key)
+          }
+
+          // Add new keys + rebuild factory-form type changes.
+          for (const [key, item] of itemByKey) {
+            const existing = childMap.get(key)
+            if (existing !== undefined) {
+              if (isFactoryForm) {
+                const result = (options as CollectionFactoryOptions<Item, K, R>).factory(
+                  item,
+                ) as CollectionFactoryResult
+                if ((result.controller as unknown) !== existing.def) {
+                  removeKey(key)
+                  const built = buildChild(item)
+                  if (built !== null) {
+                    const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
+                    self.entries.push(entry)
+                    childMap.set(key, { ...built, entry })
+                  }
+                }
+              }
+              continue
+            }
+            const built = buildChild(item)
+            if (built !== null) {
+              const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
+              self.entries.push(entry)
+              childMap.set(key, { ...built, entry })
+            }
+          }
+
+          // Project to items signal in source order, deduped, skipping failures.
+          const next: Array<{ key: K; api: Api }> = []
+          const seen = new Set<K>()
+          for (const item of source) {
+            const key = options.keyOf(item)
+            if (seen.has(key)) continue
+            seen.add(key)
+            const info = childMap.get(key)
+            if (info !== undefined) next.push({ key, api: info.api })
+          }
+          items$.set(next)
+        }
+
+        // Register the diff loop as an 'effect' entry so it pauses on suspend
+        // and re-runs on resume — mirrors how `ctx.effect` is wired.
+        const wrapped = (): void => {
+          try {
+            reconcile()
+          } catch (err) {
+            dispatchError(self.rootShared.onError, err, {
+              kind: 'effect',
+              controllerPath: self.path,
+            })
+          }
+        }
+        const effectEntry: LifecycleEntry = {
+          kind: 'effect',
+          factory: wrapped,
+          dispose: null,
+        }
+        if (self.state !== 'suspended') {
+          effectEntry.dispose = standaloneEffect(wrapped)
+        }
+        self.entries.push(effectEntry)
+
+        return {
+          items: items$,
+          size: size$,
+          get: (key: K) => childMap.get(key)?.api,
+          has: (key: K) => childMap.has(key),
+        }
+      },
+
+      lazyChild<Props, Api>(
+        loader: () => Promise<ControllerDef<Props, Api>>,
+        props: Props,
+        options?: { deps?: Partial<Record<string, unknown>> },
+      ): LazyChild<Api> {
+        const status$ = signal<'idle' | 'loading' | 'ready' | 'error'>('idle')
+        const api$ = signal<Api | undefined>(undefined)
+        const error$ = signal<unknown | undefined>(undefined)
+
+        let childInstance: ControllerInstance | null = null
+        let childEntry: LifecycleEntry | null = null
+        let pendingLoad: Promise<Api> | null = null
+        let disposed = false
+
+        // Parent dispose flag; the child entry (when present) is disposed
+        // via the parent's normal cascade, so we don't double-tear-down.
+        const flagEntry: LifecycleEntry = {
+          kind: 'onDispose',
+          fn: () => {
+            disposed = true
+          },
+        }
+        self.entries.push(flagEntry)
+
+        const handleFailure = (err: unknown): void => {
+          status$.set('error')
+          error$.set(err)
+          dispatchError(self.rootShared.onError, err, {
+            kind: 'construction',
+            controllerPath: self.path,
+          })
+        }
+
+        const load = (): Promise<Api> => {
+          if (disposed) {
+            return Promise.reject(new Error('[olas] ctx.lazyChild: cannot load after dispose'))
+          }
+          if (pendingLoad !== null) return pendingLoad
+          status$.set('loading')
+          pendingLoad = loader().then(
+            (def) => {
+              if (disposed) {
+                throw new Error('[olas] ctx.lazyChild: disposed during load')
+              }
+              const segment = self.makeChildSegment(getFactory(def), getName(def))
+              const childDeps =
+                options?.deps !== undefined ? { ...self.deps, ...options.deps } : self.deps
+              const instance = new ControllerInstance(self, self.rootShared, segment, childDeps)
+              try {
+                const api = instance.construct(getFactory(def), props)
+                childInstance = instance
+                childEntry = { kind: 'child', instance }
+                self.entries.push(childEntry)
+                api$.set(api)
+                status$.set('ready')
+                return api
+              } catch (err) {
+                handleFailure(err)
+                throw err
+              }
+            },
+            (err) => {
+              if (disposed) throw err
+              handleFailure(err)
+              throw err
+            },
+          )
+          return pendingLoad
+        }
+
+        const dispose = (): void => {
+          if (disposed) return
+          disposed = true
+          if (childEntry !== null && childInstance !== null) {
+            const idx = self.entries.indexOf(childEntry)
+            if (idx >= 0) self.entries.splice(idx, 1)
+            try {
+              childInstance.dispose()
+            } catch (err) {
+              dispatchError(self.rootShared.onError, err, {
+                kind: 'effect',
+                controllerPath: self.path,
+              })
+            }
+            childInstance = null
+            childEntry = null
+          }
+          // Splice the parent-dispose flag entry too — its only job was to
+          // signal disposal to an in-flight loader, and `disposed` is now
+          // already true. Leaving it behind leaks one closure per ever-
+          // disposed lazyChild for the parent's remaining lifetime.
+          const flagIdx = self.entries.indexOf(flagEntry)
+          if (flagIdx >= 0) self.entries.splice(flagIdx, 1)
+        }
+
+        return {
+          status: status$,
+          api: api$,
+          error: error$,
+          load,
+          dispose,
         }
       },
 

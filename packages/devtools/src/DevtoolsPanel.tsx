@@ -257,13 +257,14 @@ function TreeView({
   tree: ControllerNode
   mutations: MutationEntry[]
 }): ReactElement {
+  // Roll up pending-mutation counts per controller path. A "pending" mutation
+  // is one whose last entry is `run` with no matching success/error for the
+  // same (path, name). Computed unconditionally — must run before any early
+  // return so hook-order is stable across renders (rules of hooks).
+  const pending = useMemo(() => rollupPending(mutations), [mutations])
   if (tree.children.length === 0) {
     return <Empty title="No controllers yet" hint="The root hasn't constructed any controllers." />
   }
-  // Roll up pending-mutation counts per controller path. A "pending" mutation
-  // is one whose last entry is `run` with no matching success/error for the
-  // same (path, name).
-  const pending = useMemo(() => rollupPending(mutations), [mutations])
   return (
     <div className="olas-devtools-tree">
       {tree.children.map((child) => (

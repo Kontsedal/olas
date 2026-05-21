@@ -9,7 +9,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 
@@ -75,6 +75,8 @@ The TS overloads in `Ctx<TDeps>` declare two signatures: one for `Query`, one fo
 
 `ctx.child(def, props)` returns just `api` — the child's lifecycle is fully owned by the parent (dispose cascades, no manual control). `ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`: the child is still parent-owned (dispose cascades automatically), but the caller gets explicit handles to tear it down early or freeze/thaw it. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. See `controller-instance.md` for cascade semantics.
 
-## What's NOT yet on Ctx
+## Dynamic-child surface
 
-Per spec §20.2: `collection`, `dynamicCollection`, `session`, `lazyChild`. `provide` / `inject` landed in Phase 10 — see [`scope.md`](scope.md) for the semantics and [`modules/react.md`](../modules/react.md) for the React adapter that composes with them.
+`ctx.session(...)`, `ctx.collection(...)`, and `ctx.lazyChild(...)` cover the three dynamic-child cases — singleton-with-key (e.g. tenant switch), keyed homogeneous list (e.g. board cards), and code-split-loaded child (e.g. modal). Construction failures route through `onError({ kind: 'construction' })`. See [`modules/controller.md`](../modules/controller.md) and `packages/core/tests/dynamic-children.test.ts`.
+
+`provide` / `inject` cover cross-tree dependency injection — see [`scope.md`](scope.md) for the semantics and [`modules/react.md`](../modules/react.md) for the React adapter that composes with them.

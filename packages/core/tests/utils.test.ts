@@ -14,15 +14,25 @@ describe('isAbortError', () => {
     expect(isAbortError(c.signal.reason)).toBe(true)
   })
 
-  test('false for plain errors', () => {
+  test('false for plain errors and non-error values', () => {
     expect(isAbortError(new Error('boom'))).toBe(false)
     expect(isAbortError(null)).toBe(false)
     expect(isAbortError(undefined)).toBe(false)
-    expect(isAbortError({ name: 'AbortError' })).toBe(false)
+    expect(isAbortError({ name: 'NotAbort' })).toBe(false)
   })
 
   test('false for non-AbortError DOMExceptions', () => {
     expect(isAbortError(new DOMException('boom', 'NotFoundError'))).toBe(false)
+  })
+
+  test('true for name-based aborts (axios / msw / custom Errors)', () => {
+    // Many real-world libraries throw a plain Error or POJO whose `name` is
+    // 'AbortError' instead of a DOMException. The narrow check missed these
+    // and made retry loops treat aborts as genuine failures.
+    expect(isAbortError({ name: 'AbortError' })).toBe(true)
+    const e = new Error('aborted')
+    e.name = 'AbortError'
+    expect(isAbortError(e)).toBe(true)
   })
 })
 
