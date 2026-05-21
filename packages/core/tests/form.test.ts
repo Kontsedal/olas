@@ -296,4 +296,211 @@ describe('ctx.fieldArray', () => {
     expect(root.tags.value.value).toEqual(['x', 'y'])
     root.dispose()
   })
+
+  test('FieldArray.validate awaits async top-level + item validators', async () => {
+    const def = defineController((ctx) => ({
+      tags: ctx.fieldArray((initial) => ctx.field<string>(initial ?? '', [required()]), {
+        validators: [
+          async (items) => {
+            await Promise.resolve()
+            return items.length >= 2 ? null : 'Need ≥2'
+          },
+        ],
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.tags.add('a')
+    expect(await root.tags.validate()).toBe(false)
+    root.tags.add('b')
+    expect(await root.tags.validate()).toBe(true)
+    root.dispose()
+  })
+
+  test('FieldArray.markAllTouched cascades into sub-form items', () => {
+    const def = defineController((ctx) => ({
+      items: ctx.fieldArray(() =>
+        ctx.form({ sku: ctx.field<string>('', [required()]) }),
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.items.add({ sku: '' })
+    root.items.add({ sku: '' })
+    root.items.markAllTouched()
+    const first = root.items.at(0) as unknown as {
+      fields: { sku: { touched: { value: boolean } } }
+    }
+    expect(first.fields.sku.touched.value).toBe(true)
+    root.dispose()
+  })
+
+  test('form.set replaces FieldArray children via applyPartial', () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form({
+        name: ctx.field('A'),
+        tags: ctx.fieldArray((initial) => ctx.field(initial ?? '')),
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.form.fields.tags.add('x')
+    root.form.fields.tags.add('y')
+    root.form.set({ name: 'B', tags: ['p', 'q', 'r'] })
+    expect(root.form.value.value).toEqual({ name: 'B', tags: ['p', 'q', 'r'] })
+    root.dispose()
+  })
+})
+
+describe('async form-level + field-array-level validators', () => {
+  test('Form async top-level validator transitions through isValidating', async () => {
+    let resolve!: (msg: string | null) => void
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        {
+          a: ctx.field('x'),
+        },
+        {
+          validators: [
+            () =>
+              new Promise<string | null>((r) => {
+                resolve = r
+              }),
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    // The validator effect runs on construction; isValid is false while pending.
+    await vi.waitFor(() => expect(root.form.isValidating.value).toBe(true))
+    resolve('bad')
+    await vi.waitFor(() => expect(root.form.topLevelErrors.value).toEqual(['bad']))
+    expect(root.form.isValidating.value).toBe(false)
+    root.dispose()
+  })
+
+  test('Form validator that throws is reported via internal onValidatorError without crashing', async () => {
+    const onErr = vi.fn()
+    // The internal hook is reached via ctx.form's wiring; we observe it
+    // indirectly through the form NOT throwing and the error landing in
+    // topLevelErrors as the thrown message.
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { a: ctx.field('x') },
+        {
+          validators: [
+            () => {
+              throw new Error('boom')
+            },
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() =>
+      expect(root.form.topLevelErrors.value).toEqual(expect.arrayContaining(['boom'])),
+    )
+    onErr // unused — keeping the vi import live without an additional test asserting onError dispatch (which lives on the root).
+    root.dispose()
+  })
+
+  test('Form.validate awaits in-flight async validator before returning', async () => {
+    let resolve!: (msg: string | null) => void
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { a: ctx.field('x') },
+        {
+          validators: [
+            () =>
+              new Promise<string | null>((r) => {
+                resolve = r
+              }),
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(root.form.isValidating.value).toBe(true))
+    const verdict = root.form.validate()
+    // Resolve on the next tick so validate() actually has to wait.
+    setTimeout(() => resolve(null), 5)
+    expect(await verdict).toBe(true)
+    root.dispose()
+  })
+
+  test('FieldArray async top-level validator goes through isValidating', async () => {
+    let resolve!: (msg: string | null) => void
+    const def = defineController((ctx) => ({
+      tags: ctx.fieldArray(() => ctx.field(''), {
+        validators: [
+          () =>
+            new Promise<string | null>((r) => {
+              resolve = r
+            }),
+        ],
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(root.tags.isValidating.value).toBe(true))
+    resolve('rejected')
+    await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual(['rejected']))
+    root.dispose()
+  })
+
+  test('FieldArray sync validator that throws surfaces as a string error', async () => {
+    const def = defineController((ctx) => ({
+      tags: ctx.fieldArray(() => ctx.field(''), {
+        validators: [
+          () => {
+            throw new Error('nope')
+          },
+        ],
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() =>
+      expect(root.tags.topLevelErrors.value).toEqual(expect.arrayContaining(['nope'])),
+    )
+    root.dispose()
+  })
+})
+
+describe('flatErrors walker — fieldArray of forms', () => {
+  test('emits errors at items[idx] paths for sub-forms and leaves', async () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form({
+        items: ctx.fieldArray((initial?: { sku?: string }) =>
+          ctx.form(
+            { sku: ctx.field<string>('', [required()]) },
+            {
+              initial,
+              validators: [(v) => (v.sku === 'banned' ? 'sku is banned' : null)],
+            },
+          ),
+        ),
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.form.fields.items.add({ sku: '' })
+    root.form.fields.items.add({ sku: 'banned' })
+
+    await vi.waitFor(() => {
+      const flat = root.form.flatErrors.value
+      expect(flat).toContainEqual({ path: 'items[0].sku', errors: ['Required'] })
+      expect(flat).toContainEqual({ path: 'items[1]', errors: ['sku is banned'] })
+    })
+    root.dispose()
+  })
+
+  test('emits leaf errors at items[idx] when fieldArray items are plain fields', async () => {
+    const def = defineController((ctx) => ({
+      tags: ctx.fieldArray((initial?: string) => ctx.field<string>(initial ?? '', [required()])),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.tags.add('')
+    root.tags.add('ok')
+    await vi.waitFor(() => {
+      const errs = root.tags.errors.value
+      expect(errs[0]).toEqual(['Required'])
+      expect(errs[1]).toBeUndefined()
+    })
+    root.dispose()
+  })
 })

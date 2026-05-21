@@ -154,4 +154,122 @@ describe('usePersisted', () => {
     expect(root.s.value).toBe('default')
     root.dispose()
   })
+
+  test('rejected async storage.set is swallowed (does not crash the app)', async () => {
+    const adapter: StorageAdapter = {
+      get: () => null,
+      set: () => Promise.reject(new Error('quota exceeded')),
+      delete: () => {},
+    }
+    const def = defineController((ctx) => {
+      const s = signal<string>('')
+      usePersisted(ctx, 'k', s, { storage: adapter })
+      return { s }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    root.s.set('payload')
+    await flush()
+    // No assertion target beyond "didn't throw" — covers the .catch swallow.
+    root.dispose()
+  })
+
+  test('serialize throwing is swallowed (covers the outer catch)', async () => {
+    const store = memoryStorage()
+    const def = defineController((ctx) => {
+      const s = signal<unknown>(null)
+      usePersisted(ctx, 'k', s, {
+        storage: store,
+        serialize: () => {
+          throw new Error('not serializable')
+        },
+      })
+      return { s }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    root.s.set({ cycles: 'pretend this loops back to itself' })
+    expect(store.store.has('k')).toBe(false)
+    root.dispose()
+  })
+
+  test('crossTab onChange with rawValue=null mirrors as undefined to source', async () => {
+    const store = memoryStorage({ k: JSON.stringify('keep me') })
+    const def = defineController((ctx) => {
+      const s = signal<string | undefined>('initial')
+      usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
+      return { s }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.s.value).toBe('keep me')
+
+    // Another tab calls localStorage.removeItem → onChange fires with null.
+    store.emitChange('k', null)
+    expect(root.s.value).toBeUndefined()
+    root.dispose()
+  })
+
+  test('crossTab onChange ignores keys that do not match', async () => {
+    const store = memoryStorage({ k: JSON.stringify('mine') })
+    const def = defineController((ctx) => {
+      const s = signal<string>('')
+      usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
+      return { s }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    store.emitChange('other-key', JSON.stringify('not mine'))
+    expect(root.s.value).toBe('mine')
+    root.dispose()
+  })
+
+  test('crossTab onChange swallows corrupted payloads', async () => {
+    const store = memoryStorage({ k: JSON.stringify('start') })
+    const def = defineController((ctx) => {
+      const s = signal<string>('')
+      usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
+      return { s }
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    store.emitChange('k', '{not json}')
+    expect(root.s.value).toBe('start')
+    root.dispose()
+  })
 })
+
+describe('localStorageAdapter', () => {
+  test('round-trips through the real localStorage when present', async () => {
+    const { localStorageAdapter } = await import('../src')
+    // jsdom provides localStorage; node-only environment skips.
+    if (typeof localStorage === 'undefined') return
+    localStorage.clear()
+    localStorageAdapter.set('alpha', '1')
+    expect(localStorageAdapter.get('alpha')).toBe('1')
+    localStorageAdapter.delete('alpha')
+    expect(localStorageAdapter.get('alpha')).toBeNull()
+  })
+
+  test('no-ops gracefully when localStorage is absent', async () => {
+    const { localStorageAdapter } = await import('../src')
+    const originalLS = (globalThis as { localStorage?: Storage }).localStorage
+    const originalWin = (globalThis as { window?: Window }).window
+    delete (globalThis as { localStorage?: Storage }).localStorage
+    delete (globalThis as { window?: Window }).window
+    try {
+      expect(localStorageAdapter.get('x')).toBeNull()
+      // set/delete return void and shouldn't throw.
+      localStorageAdapter.set('x', '1')
+      localStorageAdapter.delete('x')
+      const off = localStorageAdapter.onChange?.(() => {})
+      expect(off).toBeDefined()
+      off?.()
+    } finally {
+      if (originalLS) (globalThis as { localStorage?: Storage }).localStorage = originalLS
+      if (originalWin) (globalThis as { window?: Window }).window = originalWin
+    }
+  })
+})
+

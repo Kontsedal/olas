@@ -397,6 +397,51 @@ describe('lifecycle — suspend / resume / dispose', () => {
     root.dispose()
     vi.useRealTimers()
   })
+
+  test('dispose clears a pending maxIdle timer (no double-fire)', () => {
+    vi.useFakeTimers()
+    const onDispose = vi.fn()
+    const def = defineController((ctx) => {
+      ctx.onDispose(onDispose)
+      return {}
+    })
+    const root = createRoot(def, { deps: noopApi })
+    root.suspend({ maxIdle: 1000 })
+    root.dispose()
+    expect(onDispose).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(10_000)
+    expect(onDispose).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  test('a second suspend({maxIdle}) restarts the idle timer from zero', () => {
+    vi.useFakeTimers()
+    const onDispose = vi.fn()
+    const def = defineController((ctx) => {
+      ctx.onDispose(onDispose)
+      return {}
+    })
+    const root = createRoot(def, { deps: noopApi })
+    root.suspend({ maxIdle: 1000 })
+    vi.advanceTimersByTime(900)
+    // Re-suspend before the first timer fires — the prior timer is cleared
+    // and the new 1000ms window starts now.
+    root.suspend({ maxIdle: 1000 })
+    vi.advanceTimersByTime(200)
+    expect(onDispose).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(800)
+    expect(onDispose).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  test('controller api defining a reserved root key throws on createRoot', () => {
+    for (const reserved of ['dispose', 'suspend', 'resume', '__debug'] as const) {
+      const def = defineController(() => ({ [reserved]: () => {} }) as Record<string, () => void>)
+      expect(() => createRoot(def, { deps: noopApi })).toThrowError(
+        new RegExp(`conflicts with the root controls`),
+      )
+    }
+  })
 })
 
 describe('construction error rollback (§12.1)', () => {

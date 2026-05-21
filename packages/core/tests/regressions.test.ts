@@ -495,6 +495,36 @@ describe('debouncedValidator', () => {
     root.dispose()
     vi.useRealTimers()
   })
+
+  test('rejects immediately when the validator is invoked with an already-aborted signal', async () => {
+    const { debouncedValidator } = await import('../src/forms/field')
+    const v = debouncedValidator<string>(async () => null, 50)
+    const ctrl = new AbortController()
+    ctrl.abort()
+    await expect(v('x', ctrl.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  })
+})
+
+describe('field — async validator rejection (non-abort) surfaces as an error message', () => {
+  test('rejection with an Error: message lands in field.errors', async () => {
+    const v = (async () => {
+      throw new Error('network down')
+    }) as (value: string, signal: AbortSignal) => Promise<string | null>
+    const def = defineController((ctx) => ({ name: ctx.field<string>('x', [v]) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(root.name.errors.value).toContain('network down'))
+    root.dispose()
+  })
+
+  test('rejection with a non-Error value coerces to string', async () => {
+    const v = (async () => {
+      throw 'plain string reason' // eslint-disable-line no-throw-literal
+    }) as (value: string, signal: AbortSignal) => Promise<string | null>
+    const def = defineController((ctx) => ({ name: ctx.field<string>('x', [v]) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(root.name.errors.value).toContain('plain string reason'))
+    root.dispose()
+  })
 })
 
 // ---------------------------------------------------------------------------
