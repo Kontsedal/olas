@@ -6,7 +6,6 @@
  */
 
 import { defineQuery } from '@kontsedal/olas-core'
-import type { BoardSummary } from '../../api'
 
 export const boardsListQuery = defineQuery({
   queryId: 'boards.list',

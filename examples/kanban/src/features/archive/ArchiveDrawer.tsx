@@ -1,7 +1,7 @@
 import { use, useRoot } from '@kontsedal/olas-react'
 import { ArchiveRestore } from 'lucide-react'
 import type { AppApi } from '../../app.controller'
-import { Button, Card, cx, Skeleton } from '../../ui'
+import { Button, Skeleton } from '../../ui'
 
 export function ArchiveDrawer() {
   const app = useRoot<AppApi>()

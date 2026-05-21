@@ -309,7 +309,7 @@ export const boardController = defineController(
       mutate: (vars, signal) =>
         ctx.deps.api.reorderColumn(activeBoardId.peek(), vars.columnId, vars.cardIds, signal),
       onSuccess: (_r, vars) => activity.emit(makeActivity('move', `Reordered ${vars.columnId}`)),
-      onError: (err, vars, snapshot) => {
+      onError: (err, _vars, snapshot) => {
         // Explicit rollback — even though the snapshot would auto-roll on
         // throw, the demo deliberately keeps both styles visible.
         snapshot?.rollback()

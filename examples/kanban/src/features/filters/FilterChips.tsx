@@ -7,7 +7,7 @@ import { use, useQuery, useRoot } from '@kontsedal/olas-react'
 import { X } from 'lucide-react'
 import type { Priority } from '../../api'
 import type { AppApi } from '../../app.controller'
-import { cx, Tag } from '../../ui'
+import { cx } from '../../ui'
 
 const ALL_PRIORITIES: Priority[] = ['urgent', 'high', 'med', 'low']
 
@@ -21,7 +21,6 @@ const PRIORITY_HUE: Record<Priority, number> = {
 export function FilterChips() {
   const app = useRoot<AppApi>()
   const labels = useQuery(app.labels)
-  const users = useQuery(app.users)
   const selPri = use(app.board.selectedPriorities)
   const selLab = use(app.board.selectedLabelIds)
   const selAss = use(app.board.selectedAssigneeIds)

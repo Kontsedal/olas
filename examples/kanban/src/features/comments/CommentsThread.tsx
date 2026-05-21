@@ -4,7 +4,7 @@ import type { AppApi } from '../../app.controller'
 import { UserEntity } from '../../entities'
 import { Avatar, Button } from '../../ui'
 
-export function CommentsThread({ cardId }: { cardId: string }) {
+export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
   const app = useRoot<AppApi>()
   const visible = use(app.comments.visible)
   const draft = use(app.comments.draft)
