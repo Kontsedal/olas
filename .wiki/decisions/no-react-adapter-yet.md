@@ -8,7 +8,7 @@ covers:
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: supersedes, target: ../modules/react.md }
-last_verified: 2026-05-20
+last_verified: 2026-05-21
 confidence: high
 ---
 
