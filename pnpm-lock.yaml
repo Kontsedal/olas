@@ -53,12 +53,24 @@ importers:
       '@kontsedal/olas-core':
         specifier: workspace:^
         version: link:../../packages/core
+      '@kontsedal/olas-cross-tab':
+        specifier: workspace:^
+        version: link:../../packages/cross-tab
       '@kontsedal/olas-devtools':
         specifier: workspace:^
         version: link:../../packages/devtools
+      '@kontsedal/olas-entities':
+        specifier: workspace:^
+        version: link:../../packages/entities
+      '@kontsedal/olas-persist':
+        specifier: workspace:^
+        version: link:../../packages/persist
       '@kontsedal/olas-react':
         specifier: workspace:^
         version: link:../../packages/react
+      '@kontsedal/olas-realtime':
+        specifier: workspace:^
+        version: link:../../packages/realtime
       '@kontsedal/olas-zod':
         specifier: workspace:^
         version: link:../../packages/zod

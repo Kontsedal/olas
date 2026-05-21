@@ -1,35 +1,90 @@
-# Example — kanban (React)
+# Flagship — kanban (React)
 
-A project-board demonstrating Olas's most ambitious surfaces in one place: all
-three mutation concurrency modes, optimistic updates with automatic rollback,
-nested Zod-validated forms with field arrays, typed cross-tree scopes, and the
-live Devtools panel.
+A project tracker that exercises essentially every primitive in the Olas
+library through *natural* features, not contrived demos. The intent is that a
+single feature open in the editor reads like a real app — and that the union
+of all features doubles as a coverage map for the library.
 
-## What it shows
+## Feature → primitive map
 
-- **`ctx.mutation({ concurrency: 'parallel' })`** for `moveCard` — independent moves run concurrently. Optimistic update via `onMutate → boardQuery.setData(...)`; on error, the snapshot is restored via `onError(_, _, snap) => snap?.rollback()`. Aborted runs (supersede / dispose) roll back automatically. Spec §6.3, §6.4.
-- **`ctx.mutation({ concurrency: 'latest-wins' })`** for `applyFilter` — rapid keystrokes supersede prior requests; the prior `mutate` observes `signal.aborted` and rejects with `AbortError`. The controller's `filterResults` signal always holds the freshest data.
-- **`ctx.mutation({ concurrency: 'serial' })`** for `reorderColumn` — queued runs apply one at a time, in submission order. The test asserts `maxActive === 1` to prove no api call ever overlaps.
-- **`formFromZod`** in the card editor — one Zod schema generates the entire form tree (title `Field<string>`, description `Field<string>`, subtasks `FieldArray<Form<...>>`), with validators auto-attached at every leaf.
-- **`defineScope`** + `ctx.provide` / `ctx.inject` — `currentBoardScope` lets the card editor controller learn its board id without taking it in props.
-- **`AmbientDeps`** module augmentation — `ctx.deps.api` is typed everywhere; no provider plumbing.
-- **`<DevtoolsLauncher>`** mounted at the app root — floating launcher with live controller tree, cache timeline, mutation log, field validations.
-- **Component testing with `fakeField`** in `tests/CardEditor.test.tsx` — render UI cells against shape-correct fakes; no jsdom-on-the-real-controller needed.
+| Visible feature | Library primitive |
+|---|---|
+| Multi-board sidebar with switching | `defineQuery({ crossTab: true })`, reactive key thunks |
+| Active board grid | `defineQuery` + `ctx.use(query, () => [...])` |
+| Drag-drop reorder *within* a column | `ctx.mutation({ concurrency: 'serial' })` |
+| Drag-drop *across* columns | `ctx.mutation({ concurrency: 'parallel' })` with optimistic snapshot |
+| Search bar (250 ms debounce → server) | `debounced()` + `ctx.mutation({ concurrency: 'latest-wins' })` |
+| Filter chips (priority / label / assignee) | `computed()` composition over signals |
+| Bulk move + multi-select | `selection<string>()` (handleClick range / meta) |
+| Detail panel | `<KeepAlive controller={cardDetail}>` (suspend/resume on unmount) |
+| Card detail form | `formFromZod` + `FieldArray` for subtasks |
+| Async title-uniqueness check | `debouncedValidator()` |
+| Assignee picker with shared user data | `entitiesPlugin` + `defineEntity<User>` |
+| Label picker with shared label data | `entitiesPlugin` + `defineEntity<Label>` |
+| Comments thread | `useLiveStream` over a BroadcastChannel realtime |
+| "Another tab just moved a card" log | `useRealtimePatcher` |
+| Two-tab cache convergence | `crossTabPlugin` |
+| Persisted theme / density / sidebar / last-open board | `usePersisted` × N |
+| Theme + density mirror to `<html>` | standalone `effect()` |
+| Archived-cards drawer with paged scroll | `defineInfiniteQuery` |
+| Background-tab polling pause | `useSuspendOnHidden(root)` |
+| Notifications + global error toast | `ctx.emitter` + `ctx.on` + root `onError` (`ErrorContext`) |
+| Activity feed | `ctx.emitter` + `ctx.on` |
+| Per-feature scopes (board id, selected card, prefs) | `defineScope` + `ctx.provide` / `ctx.inject` |
+| Devtools | `<DevtoolsLauncher root={...}>` |
+| `AmbientDeps` augmentation | `declare module '@kontsedal/olas-core'` in `api/schema.ts` |
 
-## Files
+## Folder layout
 
-- `src/api.ts` — in-memory board with tunable latency + `failNextWrite` flag.
-- `src/scopes.ts` — `currentBoardScope`.
-- `src/query.ts` — `boardQuery` (paginated, `keepPreviousData`).
-- `src/schema.ts` — Zod schema feeding `formFromZod` in the card editor.
-- `src/controllers/board.ts`, `controllers/cardEditor.ts` — business logic. No React.
-- `src/app.ts` — root controller composing the children + scope wiring.
-- `src/controller.ts` — barrel re-export for the things UI imports.
-- `src/View/App.tsx` — top-level layout, OlasProvider, DevtoolsLauncher.
-- `src/View/Board.tsx`, `Column.tsx`, `SearchBar.tsx`, `CardEditor.tsx` — leaf UI.
-- `src/main.tsx` — bootstrap.
-- `tests/controller.test.ts` — tests covering moveCard rollback, parallel writes, latest-wins abort, serial ordering, and form validation.
-- `tests/CardEditor.test.tsx` — component tests using `fakeField`.
+Feature folders — each is a vertical slice you can open in isolation:
+
+```
+src/
+├── main.tsx                 # mount + dispose hook
+├── root.ts                  # createRoot + plugins + onError bridge
+├── app.controller.ts        # top-level controller; mounts every feature
+├── App.tsx                  # 3-pane shell (sidebar / main / detail)
+├── styles.css               # imports tokens, motion, primitives, feature css
+├── scopes.ts                # all scope definitions in one place
+├── api/                     # fake api, broadcast realtime, schema (Zod + AmbientDeps)
+├── entities/                # defineEntity<User>, defineEntity<Label>
+├── features/
+│   ├── boards/              # sidebar + switcher
+│   ├── board/               # kanban grid + 3 mutation modes + drag/drop + selection
+│   ├── card-detail/         # KeepAlive panel + form + async validator
+│   ├── search/              # debounced search bar
+│   ├── filters/             # chip picker (priority/label/assignee)
+│   ├── comments/            # useLiveStream thread
+│   ├── activity/            # emitter feed + remote-actor events
+│   ├── notifications/       # ErrorContext-driven toasts
+│   ├── archive/             # defineInfiniteQuery drawer
+│   └── preferences/         # usePersisted theme/density/sidebar
+└── ui/                      # kanban-local design system
+    ├── tokens.css, motion.css, globals.css, primitives.css
+    └── Button, Card, Input, Tag, Avatar, Toast, Dialog, …
+```
+
+## How realtime works
+
+`@kontsedal/olas-realtime` expects a consumer-supplied `RealtimeService`.
+The demo provides one backed by `BroadcastChannel` (`api/broadcast.ts`). Open
+two browser windows and one acts as a remote actor:
+
+1. **You move a card in window A.** The mutation's `onMutate` patches
+   window A's cache optimistically and the `mutate` call resolves against
+   window A's in-memory fake API.
+2. `crossTabPlugin` replays the `setData` write to window B over a separate
+   BroadcastChannel (`olas-kanban-cache`) → window B's UI updates without
+   a refetch.
+3. After success, the board controller `publish`es a `card.moved` event over
+   the *realtime* channel (`olas-kanban-realtime`).
+4. Window B's `useRealtimePatcher` picks it up, sees `event.by !== tabId`,
+   and emits an "Another tab moved a card" entry into the activity scope —
+   visible in the activity panel with a distinct accent.
+
+The two channels are intentionally separate, mirroring real deployments where
+the cache transport (e.g. a write-through CDN cache, an in-process pubsub)
+is independent of the realtime fan-out (e.g. a WebSocket / Pusher / Supabase).
 
 ## Run it
 
@@ -41,15 +96,10 @@ pnpm --filter @kontsedal/olas-example-kanban typecheck
 pnpm --filter @kontsedal/olas-example-kanban build
 ```
 
-In the dev UI:
-
-- Click **Arm failure** in the header to make the next `moveCard` / `reorderColumn` / `saveCard` fail. Move a card and watch it snap back to its origin — that's the automatic rollback. The mutation log in the Devtools panel records the rollback event.
-- Type in the **search** input. Each keystroke triggers a 150ms server "search". With latest-wins, you always see results for the *latest* query, even if you typed fast enough to issue 10 overlapping requests.
-- Click a card title to open the editor. Add subtasks, edit text, save. Empty title → validation error; empty subtasks list → top-level form error from the Zod `.min(1)` rule.
-
 ## Read order
 
-1. `src/api.ts` (skim) — types and the latency model.
-2. `src/controller.ts` top to bottom — query, then the three mutations side by side. This is where the eloquence claim is.
-3. `tests/controller.test.ts` — see how each concurrency mode is verified deterministically with `createTestController` + a mocked api.
-4. `src/View/App.tsx` and `CardEditor.tsx` — minimal React surface.
+1. `src/api/types.ts` — domain shapes.
+2. `src/app.controller.ts` — the *orchestrator*. Reads top-down like a wiring diagram.
+3. `src/features/board/board.controller.ts` — three mutation modes side-by-side; this is where the testability claim lives.
+4. `src/features/card-detail/card-detail.controller.ts` — `formFromZod` + `debouncedValidator` + KeepAlive shape.
+5. `tests/board.test.ts` + `tests/cross-tab.test.ts` — see the mutations and the two-tab convergence verified deterministically.

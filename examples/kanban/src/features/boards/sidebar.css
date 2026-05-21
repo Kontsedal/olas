@@ -1,0 +1,79 @@
+.olas-sidebar {
+  position: sticky; top: 0;
+  height: 100vh;
+  width: var(--layout-sidebar-w);
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 12px;
+  background: var(--color-bg-sunk);
+  border-right: 1px solid var(--color-border);
+  transition: width var(--motion-base);
+  flex-shrink: 0;
+}
+.olas-sidebar-collapsed { width: var(--layout-sidebar-w-collapsed); }
+
+.olas-sidebar-brand {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 6px 14px;
+}
+.olas-sidebar-mark {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px;
+  background: linear-gradient(135deg, var(--color-accent) 0%, oklch(0.66 0.18 calc(var(--hue-accent) + 30)) 100%);
+  color: var(--color-accent-fg);
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+.olas-sidebar-title { font-weight: 600; font-size: 0.8125rem; letter-spacing: -0.005em; }
+.olas-sidebar-sub { color: var(--color-fg-mute); font-weight: 500; }
+.olas-sidebar-collapse { margin-left: auto; }
+.olas-sidebar-collapsed .olas-sidebar-collapse { margin-left: 0; }
+
+.olas-sidebar-section {
+  padding: 0 8px 4px;
+  font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--color-fg-dim);
+}
+
+.olas-sidebar-list { display: flex; flex-direction: column; gap: 1px; }
+
+.olas-sidebar-board {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-fg-mute);
+  font-weight: 500;
+  font-size: 0.8125rem;
+  text-align: left;
+  transition: background var(--motion-fast), color var(--motion-fast);
+}
+.olas-sidebar-board:hover { background: var(--color-bg-hover); color: var(--color-fg); }
+.olas-sidebar-board-active {
+  background: var(--color-bg-elev);
+  color: var(--color-fg);
+}
+
+.olas-sidebar-board-dot {
+  width: 6px; height: 6px;
+  border-radius: 999px;
+  background: oklch(0.62 0.18 var(--board-hue, 270));
+  flex-shrink: 0;
+}
+
+.olas-sidebar-board-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.olas-sidebar-spacer { flex: 1; }
+
+.olas-sidebar-foot {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px;
+  margin-top: 8px;
+}
+.olas-sidebar-foot-text { color: var(--color-fg-dim); font-size: 0.72rem; }

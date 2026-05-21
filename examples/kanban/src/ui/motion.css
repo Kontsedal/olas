@@ -1,0 +1,41 @@
+/* Named keyframes used across primitives. */
+
+@keyframes olas-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes olas-slide-in-right {
+  from { transform: translateX(8px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes olas-slide-in-up {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes olas-toast-in {
+  from { transform: translateY(12px) scale(0.98); opacity: 0; }
+  to   { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+@keyframes olas-pop-in {
+  from { transform: scale(0.96); opacity: 0; }
+  to   { transform: scale(1); opacity: 1; }
+}
+
+@keyframes olas-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes olas-pulse-glow {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.20 var(--hue-accent) / 0.35); }
+  50%      { box-shadow: 0 0 0 6px oklch(0.72 0.20 var(--hue-accent) / 0.00); }
+}
+
+@keyframes olas-accent-flash {
+  0%   { background-color: var(--color-accent-soft); }
+  100% { background-color: var(--color-bg-elev); }
+}

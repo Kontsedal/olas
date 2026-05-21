@@ -108,6 +108,38 @@ Implementation requires: key-diff loop driven by an effect, child-per-key bookke
 
 The major exports carry one-line descriptions (e.g. `defineQuery`, `defineController`, `useField`). What's still missing: `@example` blocks attached to public surfaces and TSDoc on the long tail of utility exports. Going through each package's `index.ts` re-exports systematically and adding one `@example` per primitive would materially improve IDE hover. Worth doing alongside the next API.md sweep.
 
+## Examples
+
+### [idea] Extract `examples/_shared/ui/` design system
+
+The flagship kanban example has a complete in-app design system at
+`examples/kanban/src/ui/` — tokens (oklch palette + light/dark/density),
+motion keyframes, and ~14 React primitives (Button, Card, Avatar, Tag,
+Toast, Dialog, …). When stock-ticker or reader-ssr are next due for a UI
+uplift, lift these out to `examples/_shared/ui/` and have each example
+extend the tokens. Already deliberately kept kanban-local for now to
+avoid premature abstraction — see the `cryptic-questing-twilight.md`
+plan for the rationale.
+
+### [idea] Surface `suspend` / `resume` on `ctx.attach` return shape
+
+`<KeepAlive controller={…}>` expects `{ suspend(), resume() }`. Today
+`ctx.attach(...)` returns only `{ api, dispose }` — child controllers
+have to expose suspend/resume manually as part of their `Api` (see
+`features/card-detail/card-detail.controller.ts` — it wraps an
+`isPaused` signal). Extending the attach return to include real
+suspend/resume that cascade through the child's lifecycle entries
+would let the React adapter consume any attached controller without a
+hand-rolled shim. Worth speccing as §11.x.
+
+### [idea] `formFromZod` — accept extra leaf validators
+
+`debouncedValidator` exists on Olas but `formFromZod(ctx, schema, options)`
+doesn't expose a way to attach extra validators per leaf — kanban's
+"title is already used" check is hand-wired with an effect. Add an
+`extraValidators: { [path: string]: Validator<T> }` option that the form
+walker installs on the matching field.
+
 ## Loose ends
 
 (nothing tagged yet — drop short, unclassified notes here when they don't fit above)
