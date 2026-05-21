@@ -28,6 +28,27 @@ export function zodValidatorAsync<T>(schema: z.ZodType<T>): Validator<T> {
   }
 }
 
+/**
+ * Run the schema and report only **root-level** issues (those with empty
+ * `path`). Leaf issues are already covered by `zodValidator(propSchema)` on
+ * each leaf field — surfacing them here would double-count.
+ *
+ * Used by `formFromZod` to lift root-level `.refine(...)` rules into a
+ * form-level validator. Returns `null` when every issue belongs to a leaf
+ * (or there are no issues at all).
+ */
+export function rootOnlyZodValidator<T>(schema: z.ZodType<T>): Validator<T> {
+  return (value, signal) => {
+    void signal
+    const result = schema.safeParse(value)
+    if (result.success) return null
+    for (const issue of result.error.issues) {
+      if (issue.path.length === 0) return issue.message
+    }
+    return null
+  }
+}
+
 // Zod 4 typed every wrapper as `z.ZodType`-compatible; the public unwrap path
 // is `.unwrap()` for optional/nullable and `.def.innerType` for default.
 type AnyZodType = z.ZodType
@@ -120,29 +141,68 @@ export type ZodToLeaf<S> =
  * accepts the exact item shape, etc. Consumers do not need to hand-write
  * a `CardForm = Form<{...}>` matching the schema.
  */
+/**
+ * Per-leaf extra validators keyed by dotted path. Match the leaf field's
+ * position inside the schema:
+ *
+ * - top-level: `'title'`
+ * - nested form: `'address.street'`
+ *
+ * `FieldArray` items aren't separately addressable — the schema walker
+ * generates one factory per array, so a path of `'tags'` matches the
+ * `FieldArray` (validators attached there apply to the array as a whole;
+ * use Olas's `FieldArrayOptions.validators` shape). Per-element rules
+ * already live on the Zod element schema and are attached automatically.
+ *
+ * Validators run alongside `zodValidator(schema)` — both must pass.
+ */
+export type ExtraValidators = Record<string, Validator<any>>
+
+export type FormFromZodOptions<T extends z.ZodObject<z.ZodRawShape>> = {
+  initials?: Partial<z.infer<T>>
+  extraValidators?: ExtraValidators
+}
+
 export function formFromZod<T extends z.ZodObject<z.ZodRawShape>>(
   ctx: Ctx,
   schema: T,
-  options?: { initials?: Partial<z.infer<T>> },
+  options?: FormFromZodOptions<T>,
 ): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]> }> {
-  return buildForm(ctx, schema, options?.initials) as never
+  return buildForm(ctx, schema, options?.initials, '', options?.extraValidators, schema) as never
 }
 
 function buildForm(
   ctx: Ctx,
   schema: z.ZodObject<z.ZodRawShape>,
-  initials?: Record<string, unknown>,
+  initials: Record<string, unknown> | undefined,
+  path: string,
+  extras: ExtraValidators | undefined,
+  /**
+   * The original top-level schema. Passed only when constructing the ROOT
+   * form — nested `buildForm` calls (from object-typed leaves) pass
+   * `undefined`. Used to attach a root-only Zod validator so
+   * `z.object({...}).refine(fn)` rules surface as form-level errors
+   * without double-reporting leaf issues. See `rootOnlyZodValidator`.
+   */
+  rootSchema?: z.ZodObject<z.ZodRawShape>,
 ): AnyForm {
   const shape = schema.shape
   const fields: Record<string, Field<unknown> | Form<any> | FieldArray<any>> = {}
   for (const key of Object.keys(shape)) {
     const propSchema = shape[key] as AnyZodType
     const initial = initials?.[key]
-    fields[key] = buildLeaf(ctx, propSchema, initial)
+    const leafPath = path === '' ? key : `${path}.${key}`
+    fields[key] = buildLeaf(ctx, propSchema, initial, leafPath, extras)
   }
-  // Root-level `.refine(...)` rules on the object are NOT lifted to a form
-  // validator today — see README "Limitation". Add it manually with
-  // `ctx.form(fields, { validators: [zodValidator(schema)] })` if needed.
+  // Lift root-level `.refine(...)` checks on the top-level object into a
+  // form-level validator. Leaf checks remain owned by leaf-level
+  // `zodValidator(propSchema)`; `rootOnlyZodValidator` filters to issues
+  // whose `path` is empty so leaf issues are not double-reported.
+  if (rootSchema !== undefined) {
+    return ctx.form(fields, {
+      validators: [rootOnlyZodValidator(rootSchema as z.ZodType<unknown>) as never],
+    }) as AnyForm
+  }
   return ctx.form(fields) as AnyForm
 }
 
@@ -150,6 +210,8 @@ function buildLeaf(
   ctx: Ctx,
   schema: AnyZodType,
   initial: unknown,
+  path: string,
+  extras: ExtraValidators | undefined,
 ): Field<unknown> | Form<any> | FieldArray<any> {
   const inner = unwrap(schema)
 
@@ -158,17 +220,27 @@ function buildLeaf(
       ctx,
       inner as z.ZodObject<z.ZodRawShape>,
       initial as Record<string, unknown> | undefined,
+      path,
+      extras,
     )
   }
 
   if (inner instanceof z.ZodArray) {
     const elementSchema = (inner as z.ZodArray<AnyZodType>).element as AnyZodType
     return ctx.fieldArray(
-      (itemInitial) => buildLeaf(ctx, elementSchema, itemInitial) as Field<unknown> | Form<any>,
+      // Array items aren't enumerable at schema-build time; we don't extend
+      // the dotted path with an index here. Per-item validators belong on
+      // the Zod element schema (which `buildLeaf` already wraps via
+      // `zodValidator`).
+      (itemInitial) =>
+        buildLeaf(ctx, elementSchema, itemInitial, path, extras) as Field<unknown> | Form<any>,
       initial !== undefined ? { initial: initial as Array<unknown> } : undefined,
     )
   }
 
   const ini = initial !== undefined ? initial : defaultInitial(schema)
-  return ctx.field(ini, [zodValidator(schema as z.ZodType<unknown>)])
+  const validators: Array<Validator<unknown>> = [zodValidator(schema as z.ZodType<unknown>)]
+  const extra = extras?.[path]
+  if (extra !== undefined) validators.push(extra as Validator<unknown>)
+  return ctx.field(ini, validators)
 }

@@ -127,18 +127,28 @@ export type Ctx<TDeps = AmbientDeps> = {
   ): Api
 
   /**
-   * Like `child(...)` but additionally returns a `dispose()` handle so the
-   * parent can tear down this specific sub-tree early — e.g. when the user
-   * closes a details panel. The child is still disposed automatically when
-   * the parent disposes; `dispose()` is idempotent and only earlies the
-   * teardown. Useful for "openable" sub-controllers whose lifetime is driven
-   * by a user gesture rather than the parent's lifetime alone.
+   * Like `child(...)` but additionally returns a handle that lets the parent
+   * control the attached sub-tree's lifecycle independently — `dispose()`
+   * tears it down early, and `suspend()` / `resume()` freeze and thaw it.
+   * The child is still disposed automatically when the parent disposes;
+   * `dispose()` / `suspend()` / `resume()` are idempotent.
+   *
+   * `<KeepAlive controller={…}>` in `@kontsedal/olas-react` consumes the
+   * returned `{ suspend, resume }` directly — no hand-rolled `isPaused`
+   * signal needed on the child's `Api`. Useful for "openable" sub-
+   * controllers driven by a user gesture (modal, side panel, wizard).
+   *
+   * `suspend()` cascades through the attached controller's lifecycle
+   * entries: cache subscriptions pause `refetchInterval` and release the
+   * entry, effects are torn down, `onSuspend(...)` handlers fire. `resume()`
+   * re-runs effects, re-acquires cache entries (a stale entry refetches),
+   * and fires `onResume(...)`. Spec §4.1, §16.5.
    */
   attach<Props, Api>(
     def: ControllerDef<Props, Api>,
     props: Props,
     options?: { deps?: Partial<TDeps> },
-  ): { api: Api; dispose: () => void }
+  ): { api: Api; dispose: () => void; suspend: () => void; resume: () => void }
 
   effect(fn: () => void | (() => void)): void
 

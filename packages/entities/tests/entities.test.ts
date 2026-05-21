@@ -1,7 +1,9 @@
 import {
   createRoot,
   defineController,
+  defineInfiniteQuery,
   defineQuery,
+  type InfiniteQuerySubscription,
   type Query,
   type QuerySubscription,
 } from '@kontsedal/olas-core'
@@ -780,6 +782,290 @@ describe('entitiesPlugin', () => {
 
     // Unknown ids return an empty array (not undefined).
     expect(plugin.bindings(Post, 'never-seen')).toEqual([])
+
+    root.dispose()
+  })
+
+  test('update with merge: deep recursively merges nested objects', async () => {
+    type NestedPost = {
+      id: string
+      title: string
+      author: { name: string; profile: { bio: string; verified: boolean } }
+      tags: string[]
+    }
+    const NestedPost = defineEntity<NestedPost>({
+      name: 'NestedPost',
+      idOf: (v) =>
+        v !== null &&
+        typeof v === 'object' &&
+        'id' in v &&
+        typeof v.id === 'string' &&
+        'author' in v
+          ? v.id
+          : null,
+    })
+    const q = defineQuery({
+      queryId: 'ent-test/deep-merge',
+      key: () => [],
+      fetcher: async (): Promise<{ post: NestedPost }> => ({
+        post: {
+          id: 'p1',
+          title: 'A',
+          author: { name: 'Ada', profile: { bio: 'hi', verified: false } },
+          tags: ['x', 'y'],
+        },
+      }),
+      staleTime: 60_000,
+    })
+    const plugin = entitiesPlugin([NestedPost])
+    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
+    type Api = { q: QuerySubscription<{ post: NestedPost }> }
+    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+      dispose(): void
+    }
+    await settle()
+
+    // Patch only `author.profile.verified` — the rest of `author.profile`
+    // and `author.name` should survive.
+    plugin.update(
+      NestedPost,
+      'p1',
+      { author: { profile: { verified: true } } } as Partial<NestedPost>,
+      { merge: 'deep' },
+    )
+
+    const next = plugin.get(NestedPost, 'p1')
+    expect(next).toEqual({
+      id: 'p1',
+      title: 'A',
+      author: { name: 'Ada', profile: { bio: 'hi', verified: true } },
+      tags: ['x', 'y'],
+    })
+    // Same in the query.
+    expect(root.q.data.peek()?.post.author.profile).toEqual({ bio: 'hi', verified: true })
+
+    root.dispose()
+  })
+
+  test('update with merge: deep replaces arrays wholesale (no array-merge)', async () => {
+    type WithTags = { id: string; title: string; tags: string[] }
+    const WithTags = defineEntity<WithTags>({
+      name: 'WithTagsDeep',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'tags' in v
+          ? v.id
+          : null,
+    })
+    const q = defineQuery({
+      queryId: 'ent-test/deep-array',
+      key: () => [],
+      fetcher: async (): Promise<{ p: WithTags }> => ({
+        p: { id: 'p1', title: 'A', tags: ['x', 'y', 'z'] },
+      }),
+      staleTime: 60_000,
+    })
+    const plugin = entitiesPlugin([WithTags])
+    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
+    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+      dispose(): void
+    }
+    await settle()
+
+    plugin.update(WithTags, 'p1', { tags: ['only'] }, { merge: 'deep' })
+    expect(plugin.get(WithTags, 'p1')?.tags).toEqual(['only'])
+
+    root.dispose()
+  })
+
+  test('maxSlots evicts orphan slots in LRU order on overflow', async () => {
+    type Item = { id: string; title: string }
+    const Item = defineEntity<Item>({
+      name: 'LRUItem',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'title' in v
+          ? v.id
+          : null,
+      maxSlots: 2,
+    })
+    const plugin = entitiesPlugin([Item])
+    const def = defineController(() => ({}))
+    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+      dispose(): void
+    }
+
+    // Three orphan upserts (no query holds them). With maxSlots: 2, the
+    // first should be evicted on the third insert.
+    plugin.upsert(Item, { id: 'i1', title: 'A' })
+    plugin.upsert(Item, { id: 'i2', title: 'B' })
+    plugin.upsert(Item, { id: 'i3', title: 'C' })
+
+    expect(plugin.get(Item, 'i1')).toBeUndefined()
+    expect(plugin.get(Item, 'i2')).toEqual({ id: 'i2', title: 'B' })
+    expect(plugin.get(Item, 'i3')).toEqual({ id: 'i3', title: 'C' })
+
+    root.dispose()
+  })
+
+  test('maxSlots never evicts bound entities (active query subscribers)', async () => {
+    type Item = { id: string; title: string }
+    const Item = defineEntity<Item>({
+      name: 'LRUItemBound',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'title' in v
+          ? v.id
+          : null,
+      maxSlots: 1,
+    })
+    const q = defineQuery({
+      queryId: 'ent-test/lru-bound',
+      key: () => [],
+      fetcher: async (): Promise<{ items: Item[] }> => ({
+        items: [
+          { id: 'b1', title: 'A' },
+          { id: 'b2', title: 'B' },
+        ],
+      }),
+      staleTime: 60_000,
+    })
+    const plugin = entitiesPlugin([Item])
+    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
+    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+      dispose(): void
+    }
+    await settle()
+
+    // Both bound — neither can be evicted, cap is exceeded silently.
+    expect(plugin.get(Item, 'b1')).toEqual({ id: 'b1', title: 'A' })
+    expect(plugin.get(Item, 'b2')).toEqual({ id: 'b2', title: 'B' })
+
+    // Adding a third (orphan) upsert: the orphan is evictable, but it's
+    // the *newest*. There are no orphans to evict among older slots, so
+    // the cap is exceeded silently.
+    plugin.upsert(Item, { id: 'b3', title: 'C' })
+    expect(plugin.get(Item, 'b1')).toEqual({ id: 'b1', title: 'A' })
+    expect(plugin.get(Item, 'b2')).toEqual({ id: 'b2', title: 'B' })
+    expect(plugin.get(Item, 'b3')).toEqual({ id: 'b3', title: 'C' })
+
+    root.dispose()
+  })
+
+  test('maxSlots: touching a slot promotes it (LRU order)', async () => {
+    type Item = { id: string; title: string }
+    const Item = defineEntity<Item>({
+      name: 'LRUItemPromote',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'title' in v
+          ? v.id
+          : null,
+      maxSlots: 2,
+    })
+    const plugin = entitiesPlugin([Item])
+    const def = defineController(() => ({}))
+    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+      dispose(): void
+    }
+
+    plugin.upsert(Item, { id: 'a', title: 'A' })
+    plugin.upsert(Item, { id: 'b', title: 'B' })
+    // Touch `a` via `signal(...)` (which IS an LRU touch — `get` is a
+    // pure peek and intentionally side-effect-free).
+    void plugin.signal(Item, 'a')
+    // Insert a third — `b` is now LRU and should be evicted.
+    plugin.upsert(Item, { id: 'c', title: 'C' })
+
+    expect(plugin.get(Item, 'a')).toEqual({ id: 'a', title: 'A' })
+    expect(plugin.get(Item, 'b')).toBeUndefined()
+    expect(plugin.get(Item, 'c')).toEqual({ id: 'c', title: 'C' })
+
+    root.dispose()
+  })
+
+  test('walks infinite-query pages and backpropagates through setEntryData', async () => {
+    type FeedItem = { id: string; title: string; likes: number }
+    const FeedItem = defineEntity<FeedItem>({
+      name: 'InfFeedItem',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'title' in v
+          ? v.id
+          : null,
+    })
+
+    const pages: FeedItem[][] = [
+      [
+        { id: 'p1', title: 'A', likes: 0 },
+        { id: 'p2', title: 'B', likes: 0 },
+      ],
+      [
+        { id: 'p3', title: 'C', likes: 0 },
+        { id: 'p4', title: 'D', likes: 0 },
+      ],
+    ]
+
+    const feed = defineInfiniteQuery<[], number, FeedItem[]>({
+      queryId: 'ent-test/infinite-feed',
+      key: () => [],
+      fetcher: async ({ pageParam }): Promise<FeedItem[]> => pages[pageParam] ?? [],
+      initialPageParam: 0,
+      getNextPageParam: (_lastPage, allPages) =>
+        allPages.length < pages.length ? allPages.length : null,
+      staleTime: 60_000,
+    })
+
+    const plugin = entitiesPlugin([FeedItem])
+    const def = defineController((ctx) => ({ feed: ctx.use(feed, () => []) }))
+    type Api = { feed: InfiniteQuerySubscription<FeedItem[], FeedItem> }
+    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+      dispose(): void
+    }
+    await settle()
+    // Load the second page so the walker has multiple pages to traverse.
+    await root.feed.fetchNextPage()
+    await settle()
+
+    // Entities from both pages should be normalized into the store.
+    expect(plugin.get(FeedItem, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(plugin.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 0 })
+
+    // Bindings point at the right (pageIdx, inPagePath) coordinates.
+    const bindings = plugin.bindings(FeedItem, 'p3')
+    expect(bindings.length).toBe(1)
+    expect(bindings[0]?.paths).toEqual([[1, 0]])
+
+    // Backprop through update — reaches the page-internal slot.
+    plugin.update(FeedItem, 'p3', { likes: 7 })
+    expect(plugin.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 7 })
+    expect(root.feed.pages.peek()[1]?.[0]).toEqual({ id: 'p3', title: 'C', likes: 7 })
+
+    root.dispose()
+  })
+
+  test('update default is still shallow — nested patch replaces the subtree', async () => {
+    type Nested = { id: string; meta: { a: number; b: number } }
+    const Nested = defineEntity<Nested>({
+      name: 'NestedShallow',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'meta' in v
+          ? v.id
+          : null,
+    })
+    const q = defineQuery({
+      queryId: 'ent-test/shallow-default',
+      key: () => [],
+      fetcher: async (): Promise<{ n: Nested }> => ({
+        n: { id: 'n1', meta: { a: 1, b: 2 } },
+      }),
+      staleTime: 60_000,
+    })
+    const plugin = entitiesPlugin([Nested])
+    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
+    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+      dispose(): void
+    }
+    await settle()
+
+    // No options → shallow: meta is replaced wholesale.
+    plugin.update(Nested, 'n1', { meta: { a: 9 } } as Partial<Nested>)
+    expect(plugin.get(Nested, 'n1')?.meta).toEqual({ a: 9 })
 
     root.dispose()
   })
