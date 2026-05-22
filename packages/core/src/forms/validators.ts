@@ -1,4 +1,4 @@
-import { isStandardSchema, type StandardSchemaV1 } from './standard-schema'
+import type { StandardSchemaV1 } from './standard-schema'
 import type { Validator } from './types'
 
 /**

@@ -151,13 +151,7 @@ export function HydrationBoundary<Api>(props: {
   const { def, options, children, streaming = true } = props
   // Construct once per (def, options) identity. The caller controls
   // identity — pass stable refs for stable roots, mutate to remount.
-  const root = useMemo(
-    // biome-ignore lint/suspicious/noExplicitAny: forward the user-shaped
-    // options to core's createRoot — the typed interface above is what
-    // consumers see; here we trust them.
-    () => createRoot(def, options as any) as Root<Api>,
-    [def, options],
-  )
+  const root = useMemo(() => createRoot(def, options as any) as Root<Api>, [def, options])
   // Drain the streaming intake queue + install a live forwarder. The
   // first mount per page picks up everything the server flushed before
   // the bundle loaded; subsequent stream pushes go straight through.

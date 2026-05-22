@@ -423,12 +423,6 @@ function makeRoot(): ControllerNode {
   return { path: [], state: 'active', props: undefined, children: [] }
 }
 
-function appendBounded<T>(arr: readonly T[], item: T, max: number): T[] {
-  const next = arr.length >= max ? arr.slice(arr.length - max + 1) : arr.slice()
-  next.push(item)
-  return next
-}
-
 /**
  * Insert (or update) a node at `path` inside the tree. Auto-creates any
  * missing intermediate ancestors as 'active' placeholders — needed if the
