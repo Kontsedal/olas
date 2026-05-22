@@ -10,7 +10,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../modules/signals.md }
   - { type: related, target: ../pitfalls/isstale-needs-timer.md }
-last_verified: 2026-05-20
+last_verified: 2026-05-22
 confidence: high
 ---
 

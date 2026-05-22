@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: signals.md }
   - { type: uses, target: controller.md }
   - { type: related, target: persist.md }
-last_verified: 2026-05-19
+last_verified: 2026-05-22
 confidence: medium
 ---
 

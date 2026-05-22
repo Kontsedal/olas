@@ -6,11 +6,13 @@ covers:
   - packages/core/src/query/client.ts
   - packages/core/src/controller/root.ts
   - packages/core/src/query/entry.ts
+  - packages/react/src/streaming.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-05-21
+  - { type: uses, target: ../modules/react.md }
+last_verified: 2026-05-22
 confidence: high
 ---
 
@@ -86,3 +88,42 @@ async waitForIdle(): Promise<void> {
 The outer loop re-checks because new fetches might start while we were waiting (e.g. a subscribed query's `refetchInterval` fires, or one fetch's success triggers an effect that kicks off another). 100 iterations is a guard against pathological setups.
 
 `mutationsInflight$` is a `Signal<number>` on the QueryClient. `MutationImpl` increments on `executeRun` start, decrements in `finally`.
+
+## Streaming SSR (v0.0.14+)
+
+The `waitForIdle` → `dehydrate` path serializes the entire cache once, *after* the slowest query has resolved. That's fine for static pages but blocks the response on the slowest fetcher. Streaming SSR interleaves entries into the React stream as they resolve.
+
+Server side (Node `renderToPipeableStream` or Web `renderToReadableStream`):
+
+```ts
+import { createStreamingHydrator, OLAS_BOOTSTRAP_SCRIPT } from '@kontsedal/olas-react'
+
+const { plugin, flush, dispose } = createStreamingHydrator()
+const root = createRoot(appDef, { deps, plugins: [plugin] })
+
+const { pipe } = renderToPipeableStream(
+  <OlasProvider root={root}><App /></OlasProvider>,
+  {
+    bootstrapScriptContent: OLAS_BOOTSTRAP_SCRIPT,
+    onShellReady() { pipe(res) },
+  },
+)
+// `flush()` emits a `<script>__OLAS_HYDRATION__.push([...])</script>` tag with
+// any newly-resolved entries; interleave it between React's shell chunks.
+```
+
+The Web-streams sibling is `createStreamingTransform()` — a `TransformStream` that wraps React's `ReadableStream` and injects the same flush script in-band.
+
+Client side:
+
+```tsx
+import { HydrationBoundary } from '@kontsedal/olas-react'
+
+<HydrationBoundary root={root}>
+  <App />
+</HydrationBoundary>
+```
+
+`HydrationBoundary` mounts the intake forwarder. Entries that arrived before mount sit in the `window.__OLAS_HYDRATION__.q` array (primed by `OLAS_BOOTSTRAP_SCRIPT`) and drain in. Entries that arrive after mount flow through the installed forwarder directly into `QueryClient.applyStreamedEntry`. Either way, each entry is consumed once — same lazy `bindEntry` semantics as static `hydrate(state)`.
+
+Routing on the client is by `queryId` (not hash) so a server-side `defineQuery({ queryId: 'foo', ... })` resolves cleanly without the client having to re-hash on each push.

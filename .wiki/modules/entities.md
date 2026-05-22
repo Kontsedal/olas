@@ -11,8 +11,8 @@ edges:
   - { type: uses, target: query.md }
   - { type: uses, target: signals.md }
   - { type: related, target: cross-tab.md }
-last_verified: 2026-05-21
-confidence: medium
+last_verified: 2026-05-22
+confidence: high
 ---
 
 # `@kontsedal/olas-entities`

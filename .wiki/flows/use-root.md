@@ -10,7 +10,7 @@ edges:
   - { type: tested-by, target: ../../packages/react/tests/adapter.test.tsx }
   - { type: uses, target: ../modules/react.md }
   - { type: uses, target: ../entities/controller-instance.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

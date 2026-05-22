@@ -12,7 +12,7 @@ edges:
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/entry.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

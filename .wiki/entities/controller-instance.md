@@ -10,7 +10,7 @@ edges:
   - { type: uses, target: ctx.md }
   - { type: uses, target: ../flows/construction-rollback.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

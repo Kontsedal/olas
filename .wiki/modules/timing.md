@@ -10,7 +10,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/timing.test.ts }
   - { type: uses, target: signals.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-22
 confidence: high
 ---
 

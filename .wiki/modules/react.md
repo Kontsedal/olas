@@ -1,19 +1,20 @@
 ---
 name: react
-description: "@kontsedal/olas-react — Provider, useRoot, use/useQuery/useField, KeepAlive, useSuspendOnHidden. Built on useSyncExternalStore."
+description: "@kontsedal/olas-react — Provider, useRoot/useController, use/useQuery/useSuspenseQuery/useField/useFieldInput/useMutation, KeepAlive, HydrationBoundary, streaming SSR hydrator. Built on useSyncExternalStore."
 type: module
 covers:
   - packages/react/src/index.ts
   - packages/react/src/context.ts
   - packages/react/src/hooks.ts
   - packages/react/src/keep-alive.ts
+  - packages/react/src/streaming.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/react/tests/adapter.test.tsx }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/ctx.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
-last_verified: 2026-05-20
+last_verified: 2026-05-22
 confidence: high
 ---
 
@@ -27,17 +28,34 @@ The React adapter. Pure binding layer on top of `useSyncExternalStore` — no co
 // context.ts
 function OlasProvider(props: { root: Root<unknown>; children: ReactNode }): JSX.Element
 function useRoot<Api = unknown>(): Api               // throws outside <OlasProvider>
-function useController<Api>(root: Root<Api>): Api     // back-compat — takes root explicitly
+function useController<Api>(root: Root<Api>): Api    // back-compat — takes root explicitly
+function createOlasContext<Api>(displayName?): { Provider, useRoot, use, useQuery, useField, ... }
+                                                     // typed-per-root variant; same hooks, narrower context
+function HydrationBoundary<Api>(props: { root: Root<Api>; ... }): ReactElement
+                                                     // mounts the streaming hydrator (see "Streaming SSR")
 
 // hooks.ts
 function use<T>(signal: ReadSignal<T>): T
-function useQuery<T>(subscription: AsyncState<T>): { data, error, status, isLoading, isFetching, isStale, lastUpdatedAt, hasPendingMutations, refetch }
-function useField<T>(field: Field<T>): { value, errors, isValid, isDirty, touched, isValidating, set, reset, markTouched, revalidate }
+function use<T, U>(signal: ReadSignal<T>, sel: (v: T) => U, opts?: { isEqual? }): U
+                                                     // overload — selector + custom equality
+function useQuery<T>(subscription: AsyncState<T>):   { data, error, status, isLoading, isFetching, isStale, lastUpdatedAt, hasPendingMutations, refetch }
+function useSuspenseQuery<T>(subscription):          { data, refetch, ... }   // throws the in-flight promise on first read
+function useField<T>(field: Field<T>):               { value, errors, isValid, isDirty, touched, isValidating, set, reset, markTouched, revalidate }
+function useFieldInput<T>(field: Field<T>, opts?):   { value, onChange, onBlur, ... }  // adapter for native <input>
+function useMutation<V, R>(mutation: Mutation<V, R>):{ data, error, isIdle, isPending, isSuccess, isError, run, reset }
 
 // keep-alive.ts
 function KeepAlive(props: { controller: SuspendableController; children: ReactNode }): ReactElement
+function SuspendOnUnmount(props: { controller: SuspendableController; children: ReactNode }): ReactElement
 function useSuspendOnHidden(controller: SuspendableController): void
 type SuspendableController = { suspend(): void; resume(): void }
+
+// streaming.ts
+function createStreamingHydrator(): StreamingHydrator     // server-side: plugin + flush() for SSR streams
+function createStreamingTransform(): TransformStream      // Web-streams sibling of the above
+function installStreamingIntake(): void                   // client-side: bootstrap shim for <HydrationBoundary>
+const OLAS_BOOTSTRAP_SCRIPT: string                       // drop into bootstrapScriptContent
+const STREAMING_GLOBAL: '__OLAS_HYDRATION__'              // intake queue's window key
 ```
 
 ## How subscription works

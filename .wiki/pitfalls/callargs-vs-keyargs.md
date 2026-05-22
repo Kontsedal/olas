@@ -3,12 +3,12 @@ name: callargs-vs-keyargs
 description: Two arg arrays inside ClientEntry. One goes to the fetcher; one goes to the hash. They are not the same.
 type: pitfall
 covers:
-  - packages/core/src/query/client.ts:31-102
-  - packages/core/src/query/client.ts:214-265
+  - packages/core/src/query/client.ts:31-222
+  - packages/core/src/query/client.ts:881-960
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 
@@ -20,9 +20,9 @@ A `Query` has both:
 
 ```ts
 defineQuery({
-  key:     (id: string) => ['user', id],          # produces the HASH key
-  fetcher: (id: string, signal) => api.getUser(id, signal),
-  //         ↑ same `id`, but the FETCHER receives just `id`, not `['user', id]`
+  key:     (id: string) => ['user', id],                                // produces the HASH key
+  fetcher: ({ signal }, id: string) => api.getUser(id, { signal }),     // receives the ORIGINAL `id`,
+                                                                        // not `['user', id]`
 })
 ```
 
@@ -40,32 +40,35 @@ Original Phase 5 implementation only kept `keyArgs` on the entry:
 ```ts
 // BAD — collapsed both into "args"
 this.entry = new Entry<T>({
-  fetcher: () => (signal) => fetcherFn(...args, signal),  # args = keyArgs here
+  fetcher: () => (signal) => fetcherFn({ signal, deps }, ...args),  // args = keyArgs here
 })
 ```
 
 Test `defineQuery + ctx.use > subscribing fetches; data lands on success` failed because the fetcher received `['user', 'u1']` instead of `['u1']`.
 
-Fix: separate both args arrays explicitly on `ClientEntry`:
+Fix: separate both args arrays explicitly on `ClientEntry` (`client.ts:31-89`):
 
 ```ts
 constructor(
   client, query,
-  callArgs: readonly unknown[],          # for the fetcher
-  keyArgs:  readonly unknown[],          # for the hash
+  callArgs: readonly unknown[],          // for the fetcher
+  keyArgs:  readonly unknown[],          // for the hash
   spec,
   hydrated?,
 ) {
   ...
+  this.callArgs = callArgs
+  this.keyArgs  = keyArgs
   this.entry = new Entry<T>({
-    fetcher: () => (signal) => fetcherFn(...callArgs, signal),  # NOTE: callArgs, not keyArgs
+    fetcher: () => (signal) =>
+      fetcherFn({ signal, deps }, ...(callArgs as never[])),  // NOTE: callArgs, not keyArgs
     initialData: hydrated?.data,
     initialUpdatedAt: hydrated?.lastUpdatedAt,
   })
 }
 ```
 
-`dropEntry`, `invalidate`, `invalidateAll` all also hash with `stableHash(entry.keyArgs)`.
+`dropEntry`, `invalidate`, `invalidateAll`, and `bindEntry`'s hash-collision dedupe path (`client.ts:881-960`) all hash with `stableHash(...)` over `keyArgs`.
 
 ## Why have both?
 

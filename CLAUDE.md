@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: all eight published packages exist and ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR, `defineScope`, the dynamic-child trio `ctx.session` / `ctx.collection` / `ctx.lazyChild`), `@kontsedal/olas-react` (Provider + hooks + keep-alive), `@kontsedal/olas-zod`, `@kontsedal/olas-persist` (`usePersisted` + `localStorageAdapter` + `indexedDbAdapter`), `@kontsedal/olas-devtools` (in-app panel + floating launcher), `@kontsedal/olas-cross-tab` (BroadcastChannel cache sync), `@kontsedal/olas-entities` (entity normalization plugin), `@kontsedal/olas-realtime` (realtime patcher + live streams). 507 lib tests across 41 files + the `examples/` apps (kanban, reader-ssr, stock-ticker, virtualized-table). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
+Current implementation status: ten published packages ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR + streaming SSR, `defineScope`, the dynamic-child trio `ctx.session` / `ctx.collection` / `ctx.lazyChild`), `@kontsedal/olas-react` (Provider + hooks + keep-alive + streaming hydration), `@kontsedal/olas-zod`, `@kontsedal/olas-persist` (`usePersisted` + `localStorageAdapter` + `indexedDbAdapter`), `@kontsedal/olas-devtools` (in-app panel + floating launcher), `@kontsedal/olas-cross-tab` (BroadcastChannel cache sync), `@kontsedal/olas-entities` (entity normalization plugin), `@kontsedal/olas-realtime` (realtime patcher + live streams), `@kontsedal/olas-mutation-queue` (durable persist + reload-safe replay for `persist: true` mutations), `@kontsedal/olas-router` (scope-based router bridge for TanStack Router / React Router v6). Plus the private `packages/integration` cross-package test suite. 621 tests across 55 files + the `examples/` apps (kanban, reader-ssr, stock-ticker, virtualized-table). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -35,14 +35,17 @@ CI = `install → typecheck → lint → test → build`. Reproducing CI locally
 
 ```
 packages/
-  core/       # @kontsedal/olas-core      — signals, controllers, queries, mutations, forms, SSR
-  react/      # @kontsedal/olas-react     — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden
-  persist/    # @kontsedal/olas-persist   — usePersisted + localStorage adapter
-  zod/        # @kontsedal/olas-zod       — zodValidator, formFromZod
-  devtools/   # @kontsedal/olas-devtools  — in-app DevtoolsPanel + floating launcher
-  cross-tab/  # @kontsedal/olas-cross-tab — BroadcastChannel-backed cross-tab cache sync (QueryClientPlugin)
-  entities/   # @kontsedal/olas-entities  — defineEntity + auto-walk + reverse-index backprop (QueryClientPlugin)
-  realtime/   # @kontsedal/olas-realtime  — useRealtimePatcher + useLiveStream over a consumer-supplied RealtimeService
+  core/            # @kontsedal/olas-core           — signals, controllers, queries, mutations, forms, SSR + streaming SSR
+  react/           # @kontsedal/olas-react          — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden, HydrationBoundary, streaming hydrator
+  persist/         # @kontsedal/olas-persist        — usePersisted + localStorageAdapter + indexedDbAdapter
+  zod/             # @kontsedal/olas-zod            — zodValidator, formFromZod
+  devtools/        # @kontsedal/olas-devtools       — in-app DevtoolsPanel + floating launcher
+  cross-tab/       # @kontsedal/olas-cross-tab      — BroadcastChannel-backed cross-tab cache sync (QueryClientPlugin)
+  entities/        # @kontsedal/olas-entities       — defineEntity + auto-walk + reverse-index backprop (QueryClientPlugin)
+  realtime/        # @kontsedal/olas-realtime       — useRealtimePatcher + useLiveStream over a consumer-supplied RealtimeService
+  mutation-queue/  # @kontsedal/olas-mutation-queue — durable persist + reload-safe replay for `persist: true` mutations (QueryClientPlugin)
+  router/          # @kontsedal/olas-router         — createRouterAdapter + RouteParams/Search/Pathname scopes (TanStack Router / React Router v6)
+  integration/     # private — cross-package integration test suite, not published
 ```
 
 Tests import workspace packages via aliases declared in `vitest.config.ts` — pointed at each package's `src/index.ts` (and `core/src/testing.ts`), so tests run without building `dist/`. The published `dist/` is what consumers see; the alias is dev-only.

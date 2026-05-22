@@ -63,8 +63,10 @@ The practical wins:
 
 ```bash
 pnpm add @kontsedal/olas-core @kontsedal/olas-react @preact/signals-core react
-# optional
+# optional add-ons (each independent — pick what you use)
 pnpm add @kontsedal/olas-persist @kontsedal/olas-zod @kontsedal/olas-devtools zod
+pnpm add @kontsedal/olas-cross-tab @kontsedal/olas-entities @kontsedal/olas-realtime
+pnpm add @kontsedal/olas-mutation-queue @kontsedal/olas-router
 ```
 
 `@preact/signals-core` is a peer dep on `@kontsedal/olas-core` — the library does not bundle it.
@@ -468,6 +470,8 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | [`@kontsedal/olas-cross-tab`](packages/cross-tab) | `BroadcastChannel`-backed cross-tab cache sync as a `QueryClientPlugin`. |
 | [`@kontsedal/olas-entities`](packages/entities) | `defineEntity` + auto-walk + reverse-index backprop for normalized entities across queries. |
 | [`@kontsedal/olas-realtime`](packages/realtime) | `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService`. |
+| [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Durable, replay-safe mutation queue. Persists `defineMutation({ persist: true })` runs to a `StorageAdapter`; replays pending entries on `init` after reload / crash. |
+| [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Works with TanStack Router or React Router v6. |
 
 Outstanding work — additional storage adapters, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
 
@@ -534,7 +538,7 @@ pnpm build                                         # tsdown per package → dist
 pnpm wiki:lint                                     # check .wiki/ for broken refs
 ```
 
-CI = `install → typecheck → lint → test → build`. 436 tests across 37 files, all green.
+CI = `install → typecheck → lint → test → build`. 621 tests across 55 files (including a cross-package `packages/integration` suite), all green.
 
 ---
 
