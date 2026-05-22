@@ -60,10 +60,16 @@ export type RealtimeDeps = { realtime: RealtimeService }
  * Map of `event.type` literal → handler. Only keys present in the
  * discriminated union appear; other types are filtered out by the
  * `TEvent extends { type: infer K }` conditional.
+ *
+ * The `'*'` wildcard key receives every event the dispatcher saw, including
+ * those a specific handler already consumed. Use it for logging,
+ * instrumentation, or "I don't know all the types yet" diagnostics.
  */
 export type PatcherHandlers<TEvent> = Partial<
   Record<TEvent extends { type: infer K } ? K & string : never, (event: TEvent) => void>
->
+> & {
+  '*'?: (event: TEvent) => void
+}
 
 /**
  * Subscribe to `channel` for the lifetime of the surrounding controller and
@@ -73,6 +79,10 @@ export type PatcherHandlers<TEvent> = Partial<
  * Handlers run inside `untracked(...)` so accidental signal reads (e.g.
  * `query.setData((prev) => prev.value)`) don't add deps to the enclosing
  * effect, which would otherwise re-subscribe whenever those signals change.
+ *
+ * A `'*'` wildcard handler is invoked for every event, regardless of
+ * whether a specific handler matched. Specific handlers run first; the
+ * wildcard sees the same event afterwards (in the same `untracked` scope).
  */
 export function useRealtimePatcher<TEvent extends { type: string }>(
   ctx: Ctx<RealtimeDeps>,
@@ -84,8 +94,12 @@ export function useRealtimePatcher<TEvent extends { type: string }>(
       const handler = handlers[event.type as keyof PatcherHandlers<TEvent>] as
         | ((e: TEvent) => void)
         | undefined
-      if (!handler) return
-      untracked(() => handler(event))
+      const wildcard = handlers['*']
+      if (handler === undefined && wildcard === undefined) return
+      untracked(() => {
+        if (handler !== undefined) handler(event)
+        if (wildcard !== undefined) wildcard(event)
+      })
     })
     return () => sub.unsubscribe()
   })
@@ -96,11 +110,27 @@ export function useRealtimePatcher<TEvent extends { type: string }>(
  * are dropped); `flushMs` coalesces bursty writes into a single signal update.
  * `flushMs <= 0` flushes synchronously per event.
  */
-export type LiveStreamOptions = {
+export type LiveStreamOptions<TEvent = unknown> = {
   /** Default: 1000. */
   capacity?: number
   /** Default: 16. Set to 0 (or negative) for synchronous flush. */
   flushMs?: number
+  /**
+   * Coalesce flushes against `requestAnimationFrame` instead of
+   * `setTimeout(flushMs)`. Best for tail-view UIs (live chat, log viewer)
+   * that re-render on the frame. When set, `flushMs` is ignored.
+   *
+   * Defaults to `false`. In environments without `requestAnimationFrame`
+   * (Node, SSR) the option silently falls back to `setTimeout(0)`.
+   */
+  rafFlush?: boolean
+  /**
+   * Fires when events are dropped to honor the `capacity` cap. Receives
+   * the dropped slice (oldest first) so consumers can persist, count,
+   * or surface "X events lost in this window." Without this, oldest-
+   * drop is silent.
+   */
+  onDrop?: (dropped: readonly TEvent[]) => void
 }
 
 /**
@@ -141,14 +171,16 @@ const DEFAULT_FLUSH_MS = 16
 export function useLiveStream<TEvent>(
   ctx: Ctx<RealtimeDeps>,
   channel: string,
-  options?: LiveStreamOptions,
+  options?: LiveStreamOptions<TEvent>,
 ): LiveStream<TEvent> {
   const capacity = options?.capacity ?? DEFAULT_CAPACITY
   if (capacity < 1) {
     throw new RangeError(`[olas/realtime] useLiveStream: capacity must be >= 1, got ${capacity}`)
   }
   const flushMs = options?.flushMs ?? DEFAULT_FLUSH_MS
-  const syncFlush = flushMs <= 0
+  const rafFlush = options?.rafFlush === true
+  const syncFlush = !rafFlush && flushMs <= 0
+  const onDrop = options?.onDrop
 
   const events$ = signal<readonly TEvent[]>([])
   const isPaused$ = signal(false)
@@ -159,16 +191,57 @@ export function useLiveStream<TEvent>(
   // who expect "every event the subscription saw is buffered eventually".
   let pending: TEvent[] = []
   let flushTimer: ReturnType<typeof setTimeout> | null = null
+  let rafHandle: number | null = null
 
   const flush = () => {
     if (pending.length === 0) {
       flushTimer = null
+      rafHandle = null
       return
     }
-    const next = events$.peek().concat(pending).slice(-capacity)
+    const merged = events$.peek().concat(pending)
     pending = []
     flushTimer = null
-    events$.set(next)
+    rafHandle = null
+    if (merged.length > capacity) {
+      const dropCount = merged.length - capacity
+      if (onDrop !== undefined) {
+        try {
+          onDrop(merged.slice(0, dropCount))
+        } catch {
+          /* drop-handler errors must not break the stream */
+        }
+      }
+      events$.set(merged.slice(dropCount))
+    } else {
+      events$.set(merged)
+    }
+  }
+
+  const scheduleFlush = () => {
+    if (syncFlush) {
+      flush()
+      return
+    }
+    if (rafFlush) {
+      if (rafHandle !== null) return
+      if (typeof requestAnimationFrame === 'function') {
+        rafHandle = requestAnimationFrame(() => {
+          rafHandle = null
+          flush()
+        })
+      } else {
+        // No rAF (Node / SSR) — degrade to setTimeout(0).
+        flushTimer = setTimeout(() => {
+          flushTimer = null
+          flush()
+        }, 0)
+      }
+      return
+    }
+    if (flushTimer == null) {
+      flushTimer = setTimeout(flush, flushMs)
+    }
   }
 
   ctx.effect(() => {
@@ -177,24 +250,20 @@ export function useLiveStream<TEvent>(
     // timer for (i.e. pause() fired before the trailing flush) would sit
     // forever otherwise; reschedule the flush as we re-subscribe so they
     // eventually land in `events$`.
-    if (pending.length > 0 && !syncFlush && flushTimer == null) {
-      flushTimer = setTimeout(flush, flushMs)
-    }
+    if (pending.length > 0) scheduleFlush()
     const sub = ctx.deps.realtime.subscribe<TEvent>(channel, (event) => {
       pending.push(event)
-      if (syncFlush) {
-        flush()
-        return
-      }
-      if (flushTimer == null) {
-        flushTimer = setTimeout(flush, flushMs)
-      }
+      scheduleFlush()
     })
     return () => {
       sub.unsubscribe()
       if (flushTimer != null) {
         clearTimeout(flushTimer)
         flushTimer = null
+      }
+      if (rafHandle != null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafHandle)
+        rafHandle = null
       }
     }
   })
@@ -209,6 +278,10 @@ export function useLiveStream<TEvent>(
       if (flushTimer != null) {
         clearTimeout(flushTimer)
         flushTimer = null
+      }
+      if (rafHandle != null && typeof cancelAnimationFrame === 'function') {
+        cancelAnimationFrame(rafHandle)
+        rafHandle = null
       }
       events$.set([])
     },

@@ -14,6 +14,16 @@ export type ReadSignal<T> = {
    * unsubscribe function.
    */
   subscribe(handler: (value: T) => void): () => void
+  /**
+   * Same as `subscribe`, but does NOT fire the synchronous "current value"
+   * callback on subscribe — only fires on subsequent changes. Useful for
+   * "react to user changes" semantics where the initial fire would be a
+   * spurious notification (the most common consumer pattern — `useField`,
+   * `usePersisted`, and the React adapter all hand-rolled this).
+   *
+   * Returns the unsubscribe function.
+   */
+  subscribeChanges(handler: (value: T) => void): () => void
 }
 
 /**

@@ -103,6 +103,21 @@ export type Collection<K, Api> = {
   readonly size: ReadSignal<number>
   get(key: K): Api | undefined
   has(key: K): boolean
+  /**
+   * Suspend a specific collection item by key — pauses its effects without
+   * disposing it (mirrors `attach.suspend()`). Useful for virtualized
+   * lists where rows scrolled out of view should stop running their
+   * effects but stay reconstructible without re-fetching their state.
+   *
+   * No-op if the key isn't in the collection. The collection reconcile
+   * will not auto-resume a suspended item; call `resumeItem(key)` to
+   * bring it back.
+   */
+  suspendItem(key: K): void
+  /** Resume a previously-suspended item. No-op if not suspended / not present. */
+  resumeItem(key: K): void
+  /** Whether the item is currently suspended. False when not present. */
+  isItemSuspended(key: K): boolean
 }
 
 /**

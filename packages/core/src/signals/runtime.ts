@@ -33,6 +33,10 @@ class SignalImpl<T> implements Signal<T> {
     return this.inner.subscribe(handler)
   }
 
+  subscribeChanges(handler: (value: T) => void): () => void {
+    return subscribeChangesImpl(this.inner, handler)
+  }
+
   set(value: T): void {
     this.inner.value = value
   }
@@ -60,6 +64,29 @@ class ComputedImpl<T> implements Computed<T> {
   subscribe(handler: (value: T) => void): () => void {
     return this.inner.subscribe(handler)
   }
+
+  subscribeChanges(handler: (value: T) => void): () => void {
+    return subscribeChangesImpl(this.inner, handler)
+  }
+}
+
+/**
+ * Shared skip-initial wrapper around `signal.subscribe`. Preact fires the
+ * subscribe callback synchronously with the current value (the "initial
+ * fire"); the wrapper swallows it and forwards every subsequent change.
+ */
+function subscribeChangesImpl<T>(
+  inner: PreactSignal<T> | PreactReadonlySignal<T>,
+  handler: (value: T) => void,
+): () => void {
+  let initial = true
+  return inner.subscribe((value) => {
+    if (initial) {
+      initial = false
+      return
+    }
+    handler(value)
+  })
 }
 
 /**

@@ -42,6 +42,14 @@ export type RootShared = {
   readonly devtools: DevtoolsEmitter
   readonly onError: ErrorHandler | undefined
   readonly queryClient: QueryClient
+  /**
+   * Monotonic counter bumped by every `ctx.provide(...)` call inside this
+   * root's tree. `ctx.inject(...)` caches its scope-walk result alongside
+   * the version it was computed at; a mismatch forces a re-walk. Cheap
+   * compared to the linear ancestor walk (most controllers never call
+   * provide, so cache hits dominate).
+   */
+  readonly scopesVersion: { value: number }
 }
 
 type LifecycleEntry =
@@ -81,6 +89,13 @@ export class ControllerInstance {
   private childCounter = 0
   /** Scope values provided on this instance, keyed by `Scope.__id`. */
   private scopes: Map<symbol, unknown> | null = null
+  /**
+   * Memoized result of `ctx.inject(scope)` per scope id, stamped with the
+   * `scopesVersion` the lookup observed. A bump invalidates every cache
+   * entry implicitly — the next `inject(scope)` finds a stale version
+   * stamp and re-walks. Provide is rare; reads dominate.
+   */
+  private injectCache: Map<symbol, { value: unknown; version: number }> | null = null
 
   /**
    * Pre-seed scopes from outside the factory — used by `createRoot`'s
@@ -166,6 +181,7 @@ export class ControllerInstance {
     }
     this.entries.length = 0
     this.scopes = null
+    this.injectCache = null
 
     if (__DEV__) {
       this.rootShared.devtools.emit({ type: 'controller:disposed', path: this.path })
@@ -198,6 +214,10 @@ export class ControllerInstance {
         // No work on dispose.
         break
     }
+  }
+
+  isSuspended(): boolean {
+    return this.state === 'suspended'
   }
 
   suspend(): void {
@@ -477,18 +497,41 @@ export class ControllerInstance {
       provide<T>(scope: Scope<T>, value: T): void {
         if (self.scopes === null) self.scopes = new Map()
         self.scopes.set(scope.__id, value)
+        // Invalidate every cached inject lookup tree-wide. A descendant
+        // that resolved this scope from a higher ancestor (or from a
+        // default) would now resolve to the new value, but its cache
+        // still holds the old value. Cheap: just bump the counter; cache
+        // entries check against it on next read.
+        self.rootShared.scopesVersion.value += 1
       },
 
       inject<T>(scope: Scope<T>): T {
+        const version = self.rootShared.scopesVersion.value
+        const cache = self.injectCache
+        if (cache !== null) {
+          const cached = cache.get(scope.__id)
+          if (cached !== undefined && cached.version === version) {
+            return cached.value as T
+          }
+        }
+        const ensureMemo = (): Map<symbol, { value: unknown; version: number }> => {
+          if (self.injectCache === null) self.injectCache = new Map()
+          return self.injectCache
+        }
         let node: ControllerInstance | null = self
         while (node !== null) {
           const map = node.scopes
           if (map?.has(scope.__id)) {
-            return map.get(scope.__id) as T
+            const value = map.get(scope.__id) as T
+            ensureMemo().set(scope.__id, { value, version })
+            return value
           }
           node = node.parent
         }
-        if (scope.hasDefault) return scope.default as T
+        if (scope.hasDefault) {
+          ensureMemo().set(scope.__id, { value: scope.default, version })
+          return scope.default as T
+        }
         const label = scope.name ?? scope.__id.description ?? 'unnamed'
         throw new Error(
           `[olas] ctx.inject(): no provider for scope '${label}' and no default. Provide it on an ancestor via ctx.provide(${label}, ...) or pass a default to defineScope.`,
@@ -696,7 +739,18 @@ export class ControllerInstance {
           const itemByKey = new Map<K, Item>()
           for (const item of source) {
             const key = options.keyOf(item)
-            if (!itemByKey.has(key)) itemByKey.set(key, item)
+            if (itemByKey.has(key)) {
+              if (__DEV__) {
+                // eslint-disable-next-line no-console
+                console.warn(
+                  `[olas] ctx.collection: duplicate key ${String(key)} in source — only the` +
+                    ' first occurrence is kept. This is usually a bug in `keyOf(item)`;' +
+                    ' return a unique identifier per item.',
+                )
+              }
+              continue
+            }
+            itemByKey.set(key, item)
           }
 
           // Drop removed keys.
@@ -772,6 +826,21 @@ export class ControllerInstance {
           size: size$,
           get: (key: K) => childMap.get(key)?.api,
           has: (key: K) => childMap.has(key),
+          suspendItem: (key: K) => {
+            const info = childMap.get(key)
+            if (info === undefined) return
+            info.instance.suspend()
+          },
+          resumeItem: (key: K) => {
+            const info = childMap.get(key)
+            if (info === undefined) return
+            info.instance.resume()
+          },
+          isItemSuspended: (key: K) => {
+            const info = childMap.get(key)
+            if (info === undefined) return false
+            return info.instance.isSuspended()
+          },
         }
       },
 

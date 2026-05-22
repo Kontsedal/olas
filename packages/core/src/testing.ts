@@ -76,6 +76,7 @@ export function fakeField<T>(
     },
     peek: () => value$.peek(),
     subscribe: (handler) => value$.subscribe(handler),
+    subscribeChanges: (handler) => value$.subscribeChanges(handler),
     errors: errors$,
     isValid: isValid$,
     isDirty: dirty$,

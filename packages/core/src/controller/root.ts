@@ -38,6 +38,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     devtools,
     onError: options.onError,
     queryClient,
+    scopesVersion: { value: 0 },
   }
 
   const instance = new ControllerInstance(
