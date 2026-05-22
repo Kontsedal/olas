@@ -18,5 +18,8 @@ export function readOnly<T>(source: ReadSignal<T>): ReadSignal<T> {
     subscribe(handler: (value: T) => void) {
       return source.subscribe(handler)
     },
+    subscribeChanges(handler: (value: T) => void) {
+      return source.subscribeChanges(handler)
+    },
   })
 }

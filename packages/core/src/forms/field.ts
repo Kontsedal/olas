@@ -186,6 +186,10 @@ class FieldImpl<T> implements Field<T> {
     return this.value$.subscribe(handler)
   }
 
+  subscribeChanges(handler: (value: T) => void): () => void {
+    return this.value$.subscribeChanges(handler)
+  }
+
   // --- Field-only signals ---
   get errors(): ReadSignal<string[]> {
     return this.errors$

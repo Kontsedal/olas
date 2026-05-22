@@ -15,16 +15,12 @@ import { type ChangeEvent, useCallback, useMemo, useRef, useSyncExternalStore } 
  * the initial value through `getSnapshot()`; routing it through subscribe
  * would just cause spurious work — and in some setups (e.g. RTL's act-less
  * renders) confuse useSyncExternalStore's tear-detection.
+ *
+ * Now delegates to the core's `subscribeChanges` so the skip-initial
+ * semantics live in one place.
  */
 function subscribeOnChange<T>(s: ReadSignal<T>, onChange: () => void): () => void {
-  let initial = true
-  return s.subscribe(() => {
-    if (initial) {
-      initial = false
-      return
-    }
-    onChange()
-  })
+  return s.subscribeChanges(() => onChange())
 }
 
 /**
