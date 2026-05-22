@@ -356,14 +356,14 @@ class FormImpl<S extends FormSchema> implements Form<S> {
    * unless `onError: 'rethrow'`. A `resetOnSuccess: true` option calls
    * `reset()` after the handler resolves successfully.
    */
-  async submit(
-    handler: (value: FormValue<S>) => unknown | Promise<unknown>,
+  async submit<R = unknown>(
+    handler: (value: FormValue<S>) => R | Promise<R>,
     options?: {
       validateBeforeSubmit?: boolean
       resetOnSuccess?: boolean
       onError?: 'rethrow' | 'capture'
     },
-  ): Promise<{ ok: boolean; data?: unknown; error?: unknown }> {
+  ): Promise<{ ok: boolean; data?: Awaited<R>; error?: unknown }> {
     if (this.disposed) return { ok: false, error: new Error('form is disposed') }
 
     // Double-submit guard — refusing to start a second submission while one
@@ -391,7 +391,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
           return { ok: false }
         }
       }
-      const result = await handler(this.value.peek())
+      const result = (await handler(this.value.peek())) as Awaited<R>
       if (options?.resetOnSuccess) this.reset()
       this.isSubmitting$.set(false)
       return { ok: true, data: result }

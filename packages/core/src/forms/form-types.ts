@@ -133,14 +133,14 @@ export type Form<S extends FormSchema> = {
    * `submitError`. Returns `{ ok, data?, error? }` — see `FormImpl.submit`
    * for the full contract.
    */
-  submit(
-    handler: (value: FormValue<S>) => unknown | Promise<unknown>,
+  submit<R = unknown>(
+    handler: (value: FormValue<S>) => R | Promise<R>,
     options?: {
       validateBeforeSubmit?: boolean
       resetOnSuccess?: boolean
       onError?: 'rethrow' | 'capture'
     },
-  ): Promise<{ ok: boolean; data?: unknown; error?: unknown }>
+  ): Promise<{ ok: boolean; data?: Awaited<R>; error?: unknown }>
   /**
    * Pin externally-sourced errors on specific fields. Keys are dot-separated
    * paths through nested forms / field arrays (numeric segments are array

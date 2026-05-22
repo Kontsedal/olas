@@ -83,6 +83,25 @@ export type DevtoolsStoreOptions = {
   maxEntries?: number
   /** Optional clock — useful for tests. Default: `() => Date.now()`. */
   now?: () => number
+  /**
+   * Event-write coalescing strategy.
+   *
+   * - `'sync'` (default) — each event writes its signal immediately. Best
+   *   for low-volume apps and tests; produces one React render per event.
+   * - `'raf'` — buffer writes and flush once per `requestAnimationFrame`.
+   *   Best for high-volume apps (chat, live logs, infinite scroll mut
+   *   storms). Reduces N rAF-bounded re-renders to 1.
+   * - A `(fn) => handle` function — custom scheduler. Pair with
+   *   `cancelSchedule`. Useful for tests that want explicit control via
+   *   a deterministic queue.
+   *
+   * The default is `'sync'` because devtools panels are typically
+   * driven by hand-curated test scenarios; opt into `'raf'` when wiring
+   * the production `<DevtoolsPanel>`.
+   */
+  coalesce?: 'sync' | 'raf' | ((fn: () => void) => number)
+  /** Cancel a scheduled flush — only needed when `coalesce` is a function. */
+  cancelSchedule?: (handle: number) => void
 }
 
 /**
@@ -100,15 +119,72 @@ export class DevtoolsStore {
 
   private readonly maxEntries: number
   private readonly now: () => number
+  private readonly schedule: (fn: () => void) => number
+  private readonly cancelSchedule: (handle: number) => void
   private nextId = 1
 
   /** Keyed by `path|name` so a mutation:run can be paired with its
    *  success/error to compute duration. Cleared after pairing. */
   private mutationStarts = new Map<string, number>()
 
+  /**
+   * Coalesce buffers — events arrive synchronously off the bus but
+   * commits to the signals happen at most once per frame, so the React
+   * panel re-renders at a sane rate even under 1000 evt/sec bursts.
+   */
+  private pendingCache: CacheEntry[] = []
+  private pendingMutations: MutationEntry[] = []
+  private pendingFields: FieldEntry[] = []
+  private flushHandle: number | null = null
+
+  /**
+   * When `true`, incoming events are DROPPED at the store boundary —
+   * unlike the panel-side pause which only hides them. Useful for
+   * profiling without skewing recorded timings and for "freeze the log
+   * so I can read it" UX.
+   */
+  private paused = false
+
   constructor(options?: DevtoolsStoreOptions) {
     this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES
     this.now = options?.now ?? (() => Date.now())
+    const coalesce = options?.coalesce ?? 'sync'
+    if (coalesce === 'sync') {
+      // Run the flush callback inline. The handle is irrelevant — we
+      // never need to cancel a same-tick flush.
+      this.schedule = (fn) => {
+        fn()
+        return 0
+      }
+      this.cancelSchedule = () => {}
+    } else if (coalesce === 'raf') {
+      this.schedule =
+        typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame
+          : (fn: () => void) => setTimeout(fn, 0) as unknown as number
+      this.cancelSchedule =
+        typeof cancelAnimationFrame === 'function'
+          ? cancelAnimationFrame
+          : (h: number) => clearTimeout(h as unknown as ReturnType<typeof setTimeout>)
+    } else {
+      this.schedule = coalesce
+      this.cancelSchedule = options?.cancelSchedule ?? (() => {})
+    }
+  }
+
+  /** Pause event ingestion. Recorded state is preserved; new events drop. */
+  pause(): void {
+    this.paused = true
+  }
+
+  /** Resume event ingestion. Buffered events from before pause are NOT replayed. */
+  resume(): void {
+    this.paused = false
+  }
+
+  /** Whether ingestion is currently paused. */
+  isPaused(): boolean {
+    return this.paused
   }
 
   /**
@@ -216,6 +292,15 @@ export class DevtoolsStore {
     this.cache$.set([])
     this.mutations$.set([])
     this.fields$.set([])
+    // Drop pending coalesce buffers too — a scheduled flush after `clearLogs`
+    // would otherwise revive entries the user just cleared.
+    this.pendingCache = []
+    this.pendingMutations = []
+    this.pendingFields = []
+    if (this.flushHandle !== null) {
+      this.cancelSchedule(this.flushHandle)
+      this.flushHandle = null
+    }
     // Drop pending mutation-start timing records too — `clearLogs()` is the
     // user's "start fresh" gesture; any subsequent `success`/`error` for a
     // pre-clear `run` would have produced a duration anchored to noise.
@@ -227,18 +312,70 @@ export class DevtoolsStore {
   // -----------------------------------------------------------------------
 
   private pushCache(entry: DistributiveOmit<CacheEntry, 'id' | 't'>): void {
+    if (this.paused) return
     const full = { id: this.nextId++, t: this.now(), ...entry } as CacheEntry
-    this.cache$.set(appendBounded(this.cache$.peek(), full, this.maxEntries))
+    this.pendingCache.push(full)
+    this.scheduleFlush()
   }
 
   private pushMutation(entry: DistributiveOmit<MutationEntry, 'id' | 't'>): void {
+    if (this.paused) return
     const full = { id: this.nextId++, t: this.now(), ...entry } as MutationEntry
-    this.mutations$.set(appendBounded(this.mutations$.peek(), full, this.maxEntries))
+    this.pendingMutations.push(full)
+    this.scheduleFlush()
   }
 
   private pushField(entry: Omit<FieldEntry, 'id' | 't'>): void {
+    if (this.paused) return
     const full = { id: this.nextId++, t: this.now(), ...entry } as FieldEntry
-    this.fields$.set(appendBounded(this.fields$.peek(), full, this.maxEntries))
+    this.pendingFields.push(full)
+    this.scheduleFlush()
+  }
+
+  private scheduleFlush(): void {
+    if (this.flushHandle !== null) return
+    // Sentinel value placed *before* `schedule` runs so a synchronous
+    // scheduler doesn't see `null` AND we don't overwrite the `null` the
+    // callback sets after a sync flush completes.
+    this.flushHandle = -1
+    const handle = this.schedule(() => {
+      this.flushHandle = null
+      this.flushPending()
+    })
+    // Only adopt the real handle if the sync flush hasn't already cleared
+    // it. Otherwise the sentinel write above + sync clear inside the
+    // callback would race with this assignment.
+    if (this.flushHandle === -1) {
+      this.flushHandle = handle === 0 ? null : handle
+    }
+  }
+
+  /**
+   * Drain pending buffers into the signals. Public so tests can force a
+   * flush without waiting on rAF; production code shouldn't call this.
+   */
+  flushPending(): void {
+    if (this.pendingCache.length > 0) {
+      let next = this.cache$.peek().slice()
+      for (const e of this.pendingCache) next.push(e)
+      if (next.length > this.maxEntries) next = next.slice(next.length - this.maxEntries)
+      this.pendingCache = []
+      this.cache$.set(next)
+    }
+    if (this.pendingMutations.length > 0) {
+      let next = this.mutations$.peek().slice()
+      for (const e of this.pendingMutations) next.push(e)
+      if (next.length > this.maxEntries) next = next.slice(next.length - this.maxEntries)
+      this.pendingMutations = []
+      this.mutations$.set(next)
+    }
+    if (this.pendingFields.length > 0) {
+      let next = this.fields$.peek().slice()
+      for (const e of this.pendingFields) next.push(e)
+      if (next.length > this.maxEntries) next = next.slice(next.length - this.maxEntries)
+      this.pendingFields = []
+      this.fields$.set(next)
+    }
   }
 
   private consumeStart(path: readonly string[], name: string | undefined): number | undefined {

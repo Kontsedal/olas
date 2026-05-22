@@ -57,6 +57,25 @@ export type MutationQueueOptions = {
    * default — fine while the protocol is v1).
    */
   migrate?: (raw: unknown, fromVersion: number) => QueueEntry | null
+  /**
+   * Max age (in ms) a persisted entry is kept on disk. On `init` the
+   * plugin drops entries older than `Date.now() - ttlMs` before any
+   * replay attempt. Useful for "if this mutation has been stuck for a
+   * week, give up." The drop fires `onReplayError` with a sentinel
+   * Error so consumers can surface to telemetry. Defaults to
+   * `Infinity` (no TTL — current behavior).
+   */
+  ttlMs?: number
+  /**
+   * Base backoff in ms between replay attempts for the *same* runId
+   * across page loads. Effective delay is `backoffMs * 2^(attempts-1)`,
+   * capped at `maxBackoffMs`. Without this, an unhealthy endpoint
+   * gets hit `maxAttempts` times in quick succession every load.
+   * Defaults to `0` (no backoff — current behavior).
+   */
+  backoffMs?: number
+  /** Cap on the exponential backoff. Defaults to `60_000` (60s). */
+  maxBackoffMs?: number
   onWarn?: (message: string, cause?: unknown) => void
 }
 
@@ -101,6 +120,9 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   const onReplayAttempt = options.onReplayAttempt
   const dedupeBy = options.dedupeBy
   const migrate = options.migrate
+  const ttlMs = options.ttlMs ?? Number.POSITIVE_INFINITY
+  const backoffMs = options.backoffMs ?? 0
+  const maxBackoffMs = options.maxBackoffMs ?? 60_000
   const onWarn = options.onWarn ?? defaultWarn
 
   if (typeof keyPrefix !== 'string' || keyPrefix.length === 0) {
@@ -132,6 +154,13 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   // replays; they run in the background and call `onReplayError` if any
   // settle in failure.
   let disposed = false
+  // Outstanding replay AbortControllers — `dispose()` aborts each so a tab
+  // close mid-replay doesn't leak the request. The controller is added to
+  // the set just before `mutate(...)` runs and removed in `finally`.
+  const inFlightReplays = new Set<AbortController>()
+  // Outstanding backoff sleepers — `dispose()` triggers each so the
+  // per-mutationId driver short-circuits the wait.
+  const backoffSleepers = new Set<() => void>()
 
   // Tracks in-flight writes per runId so a fast `delete` can't race ahead
   // of its preceding `write` (the persist-after-delete bug). Callers that
@@ -299,6 +328,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
     const next: QueueEntry = { ...entry, attempts: entry.attempts + 1 }
     await writeEntry(next)
     const abort = new AbortController()
+    inFlightReplays.add(abort)
     try {
       await registered.mutate(entry.variables, abort.signal)
       // Success — drop the entry.
@@ -319,7 +349,41 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
           /* don't let a buggy onReplayAttempt break replay */
         }
       }
+    } finally {
+      inFlightReplays.delete(abort)
     }
+  }
+
+  /**
+   * Sleep that resolves early when `bail()` returns true. Used by the
+   * per-mutationId driver to short-circuit backoff windows when the
+   * plugin disposes mid-wait — without this, `dispose()` would still
+   * have to wait out the longest backoff to escape.
+   */
+  const sleep = (ms: number, bail: () => boolean): Promise<void> => {
+    return new Promise((resolve) => {
+      if (bail()) {
+        resolve()
+        return
+      }
+      const t = setTimeout(() => {
+        cleanup()
+        resolve()
+      }, ms)
+      const tick = () => {
+        if (bail()) {
+          clearTimeout(t)
+          cleanup()
+          resolve()
+        }
+      }
+      const interval = setInterval(tick, 100)
+      const cleanup = () => {
+        clearInterval(interval)
+        backoffSleepers.delete(cleanup)
+      }
+      backoffSleepers.add(cleanup)
+    })
   }
 
   /**
@@ -355,10 +419,33 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   const replayAll = async (): Promise<void> => {
     const entries = await listEntries()
     if (entries.length === 0) return
+    // TTL gate: drop expired entries before waiting for online. A stale
+    // entry from a deleted endpoint shouldn't block the online-wait, and
+    // shouldn't fan back through the bucket loop just to fail.
+    const live: QueueEntry[] = []
+    if (ttlMs !== Number.POSITIVE_INFINITY) {
+      const now = Date.now()
+      for (const e of entries) {
+        if (now - e.enqueuedAt > ttlMs) {
+          await deleteEntry(e.mutationId, e.runId)
+          onReplayError(
+            Object.assign(new Error(`[olas/mutation-queue] dropping ttl-expired entry`), {
+              code: 'ttl-expired' as const,
+            }),
+            e,
+          )
+        } else {
+          live.push(e)
+        }
+      }
+    } else {
+      live.push(...entries)
+    }
+    if (live.length === 0) return
     await waitForOnline()
     if (disposed) return
     const byMutation = new Map<string, QueueEntry[]>()
-    for (const e of entries) {
+    for (const e of live) {
       const bucket = byMutation.get(e.mutationId)
       if (bucket === undefined) byMutation.set(e.mutationId, [e])
       else bucket.push(e)
@@ -383,6 +470,15 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
         (async () => {
           for (const entry of bucket) {
             if (disposed) return
+            // Exponential backoff against the entry's *prior* attempts.
+            // First-ever replay (attempts === 0) runs immediately; the
+            // 2nd cross-load attempt waits backoffMs, the 3rd waits 2x,
+            // and so on, capped at maxBackoffMs.
+            if (backoffMs > 0 && entry.attempts > 0) {
+              const delay = Math.min(backoffMs * 2 ** (entry.attempts - 1), maxBackoffMs)
+              await sleep(delay, () => disposed)
+              if (disposed) return
+            }
             await replayEntry(entry)
           }
         })(),
@@ -478,6 +574,17 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
     dispose() {
       disposed = true
       knownRuns.clear()
+      // Abort every in-flight replay so a tab close mid-mutate doesn't
+      // leak the network request. Mutations that respect their signal
+      // (the documented contract) will reject with AbortError — caught
+      // inside `replayEntry` as a regular failure path.
+      for (const controller of inFlightReplays) controller.abort()
+      inFlightReplays.clear()
+      // Trip every backoff sleeper so the per-mutationId driver's
+      // `await sleep(...)` short-circuits and the outer loop bails on
+      // `if (disposed) return`.
+      for (const wake of backoffSleepers) wake()
+      backoffSleepers.clear()
     },
   }
 }

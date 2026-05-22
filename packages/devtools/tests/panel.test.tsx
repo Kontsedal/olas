@@ -52,6 +52,15 @@ describe('<DevtoolsPanel>', () => {
       await root.users.refetch()
     })
 
+    // Panel uses rAF-coalesced writes — wait one frame for the pending
+    // events to land in the displayed log.
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve())
+        }),
+    )
+
     const panel = screen.getByRole('tabpanel')
     expect(panel.textContent).toContain('fetch-start')
     expect(panel.textContent).toContain('fetch-success')
@@ -69,6 +78,13 @@ describe('<DevtoolsPanel>', () => {
     await act(async () => {
       await root.x.refetch()
     })
+    // Panel coalesces via rAF — wait one frame so the pending events land.
+    await act(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => resolve())
+        }),
+    )
     expect(screen.getByRole('tabpanel').textContent).toContain('fetch-success')
 
     act(() => {

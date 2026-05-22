@@ -49,7 +49,14 @@ export type DevtoolsPanelProps = {
 export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const { root, defaultTab = 'tree', maxEntries, urlHashKey, inspectorPollMs = 800 } = props
   const store = useMemo(
-    () => new DevtoolsStore(maxEntries !== undefined ? { maxEntries } : undefined),
+    () =>
+      new DevtoolsStore({
+        ...(maxEntries !== undefined ? { maxEntries } : {}),
+        // Live panel — rAF-coalesce so a burst of N events flushes in one
+        // React render per frame, not N. Tests construct DevtoolsStore
+        // directly without this option and stay synchronous.
+        coalesce: 'raf',
+      }),
     [maxEntries],
   )
   useEffect(() => store.attach(root), [root, store])
