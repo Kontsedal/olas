@@ -303,6 +303,57 @@ export class Entry<T> {
     return this.startFetch()
   }
 
+  /**
+   * Apply a server-supplied data + timestamp without going through the
+   * fetcher path. Used by streaming SSR hydration: each `<Suspense>` boundary
+   * that resolves on the server pushes its entry's data to the client, and
+   * the client routes it through here so the entry transitions to `success`
+   * without burning the user's fetcher.
+   *
+   * Distinct from `setData`: no Snapshot returned (no rollback semantics —
+   * this is canonical data, not an optimistic patch), no
+   * `hasPendingMutations` flip, and `lastUpdatedAt` honors the supplied
+   * server timestamp instead of `Date.now()`. Also bumps `currentFetchId`
+   * so any in-flight fetch supersedes itself rather than overwriting the
+   * fresher hydrated value.
+   */
+  applyHydration(data: T, lastUpdatedAt: number): void {
+    if (this.disposed) return
+    // Bump fetch id: an inflight fetcher will now lose the supersede check
+    // in `runWithRetry` and won't write its (likely-stale) result.
+    this.currentFetchId += 1
+    this.currentAbort?.abort()
+    this.currentAbort = null
+    if (this.staleTimer !== null) {
+      clearTimeout(this.staleTimer)
+      this.staleTimer = null
+    }
+    const alreadyStale = this.staleTime === 0 || Date.now() - lastUpdatedAt >= this.staleTime
+    batch(() => {
+      this.data.set(data)
+      this.error.set(undefined)
+      this.status.set('success')
+      this.isLoading.set(false)
+      this.isFetching.set(false)
+      this.lastUpdatedAt.set(lastUpdatedAt)
+      this.isStale.set(alreadyStale)
+    })
+    if (!alreadyStale && this.staleTime > 0) {
+      const remaining = this.staleTime - (Date.now() - lastUpdatedAt)
+      this.staleTimer = setTimeout(() => {
+        this.staleTimer = null
+        if (!this.disposed) this.isStale.set(true)
+      }, remaining)
+    }
+    this.onSuccessData?.(data)
+    // Resolve any awaiters parked in firstValue / promise.
+    if (this.pendingFirstValueRejects.length > 0) {
+      // First-value awaiters are subscribed to `this.status`; the batched
+      // `status.set('success')` above wakes them through the normal
+      // subscribe path. We don't need to do anything else here.
+    }
+  }
+
   invalidate(): Promise<T> {
     if (this.staleTimer != null) {
       clearTimeout(this.staleTimer)

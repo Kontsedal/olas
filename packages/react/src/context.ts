@@ -5,8 +5,10 @@ import {
   createElement,
   type ReactNode,
   useContext,
+  useEffect,
   useMemo,
 } from 'react'
+import { installStreamingIntake } from './streaming'
 
 const OlasContext = createContext<Root<unknown> | null>(null)
 OlasContext.displayName = 'OlasContext'
@@ -136,9 +138,17 @@ export function HydrationBoundary<Api>(props: {
     scopes?: ReadonlyArray<readonly [unknown, unknown]>
     plugins?: ReadonlyArray<unknown>
   }
+  /**
+   * When `true` (default), installs the streaming intake on mount so
+   * `<script>` tags written by `createStreamingHydrator().flush()` on
+   * the server route into this root. Set `false` if you're using
+   * `HydrationBoundary` purely for a one-shot `options.hydrate` and
+   * don't want the global `__OLAS_HYDRATION__` listener.
+   */
+  streaming?: boolean
   children: ReactNode
 }): ReactNode {
-  const { def, options, children } = props
+  const { def, options, children, streaming = true } = props
   // Construct once per (def, options) identity. The caller controls
   // identity — pass stable refs for stable roots, mutate to remount.
   const root = useMemo(
@@ -148,5 +158,12 @@ export function HydrationBoundary<Api>(props: {
     () => createRoot(def, options as any) as Root<Api>,
     [def, options],
   )
+  // Drain the streaming intake queue + install a live forwarder. The
+  // first mount per page picks up everything the server flushed before
+  // the bundle loaded; subsequent stream pushes go straight through.
+  useEffect(() => {
+    if (!streaming) return undefined
+    return installStreamingIntake(root)
+  }, [root, streaming])
   return createElement(OlasContext.Provider, { value: root }, children)
 }
