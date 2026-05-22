@@ -78,12 +78,96 @@ type LifecycleEntry =
 
 type State = 'constructing' | 'active' | 'suspended' | 'disposed'
 
+/**
+ * Doubly-linked-list node wrapping a `LifecycleEntry`. Holding a reference
+ * to the node lets call sites unlink in O(1) instead of the old
+ * `entries.indexOf(...) + splice(...)` which was quadratic for long-lived
+ * collections / lazyChildren / attach-style children.
+ *
+ * `unlinked: true` is a defensive flag — re-unlinking a node should be a
+ * no-op (the parent's dispose cascade may race with an explicit unlink
+ * from a `dispose()` returned to user code).
+ */
+type LifecycleNode = {
+  entry: LifecycleEntry
+  prev: LifecycleNode | null
+  next: LifecycleNode | null
+  unlinked: boolean
+}
+
+/**
+ * Append-and-unlink container for `LifecycleEntry`s. Replaces the historical
+ * `LifecycleEntry[]` to make per-entry removal O(1) — important for
+ * controllers that churn entries (`ctx.collection` reconcile, `lazyChild`
+ * loop, `attach` short-lived children).
+ *
+ * Iteration order is insertion order for `forward()` and reverse-insertion
+ * for `reverse()`. Iteration is safe against `push` during traversal (the
+ * generator captures `next`/`prev` *before* yielding) but not against
+ * unlinking the current node from inside the visitor — visitors must not
+ * call `unlink` on the entry they're currently inspecting.
+ */
+class LifecycleList {
+  private head: LifecycleNode | null = null
+  private tail: LifecycleNode | null = null
+  private _size = 0
+
+  get size(): number {
+    return this._size
+  }
+
+  push(entry: LifecycleEntry): LifecycleNode {
+    const node: LifecycleNode = { entry, prev: this.tail, next: null, unlinked: false }
+    if (this.tail !== null) this.tail.next = node
+    else this.head = node
+    this.tail = node
+    this._size += 1
+    return node
+  }
+
+  unlink(node: LifecycleNode): void {
+    if (node.unlinked) return
+    node.unlinked = true
+    if (node.prev !== null) node.prev.next = node.next
+    else this.head = node.next
+    if (node.next !== null) node.next.prev = node.prev
+    else this.tail = node.prev
+    this._size -= 1
+  }
+
+  clear(): void {
+    this.head = null
+    this.tail = null
+    this._size = 0
+  }
+
+  /** Yield entries in insertion order. */
+  *forward(): Generator<LifecycleEntry> {
+    let n = this.head
+    while (n !== null) {
+      const next = n.next
+      yield n.entry
+      n = next
+    }
+  }
+
+  /** Yield entries in reverse-insertion order — used by dispose / suspend. */
+  *reverse(): Generator<LifecycleEntry> {
+    let n = this.tail
+    while (n !== null) {
+      const prev = n.prev
+      yield n.entry
+      n = prev
+    }
+  }
+}
+
 export class ControllerInstance {
   readonly path: readonly string[]
   readonly deps: Record<string, unknown>
 
   private state: State = 'constructing'
-  private readonly entries: LifecycleEntry[] = []
+  private readonly entries: LifecycleList = new LifecycleList()
   private readonly rootShared: RootShared
   private readonly parent: ControllerInstance | null
   private childCounter = 0
@@ -150,16 +234,14 @@ export class ControllerInstance {
 
   private rollbackPartialConstruction(): void {
     // Tear down what was built before the throw, in reverse order.
-    for (let i = this.entries.length - 1; i >= 0; i--) {
-      const entry = this.entries[i]
-      if (!entry) continue
+    for (const entry of this.entries.reverse()) {
       try {
         this.disposeEntry(entry)
       } catch {
         // Rollback paths can't throw further.
       }
     }
-    this.entries.length = 0
+    this.entries.clear()
     this.state = 'disposed'
   }
 
@@ -167,9 +249,7 @@ export class ControllerInstance {
     if (this.state === 'disposed') return
     this.state = 'disposed'
 
-    for (let i = this.entries.length - 1; i >= 0; i--) {
-      const entry = this.entries[i]
-      if (!entry) continue
+    for (const entry of this.entries.reverse()) {
       try {
         this.disposeEntry(entry)
       } catch (err) {
@@ -179,7 +259,7 @@ export class ControllerInstance {
         })
       }
     }
-    this.entries.length = 0
+    this.entries.clear()
     this.scopes = null
     this.injectCache = null
 
@@ -224,9 +304,7 @@ export class ControllerInstance {
     if (this.state !== 'active') return
     this.state = 'suspended'
 
-    for (let i = this.entries.length - 1; i >= 0; i--) {
-      const entry = this.entries[i]
-      if (!entry) continue
+    for (const entry of this.entries.reverse()) {
       try {
         switch (entry.kind) {
           case 'effect':
@@ -264,7 +342,7 @@ export class ControllerInstance {
     if (this.state !== 'suspended') return
     this.state = 'active'
 
-    for (const entry of this.entries) {
+    for (const entry of this.entries.forward()) {
       try {
         switch (entry.kind) {
           case 'effect':
@@ -411,6 +489,9 @@ export class ControllerInstance {
         self.entries.push({ kind: 'cleanup', dispose: () => e.dispose() })
         return e
       },
+
+      signal,
+      computed,
 
       field<T>(
         initial: T,
@@ -580,15 +661,14 @@ export class ControllerInstance {
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
         const api = childInstance.construct(getFactory(def), props)
         const entry: LifecycleEntry = { kind: 'child', instance: childInstance }
-        self.entries.push(entry)
+        const node = self.entries.push(entry)
         let disposed = false
         return {
           api,
           dispose: () => {
             if (disposed) return
             disposed = true
-            const idx = self.entries.indexOf(entry)
-            if (idx >= 0) self.entries.splice(idx, 1)
+            self.entries.unlink(node)
             try {
               childInstance.dispose()
             } catch (err) {
@@ -639,13 +719,12 @@ export class ControllerInstance {
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
         const api = childInstance.construct(getFactory(def), props)
         const entry: LifecycleEntry = { kind: 'child', instance: childInstance }
-        self.entries.push(entry)
+        const node = self.entries.push(entry)
         let disposed = false
         const dispose = (): void => {
           if (disposed) return
           disposed = true
-          const idx = self.entries.indexOf(entry)
-          if (idx >= 0) self.entries.splice(idx, 1)
+          self.entries.unlink(node)
           try {
             childInstance.dispose()
           } catch (err) {
@@ -666,7 +745,7 @@ export class ControllerInstance {
         type ChildInfo = {
           instance: ControllerInstance
           api: Api
-          entry: LifecycleEntry
+          node: LifecycleNode
           // For factory form: the controller def used to construct this child.
           // A different def on a future render means "rebuild with new type".
           def: ControllerDef<unknown, unknown>
@@ -722,8 +801,7 @@ export class ControllerInstance {
           const info = childMap.get(key)
           if (info === undefined) return
           childMap.delete(key)
-          const idx = self.entries.indexOf(info.entry)
-          if (idx >= 0) self.entries.splice(idx, 1)
+          self.entries.unlink(info.node)
           try {
             info.instance.dispose()
           } catch (err) {
@@ -771,8 +849,8 @@ export class ControllerInstance {
                   const built = buildChild(item)
                   if (built !== null) {
                     const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
-                    self.entries.push(entry)
-                    childMap.set(key, { ...built, entry })
+                    const node = self.entries.push(entry)
+                    childMap.set(key, { ...built, node })
                   }
                 }
               }
@@ -781,8 +859,8 @@ export class ControllerInstance {
             const built = buildChild(item)
             if (built !== null) {
               const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
-              self.entries.push(entry)
-              childMap.set(key, { ...built, entry })
+              const node = self.entries.push(entry)
+              childMap.set(key, { ...built, node })
             }
           }
 
@@ -854,7 +932,7 @@ export class ControllerInstance {
         const error$ = signal<unknown | undefined>(undefined)
 
         let childInstance: ControllerInstance | null = null
-        let childEntry: LifecycleEntry | null = null
+        let childNode: LifecycleNode | null = null
         let pendingLoad: Promise<Api> | null = null
         let disposed = false
 
@@ -866,7 +944,7 @@ export class ControllerInstance {
             disposed = true
           },
         }
-        self.entries.push(flagEntry)
+        const flagNode = self.entries.push(flagEntry)
 
         const handleFailure = (err: unknown): void => {
           status$.set('error')
@@ -899,8 +977,7 @@ export class ControllerInstance {
               try {
                 const api = instance.construct(getFactory(def), props)
                 childInstance = instance
-                childEntry = { kind: 'child', instance }
-                self.entries.push(childEntry)
+                childNode = self.entries.push({ kind: 'child', instance })
                 api$.set(api)
                 status$.set('ready')
                 return api
@@ -928,9 +1005,8 @@ export class ControllerInstance {
         const dispose = (): void => {
           if (disposed) return
           disposed = true
-          if (childEntry !== null && childInstance !== null) {
-            const idx = self.entries.indexOf(childEntry)
-            if (idx >= 0) self.entries.splice(idx, 1)
+          if (childNode !== null && childInstance !== null) {
+            self.entries.unlink(childNode)
             try {
               childInstance.dispose()
             } catch (err) {
@@ -940,14 +1016,13 @@ export class ControllerInstance {
               })
             }
             childInstance = null
-            childEntry = null
+            childNode = null
           }
-          // Splice the parent-dispose flag entry too — its only job was to
+          // Unlink the parent-dispose flag entry too — its only job was to
           // signal disposal to an in-flight loader, and `disposed` is now
           // already true. Leaving it behind leaks one closure per ever-
           // disposed lazyChild for the parent's remaining lifetime.
-          const flagIdx = self.entries.indexOf(flagEntry)
-          if (flagIdx >= 0) self.entries.splice(flagIdx, 1)
+          self.entries.unlink(flagNode)
         }
 
         return {

@@ -14,7 +14,7 @@ import type { Mutation, MutationSpec } from '../query/mutation'
 import type { QueryClientPlugin } from '../query/plugin'
 import type { LocalCache, Query, QuerySubscription, UseOptions } from '../query/types'
 import type { Scope } from '../scope'
-import type { ReadSignal } from '../signals/types'
+import type { Computed, ReadSignal, Signal } from '../signals/types'
 
 /**
  * App-wide deps available on every controller's `ctx.deps`.
@@ -223,6 +223,22 @@ export type Ctx<TDeps = AmbientDeps> = {
   mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>
 
   emitter<T = void>(): Emitter<T>
+
+  /**
+   * Convenience re-export of the standalone `signal(initial)` function bound
+   * to the controller's surface. Identical semantics — there's no lifecycle
+   * to manage for a plain signal — but having it on `ctx` makes "everything
+   * I need is on ctx" feel honest and lets consumers avoid importing from
+   * `@kontsedal/olas-core` separately.
+   */
+  signal<T>(initial: T): Signal<T>
+
+  /**
+   * Convenience re-export of the standalone `computed(fn)` function bound
+   * to the controller's surface. Re-evaluates on tracked-dep change; same
+   * caveat as `signal` — no lifecycle binding, just discoverability.
+   */
+  computed<T>(fn: () => T): Computed<T>
 
   field<T>(
     initial: T,
