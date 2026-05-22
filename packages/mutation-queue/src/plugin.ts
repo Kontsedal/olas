@@ -76,6 +76,14 @@ export type MutationQueueOptions = {
   backoffMs?: number
   /** Cap on the exponential backoff. Defaults to `60_000` (60s). */
   maxBackoffMs?: number
+  /**
+   * Soft byte-size budget per durable entry. When the JSON-serialized
+   * envelope exceeds this, `onWarn(...)` fires with the byte count and the
+   * write proceeds anyway. Useful for catching unbounded variable growth
+   * before `localStorage` quota errors start surfacing. Defaults to
+   * `64 * 1024` (64 KB). Set to `Infinity` to disable.
+   */
+  maxEntryBytes?: number
   onWarn?: (message: string, cause?: unknown) => void
 }
 
@@ -123,6 +131,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   const ttlMs = options.ttlMs ?? Number.POSITIVE_INFINITY
   const backoffMs = options.backoffMs ?? 0
   const maxBackoffMs = options.maxBackoffMs ?? 60_000
+  const maxEntryBytes = options.maxEntryBytes ?? 64 * 1024
   const onWarn = options.onWarn ?? defaultWarn
 
   if (typeof keyPrefix !== 'string' || keyPrefix.length === 0) {
@@ -177,6 +186,14 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   const writeEntry = async (entry: QueueEntry): Promise<void> => {
     try {
       const json = JSON.stringify(entry)
+      if (maxEntryBytes !== Number.POSITIVE_INFINITY && json.length > maxEntryBytes) {
+        onWarn(
+          `[olas/mutation-queue] entry for ${entry.mutationId}/${entry.runId} is ${json.length} bytes,` +
+            ` over the ${maxEntryBytes}-byte soft cap. Large variables risk hitting storage quotas` +
+            ' (localStorage is typically 5–10 MB total per origin); consider trimming the payload or' +
+            ' moving the queue to indexedDbAdapter.',
+        )
+      }
       const writeP = Promise.resolve(adapter.set(entryKey(entry.mutationId, entry.runId), json))
       pendingWrites.set(entry.runId, writeP)
       try {
