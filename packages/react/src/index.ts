@@ -1,4 +1,10 @@
-export { createOlasContext, OlasProvider, useController, useRoot } from './context'
+export {
+  createOlasContext,
+  HydrationBoundary,
+  OlasProvider,
+  useController,
+  useRoot,
+} from './context'
 export {
   use,
   useField,

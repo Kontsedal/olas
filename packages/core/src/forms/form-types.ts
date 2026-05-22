@@ -123,6 +123,13 @@ export type Form<S extends FormSchema> = {
   resetWithInitial(partial: DeepPartial<FormValue<S>>): void
   /** Reset every leaf to its initial value. */
   reset(): void
+  /**
+   * Reset a named subtree to its initial. Path uses the same dotted /
+   * bracket notation as `setErrors` / `flatErrors`. Unlike `Form.set({foo:
+   * undefined})` (which is "leave alone"), this is the explicit
+   * "clear this subtree" gesture. Pass `''` to reset the whole form.
+   */
+  clearSubtree(path: string): void
   /** Mark every leaf as touched (so error messages appear). */
   markAllTouched(): void
   /** Re-run every leaf's validators. Resolves with true if all leaves are valid. */

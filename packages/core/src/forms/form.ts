@@ -425,6 +425,29 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     })
   }
 
+  /**
+   * Reset a named subtree to its initial. `path` uses the same dotted /
+   * bracket notation as `setErrors` / `flatErrors`. Useful when
+   * `Form.set({foo: undefined})` would be ambiguous ("clear" vs "leave
+   * alone" — the latter is what `set` does today).
+   *
+   * Walks via `resolvePath`; the resolved target must expose `reset()`
+   * (Field, Form, or FieldArray all do). Unknown paths are silently
+   * ignored — `flatErrors`-shaped paths from upstream code shouldn't
+   * crash this. Pass an empty string to reset the whole form (same as
+   * `form.reset()`).
+   */
+  clearSubtree(path: string): void {
+    if (this.disposed) return
+    if (path === '') {
+      this.reset()
+      return
+    }
+    const target = this.resolvePath(path) as { reset?: () => void } | undefined
+    if (target === undefined) return
+    if (typeof target.reset === 'function') target.reset()
+  }
+
   private resolvePath(path: string): unknown {
     if (path === '') return undefined
     const segments = splitPath(path)
