@@ -47,6 +47,8 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
   retryDelay?: RetryDelay
   /** See `QuerySpec.networkMode`. Defaults to `'online'`. */
   networkMode?: NetworkMode
+  /** See `QuerySpec.structuralShare`. Applies to the head-page refresh. */
+  structuralShare?: boolean
   /**
    * Stable identifier used by `QueryClientPlugin`s (`@kontsedal/olas-cross-tab`,
    * etc.). Infinite queries do NOT propagate cross-tab in v1 — the
@@ -55,10 +57,12 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
    */
   queryId?: string
   /**
-   * Opt into cross-tab sync. No effect for infinite queries in v1 (see
-   * `queryId` doc above).
+   * Opt into cross-tab sync. `'infinite'` or `'both'` lifts the cross-tab
+   * plugin's infinite-query gate. See `QuerySpec.crossTab` for the full
+   * shape; legacy `true` keeps the old "data-only" mapping (a no-op here
+   * since infinite queries don't emit data-only events).
    */
-  crossTab?: boolean
+  crossTab?: boolean | 'data' | 'infinite' | 'both'
 }
 
 /**
@@ -144,6 +148,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private readonly retry: RetryPolicy
   private readonly retryDelay: RetryDelay
   private readonly networkMode: NetworkMode
+  private readonly structuralShareEnabled: boolean
   private reconnectUnsub: (() => void) | null = null
   private deferredResolvers: Array<{
     direction: 'initial' | 'next' | 'prev'
@@ -169,6 +174,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     retry?: RetryPolicy
     retryDelay?: RetryDelay
     networkMode?: NetworkMode
+    structuralShare?: boolean
     onSuccessData?: (pages: TPage[]) => void
   }) {
     this.fetcher = opts.fetcher
@@ -180,6 +186,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.retry = opts.retry ?? 0
     this.retryDelay = opts.retryDelay ?? 1000
     this.networkMode = opts.networkMode ?? 'online'
+    this.structuralShareEnabled = opts.structuralShare ?? true
     this.onSuccessData = opts.onSuccessData
     this.pageParams = signal<PageParam[]>([])
     this.data = computed(() => {
@@ -238,7 +245,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         // initial fetch wipes the rest of the array by definition.
         const prevPages = this.pages.peek()
         const sharedPage =
-          prevPages.length > 0 ? structuralShare(prevPages[0] as TPage, page) : page
+          prevPages.length > 0 && this.structuralShareEnabled
+            ? structuralShare(prevPages[0] as TPage, page)
+            : page
         batch(() => {
           this.pages.set([sharedPage])
           this.pageParams.set([param])

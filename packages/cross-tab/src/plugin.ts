@@ -25,6 +25,16 @@ export type CrossTabOptions = {
   channelName: string
   onWarn?: (message: string, cause?: unknown) => void
   channelFactory?: (name: string) => ChannelLike | undefined
+  /**
+   * Soft byte-size limit on a single outbound message. When the JSON-
+   * serialized estimate exceeds this, the plugin calls `onWarn(...)` and
+   * still posts the message — the cap is a heads-up, not an enforced
+   * limit, because the underlying `BroadcastChannel` has its own
+   * (browser-defined) cap and the right ceiling depends on use case.
+   *
+   * Defaults to `512 * 1024` (512 KB). Set to `Infinity` to disable.
+   */
+  maxPayloadBytes?: number
 }
 
 /**
@@ -72,6 +82,7 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
   const channelName = options.channelName
   const onWarn = options.onWarn ?? defaultWarn
   const factory = options.channelFactory ?? defaultChannelFactory
+  const maxPayloadBytes = options.maxPayloadBytes ?? 512 * 1024
 
   // Cheap probe — if the environment can't produce a channel at all we can
   // return a no-op plugin without opening anything. The real channel opens
@@ -145,6 +156,25 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
 
   const send = (msg: Message): void => {
     if (channel === null) return
+    // Cheap byte-size estimate via JSON length. Doesn't account for binary
+    // structured-clone overhead but is correct within a small constant
+    // factor — enough to flag "you're shipping 50 MB to peers" cases.
+    if (maxPayloadBytes !== Number.POSITIVE_INFINITY) {
+      let estimate = 0
+      try {
+        estimate = JSON.stringify(msg).length
+      } catch {
+        // If we can't JSON-stringify it, structured clone will likely fail
+        // too — let the postMessage path catch and warn.
+      }
+      if (estimate > maxPayloadBytes) {
+        onWarn(
+          `[olas/cross-tab] payload for ${msg.type}` +
+            ` queryId="${(msg as { queryId?: string }).queryId ?? ''}" is ${estimate} bytes,` +
+            ` over the ${maxPayloadBytes}-byte soft cap. Consider entities or thinner queries.`,
+        )
+      }
+    }
     try {
       channel.postMessage(msg)
     } catch (cause) {
@@ -184,9 +214,13 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
       // fetched the same data themselves. We only echo explicit `setData`
       // calls (mutations, optimistic patches, entity backprop) cross-tab.
       if (event.source === 'fetch') return
-      // Infinite queries are deferred for v1 — see SPEC §13.2.
-      if (event.kind !== 'data') return
-      if (!shouldBroadcast(event.queryId)) return
+      // Infinite queries are opt-in: page arrays are heavy enough that
+      // silent cross-tab sync of every mutation can saturate the channel.
+      // `crossTab: 'infinite'` or `'both'` on the spec lifts the gate.
+      const mode = shouldBroadcast(event.queryId)
+      if (mode === false) return
+      if (event.kind === 'infinite' && mode !== 'infinite' && mode !== 'both') return
+      if (event.kind === 'data' && mode === 'infinite') return
 
       send({
         v: PROTOCOL_VERSION,
@@ -201,8 +235,10 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
 
     onInvalidate(event: InvalidateEvent) {
       if (event.isRemote) return
-      if (event.kind !== 'data') return
-      if (!shouldBroadcast(event.queryId)) return
+      const mode = shouldBroadcast(event.queryId)
+      if (mode === false) return
+      if (event.kind === 'infinite' && mode !== 'infinite' && mode !== 'both') return
+      if (event.kind === 'data' && mode === 'infinite') return
 
       send({
         v: PROTOCOL_VERSION,
@@ -243,14 +279,18 @@ function defaultWarn(message: string, cause?: unknown): void {
 }
 
 /**
- * Per-query gate. `crossTab: true` is a static opt-in on the spec; the
- * QueryClient doesn't filter on it (its events fire for every query that
- * has a `queryId`), so the plugin checks here. We look it up from the
- * core's query registry on every event — no caching, since the registry
- * lookup is a Map.get.
+ * Per-query gate. `crossTab: true` (or `'data' | 'infinite' | 'both'`) is a
+ * static opt-in on the spec; the QueryClient doesn't filter on it (its
+ * events fire for every query with a `queryId`), so the plugin checks here.
+ *
+ * Returns the requested mode (`'data' | 'infinite' | 'both'`) or `false` if
+ * not opted in. Legacy `crossTab: true` maps to `'data'` (current behavior).
  */
-function shouldBroadcast(queryId: string): boolean {
+function shouldBroadcast(queryId: string): 'data' | 'infinite' | 'both' | false {
   const registered = lookupRegisteredQuery(queryId)
   if (!registered) return false
-  return registered.__spec.crossTab === true
+  const flag = (registered.__spec as { crossTab?: boolean | 'data' | 'infinite' | 'both' }).crossTab
+  if (flag === true) return 'data'
+  if (flag === 'data' || flag === 'infinite' || flag === 'both') return flag
+  return false
 }

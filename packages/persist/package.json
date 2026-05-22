@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-persist",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "Olas persistence composables — usePersisted with a localStorage adapter.",
   "keywords": [
     "olas",

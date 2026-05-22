@@ -81,6 +81,7 @@ export class ClientEntry<T> {
       retry: spec.retry as RetryPolicy | undefined,
       retryDelay: spec.retryDelay as RetryDelay | undefined,
       networkMode: spec.networkMode,
+      structuralShare: spec.structuralShare,
       initialData: hydrated?.data,
       initialUpdatedAt: hydrated?.lastUpdatedAt,
       events:
@@ -265,6 +266,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       retry: spec.retry as RetryPolicy | undefined,
       retryDelay: spec.retryDelay as RetryDelay | undefined,
       networkMode: spec.networkMode,
+      structuralShare: spec.structuralShare,
       // Fire SetDataEvent { kind: 'infinite', source: 'fetch' } whenever a
       // fetch settles successfully. Plugins (e.g. entity normalization) use
       // this to walk the pages and update their normalized stores. Mirrors
@@ -413,7 +415,7 @@ export class QueryClient {
     if (opts?.hydrate) this.hydrate(opts.hydrate)
     const api = this.makePluginApi()
     for (const plugin of this.plugins) {
-      this.callPlugin(() => plugin.init?.(api))
+      this.callPlugin(plugin, () => plugin.init?.(api))
     }
   }
 
@@ -441,13 +443,14 @@ export class QueryClient {
   }
 
   /** Invoke a plugin callback; route exceptions through `onError`. */
-  private callPlugin(fn: () => void): void {
+  private callPlugin(plugin: QueryClientPlugin, fn: () => void): void {
     try {
       fn()
     } catch (err) {
       dispatchError(this.onError, err, {
         kind: 'plugin',
         controllerPath: [],
+        pluginName: plugin.name,
       })
     }
   }
@@ -490,7 +493,7 @@ export class QueryClient {
     for (const plugin of this.plugins) {
       if (plugin.onSetData) {
         const cb = plugin.onSetData
-        this.callPlugin(() => cb.call(plugin, event))
+        this.callPlugin(plugin, () => cb.call(plugin, event))
       }
     }
   }
@@ -512,7 +515,7 @@ export class QueryClient {
     for (const plugin of this.plugins) {
       if (plugin.onInvalidate) {
         const cb = plugin.onInvalidate
-        this.callPlugin(() => cb.call(plugin, event))
+        this.callPlugin(plugin, () => cb.call(plugin, event))
       }
     }
   }
@@ -529,7 +532,7 @@ export class QueryClient {
     for (const plugin of this.plugins) {
       if (plugin.onGc) {
         const cb = plugin.onGc
-        this.callPlugin(() => cb.call(plugin, event))
+        this.callPlugin(plugin, () => cb.call(plugin, event))
       }
     }
   }
@@ -549,7 +552,7 @@ export class QueryClient {
     for (const plugin of this.plugins) {
       if (plugin.onMutationEnqueue) {
         const cb = plugin.onMutationEnqueue
-        this.callPlugin(() => cb.call(plugin, event))
+        this.callPlugin(plugin, () => cb.call(plugin, event))
       }
     }
   }
@@ -565,7 +568,7 @@ export class QueryClient {
     for (const plugin of this.plugins) {
       if (plugin.onMutationSettle) {
         const cb = plugin.onMutationSettle
-        this.callPlugin(() => cb.call(plugin, event))
+        this.callPlugin(plugin, () => cb.call(plugin, event))
       }
     }
   }
@@ -1151,7 +1154,7 @@ export class QueryClient {
     for (const plugin of this.plugins) {
       if (plugin.dispose) {
         const cb = plugin.dispose
-        this.callPlugin(() => cb.call(plugin))
+        this.callPlugin(plugin, () => cb.call(plugin))
       }
     }
   }

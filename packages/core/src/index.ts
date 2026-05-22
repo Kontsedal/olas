@@ -24,7 +24,7 @@ export type { DebugBus, DebugCacheEntry, DebugEvent } from './devtools'
 // Emitter
 export type { Emitter, EmitterErrorReporter } from './emitter'
 export { createEmitter } from './emitter'
-export type { ErrorContext, ErrorHandler } from './errors'
+export type { ErrorContext, ErrorContextInput, ErrorHandler } from './errors'
 // Forms — stdlib validators + Standard Schema adapter + debouncedValidator
 export type { StandardSchemaV1, Validator } from './forms'
 export {
@@ -114,6 +114,7 @@ export { selection } from './selection'
 export type { Computed, ReadSignal, Signal } from './signals'
 export { batch, computed, effect, signal, untracked } from './signals'
 // Timing
+export type { TimingSignal } from './timing'
 export { debounced, throttled } from './timing'
 
 // Utilities

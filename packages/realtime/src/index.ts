@@ -30,7 +30,28 @@ export type RealtimeService = {
     channel: string,
     handler: RealtimeHandler<TEvent>,
   ): RealtimeSubscription
+  /**
+   * Optional. Subscribe to connection-state changes. When implemented,
+   * `useRealtimeConnection(ctx)` returns a live signal of the state;
+   * otherwise it returns a constant `'connected'` signal.
+   *
+   * Three canonical states:
+   * - `'connected'`: subscriptions actively receive events.
+   * - `'reconnecting'`: transport is mid-recovery; subscriptions may
+   *   miss events during the gap.
+   * - `'offline'`: no connection; subscriptions are paused at the
+   *   transport.
+   *
+   * Returns an unsubscribe function. Many transports emit a synchronous
+   * "current state" callback on subscribe — that's fine; the hook reads
+   * it as the initial value.
+   */
+  onConnectionChange?(handler: (state: ConnectionState) => void): () => void
 }
+
+export type ConnectionState = 'connected' | 'reconnecting' | 'offline'
+
+/** Slice of `ctx.deps` needed by `useRealtimeConnection`. */
 
 /** Slice of `ctx.deps` consumed by this package. */
 export type RealtimeDeps = { realtime: RealtimeService }
@@ -192,4 +213,54 @@ export function useLiveStream<TEvent>(
       events$.set([])
     },
   }
+}
+
+/**
+ * Reactive connection-state signal — `'connected' | 'reconnecting' | 'offline'`.
+ *
+ * Backed by `RealtimeService.onConnectionChange?(...)`. If the consumer's
+ * transport doesn't implement that method, the returned signal stays at
+ * `'connected'` for the lifetime of the controller (best-effort default).
+ *
+ * Useful for "stale-during-disconnect" UIs and as a refetch trigger when
+ * the connection comes back up:
+ *
+ * ```ts
+ * const conn = useRealtimeConnection(ctx)
+ * ctx.effect(() => {
+ *   if (conn.value === 'connected') {
+ *     ordersQuery.invalidateAll()
+ *   }
+ * })
+ * ```
+ */
+export function useRealtimeConnection(ctx: Ctx<RealtimeDeps>): ReadSignal<ConnectionState> {
+  const state$ = signal<ConnectionState>('connected')
+  ctx.effect(() => {
+    const onChange = ctx.deps.realtime.onConnectionChange
+    if (onChange === undefined) return undefined
+    return onChange((s) => state$.set(s))
+  })
+  return state$
+}
+
+/**
+ * Trigger `fn()` when the realtime connection transitions back to
+ * `'connected'` from a non-connected state. Typical use: invalidate
+ * queries that may have missed updates during the disconnect window.
+ *
+ * The handler fires AFTER the transition is observed; it does NOT fire on
+ * the initial `'connected'` value (no transition happened yet). Wrapped
+ * in `untracked` so cache writes don't accidentally hook the effect.
+ */
+export function onReconnect(ctx: Ctx<RealtimeDeps>, fn: () => void): void {
+  const conn = useRealtimeConnection(ctx)
+  let prev: ConnectionState = conn.peek()
+  ctx.effect(() => {
+    const next = conn.value
+    if (next === 'connected' && prev !== 'connected') {
+      untracked(fn)
+    }
+    prev = next
+  })
 }

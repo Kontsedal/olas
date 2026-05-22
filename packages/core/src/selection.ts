@@ -24,7 +24,7 @@ export type Selection<T = unknown> = {
   handleClick(
     id: string,
     mods: { shift?: boolean; meta?: boolean },
-    ordered: readonly string[],
+    ordered: readonly string[] | ReadonlyMap<string, number>,
   ): void
 }
 
@@ -103,24 +103,58 @@ export function selection<T = unknown>(options?: { initial?: readonly string[] }
   const handleClick = (
     id: string,
     mods: { shift?: boolean; meta?: boolean },
-    ordered: readonly string[],
+    ordered: readonly string[] | ReadonlyMap<string, number>,
   ): void => {
     if (mods.shift && anchor !== null) {
-      const anchorIdx = ordered.indexOf(anchor)
-      const targetIdx = ordered.indexOf(id)
-      if (anchorIdx === -1 || targetIdx === -1) {
-        // anchor or target not visible — fall back to plain select
-        ids.set(new Set([id]))
-        anchor = id
-        preShiftSelection = null
-        return
+      // Accept either a positional array (back-compat, O(n) lookup) OR a
+      // precomputed `Map<id, index>` for O(1) shift-click on large lists
+      // (a 100k-row virtualized table doesn't want to scan the array twice
+      // per click). The caller decides which to pass — `Map` is cheap to
+      // build once when the row list changes.
+      let anchorIdx: number
+      let targetIdx: number
+      let slice: readonly string[]
+      if (Array.isArray(ordered)) {
+        const arr = ordered as readonly string[]
+        anchorIdx = arr.indexOf(anchor)
+        targetIdx = arr.indexOf(id)
+        if (anchorIdx === -1 || targetIdx === -1) {
+          ids.set(new Set([id]))
+          anchor = id
+          preShiftSelection = null
+          return
+        }
+        const [lo, hi] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx]
+        slice = arr.slice(lo, hi + 1)
+      } else {
+        const map = ordered as ReadonlyMap<string, number>
+        anchorIdx = map.get(anchor) ?? -1
+        targetIdx = map.get(id) ?? -1
+        if (anchorIdx === -1 || targetIdx === -1) {
+          ids.set(new Set([id]))
+          anchor = id
+          preShiftSelection = null
+          return
+        }
+        const [lo, hi] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx]
+        // The Map gives O(1) index lookup. To materialise the range we
+        // still need keys at [lo, hi]; iterate the insertion-ordered Map
+        // once and bail when we've collected enough. The 0..hi prefix is
+        // O(hi) — bounded by the range length, not the full list.
+        const keys: string[] = []
+        let i = 0
+        for (const k of map.keys()) {
+          if (i >= lo && i <= hi) keys.push(k)
+          if (i >= hi) break
+          i += 1
+        }
+        slice = keys
       }
       if (preShiftSelection === null) {
         preShiftSelection = ids.peek()
       }
-      const [lo, hi] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx]
       const next = new Set(preShiftSelection)
-      for (const k of ordered.slice(lo, hi + 1)) next.add(k)
+      for (const k of slice) next.add(k)
       ids.set(next)
       // Anchor stays — subsequent shift-clicks extend from the same origin.
       return
