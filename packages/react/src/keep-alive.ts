@@ -6,12 +6,21 @@ export type SuspendableController = {
 }
 
 /**
- * Wrap a sub-tree so unmount calls `controller.suspend()` and re-mount calls
- * `controller.resume()` instead of disposing. Useful for hidden tabs and
- * router caches where you want effects torn down but state preserved. See
- * spec §20.10.
+ * Wrap a sub-tree so unmount calls `controller.suspend()` and re-mount
+ * calls `controller.resume()` instead of disposing. The React tree is
+ * still unmounted (this is NOT Vue-style `<KeepAlive>` DOM preservation —
+ * DOM, scroll, focus, input state are NOT retained); only the *controller*
+ * stays alive and its effects pause. Use it for routed sub-trees whose
+ * computed state is expensive to rebuild but whose DOM you're happy to
+ * re-render. See spec §20.10.
+ *
+ * **Concurrency contract.** `SuspendableController.suspend()` MUST be safe
+ * to call when the controller is already suspended (idempotent) and from
+ * multiple consumers. Two sibling `<SuspendOnUnmount>` wrappers around the
+ * same controller will overlap their `resume`/`suspend` calls during a
+ * cross-fade; the controller must tolerate that.
  */
-export function KeepAlive(props: {
+export function SuspendOnUnmount(props: {
   controller: SuspendableController
   children: ReactNode
 }): ReactElement {
@@ -24,6 +33,14 @@ export function KeepAlive(props: {
   }, [controller])
   return children as ReactElement
 }
+
+/**
+ * @deprecated Renamed to `SuspendOnUnmount` — the old name implied Vue-
+ * style DOM preservation which this component does NOT do. Re-exported as
+ * an alias so existing call sites keep working. Will be removed in a
+ * future major.
+ */
+export const KeepAlive = SuspendOnUnmount
 
 /**
  * Auto-suspend a controller when `document.visibilityState === 'hidden'`,

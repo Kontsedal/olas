@@ -1,5 +1,12 @@
-import type { AsyncState, AsyncStatus, Field, Mutation, ReadSignal } from '@kontsedal/olas-core'
-import { useCallback, useRef, useSyncExternalStore } from 'react'
+import type {
+  AsyncState,
+  AsyncStatus,
+  Field,
+  FieldTransform,
+  Mutation,
+  ReadSignal,
+} from '@kontsedal/olas-core'
+import { type ChangeEvent, useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 
 /**
  * Wrap a signal subscribe so the synchronous "initial-value" call that
@@ -280,6 +287,119 @@ export function useField<T>(field: Field<T>): {
     markTouched: () => field.markTouched(),
     revalidate: () => field.revalidate(),
     setErrors: (errs: ReadonlyArray<string>) => field.setErrors(errs),
+  }
+}
+
+/**
+ * JSX-ready spread for binding a `Field<T>` to a native `<input>` /
+ * `<textarea>` / `<select>`. Subscribes to the field's value, errors, and
+ * touched signals; returns props you can spread directly:
+ *
+ * ```tsx
+ * <input {...useFieldInput(form.fields.title)} />
+ * ```
+ *
+ * For non-string fields, pass a `transform`:
+ *
+ * ```tsx
+ * <input
+ *   type="number"
+ *   {...useFieldInput(form.fields.age, {
+ *     transform: { parse: Number, format: String },
+ *   })}
+ * />
+ * ```
+ *
+ * The returned `onChange` reads `e.target.value` and writes through the
+ * transform; `onBlur` calls `markTouched()` so `validateOn: 'blur'` modes
+ * activate without any extra wiring. `aria-invalid` is set when the field
+ * has been touched AND has errors (avoid the "errors on every keystroke"
+ * UX even when validators run on change).
+ */
+export function useFieldInput<T extends string>(
+  field: Field<T>,
+  options?: { name?: string },
+): {
+  value: string
+  onChange: (e: ChangeEvent<{ value: string }>) => void
+  onBlur: () => void
+  name: string | undefined
+  'aria-invalid': boolean | undefined
+  'aria-errormessage': string | undefined
+}
+export function useFieldInput<T>(
+  field: Field<T>,
+  options: { transform: FieldTransform<T>; name?: string },
+): {
+  value: string
+  onChange: (e: ChangeEvent<{ value: string }>) => void
+  onBlur: () => void
+  name: string | undefined
+  'aria-invalid': boolean | undefined
+  'aria-errormessage': string | undefined
+}
+export function useFieldInput<T>(
+  field: Field<T>,
+  options?: { transform?: FieldTransform<T>; name?: string },
+): {
+  value: string
+  onChange: (e: ChangeEvent<{ value: string }>) => void
+  onBlur: () => void
+  name: string | undefined
+  'aria-invalid': boolean | undefined
+  'aria-errormessage': string | undefined
+} {
+  const versionRef = useRef(0)
+  const transform = options?.transform
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const bump = () => {
+        versionRef.current++
+        onChange()
+      }
+      const unsubs = [
+        subscribeOnChange(field, bump),
+        subscribeOnChange(field.errors, bump),
+        subscribeOnChange(field.touched, bump),
+      ]
+      return () => {
+        for (const u of unsubs) u()
+      }
+    },
+    [field],
+  )
+  const getSnapshot = useCallback(() => versionRef.current, [])
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  // Build the change/blur handlers once per field/transform — useMemo over
+  // [field, transform] so each remount of the same field doesn't churn
+  // identity (React downstream may use the function ref for memoization).
+  const handlers = useMemo(() => {
+    const onChangeHandler = (e: ChangeEvent<{ value: string }>): void => {
+      const raw = e.target.value
+      if (transform === undefined) {
+        // Caller asserted `T extends string`; safe to cast.
+        field.set(raw as unknown as T)
+      } else {
+        field.set(transform.parse(raw))
+      }
+    }
+    const onBlurHandler = (): void => field.markTouched()
+    return { onChangeHandler, onBlurHandler }
+  }, [field, transform])
+
+  const value = field.peek()
+  const formatted = transform === undefined ? (value as unknown as string) : transform.format(value)
+  const errors = field.errors.peek()
+  const touched = field.touched.peek()
+  const showError = touched && errors.length > 0
+  return {
+    value: formatted,
+    onChange: handlers.onChangeHandler,
+    onBlur: handlers.onBlurHandler,
+    name: options?.name,
+    'aria-invalid': showError ? true : undefined,
+    'aria-errormessage': showError ? errors[0] : undefined,
   }
 }
 

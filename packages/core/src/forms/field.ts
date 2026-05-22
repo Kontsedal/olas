@@ -468,6 +468,27 @@ export function createField<T>(
 }
 
 /**
+ * A bidirectional `T ↔ string` transform, suitable for HTML input bindings
+ * where DOM values are always strings.
+ *
+ * `parse(raw)` converts the input's string value into the field's type;
+ * `format(value)` converts the field's typed value back into a string for
+ * the input. Both must be pure — `useFieldInput` calls them on every
+ * render and every input event respectively.
+ *
+ * ```ts
+ * const numberTransform: FieldTransform<number> = {
+ *   parse: (raw) => Number(raw),
+ *   format: (v) => String(v),
+ * }
+ * ```
+ */
+export type FieldTransform<T> = {
+  parse: (raw: string) => T
+  format: (value: T) => string
+}
+
+/**
  * Wrap an async validator with a debounce. The debounce timer resets on every
  * value change. While debouncing or the request is in flight, the field's
  * `isValidating` is true and `isValid` is false (treat-as-invalid-until-proven-valid).

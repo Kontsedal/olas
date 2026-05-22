@@ -26,7 +26,7 @@ export type { Emitter, EmitterErrorReporter } from './emitter'
 export { createEmitter } from './emitter'
 export type { ErrorContext, ErrorContextInput, ErrorHandler } from './errors'
 // Forms — stdlib validators + Standard Schema adapter + debouncedValidator
-export type { StandardSchemaV1, Validator } from './forms'
+export type { FieldTransform, StandardSchemaV1, ValidateOn, Validator } from './forms'
 export {
   email,
   isStandardSchema,
