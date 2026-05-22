@@ -18,6 +18,7 @@ export type EntryOptions<T> = {
   retry?: RetryPolicy
   retryDelay?: RetryDelay
   networkMode?: NetworkMode
+  structuralShare?: boolean
   events?: EntryEvents
   /**
    * Fired after a successful fetch result is written to `data`. Used by the
@@ -63,6 +64,7 @@ export class Entry<T> {
   private retry: RetryPolicy
   private retryDelay: RetryDelay
   private networkMode: NetworkMode
+  private structuralShareEnabled: boolean
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
   private staleTimer: ReturnType<typeof setTimeout> | null = null
@@ -99,6 +101,7 @@ export class Entry<T> {
     this.retry = options.retry ?? 0
     this.retryDelay = options.retryDelay ?? 1000
     this.networkMode = options.networkMode ?? 'online'
+    this.structuralShareEnabled = options.structuralShare ?? true
     this.events = options.events ?? {}
     this.onSuccessData = options.onSuccessData as ((data: unknown) => void) | undefined
     this.data = signal<T | undefined>(options.initialData)
@@ -246,9 +249,12 @@ export class Entry<T> {
     // Structurally share with the previous value so unchanged sub-trees
     // keep their `===` identity. Downstream `computed`s and React snapshots
     // stop thrashing on no-op refetches. Bails on Maps/Sets/class instances
-    // — see `structural-share.ts`.
+    // — see `structural-share.ts`. Disabled per-query via `structuralShare:
+    // false` for large payloads where the O(payload) walk costs more than
+    // the re-render savings.
     const prev = this.data.peek() as T | undefined
-    const shared = prev === undefined ? result : structuralShare(prev, result)
+    const shared =
+      prev === undefined || !this.structuralShareEnabled ? result : structuralShare(prev, result)
     batch(() => {
       this.data.set(shared)
       this.error.set(undefined)

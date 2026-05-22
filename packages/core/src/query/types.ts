@@ -152,6 +152,14 @@ export type QuerySpec<Args extends unknown[], T> = {
    */
   networkMode?: NetworkMode
   /**
+   * Whether to run `structuralShare(prev, next)` after a successful fetch.
+   * Defaults to `true`. Set `false` for queries returning large payloads
+   * (e.g. a 100k-row table) where the O(payload) deep walk on every poll
+   * is more expensive than re-rendering. With `false`, `applySuccess`
+   * writes the fetcher's result directly.
+   */
+  structuralShare?: boolean
+  /**
    * Stable identifier used by `QueryClientPlugin`s (e.g. `@kontsedal/olas-cross-tab`)
    * to locate the same query across tabs / processes / persistence layers.
    * REQUIRED for queries with `crossTab: true`. SPEC §13.2.
@@ -161,10 +169,15 @@ export type QuerySpec<Args extends unknown[], T> = {
    */
   queryId?: string
   /**
-   * Opt this query into cross-tab cache sync (`@kontsedal/olas-cross-tab`). No effect
-   * without a `queryId` and without a plugin installed. SPEC §13.2.
+   * Opt this query into cross-tab cache sync (`@kontsedal/olas-cross-tab`).
+   * No effect without a `queryId` and without a plugin installed. SPEC §13.2.
+   *
+   * - `true` (legacy) — equivalent to `'data'`.
+   * - `'data'` — propagate explicit `setData`/`invalidate` writes only.
+   * - `'infinite'` — only relevant for infinite queries (page arrays).
+   * - `'both'` — propagate both data and infinite traffic.
    */
-  crossTab?: boolean
+  crossTab?: boolean | 'data' | 'infinite' | 'both'
 }
 
 /**

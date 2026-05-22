@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { dispatchError, type ErrorContext } from '../src/errors'
+import { dispatchError, type ErrorContextInput } from '../src/errors'
 
-const ctx: ErrorContext = { kind: 'effect', controllerPath: ['root', 'feature'] }
+const ctx: ErrorContextInput = { kind: 'effect', controllerPath: ['root', 'feature'] }
 
 let consoleErr: ReturnType<typeof vi.spyOn>
 
@@ -20,7 +20,10 @@ describe('dispatchError', () => {
     expect(handler).toHaveBeenCalledTimes(1)
     const [err, passedCtx] = handler.mock.calls[0]!
     expect((err as Error).message).toBe('boom')
-    expect(passedCtx).toEqual(ctx)
+    expect(passedCtx).toMatchObject(ctx)
+    // The dispatcher stamps a per-event correlation id + timestamp.
+    expect(typeof (passedCtx as { eventId: string }).eventId).toBe('string')
+    expect(typeof (passedCtx as { timestamp: number }).timestamp).toBe('number')
   })
 
   test('falls back to console.error when no handler is provided', () => {

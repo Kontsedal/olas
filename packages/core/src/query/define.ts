@@ -10,7 +10,10 @@ type QueryInternal<Args extends unknown[], T> = Query<Args, T> & {
 
 const warnedMissingId = new WeakSet<object>()
 
-function registerQueryId(spec: { queryId?: string; crossTab?: boolean }, query: object): void {
+function registerQueryId(
+  spec: { queryId?: string; crossTab?: boolean | 'data' | 'infinite' | 'both' },
+  query: object,
+): void {
   if (spec.queryId != null) {
     registerQueryById(spec.queryId, query as RegisteredQuery)
   } else if (spec.crossTab === true) {

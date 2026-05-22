@@ -155,6 +155,13 @@ export type MutationSettleEvent = {
  */
 export type QueryClientPlugin = {
   /**
+   * Optional human-readable identifier surfaced in `ErrorContext.pluginName`
+   * when this plugin's callback throws. Without it, `pluginName` is left
+   * `undefined`. Recommended for shipped plugins so Sentry/OTel adapters
+   * can attribute errors back to the right package.
+   */
+  readonly name?: string
+  /**
    * Called once after the `QueryClient` is constructed. Use it to wire up
    * transport listeners and capture the `QueryClientPluginApi`. SPEC §13.2.
    *

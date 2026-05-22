@@ -27,13 +27,60 @@ function subscribeOnChange<T>(s: ReadSignal<T>, onChange: () => void): () => voi
  * when a component depends on one signal; for `Field<T>` and `AsyncState<T>`,
  * prefer `useField` and `useQuery` which batch multiple subscribes into one
  * render trigger.
+ *
+ * Optional `select` projects the signal value into a derived slice; `isEqual`
+ * (default `Object.is`) controls when React re-renders. Combine to subscribe
+ * to a slice of an object-shaped signal without re-rendering on unrelated
+ * changes:
+ *
+ * ```ts
+ * const name = use(userSignal, { select: u => u.name })
+ * const tags = use(postSignal, {
+ *   select: p => p.tags,
+ *   isEqual: (a, b) => a.length === b.length && a.every((x, i) => x === b[i]),
+ * })
+ * ```
  */
-export function use<T>(signal: ReadSignal<T>): T {
+export function use<T>(signal: ReadSignal<T>): T
+export function use<T, U>(
+  signal: ReadSignal<T>,
+  options: { select: (value: T) => U; isEqual?: (a: U, b: U) => boolean },
+): U
+export function use<T>(signal: ReadSignal<T>, options: { isEqual: (a: T, b: T) => boolean }): T
+export function use<T, U = T>(
+  signal: ReadSignal<T>,
+  options?: { select?: (value: T) => U; isEqual?: (a: U, b: U) => boolean },
+): T | U {
+  // Cache the last derived slice + raw input so `getSnapshot` returns a
+  // stable reference unless `isEqual` says otherwise. Without this, a
+  // selector returning a fresh object every call would loop React.
+  const lastRef = useRef<{ raw: T; out: T | U; initialized: boolean }>({
+    raw: undefined as unknown as T,
+    out: undefined as unknown as T | U,
+    initialized: false,
+  })
+  const select = options?.select
+  const isEqual = options?.isEqual
+
   const subscribe = useCallback(
     (onChange: () => void) => subscribeOnChange(signal, onChange),
     [signal],
   )
-  const getSnapshot = useCallback(() => signal.peek(), [signal])
+  const getSnapshot = useCallback((): T | U => {
+    const raw = signal.peek()
+    const last = lastRef.current
+    if (!last.initialized || !Object.is(last.raw, raw)) {
+      const next = (select ? select(raw) : raw) as T | U
+      if (last.initialized && isEqual !== undefined && isEqual(last.out as U, next as U)) {
+        last.raw = raw // remember the new raw so the equality check fires once
+        return last.out
+      }
+      last.raw = raw
+      last.out = next
+      last.initialized = true
+    }
+    return last.out
+  }, [signal, select, isEqual])
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
@@ -147,6 +194,30 @@ export function useQuery<T>(
     hasPendingMutations: subscription.hasPendingMutations.peek(),
     refetch: subscription.refetch,
   }
+}
+
+/**
+ * Suspense-first variant of `useQuery`. `data` is always `T` (the hook
+ * suspends until the first success, after which refetches don't re-suspend).
+ * Errors throw to the nearest ErrorBoundary. Same fan-out as `useQuery` —
+ * one `useSyncExternalStore` registration over the eight subscription
+ * signals.
+ *
+ * Sugar over `useQuery(sub, { suspense: true })`; exists so call sites
+ * read as `useSuspenseQuery(sub)` without an options bag.
+ */
+export function useSuspenseQuery<T>(subscription: AsyncState<T>): {
+  data: T
+  error: unknown | undefined
+  status: AsyncStatus
+  isLoading: boolean
+  isFetching: boolean
+  isStale: boolean
+  lastUpdatedAt: number | undefined
+  hasPendingMutations: boolean
+  refetch: () => Promise<T>
+} {
+  return useQuery(subscription, { suspense: true })
 }
 
 /**
