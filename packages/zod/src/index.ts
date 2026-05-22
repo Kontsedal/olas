@@ -22,14 +22,38 @@ export function zodValidator<T>(schema: z.ZodType<T>): Validator<T> {
 /**
  * Async variant for schemas with `.refine(async ...)` or `.transform(async ...)`.
  * Returns a Promise<string | null>.
+ *
+ * Zod has no native cancellation surface, so we race `safeParseAsync` against
+ * the supplied `signal` and throw an `AbortError` if the signal fires. The
+ * validator runner filters `AbortError` via `isAbortError`, so a superseded
+ * pass never writes its result back.
  */
 export function zodValidatorAsync<T>(schema: z.ZodType<T>): Validator<T> {
   return async (value, signal) => {
-    void signal
-    const result = await schema.safeParseAsync(value)
+    if (signal?.aborted) throw makeAbortError()
+    const abortPromise = signal
+      ? new Promise<never>((_, reject) => {
+          const onAbort = () => reject(makeAbortError())
+          signal.addEventListener('abort', onAbort, { once: true })
+        })
+      : undefined
+    const parsePromise = schema.safeParseAsync(value)
+    const result = await (abortPromise ? Promise.race([parsePromise, abortPromise]) : parsePromise)
+    if (signal?.aborted) throw makeAbortError()
     if (result.success) return null
     return result.error.issues[0]?.message ?? 'Invalid'
   }
+}
+
+function makeAbortError(): Error {
+  // DOMException is the canonical AbortError but isn't available everywhere
+  // (e.g. older Node ESM environments before 17). Fall back to a tagged Error.
+  if (typeof DOMException === 'function') {
+    return new DOMException('Aborted', 'AbortError')
+  }
+  const err = new Error('Aborted')
+  err.name = 'AbortError'
+  return err
 }
 
 /**
@@ -58,10 +82,14 @@ export function rootOnlyZodValidator<T>(schema: z.ZodType<T>): Validator<T> {
 type AnyZodType = z.ZodType
 
 // Strip the outer optional/nullable/default wrappers to find the inner schema.
+// Unwraps to a fixed point with identity-cycle detection so a pathological
+// schema graph can never loop. `.optional().nullable().default(x).optional()`
+// chains of any depth are handled.
 function unwrap(schema: AnyZodType): AnyZodType {
   let s: AnyZodType = schema
-  // Unwrap default + optional + nullable, in any combination.
-  for (let i = 0; i < 5; i++) {
+  const seen = new Set<AnyZodType>()
+  while (!seen.has(s)) {
+    seen.add(s)
     if (s instanceof z.ZodDefault) {
       // ZodDefault stores the inner schema on `def.innerType`. The runtime
       // shape is stable across 3.x and 4.x; the public type just shifts.
@@ -95,7 +123,17 @@ function defaultInitial(schema: AnyZodType): unknown {
     const first = opts[0]
     return typeof first === 'string' ? first : ''
   }
-  // For unknown/any/dates etc., undefined is the safest starting point.
+  if (inner instanceof z.ZodDate) return null
+  if (inner instanceof z.ZodBigInt) return 0n
+  if (inner instanceof z.ZodLiteral) {
+    const vals = (inner as unknown as { def: { values: readonly unknown[] } }).def?.values
+    return vals?.[0]
+  }
+  if (inner instanceof z.ZodTuple) return []
+  if (inner instanceof z.ZodRecord) return {}
+  if (inner instanceof z.ZodMap) return new Map()
+  if (inner instanceof z.ZodSet) return new Set()
+  // For unknown/any/union/discriminated-union, undefined is the safest start.
   return undefined
 }
 

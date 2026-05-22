@@ -17,6 +17,19 @@ export type StorageAdapter = {
   keys?(): Iterable<string> | Promise<Iterable<string>>
 }
 
+/**
+ * Where a `PersistOptions.onError` fired. Distinguishes the failing operation
+ * for routing (e.g. quota-exceeded vs schema-migration-failed vs
+ * deserialization-corrupted).
+ */
+export type PersistErrorOp =
+  | 'load'
+  | 'deserialize'
+  | 'serialize'
+  | 'write'
+  | 'migrate'
+  | 'remoteChange'
+
 export type PersistOptions<T> = {
   /**
    * Storage backend. When omitted *or explicitly `undefined`* (handy for app
@@ -28,6 +41,42 @@ export type PersistOptions<T> = {
   serialize?: (value: T) => string
   deserialize?: (raw: string) => T
   crossTab?: boolean
+  /**
+   * Schema version. When the value loaded from storage carries a different
+   * `version`, `migrate(raw, fromVersion)` is invoked to bring it forward;
+   * the migrated value is written back atomically. When omitted, no version
+   * gate runs — payloads are read and written raw (current default).
+   *
+   * The on-disk shape with versioning enabled is `{"v": N, "d": <serialized>}`
+   * — `usePersisted` wraps every write and reads both shapes (legacy raw and
+   * versioned). Versioned writes only happen once `version` is set.
+   */
+  version?: number
+  /**
+   * Migrate a raw payload of a prior version. Receives the pre-deserialize
+   * string and the version number it was written with (or `undefined` if no
+   * version stamp existed, i.e. the legacy raw shape). Return the migrated
+   * payload AS A `T` value (post-deserialize); `usePersisted` re-serializes
+   * it before writing. Return `undefined` to drop the entry (the source
+   * keeps its current value).
+   */
+  migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
+  /**
+   * Debounce writes by `throttleMs` milliseconds. Useful for high-frequency
+   * sources (cursor position, scroll, every-keystroke field) where the
+   * default "write on every change" is too chatty. Defaults to `0` (no
+   * debounce). On `ctx.onDispose`, any pending write is flushed.
+   */
+  throttleMs?: number
+  /**
+   * Routed errors from every fallible op: storage `get`/`set` (quota,
+   * security, version-conflict), `deserialize`/`serialize` (corrupt JSON,
+   * non-serializable T), `migrate` (user-thrown), and `onChange` callbacks
+   * (cross-tab payload corruption). Without this, errors are swallowed —
+   * matches the historical behavior, but production apps want at least a
+   * sentry/console hook.
+   */
+  onError?: (err: unknown, op: PersistErrorOp, key: string) => void
 }
 
 export type Persisted = {
@@ -258,35 +307,168 @@ export function usePersisted<T>(
   const serialize = options?.serialize ?? JSON.stringify
   const deserialize = options?.deserialize ?? JSON.parse
   const crossTab = options?.crossTab ?? false
+  const version = options?.version
+  const migrate = options?.migrate
+  const throttleMs = options?.throttleMs ?? 0
+  const onError = options?.onError
+
+  const reportError = (err: unknown, op: PersistErrorOp): void => {
+    if (onError === undefined) return
+    try {
+      onError(err, op, key)
+    } catch {
+      /* an onError handler that itself throws is its own problem. */
+    }
+  }
 
   const ready$ = signal(false)
   let writingFromLoad = false
 
+  /**
+   * On-disk envelope when `version` is set: `{"v": N, "d": "<serializedT>"}`.
+   * Without `version`, we read/write raw (legacy shape). Migration takes the
+   * raw inner string + the parsed `v` (or `undefined` for legacy) so the
+   * consumer's migrator can replay arbitrary historical formats.
+   */
+  type Envelope = { v: number; d: string }
+  const isEnvelope = (raw: unknown): raw is Envelope =>
+    typeof raw === 'object' &&
+    raw !== null &&
+    typeof (raw as { v?: unknown }).v === 'number' &&
+    typeof (raw as { d?: unknown }).d === 'string'
+
+  const encodeForStorage = (value: T): string => {
+    const inner = serialize(value)
+    if (version === undefined) return inner
+    return JSON.stringify({ v: version, d: inner })
+  }
+
   // Load initial value.
   const loaded = storage.get(key)
-  const applyLoaded = (raw: string | null) => {
+  const applyLoaded = async (raw: string | null): Promise<void> => {
     if (raw == null) {
       ready$.set(true)
       return
     }
+    let value: T | undefined
+    let needsRewrite = false
     try {
-      const value = deserialize(raw)
-      writingFromLoad = true
+      // Try the envelope shape first (for version-aware reads). If it isn't
+      // an envelope, treat the raw string as a legacy v=undefined payload.
+      let parsedEnvelope: unknown
       try {
-        source.set(value)
-      } finally {
-        writingFromLoad = false
+        parsedEnvelope = JSON.parse(raw)
+      } catch {
+        parsedEnvelope = undefined
       }
-    } catch {
-      // Corrupted entry — ignore and continue with whatever the source had.
+      if (version !== undefined && isEnvelope(parsedEnvelope)) {
+        if (parsedEnvelope.v === version) {
+          value = deserialize(parsedEnvelope.d) as T
+        } else if (migrate !== undefined) {
+          try {
+            const migrated = await migrate(parsedEnvelope.d, parsedEnvelope.v)
+            if (migrated === undefined) {
+              ready$.set(true)
+              return
+            }
+            value = migrated
+            needsRewrite = true
+          } catch (err) {
+            reportError(err, 'migrate')
+            ready$.set(true)
+            return
+          }
+        } else {
+          // Version mismatch with no migrator — discard.
+          ready$.set(true)
+          return
+        }
+      } else if (version !== undefined && migrate !== undefined) {
+        // Legacy raw payload but we now require versioning — invoke migrator
+        // with `fromVersion: undefined`.
+        try {
+          const migrated = await migrate(raw, undefined)
+          if (migrated === undefined) {
+            ready$.set(true)
+            return
+          }
+          value = migrated
+          needsRewrite = true
+        } catch (err) {
+          reportError(err, 'migrate')
+          ready$.set(true)
+          return
+        }
+      } else {
+        value = deserialize(raw) as T
+      }
+    } catch (err) {
+      reportError(err, 'deserialize')
+      ready$.set(true)
+      return
+    }
+    writingFromLoad = true
+    try {
+      source.set(value as T)
+    } finally {
+      writingFromLoad = false
     }
     ready$.set(true)
+    if (needsRewrite) {
+      try {
+        const writeResult = storage.set(key, encodeForStorage(value as T))
+        if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
+      } catch (err) {
+        reportError(err, 'write')
+      }
+    }
   }
 
   if (loaded instanceof Promise) {
-    loaded.then(applyLoaded, () => ready$.set(true))
+    loaded.then(
+      (raw) => applyLoaded(raw),
+      (err) => {
+        reportError(err, 'load')
+        ready$.set(true)
+      },
+    )
   } else {
     applyLoaded(loaded)
+  }
+
+  // Optional throttled writer. State is captured per-`usePersisted` call so
+  // multiple persisted signals in the same controller don't interfere.
+  let pendingWriteValue: T | undefined
+  let hasPendingWrite = false
+  let writeTimer: ReturnType<typeof setTimeout> | null = null
+
+  const flushWrite = (): void => {
+    if (!hasPendingWrite) return
+    const value = pendingWriteValue as T
+    hasPendingWrite = false
+    pendingWriteValue = undefined
+    writeTimer = null
+    try {
+      const raw = encodeForStorage(value)
+      const writeResult = storage.set(key, raw)
+      if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
+    } catch (err) {
+      reportError(err, 'serialize')
+    }
+  }
+
+  const scheduleWrite = (value: T): void => {
+    if (throttleMs <= 0) {
+      pendingWriteValue = value
+      hasPendingWrite = true
+      flushWrite()
+      return
+    }
+    pendingWriteValue = value
+    hasPendingWrite = true
+    if (writeTimer === null) {
+      writeTimer = setTimeout(flushWrite, throttleMs)
+    }
   }
 
   // Persist on every CHANGE. The signal's subscribe fires immediately with
@@ -300,17 +482,7 @@ export function usePersisted<T>(
     }
     if (writingFromLoad) return
     if (!ready$.peek()) return
-    try {
-      const raw = serialize(value)
-      const writeResult = storage.set(key, raw)
-      if (writeResult instanceof Promise) {
-        writeResult.catch(() => {
-          /* swallow write errors — caller can supply onError via deps if they care */
-        })
-      }
-    } catch {
-      // Serialization failed; nothing to do.
-    }
+    scheduleWrite(value)
   })
 
   // Cross-tab sync.
@@ -332,23 +504,73 @@ export function usePersisted<T>(
         return
       }
       try {
-        const value = deserialize(rawValue)
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(rawValue)
+        } catch {
+          parsed = undefined
+        }
+        let value: T
+        if (version !== undefined && isEnvelope(parsed)) {
+          if (parsed.v !== version) return // peer is on a different schema; ignore.
+          value = deserialize(parsed.d) as T
+        } else {
+          value = deserialize(rawValue) as T
+        }
         writingFromLoad = true
         try {
           source.set(value)
         } finally {
           writingFromLoad = false
         }
-      } catch {
-        /* ignore */
+      } catch (err) {
+        reportError(err, 'remoteChange')
       }
     })
   }
 
   ctx.onDispose(() => {
+    // Flush any pending throttled write before tearing down so we never lose
+    // the last value the user produced. Synchronous in localStorage; the
+    // Promise return from IDB resolves shortly after dispose returns.
+    if (hasPendingWrite) {
+      if (writeTimer !== null) clearTimeout(writeTimer)
+      flushWrite()
+    }
     unsub()
     unsubChange?.()
   })
 
   return { ready: ready$ }
+}
+
+/**
+ * Clear every key under a `prefix` (default: clear all). Useful for "log out"
+ * flows that want to drop persisted state without enumerating consumers.
+ * Errors are routed through the optional `onError` (e.g. quota or security
+ * exceptions on `delete`).
+ */
+export async function clearPersisted(
+  storage: StorageAdapter = localStorageAdapter,
+  prefix?: string,
+  onError?: (err: unknown, key: string) => void,
+): Promise<void> {
+  if (storage.keys === undefined) return
+  let keys: Iterable<string>
+  try {
+    const result = storage.keys()
+    keys = result instanceof Promise ? await result : result
+  } catch (err) {
+    onError?.(err, '<keys>')
+    return
+  }
+  for (const key of keys) {
+    if (prefix !== undefined && !key.startsWith(prefix)) continue
+    try {
+      const r = storage.delete(key)
+      if (r instanceof Promise) await r
+    } catch (err) {
+      onError?.(err, key)
+    }
+  }
 }

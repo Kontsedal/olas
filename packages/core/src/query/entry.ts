@@ -1,7 +1,8 @@
 import { batch, type Signal, signal } from '../signals'
 import { abortableSleep, isAbortError } from '../utils'
+import { subscribeReconnect } from './focus-online'
 import { structuralShare } from './structural-share'
-import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
+import type { AsyncStatus, NetworkMode, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 export type EntryEvents = {
   onFetchStart?: () => void
@@ -16,6 +17,7 @@ export type EntryOptions<T> = {
   initialUpdatedAt?: number | undefined
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  networkMode?: NetworkMode
   events?: EntryEvents
   /**
    * Fired after a successful fetch result is written to `data`. Used by the
@@ -60,12 +62,25 @@ export class Entry<T> {
   private staleTime: number
   private retry: RetryPolicy
   private retryDelay: RetryDelay
+  private networkMode: NetworkMode
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
   private staleTimer: ReturnType<typeof setTimeout> | null = null
   private snapshots: Array<SnapshotRecord<T>> = []
   private nextSnapshotId = 0
   private disposed = false
+  /** Subscribers to reconnect — installed lazily when a deferred fetch lands. */
+  private reconnectUnsub: (() => void) | null = null
+  /**
+   * Set of deferred-fetch resolvers waiting for reconnect (online mode).
+   * Stored at `unknown` to keep `Entry<T>` covariant in `T` — same trick as
+   * `onSuccessData`. Each resolver is fed the same value from
+   * `applySuccess`, which is `T`, then cast at the fan-out call site.
+   */
+  private deferredResolvers: Array<{
+    resolve: (value: unknown) => void
+    reject: (reason?: unknown) => void
+  }> = []
   private readonly events: EntryEvents
   // Stored at `unknown` (not `T`) to keep `Entry<T>` covariant in `T`. The
   // callback only forwards the value through; Entry never inspects it.
@@ -83,6 +98,7 @@ export class Entry<T> {
     this.staleTime = options.staleTime ?? 0
     this.retry = options.retry ?? 0
     this.retryDelay = options.retryDelay ?? 1000
+    this.networkMode = options.networkMode ?? 'online'
     this.events = options.events ?? {}
     this.onSuccessData = options.onSuccessData as ((data: unknown) => void) | undefined
     this.data = signal<T | undefined>(options.initialData)
@@ -119,6 +135,13 @@ export class Entry<T> {
     if (this.disposed) {
       return Promise.reject(new Error('Entry disposed'))
     }
+    // `online` mode: defer until reconnect when the browser thinks we're
+    // offline. Don't touch status — the UI keeps showing last-known data.
+    // `always` / `offlineFirst` proceed to the fetcher; `offlineFirst` will
+    // re-handle a network rejection inside the catch path.
+    if (this.networkMode === 'online' && this.isOffline()) {
+      return this.scheduleDeferredFetch()
+    }
     const myId = ++this.currentFetchId
     this.currentAbort?.abort()
     const abort = new AbortController()
@@ -139,6 +162,45 @@ export class Entry<T> {
     }
 
     return this.runWithRetry(myId, abort)
+  }
+
+  private isOffline(): boolean {
+    return typeof navigator !== 'undefined' && navigator.onLine === false
+  }
+
+  private scheduleDeferredFetch(): Promise<T> {
+    // Lazy-install one reconnect listener for the entry. Cleared on dispose
+    // and on the first successful drain. Each call appends a fresh resolver.
+    if (this.reconnectUnsub === null) {
+      this.reconnectUnsub = subscribeReconnect(() => this.drainDeferred())
+    }
+    return new Promise<T>((resolve, reject) => {
+      this.deferredResolvers.push({
+        resolve: resolve as (value: unknown) => void,
+        reject,
+      })
+    })
+  }
+
+  private drainDeferred(): void {
+    if (this.deferredResolvers.length === 0) return
+    if (this.disposed) return
+    const pending = this.deferredResolvers
+    this.deferredResolvers = []
+    // One real fetch fans out to every pending resolver. Tearing down the
+    // reconnect listener avoids accumulating listeners across many deferrals.
+    if (this.reconnectUnsub !== null) {
+      this.reconnectUnsub()
+      this.reconnectUnsub = null
+    }
+    this.startFetch().then(
+      (value) => {
+        for (const p of pending) p.resolve(value)
+      },
+      (err) => {
+        for (const p of pending) p.reject(err)
+      },
+    )
   }
 
   private async runWithRetry(myId: number, abort: AbortController): Promise<T> {
@@ -341,6 +403,16 @@ export class Entry<T> {
     }
     this.currentAbort?.abort()
     this.currentAbort = null
+    if (this.reconnectUnsub !== null) {
+      this.reconnectUnsub()
+      this.reconnectUnsub = null
+    }
+    if (this.deferredResolvers.length > 0) {
+      const disposed = new DOMException('Entry disposed', 'AbortError')
+      const pending = this.deferredResolvers
+      this.deferredResolvers = []
+      for (const p of pending) p.reject(disposed)
+    }
     if (this.pendingFirstValueRejects.length > 0) {
       const disposed = new DOMException('Entry disposed', 'AbortError')
       const rejects = this.pendingFirstValueRejects

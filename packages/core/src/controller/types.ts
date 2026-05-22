@@ -209,7 +209,11 @@ export type Ctx<TDeps = AmbientDeps> = {
 
   emitter<T = void>(): Emitter<T>
 
-  field<T>(initial: T, validators?: ReadonlyArray<Validator<T>>): Field<T>
+  field<T>(
+    initial: T,
+    validators?: ReadonlyArray<Validator<T>>,
+    options?: { validateOn?: 'change' | 'blur' | 'submit' },
+  ): Field<T>
 
   form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S>
 

@@ -31,6 +31,32 @@ export type MutationQueueOptions = {
   keyPrefix: string
   maxAttempts?: number
   onReplayError?: (err: unknown, entry: QueueEntry) => void
+  /**
+   * Fires on every non-final replay attempt failure (i.e. when the entry
+   * will be re-tried on the next page load because `attempts <
+   * maxAttempts`). Without this, transient failures are completely silent
+   * and UIs can't show a "we'll retry later" indicator. Distinguished from
+   * `onReplayError` which is the terminal-after-exhaustion variant.
+   */
+  onReplayAttempt?: (err: unknown, entry: QueueEntry) => void
+  /**
+   * Compute an idempotency key from `variables`. When two enqueues with
+   * the same `mutationId` produce the same key, the second is collapsed
+   * onto the first: the in-process run continues (the consumer's mutation
+   * promise resolves with the second call's result), but no new durable
+   * entry is written. Client-side dedupe only; server-side dedupe by the
+   * same key is the authoritative gate. Defaults to `undefined` (no
+   * dedupe).
+   */
+  dedupeBy?: (mutationId: string, variables: unknown) => string | undefined
+  /**
+   * Migrate a raw queue entry of a prior `PROTOCOL_VERSION`. Receives the
+   * parsed JSON and the version number it carried. Returns a
+   * forward-compatible `QueueEntry`, or `null` to drop the entry. Without
+   * this, a `v` bump silently discards every queued mutation (the current
+   * default — fine while the protocol is v1).
+   */
+  migrate?: (raw: unknown, fromVersion: number) => QueueEntry | null
   onWarn?: (message: string, cause?: unknown) => void
 }
 
@@ -72,11 +98,31 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   const { adapter, keyPrefix } = options
   const maxAttempts = options.maxAttempts ?? 5
   const onReplayError = options.onReplayError ?? defaultReplayError
+  const onReplayAttempt = options.onReplayAttempt
+  const dedupeBy = options.dedupeBy
+  const migrate = options.migrate
   const onWarn = options.onWarn ?? defaultWarn
 
   if (typeof keyPrefix !== 'string' || keyPrefix.length === 0) {
     throw new Error('[olas/mutation-queue] keyPrefix is required.')
   }
+
+  /**
+   * Monotonic per-tab sequence counter. Persisted entries take this as
+   * their `seq` so replay ordering survives wall-clock drift. Starts from
+   * the highest `seq` we observe on disk during the first `init` so a
+   * restart doesn't reset back to zero (which would tear ordering apart
+   * for entries enqueued across two sessions).
+   */
+  let seqCounter = 0
+
+  /**
+   * Map of active `idempotencyKey` → `runId`. When `dedupeBy` returns a
+   * key that matches an in-flight entry, the second enqueue collapses
+   * onto the first (no new write). Cleared on settle (success/error after
+   * exhaustion, NOT cancelled).
+   */
+  const activeKeys = new Map<string, string>()
 
   // Per-runId attempt counter so a replay that itself enqueues bumps the
   // attempts counter rather than allocating a fresh slot.
@@ -144,18 +190,30 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
     if (typeof raw !== 'string') return null
     try {
       const parsed = JSON.parse(raw) as unknown
+      if (parsed === null || typeof parsed !== 'object') return null
+      const obj = parsed as Record<string, unknown>
+      const version = typeof obj.v === 'number' ? obj.v : undefined
+      if (version !== PROTOCOL_VERSION) {
+        // Try migrator first; if it returns null (or none configured), drop.
+        if (migrate !== undefined && version !== undefined) {
+          try {
+            const migrated = migrate(parsed, version)
+            if (migrated !== null) return migrated
+          } catch (err) {
+            onWarn('[olas/mutation-queue] migrate threw; dropping entry', err)
+          }
+        }
+        return null
+      }
       if (
-        parsed === null ||
-        typeof parsed !== 'object' ||
-        (parsed as { v?: unknown }).v !== PROTOCOL_VERSION ||
-        typeof (parsed as { mutationId?: unknown }).mutationId !== 'string' ||
-        typeof (parsed as { runId?: unknown }).runId !== 'string' ||
-        typeof (parsed as { attempts?: unknown }).attempts !== 'number' ||
-        typeof (parsed as { enqueuedAt?: unknown }).enqueuedAt !== 'number'
+        typeof obj.mutationId !== 'string' ||
+        typeof obj.runId !== 'string' ||
+        typeof obj.attempts !== 'number' ||
+        typeof obj.enqueuedAt !== 'number'
       ) {
         return null
       }
-      return parsed as QueueEntry
+      return obj as unknown as QueueEntry
     } catch {
       return null
     }
@@ -249,10 +307,17 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
       // Single replay attempt failed. If this was the last allowed
       // attempt, drop and surface; otherwise leave the entry in place
       // (with the bumped attempts counter) so the next page load tries
-      // again.
+      // again. Fire `onReplayAttempt` either way so consumers can show
+      // "retrying" indicators.
       if (next.attempts >= maxAttempts) {
         await deleteEntry(entry.mutationId, entry.runId)
         onReplayError(err, next)
+      } else if (onReplayAttempt !== undefined) {
+        try {
+          onReplayAttempt(err, next)
+        } catch {
+          /* don't let a buggy onReplayAttempt break replay */
+        }
       }
     }
   }
@@ -298,9 +363,22 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
       if (bucket === undefined) byMutation.set(e.mutationId, [e])
       else bucket.push(e)
     }
+    // Prime the monotonic counter so post-restart enqueues sit after every
+    // pre-restart entry — without this, replay ordering after a reload
+    // would mix new and old entries by wall-clock alone.
+    for (const e of entries) {
+      if (typeof e.seq === 'number' && e.seq > seqCounter) seqCounter = e.seq
+    }
     const tasks: Promise<void>[] = []
     for (const bucket of byMutation.values()) {
-      bucket.sort((a, b) => a.enqueuedAt - b.enqueuedAt)
+      // Prefer monotonic `seq` (assigned at enqueue time, immune to clock
+      // drift). Fall back to `enqueuedAt` for legacy entries without a
+      // `seq` stamp.
+      bucket.sort((a, b) => {
+        const aS = typeof a.seq === 'number' ? a.seq : a.enqueuedAt
+        const bS = typeof b.seq === 'number' ? b.seq : b.enqueuedAt
+        return aS - bS
+      })
       tasks.push(
         (async () => {
           for (const entry of bucket) {
@@ -323,6 +401,20 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
     },
 
     onMutationEnqueue(event: MutationEnqueueEvent) {
+      const idempotencyKey = dedupeBy?.(event.mutationId, event.variables)
+      if (idempotencyKey !== undefined) {
+        const fullKey = `${event.mutationId}:${idempotencyKey}`
+        const existingRunId = activeKeys.get(fullKey)
+        if (existingRunId !== undefined && existingRunId !== event.runId) {
+          // Already in flight under a different runId — collapse. The
+          // in-process run continues (consumer's promise resolves with
+          // whatever this attempt produces), but we don't write a second
+          // durable entry. The server's dedupe is the canonical gate.
+          return
+        }
+        activeKeys.set(fullKey, event.runId)
+      }
+      seqCounter += 1
       const entry: QueueEntry = {
         v: PROTOCOL_VERSION,
         mutationId: event.mutationId,
@@ -330,6 +422,8 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
         variables: event.variables,
         attempts: event.attempt,
         enqueuedAt: Date.now(),
+        seq: seqCounter,
+        idempotencyKey,
       }
       // Fire and forget — `runOnChain` ensures a subsequent delete waits
       // on this write, so the persist-after-delete race can't happen even
@@ -338,6 +432,14 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
     },
 
     onMutationSettle(event: MutationSettleEvent) {
+      // Best-effort cleanup of activeKeys — we don't track runId → key, so
+      // walk the map. O(n) in active mutations, normally 0-few.
+      for (const [k, v] of activeKeys) {
+        if (v === event.runId) {
+          activeKeys.delete(k)
+          break
+        }
+      }
       switch (event.outcome) {
         case 'success':
           void deleteEntry(event.mutationId, event.runId)

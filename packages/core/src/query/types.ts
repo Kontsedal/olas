@@ -117,6 +117,23 @@ export type FetchCtx = {
  * cache args come after. This shape lets module-scoped queries read
  * `ctx.deps.api` etc. — no `setApiForQuery(api)` module-level capture needed.
  */
+/**
+ * How a query behaves with respect to the network reachability signal.
+ *
+ * - `online` (default) — pause fetches while `navigator.onLine` is `false`;
+ *   automatically resume when reconnect fires (via `subscribeReconnect`).
+ *   Inflight fetches are NOT aborted on offline; a `bindEntry` / `acquire`
+ *   that lands while offline simply defers the initial fetch.
+ * - `always` — never gate on connectivity; fetcher runs whenever requested.
+ *   Useful for queries against `localhost` / IPC / a service worker that
+ *   doesn't surface through `navigator.onLine`.
+ * - `offlineFirst` — start the fetch regardless; if it rejects with a
+ *   network-y error and we're currently offline, leave the entry in `idle`
+ *   and resume on reconnect rather than bubbling the error. Matches
+ *   TanStack's `offlineFirst` policy for app-shell-first PWAs.
+ */
+export type NetworkMode = 'online' | 'always' | 'offlineFirst'
+
 export type QuerySpec<Args extends unknown[], T> = {
   key: (...args: Args) => unknown[]
   fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>
@@ -128,6 +145,12 @@ export type QuerySpec<Args extends unknown[], T> = {
   keepPreviousData?: boolean
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  /**
+   * Network-mode policy. Defaults to `'online'`. See `NetworkMode` for the
+   * three policies. Override per-query for special cases (e.g. `'always'`
+   * for `localhost` queries that don't surface through `navigator.onLine`).
+   */
+  networkMode?: NetworkMode
   /**
    * Stable identifier used by `QueryClientPlugin`s (e.g. `@kontsedal/olas-cross-tab`)
    * to locate the same query across tabs / processes / persistence layers.

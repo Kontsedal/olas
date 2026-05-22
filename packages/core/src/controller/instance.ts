@@ -392,7 +392,11 @@ export class ControllerInstance {
         return e
       },
 
-      field<T>(initial: T, validators?: ReadonlyArray<Validator<T>>): Field<T> {
+      field<T>(
+        initial: T,
+        validators?: ReadonlyArray<Validator<T>>,
+        options?: { validateOn?: 'change' | 'blur' | 'submit' },
+      ): Field<T> {
         // Pass the reporter at construct time so the FIRST validator pass
         // (which runs synchronously in the FieldImpl constructor's
         // validator-effect) is covered.
@@ -403,6 +407,7 @@ export class ControllerInstance {
               controllerPath: self.path,
             })
           },
+          validateOn: options?.validateOn,
         })
         self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
         // Standalone fields (not inside a form) still publish field:validated

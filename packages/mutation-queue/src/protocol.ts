@@ -15,6 +15,22 @@ export type QueueEntry = {
   readonly variables: unknown
   readonly attempts: number
   readonly enqueuedAt: number
+  /**
+   * Monotonic counter assigned at enqueue time. Replay ordering uses `seq`
+   * in preference to `enqueuedAt` so wall-clock drift (NTP correction,
+   * user-set-back time, suspend resume) can't reorder pending mutations.
+   * Optional for backward compatibility — entries written before v0.0.8 do
+   * not carry `seq`; they fall back to `enqueuedAt` ordering during replay.
+   */
+  readonly seq?: number
+  /**
+   * Client-supplied dedupe key. When two enqueues share an
+   * `idempotencyKey`, the second is collapsed onto the first (kept value
+   * is the first's, second is dropped). Server-side dedupe is the
+   * authoritative gate; this is a client-side cost reduction. Optional —
+   * absence means "every enqueue is unique."
+   */
+  readonly idempotencyKey?: string
 }
 
 export const PROTOCOL_VERSION = 1

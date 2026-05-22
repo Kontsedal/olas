@@ -323,7 +323,15 @@ function cloneWithUpsert(
     return { ...node, state: 'active', props }
   }
   const segment = path[depth] as string
-  const idx = node.children.findIndex((c) => c.path[c.path.length - 1] === segment)
+  // Match by both segment AND depth: matching only by last segment aliases
+  // children whose paths happen to end in the same string but actually have
+  // different depths or different prefixes (e.g. a controller renamed mid-
+  // session, or a collection item whose path tail collides with an unrelated
+  // sibling at a different level). Comparing depth + segment uniquely
+  // identifies a direct child of this node.
+  const idx = node.children.findIndex(
+    (c) => c.path.length === depth + 1 && c.path[depth] === segment,
+  )
   const childPath = path.slice(0, depth + 1)
   if (idx === -1) {
     const newChild = cloneWithUpsert(
@@ -366,7 +374,10 @@ function setStateAt(
     return { ...node, state }
   }
   const segment = path[depth] as string
-  const idx = node.children.findIndex((c) => c.path[c.path.length - 1] === segment)
+  // Same depth+segment match as `cloneWithUpsert`.
+  const idx = node.children.findIndex(
+    (c) => c.path.length === depth + 1 && c.path[depth] === segment,
+  )
   if (idx === -1) return null
   const existing = node.children[idx]!
   const updatedChild = setStateAt(existing, path, depth + 1, state)

@@ -46,6 +46,14 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   readonly touched: ReadSignal<boolean>
   readonly isValidating: ReadSignal<boolean>
   readonly flatErrors: ReadSignal<Array<{ path: string; errors: string[] }>>
+  /**
+   * Dotted paths of every leaf whose `isDirty` is `true`. Recomputes when
+   * any child's dirty state flips; ordered by depth-first traversal so two
+   * snapshots of a stable tree compare with `===`-friendly references on
+   * unchanged subsets. Useful for partial-update PATCH payloads and
+   * "highlight the changed inputs" UIs.
+   */
+  readonly dirtyFields: ReadSignal<string[]>
 
   private readonly topLevelErrors$: Signal<string[]> = signal([])
   readonly topLevelErrors: ReadSignal<string[]> = this.topLevelErrors$
@@ -137,6 +145,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       return true
     })
     this.flatErrors = computed(() => this.computeFlatErrors())
+    this.dirtyFields = computed(() => {
+      const out: string[] = []
+      collectDirtyFields(this.fields, '', out)
+      return out
+    })
 
     if (this.validators.length > 0) {
       this.validatorDispose = effect(() => this.runTopLevelValidators())
@@ -272,6 +285,13 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         }
       }
       this.topLevelErrors$.set([])
+      // Submission lifecycle is conceptually part of "form state"; resetting
+      // a form means the user is starting over. Without these clears, a UI
+      // bound to `submitCount`/`submitError` would show stale state after
+      // `reset()`. `isSubmitting` is deliberately NOT cleared — only the
+      // owning submit() flow can flip it back.
+      this.submitCount$.set(0)
+      this.submitError$.set(undefined)
     })
     // Re-apply initial if provided — as initial (no dirty bump).
     if (this.options?.initial !== undefined) {
@@ -539,6 +559,27 @@ function splitPath(path: string): string[] | null {
   }
   if (current !== '') out.push(current)
   return out
+}
+
+function collectDirtyFields(fields: FormSchema, prefix: string, out: string[]): void {
+  for (const [k, child] of Object.entries(fields)) {
+    const path = prefix ? `${prefix}.${k}` : k
+    if (isForm(child)) {
+      collectDirtyFields(child.fields, path, out)
+    } else if (isFieldArray(child)) {
+      const items = child.items.value
+      items.forEach((item, idx) => {
+        const itemPath = `${path}[${idx}]`
+        if (isForm(item)) {
+          collectDirtyFields(item.fields, itemPath, out)
+        } else if ((item as Field<unknown>).isDirty.value) {
+          out.push(itemPath)
+        }
+      })
+    } else if ((child as Field<unknown>).isDirty.value) {
+      out.push(path)
+    }
+  }
 }
 
 function walkErrors(
