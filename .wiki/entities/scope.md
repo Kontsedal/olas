@@ -11,7 +11,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/scope.test.ts }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

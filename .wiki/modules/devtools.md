@@ -14,8 +14,8 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/dev-flag.test.ts }
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: related, target: devtools-panel.md }
-last_verified: 2026-05-21
-confidence: high
+last_verified: 2026-05-22
+confidence: medium
 ---
 
 # `devtools.ts`

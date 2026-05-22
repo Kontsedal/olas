@@ -15,7 +15,7 @@ edges:
   - { type: uses, target: query.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: persist.md }
-last_verified: 2026-05-20
+last_verified: 2026-05-22
 confidence: medium
 ---
 

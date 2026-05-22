@@ -6,7 +6,7 @@ covers:
   - packages/core/src/signals/runtime.ts:13-43
 edges:
   - { type: uses, target: ../modules/signals.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

@@ -16,8 +16,8 @@ edges:
   - { type: tested-by, target: ../../packages/devtools/tests/panel.test.tsx }
   - { type: uses, target: devtools.md }
   - { type: uses, target: react.md }
-last_verified: 2026-05-21
-confidence: high
+last_verified: 2026-05-22
+confidence: medium
 ---
 
 # `@kontsedal/olas-devtools`

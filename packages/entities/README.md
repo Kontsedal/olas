@@ -117,7 +117,7 @@ The post-update walk that runs when the patch's `setEntryData` fires its `SetDat
 
 ## Constraints (v1)
 
-- **Regular queries only.** Infinite queries (`kind: 'infinite'`) aren't walked in v1. Page-array shape handling is deferred (mirrors cross-tab's v1 constraint).
+- **Regular and infinite queries are both walked.** Infinite payloads (`kind: 'infinite'`) traverse the `TPage[]` shape transparently — the walker's existing array branch handles page indices, and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData`. Cross-tab still skips infinite (different concern: payload size).
 - **One plugin instance per root.** Construct a fresh `entitiesPlugin([...])` per `createRoot(...)`.
 - **Entity must be registered.** `signal / get / upsert / update / invalidate / entries / bindings` throw when called with an `EntityDef` that wasn't passed to `entitiesPlugin([...])`. Catches the mistake at the call site instead of leaking orphan signals.
 - **`update` default is shallow-merge.** Use the function form (`update(id, prev => ...)`) for non-shallow / computed updates.
@@ -135,9 +135,8 @@ Both plugins observe `SetDataEvent`s. Cross-tab broadcasts `source: 'set'` event
 
 ## What's NOT included
 
-- A walking strategy for `kind: 'infinite'`.
-- Deep-merge semantics on `update`.
-- Per-entity LRU eviction for unbounded entity catalogs.
+- Cross-tab broadcast of infinite-query updates (the entities plugin walks infinite locally; `@kontsedal/olas-cross-tab` still skips `kind: 'infinite'` for payload-size reasons).
+- Deep-merge semantics on `update` are off by default — pass `{ merge: 'deep' }` (or use the function form) when you need them.
 - `entity.subscribe(id)` outside React — use `entities.signal(Post, id).subscribe(handler)` directly.
 
 Tracked in [`../../BACKLOG.md`](../../BACKLOG.md).

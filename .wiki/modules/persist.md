@@ -10,7 +10,7 @@ edges:
   - { type: tested-by, target: ../../packages/persist/tests/indexeddb-adapter.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: controller.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

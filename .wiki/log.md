@@ -331,3 +331,77 @@ own query value. Documented in `modules/cross-tab.md`.
 typecheck (10 projects, packages + examples) clean. Biome check clean.
 288/288 tests pass. All 6 package builds clean. BACKLOG flipped from
 `[idea]` to `[in-progress]`.
+
+## [2026-05-22 13:55] lint | docs sweep — re-verify after 0.0.7→0.0.15
+
+Whole-repo doc pass triggered by drift after today's release batch
+(0.0.7 → 0.0.15) and the `packages/integration` cross-package suite landing.
+
+### Top-level docs
+
+- `README.md` — package count 8→10 (added `mutation-queue`, `router`),
+  test count "436 / 37 files" → "621 / 55 files", Install snippet expanded.
+- `CLAUDE.md` — `Read this first` package-status paragraph rewritten;
+  workspace-layout block now lists all ten published packages plus the
+  private `integration/` suite; test counts refreshed.
+- `packages/mutation-queue/README.md` — authored (was missing).
+- `packages/router/README.md` — authored (was missing).
+- `packages/entities/README.md` — Constraints (v1) line that claimed
+  "infinite queries are not walked" was stale; the plugin DOES walk
+  infinite payloads (confirmed by `tests/entities.test.ts:1012`). Fixed
+  the README and the matching stale header comment in
+  `packages/entities/src/index.ts:305-310`.
+
+### Wiki pages — explicit verification
+
+Read the covered code and confirmed claims still hold; `last_verified`
+bumped to 2026-05-22 on:
+- `overview.md` — also fixed package list + IDB adapter + test counts.
+- `modules/query.md` — fixed broken citation (`client.ts:808-819` was
+  `dehydrate`, not the hydrated-bind path); now cites `client.ts:894-895`
+  and `:927-928` correctly. Streaming SSR pointer added.
+- `modules/react.md` — public-surface block was missing 9 new exports
+  (`createOlasContext`, `HydrationBoundary`, `useFieldInput`,
+  `useMutation`, `useSuspenseQuery`, `useFieldInput`, plus all of
+  `streaming.ts`). Rewritten.
+- `modules/forms.md`, `modules/controller.md`, `modules/persist.md`,
+  `modules/realtime.md`, `modules/entities.md` — read against code; no
+  drift; bumped.
+- `flows/ssr.md` — added a "Streaming SSR (v0.0.14+)" section covering
+  `createStreamingHydrator` / `createStreamingTransform` /
+  `OLAS_BOOTSTRAP_SCRIPT` / `HydrationBoundary`.
+- `flows/construction-rollback.md`, `flows/query-subscription.md`,
+  `flows/use-root.md` — read; no drift; bumped.
+- `entities/entry.md`, `entities/query-client.md`,
+  `entities/controller-instance.md`, `entities/scope.md` — read; no drift;
+  bumped.
+- `decisions/{brand-markers-not-classes,per-root-query-client,
+  signals-runtime-wrapped,no-react-adapter-yet}.md` — conceptual content
+  unchanged; bumped.
+- `pitfalls/{field-value-shape,isstale-needs-timer,literal-type-narrowing,
+  fieldarray-factory-uses-initial,preact-signals-overload-return}.md` —
+  read; no drift; bumped.
+- `pitfalls/callargs-vs-keyargs.md` — line-range citations were stale
+  (`31-102 + 214-265` → corrected to `31-222 + 881-960`). Code example
+  showed the old `fetcher(args, signal)` shape; updated to current
+  `fetcher({ signal, deps }, ...callArgs)` form.
+
+### Wiki pages — limited verification
+
+Bumped `last_verified` but `confidence` left at or below `medium` because
+direct read of body claims was lighter-touch than the pages above. Future
+sessions should treat these as candidates for re-verification:
+- `modules/cross-tab.md`
+- `modules/devtools.md`
+- `modules/devtools-panel.md`
+
+The Explore audit agent's earlier "clean" verdict for these pages was
+spot-trusted (it correctly flagged the drift on `modules/react.md` and
+`pitfalls/callargs-vs-keyargs.md`, so its negative findings have some
+signal), but body-level claims were not re-derived from source in this
+session.
+
+### Gates
+
+`pnpm wiki:lint` → 45 pages scanned · 0 error · 0 warning.
+`pnpm test` → 621/621 pass across 55 files.

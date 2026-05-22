@@ -17,7 +17,7 @@ edges:
   - { type: uses, target: ../entities/ctx.md }
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: uses, target: ../flows/construction-rollback.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

@@ -7,7 +7,7 @@ covers:
   - packages/core/src/controller/define.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

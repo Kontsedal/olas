@@ -7,7 +7,7 @@ covers:
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/errors.test.ts }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 

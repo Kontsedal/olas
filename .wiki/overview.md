@@ -10,7 +10,7 @@ covers:
 edges:
   - { type: documented-in, target: ../SPEC.md }
   - { type: related, target: glossary.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 
@@ -41,16 +41,18 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 
 | Package | Status | Purpose |
 |---------|--------|---------|
-| `@kontsedal/olas-core` | Implemented | Signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus, `defineScope` |
-| `@kontsedal/olas-react` | Implemented | `OlasProvider`, `useRoot`, `useController`, `useQuery`/`useField`, `KeepAlive`, `useSuspendOnHidden` |
-| `@kontsedal/olas-zod` | Implemented | `zodValidator` + `zodValidatorAsync` + `rootOnlyZodValidator` + `formFromZod` (now takes `{ extraValidators }`) |
-| `@kontsedal/olas-persist` | Implemented | `usePersisted` + localStorage adapter |
+| `@kontsedal/olas-core` | Implemented | Signals, controllers, queries, mutations, forms, scopes, SSR + streaming SSR, devtools event bus, `defineScope` |
+| `@kontsedal/olas-react` | Implemented | `OlasProvider`, `useRoot`, `useController`, `use`/`useQuery`/`useSuspenseQuery`/`useField`/`useFieldInput`/`useMutation`, `KeepAlive`, `useSuspendOnHidden`, `HydrationBoundary` + streaming hydrator |
+| `@kontsedal/olas-zod` | Implemented | `zodValidator` + `zodValidatorAsync` + `rootOnlyZodValidator` + `formFromZod` (takes `{ extraValidators }`) |
+| `@kontsedal/olas-persist` | Implemented | `usePersisted` + `localStorageAdapter` + `indexedDbAdapter` |
 | `@kontsedal/olas-devtools` | Implemented | `<DevtoolsPanel>` + `<DevtoolsLauncher>` + `DevtoolsStore` over `root.__debug` |
 | `@kontsedal/olas-cross-tab` | Implemented | `crossTabPlugin` — BroadcastChannel-backed cache sync (`QueryClientPlugin`) |
 | `@kontsedal/olas-entities` | Implemented | `defineEntity` + `entitiesPlugin` — normalized entity store with reverse-index backprop into both regular AND infinite queries |
 | `@kontsedal/olas-realtime` | Implemented | `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService` |
+| `@kontsedal/olas-mutation-queue` | Implemented | `mutationQueuePlugin` — durable persist + reload-safe replay for `defineMutation({ persist: true })` |
+| `@kontsedal/olas-router` | Implemented | `createRouterAdapter` + `RouteParams/Search/Pathname` scopes — TanStack Router / React Router v6 |
 
-Polish & docs landed: READMEs, `MIGRATING.md`, `RECIPES.md`, TSDoc, four runnable example apps (kanban flagship, stock-ticker, reader-ssr, virtualized-table). A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
+Polish & docs landed: READMEs (every published package), `MIGRATING.md`, `RECIPES.md`, TSDoc, four runnable example apps (kanban flagship, stock-ticker, reader-ssr, virtualized-table), a cross-package `packages/integration` test suite. A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
 
 ## Core module map
 
@@ -91,4 +93,4 @@ See `modules/*.md` for per-directory details.
 
 ## Build & verify
 
-CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 482 lib tests across 39 files pass (kanban example ships its own controller-level tests on top). See `../CLAUDE.md` for the full command list.
+CI = `pnpm install && pnpm typecheck && pnpm lint && pnpm test && pnpm build`. 621 tests across 55 files pass (including the cross-package `packages/integration` suite; example apps ship their own controller-level tests on top). See `../CLAUDE.md` for the full command list.

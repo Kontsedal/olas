@@ -8,7 +8,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/emitter.test.ts }
   - { type: uses, target: controller.md }
-last_verified: 2026-05-18
+last_verified: 2026-05-22
 confidence: high
 ---
 

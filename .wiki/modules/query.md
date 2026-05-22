@@ -25,7 +25,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-21
+last_verified: 2026-05-22
 confidence: high
 ---
 
@@ -82,7 +82,7 @@ A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it re
 
 ## SSR
 
-`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`. Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map; the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry`. The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md` and `client.ts:808-819`.
+`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'` (`client.ts:809-822`). Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map (`client.ts:746-768`); the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry` (`client.ts:894-895`). The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data (`client.ts:927-928`) — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md`. For phase-2 streaming SSR, the same flow is driven row-by-row via `QueryClient.applyDehydratedEntry` (`client.ts:645-672`), which buffers into `hydratedData` if the entry isn't bound yet, or applies directly via `applyRemoteSetData` if it is.
 
 ## Plugin slot
 
