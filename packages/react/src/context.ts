@@ -1,5 +1,12 @@
-import type { Root } from '@kontsedal/olas-core'
-import { type Context, createContext, createElement, type ReactNode, useContext } from 'react'
+import { createRoot, type DehydratedState, type Root } from '@kontsedal/olas-core'
+import {
+  type Context,
+  createContext,
+  createElement,
+  type ReactNode,
+  useContext,
+  useMemo,
+} from 'react'
 
 const OlasContext = createContext<Root<unknown> | null>(null)
 OlasContext.displayName = 'OlasContext'
@@ -87,4 +94,59 @@ export function createOlasContext<Api>(displayName?: string): {
   const useTypedController = (root: Root<Api>): Api => root
 
   return { Provider, useRoot: useTypedRoot, useController: useTypedController, Context }
+}
+
+/**
+ * Hydration boundary for SSR: constructs a `Root<Api>` once on the client
+ * with the supplied `DehydratedState` (typically serialized into the HTML
+ * by `root.dehydrate()` on the server), then provides it to descendants.
+ *
+ * Usage:
+ *
+ * ```tsx
+ * // server: render -> root.dehydrate() -> serialize into HTML
+ * const dehydrated = root.dehydrate()
+ * // emit: <script>window.__OLAS_STATE__ = {...dehydrated}</script>
+ *
+ * // client entry:
+ * <HydrationBoundary
+ *   def={appController}
+ *   options={{ deps, hydrate: window.__OLAS_STATE__ }}
+ * >
+ *   <App />
+ * </HydrationBoundary>
+ * ```
+ *
+ * The root is memoized against `def` and `options` reference equality, so
+ * the boundary must be mounted once at the tree root. To replace the root
+ * on navigation, re-key the component or wrap in your own factory.
+ *
+ * **SSR contract.** During server rendering, callers typically construct
+ * a per-request root inline and pass it to `<OlasProvider root={...} />`.
+ * The `HydrationBoundary` shape is the *client-side* mirror — it accepts
+ * a controller def + the dehydrated state and produces a root that
+ * matches what the server rendered.
+ */
+export function HydrationBoundary<Api>(props: {
+  def: import('@kontsedal/olas-core').ControllerDef<void, Api>
+  options: {
+    deps: Record<string, unknown>
+    hydrate?: DehydratedState
+    onError?: (err: unknown, ctx: unknown) => void
+    scopes?: ReadonlyArray<readonly [unknown, unknown]>
+    plugins?: ReadonlyArray<unknown>
+  }
+  children: ReactNode
+}): ReactNode {
+  const { def, options, children } = props
+  // Construct once per (def, options) identity. The caller controls
+  // identity — pass stable refs for stable roots, mutate to remount.
+  const root = useMemo(
+    // biome-ignore lint/suspicious/noExplicitAny: forward the user-shaped
+    // options to core's createRoot — the typed interface above is what
+    // consumers see; here we trust them.
+    () => createRoot(def, options as any) as Root<Api>,
+    [def, options],
+  )
+  return createElement(OlasContext.Provider, { value: root }, children)
 }
