@@ -319,6 +319,57 @@ importers:
         specifier: workspace:^
         version: link:../core
 
+  packages/integration:
+    devDependencies:
+      '@kontsedal/olas-core':
+        specifier: workspace:^
+        version: link:../core
+      '@kontsedal/olas-cross-tab':
+        specifier: workspace:^
+        version: link:../cross-tab
+      '@kontsedal/olas-entities':
+        specifier: workspace:^
+        version: link:../entities
+      '@kontsedal/olas-mutation-queue':
+        specifier: workspace:^
+        version: link:../mutation-queue
+      '@kontsedal/olas-persist':
+        specifier: workspace:^
+        version: link:../persist
+      '@kontsedal/olas-react':
+        specifier: workspace:^
+        version: link:../react
+      '@kontsedal/olas-realtime':
+        specifier: workspace:^
+        version: link:../realtime
+      '@kontsedal/olas-zod':
+        specifier: workspace:^
+        version: link:../zod
+      '@preact/signals-core':
+        specifier: ^1.14.2
+        version: 1.14.2
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.14))(@types/react@19.2.14)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@types/react':
+        specifier: ^19.2.14
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.2.3
+        version: 19.2.3(@types/react@19.2.14)
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
+      react:
+        specifier: ^19.2.6
+        version: 19.2.6
+      react-dom:
+        specifier: ^19.2.6
+        version: 19.2.6(react@19.2.6)
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+
   packages/mutation-queue:
     devDependencies:
       '@kontsedal/olas-core':

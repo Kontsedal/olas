@@ -1,0 +1,29 @@
+{
+  "name": "@kontsedal/olas-integration-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Cross-package integration tests for Olas. Not published.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-cross-tab": "workspace:^",
+    "@kontsedal/olas-entities": "workspace:^",
+    "@kontsedal/olas-mutation-queue": "workspace:^",
+    "@kontsedal/olas-persist": "workspace:^",
+    "@kontsedal/olas-react": "workspace:^",
+    "@kontsedal/olas-realtime": "workspace:^",
+    "@kontsedal/olas-zod": "workspace:^",
+    "@preact/signals-core": "^1.14.2",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "jsdom": "^29.1.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "zod": "^4.4.3"
+  }
+}
