@@ -10,11 +10,14 @@ describe('required', () => {
     [null, 'Required'],
     [undefined, 'Required'],
     [[], 'Required'],
+    // `false` is empty for booleans — an unchecked "I agree" checkbox shouldn't
+    // pass `required()`. `true` and `0` (number) remain accepts.
+    [false, 'Required'],
   ])('rejects %j', async (value, msg) => {
     expect(await v(value, sig)).toBe(msg)
   })
 
-  test.each([['x'], [' '], [0], [false], [[1]]])('accepts %j', async (value) => {
+  test.each([['x'], [' '], [0], [true], [[1]]])('accepts %j', async (value) => {
     expect(await v(value, sig)).toBeNull()
   })
 

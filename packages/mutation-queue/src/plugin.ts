@@ -87,14 +87,31 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   // settle in failure.
   let disposed = false
 
+  // Tracks in-flight writes per runId so a fast `delete` can't race ahead
+  // of its preceding `write` (the persist-after-delete bug). Callers that
+  // await sequentially (e.g. `replayEntry`) pay zero overhead — the write
+  // has cleared its slot by the time the delete starts. Callers that fire
+  // both fire-and-forget (the `onMutationEnqueue` → `onMutationSettle`
+  // path on a synchronous mutation) get ordered correctly because the
+  // entry is registered before `writeEntry`'s first `await`.
+  const pendingWrites = new Map<string, Promise<unknown>>()
+
   const entryKey = (mutationId: string, runId: string): string =>
     `${keyPrefix}/${mutationId}/${runId}`
 
   const writeEntry = async (entry: QueueEntry): Promise<void> => {
     try {
       const json = JSON.stringify(entry)
-      await adapter.set(entryKey(entry.mutationId, entry.runId), json)
-      knownRuns.set(entry.runId, entry)
+      const writeP = Promise.resolve(adapter.set(entryKey(entry.mutationId, entry.runId), json))
+      pendingWrites.set(entry.runId, writeP)
+      try {
+        await writeP
+        knownRuns.set(entry.runId, entry)
+      } finally {
+        if (pendingWrites.get(entry.runId) === writeP) {
+          pendingWrites.delete(entry.runId)
+        }
+      }
     } catch (cause) {
       onWarn(
         `[olas/mutation-queue] failed to persist enqueue for ${entry.mutationId}/${entry.runId}: ` +
@@ -105,6 +122,16 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   }
 
   const deleteEntry = async (mutationId: string, runId: string): Promise<void> => {
+    const pending = pendingWrites.get(runId)
+    if (pending !== undefined) {
+      // Concurrent write+delete on the same runId — wait for the write to
+      // land first so we don't leave a phantom entry behind.
+      try {
+        await pending
+      } catch {
+        /* writeEntry handles its own errors via onWarn */
+      }
+    }
     knownRuns.delete(runId)
     try {
       await adapter.delete(entryKey(mutationId, runId))
@@ -231,13 +258,40 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
   }
 
   /**
+   * Wait until the tab reports as online. Without this gate, replays burn
+   * `maxAttempts` on `fetch` failures the user can't see and the queue
+   * silently empties. In environments without `navigator` (Node SSR, tests
+   * mocking the global), assume online and proceed.
+   */
+  const waitForOnline = (): Promise<void> => {
+    if (typeof navigator === 'undefined' || navigator.onLine !== false) {
+      return Promise.resolve()
+    }
+    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
+      return Promise.resolve()
+    }
+    return new Promise((resolve) => {
+      const onOnline = () => {
+        window.removeEventListener('online', onOnline)
+        resolve()
+      }
+      window.addEventListener('online', onOnline)
+    })
+  }
+
+  /**
    * Replay all pending entries on init, serialized per mutationId so an
    * `order/create` followed by an `order/cancel` for the same id runs in
    * order. Different mutationIds run in parallel.
+   *
+   * Blocks until the tab is online before issuing any mutate calls — see
+   * `waitForOnline`.
    */
   const replayAll = async (): Promise<void> => {
     const entries = await listEntries()
     if (entries.length === 0) return
+    await waitForOnline()
+    if (disposed) return
     const byMutation = new Map<string, QueueEntry[]>()
     for (const e of entries) {
       const bucket = byMutation.get(e.mutationId)
@@ -277,6 +331,9 @@ export function mutationQueuePlugin(options: MutationQueueOptions): QueryClientP
         attempts: event.attempt,
         enqueuedAt: Date.now(),
       }
+      // Fire and forget — `runOnChain` ensures a subsequent delete waits
+      // on this write, so the persist-after-delete race can't happen even
+      // with a sync settle.
       void writeEntry(entry)
     },
 

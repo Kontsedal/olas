@@ -31,15 +31,24 @@ export function KeepAlive(props: {
  */
 export function useSuspendOnHidden(controller: SuspendableController): void {
   useEffect(() => {
+    if (typeof document === 'undefined') return undefined
     const onChange = () => {
-      if (typeof document === 'undefined') return
       if (document.visibilityState === 'hidden') {
         controller.suspend()
       } else {
         controller.resume()
       }
     }
-    if (typeof document === 'undefined') return undefined
+    // Sync once on mount IFF the tab is already hidden. We don't call
+    // `resume()` on a visible tab because the caller is responsible for
+    // the controller's pre-mount state — and a stray `resume()` on an
+    // already-active controller would be a no-op on a healthy
+    // implementation but noisy in tests / event logs. The real bug we're
+    // closing here is: mount under a hidden tab never suspends until the
+    // next visibility change, which may never come.
+    if (document.visibilityState === 'hidden') {
+      controller.suspend()
+    }
     document.addEventListener('visibilitychange', onChange)
     return () => {
       document.removeEventListener('visibilitychange', onChange)

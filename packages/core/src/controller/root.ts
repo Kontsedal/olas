@@ -66,7 +66,19 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
 
   if (typeof api !== 'object' || api === null) {
     // Allow primitive APIs in principle but root controls must live somewhere.
-    // Wrap in a holder.
+    // Wrap in a holder. The declared `Root<Api>` type intersection lies in
+    // this branch — `(holder as Api).dispose` won't be present on the
+    // primitive itself. Dev-warn so the footgun is visible at first run
+    // instead of as a confusing "undefined.value" later.
+    if (__DEV__) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[olas] createRoot: controller returned a non-object api ' +
+          `(${api === null ? 'null' : typeof api}). ` +
+          'Wrapping as { value: api } so root controls (dispose / suspend / ...) ' +
+          "can be attached. Prefer returning an object from a root controller's factory.",
+      )
+    }
     const holder = { value: api } as unknown as Api
     return attachRootControls(holder, instance, devtools, queryClient)
   }
@@ -122,7 +134,10 @@ function attachRootControls<Api>(
 
   const target = api as Record<string, unknown>
   for (const method of ROOT_METHODS) {
-    if (Object.hasOwn(target, method)) {
+    // Use `in` rather than `Object.hasOwn` so class-based apis with
+    // prototype methods like `dispose()` still trigger the conflict
+    // detection instead of being silently overwritten by defineProperty.
+    if (method in target) {
       throw new Error(
         `[olas] Root controller api defines '${method}' which conflicts with the root controls.`,
       )

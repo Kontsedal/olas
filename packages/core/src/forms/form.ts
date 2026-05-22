@@ -407,7 +407,8 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   private resolvePath(path: string): unknown {
     if (path === '') return undefined
-    const segments = path.split('.')
+    const segments = splitPath(path)
+    if (segments === null) return undefined
     let cursor: unknown = this
     for (const seg of segments) {
       if (cursor === undefined || cursor === null) return undefined
@@ -500,6 +501,44 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       })
     })
   }
+}
+
+/**
+ * Split a path string into segments, accepting both dot syntax (`users.0.name`)
+ * and the bracket syntax `walkErrors` emits for array items (`users[0].name`).
+ * Returns `null` if the path is malformed (unclosed bracket, empty bracket,
+ * non-numeric bracket index).
+ */
+function splitPath(path: string): string[] | null {
+  const out: string[] = []
+  let current = ''
+  for (let i = 0; i < path.length; i++) {
+    const ch = path[i]
+    if (ch === '.') {
+      if (current !== '') {
+        out.push(current)
+        current = ''
+      }
+      continue
+    }
+    if (ch === '[') {
+      if (current !== '') {
+        out.push(current)
+        current = ''
+      }
+      const close = path.indexOf(']', i + 1)
+      if (close === -1) return null
+      const idx = path.slice(i + 1, close)
+      if (idx === '' || !/^\d+$/.test(idx)) return null
+      out.push(idx)
+      i = close
+      continue
+    }
+    if (ch === ']') return null
+    current += ch
+  }
+  if (current !== '') out.push(current)
+  return out
 }
 
 function walkErrors(
