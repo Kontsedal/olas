@@ -626,6 +626,52 @@ export class QueryClient {
   }
 
   /**
+   * Apply a single dehydrated entry to the cache. Idempotent across
+   * pre-bind / post-bind:
+   *
+   * - If the matching `ClientEntry` already exists (a subscriber has
+   *   bound this key), `Entry.applyHydration(data, lastUpdatedAt)` writes
+   *   through with the server's timestamp + supersedes any inflight
+   *   fetch. Plugins see a `SetDataEvent` with `source: 'remote'`.
+   * - If no `ClientEntry` exists yet (the subscribing component hasn't
+   *   mounted), the entry is buffered in `hydratedData` so the next
+   *   `bindEntry` for that hash picks it up — same path the constructor
+   *   `hydrate(state)` uses.
+   *
+   * Designed for streaming SSR: each `<Suspense>` boundary that resolves
+   * on the server pushes its dehydrated entry through this method on the
+   * client as the bootstrap script executes.
+   */
+  applyDehydratedEntry(
+    queryId: string,
+    keyArgs: readonly unknown[],
+    data: unknown,
+    lastUpdatedAt: number,
+  ): void {
+    const query = lookupRegisteredQuery(queryId)
+    const hash = stableHash(keyArgs)
+    if (query && query.__olas === 'query') {
+      const internal = query as unknown as AnyQuery
+      const map = this.maps.get(internal)
+      const entry = map?.get(hash)
+      if (entry !== undefined) {
+        this.applyingRemote = true
+        try {
+          entry.entry.applyHydration(data, lastUpdatedAt)
+          this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
+        } finally {
+          this.applyingRemote = false
+        }
+        return
+      }
+    }
+    // No local entry yet — buffer in the same map the constructor uses.
+    // The next bindEntry that hashes to this key will adopt the buffered
+    // payload and clear the slot.
+    this.hydratedData.set(hash, { data, lastUpdatedAt })
+  }
+
+  /**
    * Local-originated `setData` keyed by `queryId + keyArgs`. Plugin-facing
    * (exposed via `QueryClientPluginApi.setEntryData`); used by the
    * `@kontsedal/olas-entities` plugin to backpropagate entity patches into

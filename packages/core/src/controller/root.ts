@@ -10,6 +10,7 @@ const ROOT_METHODS = [
   'resume',
   'dehydrate',
   'waitForIdle',
+  'applyDehydratedEntry',
   '__debug',
 ] as const
 
@@ -159,6 +160,11 @@ function attachRootControls<Api>(
   })
   Object.defineProperty(target, 'waitForIdle', {
     value: () => queryClient.waitForIdle(),
+    ...lock,
+  })
+  Object.defineProperty(target, 'applyDehydratedEntry', {
+    value: (queryId: string, keyArgs: readonly unknown[], data: unknown, lastUpdatedAt: number) =>
+      queryClient.applyDehydratedEntry(queryId, keyArgs, data, lastUpdatedAt),
     ...lock,
   })
 

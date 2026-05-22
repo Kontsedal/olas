@@ -402,5 +402,22 @@ export type Root<Api> = Api & {
   resume(): void
   dehydrate(): DehydratedState
   waitForIdle(): Promise<void>
+  /**
+   * Apply a single dehydrated query entry to this root's cache. Idempotent
+   * across pre-bind / post-bind: if a `ClientEntry` for `queryId + keyArgs`
+   * already exists, the data is written through and supersedes any inflight
+   * fetch; otherwise it's buffered for the next `bindEntry`.
+   *
+   * Designed for streaming SSR — each `<Suspense>` boundary that resolves
+   * on the server can push its entry into the live client root as the
+   * bootstrap script executes. Also useful for `localStorage` warm-starts
+   * and similar "I have fresh data from elsewhere, inject it" patterns.
+   */
+  applyDehydratedEntry(
+    queryId: string,
+    keyArgs: readonly unknown[],
+    data: unknown,
+    lastUpdatedAt: number,
+  ): void
   readonly __debug: DebugBus
 }
