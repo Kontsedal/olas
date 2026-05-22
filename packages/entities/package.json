@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-entities",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "description": "Entity-normalization plugin for Olas — extract entities from query results, subscribe per-id, patch every query holding an entity in one call.",
   "keywords": [
     "olas",

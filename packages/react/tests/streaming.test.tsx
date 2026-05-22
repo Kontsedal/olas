@@ -1,8 +1,13 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import { createRoot, defineController, defineQuery, effect } from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
-import { createStreamingHydrator, installStreamingIntake, STREAMING_GLOBAL } from '../src/streaming'
+import {
+  createStreamingHydrator,
+  createStreamingTransform,
+  installStreamingIntake,
+  STREAMING_GLOBAL,
+} from '../src/streaming'
 
 afterEach(() => {
   // Wipe the global between tests so leaks don't infect the next case.
@@ -134,5 +139,118 @@ describe('installStreamingIntake (client side)', () => {
 
     uninstall()
     root.dispose()
+  })
+
+  test('intake apply runs inside a single signal batch per arriving batch', async () => {
+    const q1 = defineQuery({
+      queryId: 'streaming-batch-q1',
+      key: () => [],
+      fetcher: async () => 'v1',
+    })
+    const q2 = defineQuery({
+      queryId: 'streaming-batch-q2',
+      key: () => [],
+      fetcher: async () => 'v2',
+    })
+    const def = defineController((ctx) => ({ a: ctx.use(q1), b: ctx.use(q2) }))
+    const root = createRoot(def, { deps: {} })
+    // Override the pre-populated queue from `beforeEach` — irrelevant to
+    // this test.
+    ;(globalThis as unknown as Record<string, unknown>)[STREAMING_GLOBAL] = {
+      q: [],
+      push(batch: unknown) {
+        const g = (globalThis as unknown as Record<string, { q: unknown[] }>)[STREAMING_GLOBAL]
+        if (g !== undefined) g.q.push(batch)
+      },
+    }
+    const uninstall = installStreamingIntake(root)
+    const sub = root as {
+      a: { data: { value: unknown; peek: () => unknown } }
+      b: { data: { value: unknown; peek: () => unknown } }
+    }
+    // Wait for initial fetches to settle to keep effect counts focused on
+    // the batched apply.
+    await root.waitForIdle()
+
+    // Count effect runs. An effect that reads both signals re-runs once
+    // per batch where either changes — so a single push that updates
+    // both should produce exactly one run after the steady-state read.
+    let runs = 0
+    const dispose = effect(() => {
+      void sub.a.data.value
+      void sub.b.data.value
+      runs += 1
+    })
+    const baseline = runs
+    // Push two entries at once.
+    const intake = (globalThis as unknown as Record<string, { push: (b: unknown) => void }>)[
+      STREAMING_GLOBAL
+    ]
+    if (intake === undefined) throw new Error('intake missing')
+    intake.push([
+      { queryId: 'streaming-batch-q1', key: [], data: 'next-v1', lastUpdatedAt: 100 },
+      { queryId: 'streaming-batch-q2', key: [], data: 'next-v2', lastUpdatedAt: 100 },
+    ])
+    // Effect runs once for the batch, not twice.
+    expect(runs - baseline).toBe(1)
+    expect(sub.a.data.peek()).toBe('next-v1')
+    expect(sub.b.data.peek()).toBe('next-v2')
+
+    dispose()
+    uninstall()
+    root.dispose()
+  })
+})
+
+describe('createStreamingTransform', () => {
+  test('interleaves flushed scripts after each upstream chunk', async () => {
+    const flushed = ['<script>1</script>', '<script>2</script>', '']
+    let i = 0
+    const flush = () => flushed[i++] ?? ''
+
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const enc = new TextEncoder()
+        controller.enqueue(enc.encode('<chunk-a/>'))
+        controller.enqueue(enc.encode('<chunk-b/>'))
+        controller.close()
+      },
+    })
+    const out = source.pipeThrough(createStreamingTransform(flush))
+    const reader = out.getReader()
+    const dec = new TextDecoder()
+    const seen: string[] = []
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      seen.push(dec.decode(value))
+    }
+    // Order: chunk-a, then flushed[0], then chunk-b, then flushed[1], then
+    // final-drain flushed[2] (empty — skipped).
+    expect(seen).toEqual(['<chunk-a/>', '<script>1</script>', '<chunk-b/>', '<script>2</script>'])
+  })
+
+  test('drains a final non-empty flush on stream close', async () => {
+    let drained = false
+    const flush = () => {
+      if (drained) return ''
+      drained = true
+      return '<script>trailing</script>'
+    }
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.close()
+      },
+    })
+    const out = source.pipeThrough(createStreamingTransform(flush))
+    const reader = out.getReader()
+    const dec = new TextDecoder()
+    const seen: string[] = []
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      seen.push(dec.decode(value))
+    }
+    expect(seen).toEqual(['<script>trailing</script>'])
   })
 })

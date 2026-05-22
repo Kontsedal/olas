@@ -21,6 +21,7 @@ export {
 } from './keep-alive'
 export {
   createStreamingHydrator,
+  createStreamingTransform,
   installStreamingIntake,
   OLAS_BOOTSTRAP_SCRIPT,
   STREAMING_GLOBAL,
