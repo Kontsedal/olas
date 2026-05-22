@@ -24,7 +24,7 @@ export function isAbortError(err: unknown): boolean {
 export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal.aborted) {
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(abortReason(signal))
       return
     }
     const timer = setTimeout(() => {
@@ -34,8 +34,21 @@ export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
     const onAbort = () => {
       clearTimeout(timer)
       signal.removeEventListener('abort', onAbort)
-      reject(new DOMException('Aborted', 'AbortError'))
+      reject(abortReason(signal))
     }
     signal.addEventListener('abort', onAbort, { once: true })
   })
+}
+
+/**
+ * Read the caller-supplied abort reason if present, falling back to the
+ * canonical `DOMException('Aborted', 'AbortError')`. `signal.reason` lets
+ * users propagate context (e.g. "supersededByLatestWins") through abort
+ * chains — discarding it would force every caller to wrap with custom
+ * cancellation tokens.
+ */
+function abortReason(signal: AbortSignal): unknown {
+  const reason: unknown = (signal as { reason?: unknown }).reason
+  if (reason !== undefined) return reason
+  return new DOMException('Aborted', 'AbortError')
 }

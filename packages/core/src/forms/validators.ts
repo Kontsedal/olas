@@ -35,10 +35,13 @@ const isEmpty = (value: unknown): boolean => {
   if (value === undefined || value === null) return true
   if (typeof value === 'string') return value.length === 0
   if (Array.isArray(value)) return value.length === 0
+  // Unchecked boolean fields are "empty" — `required` on a confirm-checkbox
+  // should reject `false` the same way it rejects `''`.
+  if (typeof value === 'boolean') return value === false
   return false
 }
 
-/** Reject empty values (undefined, null, empty string, empty array). */
+/** Reject empty values (undefined, null, empty string, empty array, false). */
 export const required =
   <T>(message = 'Required'): Validator<T> =>
   (value) =>

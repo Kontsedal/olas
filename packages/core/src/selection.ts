@@ -69,6 +69,9 @@ export function selection<T = unknown>(options?: { initial?: readonly string[] }
     const next = new Set(prev)
     next.delete(id)
     ids.set(next)
+    // Clear the anchor if we just removed it — a subsequent shift-click
+    // would otherwise range from an id that's no longer in the selection.
+    if (anchor === id) anchor = null
   }
 
   const toggle = (id: string): void => {

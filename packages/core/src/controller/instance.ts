@@ -807,9 +807,13 @@ export class ControllerInstance {
           if (disposed) {
             return Promise.reject(new Error('[olas] ctx.lazyChild: cannot load after dispose'))
           }
+          // Cached fulfilled or in-flight loads share a promise. A previously
+          // *rejected* load doesn't — we clear `pendingLoad` in the catch
+          // branch so the next `load()` reattempts the loader. Sticky
+          // rejections trap consumers on a transient import-failure.
           if (pendingLoad !== null) return pendingLoad
           status$.set('loading')
-          pendingLoad = loader().then(
+          const attempt = loader().then(
             (def) => {
               if (disposed) {
                 throw new Error('[olas] ctx.lazyChild: disposed during load')
@@ -837,7 +841,14 @@ export class ControllerInstance {
               throw err
             },
           )
-          return pendingLoad
+          pendingLoad = attempt
+          attempt.catch(() => {
+            // Allow retry: drop the cached rejection if this is still the
+            // current attempt. A successful load leaves `pendingLoad` in
+            // place so repeat `load()` calls return the same fulfilled api.
+            if (pendingLoad === attempt) pendingLoad = null
+          })
+          return attempt
         }
 
         const dispose = (): void => {
