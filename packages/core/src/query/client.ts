@@ -80,6 +80,7 @@ export class ClientEntry<T> {
       staleTime: spec.staleTime,
       retry: spec.retry as RetryPolicy | undefined,
       retryDelay: spec.retryDelay as RetryDelay | undefined,
+      networkMode: spec.networkMode,
       initialData: hydrated?.data,
       initialUpdatedAt: hydrated?.lastUpdatedAt,
       events:
@@ -142,6 +143,14 @@ export class ClientEntry<T> {
     if (this.refetchInterval == null) return
     if (this.intervalTimer != null) return
     this.intervalTimer = setInterval(() => {
+      // Skip when the tab is hidden — refetching while in background wastes
+      // battery and network. `refetchOnWindowFocus` (when enabled) will
+      // catch the entry up on visibility return; pure-interval users without
+      // focus-refetch get the catch-up via `acquire()` re-arming the timer
+      // when they next mount.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return
+      }
       this.entry.startFetch().catch(() => {
         /* error already captured on entry */
       })
@@ -255,6 +264,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       staleTime: spec.staleTime,
       retry: spec.retry as RetryPolicy | undefined,
       retryDelay: spec.retryDelay as RetryDelay | undefined,
+      networkMode: spec.networkMode,
       // Fire SetDataEvent { kind: 'infinite', source: 'fetch' } whenever a
       // fetch settles successfully. Plugins (e.g. entity normalization) use
       // this to walk the pages and update their normalized stores. Mirrors
@@ -296,6 +306,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   private startIntervalTimer(): void {
     if (this.refetchInterval == null || this.intervalTimer != null) return
     this.intervalTimer = setInterval(() => {
+      // Same visibility-gate as the regular `ClientEntry.startIntervalTimer`.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return
+      }
       this.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
@@ -792,16 +806,27 @@ export class QueryClient {
       await Promise.all(tasks)
     }
     // The 100-iteration safety bound exists so a pathological setup that
-    // keeps starting new fetches doesn't lock the dehydrate path. Warn so
-    // it's surfaced — silent success would let an SSR dehydrate ship an
-    // incomplete payload looking like a clean one.
-    if (__DEV__) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[olas] waitForIdle(): exited via the 100-iteration safety bound — ' +
-          'the cache or mutations keep restarting. The dehydrate payload may be incomplete.',
-      )
+    // keeps starting new fetches doesn't lock the dehydrate path. This is
+    // a correctness failure for SSR: silently returning would let
+    // `dehydrate()` ship an incomplete payload that looks clean. Throw so
+    // the SSR boundary surfaces it instead of pretending success.
+    const unsettled: Array<{ key: readonly unknown[]; kind: 'data' | 'infinite' }> = []
+    for (const map of this.maps.values()) {
+      for (const ce of map.values()) {
+        if (ce.entry.isFetching.peek()) unsettled.push({ key: ce.keyArgs, kind: 'data' })
+      }
     }
+    for (const map of this.infiniteMaps.values()) {
+      for (const ce of map.values()) {
+        if (ce.entry.isFetching.peek()) unsettled.push({ key: ce.keyArgs, kind: 'infinite' })
+      }
+    }
+    const err = new Error(
+      '[olas] waitForIdle: exceeded 100-iteration safety bound — cache or mutations keep restarting',
+    ) as Error & { unsettled: typeof unsettled; mutationsInflight: number }
+    err.unsettled = unsettled
+    err.mutationsInflight = this.mutationsInflight$.peek()
+    throw err
   }
 
   bindEntry<Args extends unknown[], T>(query: Query<Args, T>, args: Args): ClientEntry<T> {
@@ -852,6 +877,29 @@ export class QueryClient {
       // the right thing.
       if (hydrated !== undefined) {
         this.emitSetData(internal, keyArgs, hydrated.data, 'data', 'fetch')
+      }
+    } else if (__DEV__) {
+      // The fetcher closure is captured on first `bindEntry`. If a later
+      // subscriber binds the SAME `keyArgs` (same hash) but DIFFERENT
+      // `callArgs`, the next refetch will still use the first caller's
+      // arguments — a silent staleness footgun when a `key()` function
+      // collapses non-key args (e.g. headers, abort tokens). Warn so the
+      // mismatch is surfaced; the consumer should either include the diff
+      // in the key or accept the documented "first wins" behavior.
+      const prev = entry.callArgs
+      const len = Math.max(prev.length, args.length)
+      let mismatch = prev.length !== args.length
+      for (let i = 0; i < len && !mismatch; i++) {
+        if (!Object.is(prev[i], args[i])) mismatch = true
+      }
+      if (mismatch) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[olas] bindEntry: hash collision with diverging callArgs for query` +
+            ` ${internal.__spec.queryId ?? '<anonymous>'} key=${JSON.stringify(keyArgs)}.` +
+            ` First bind's args are used by the fetcher; later args ignored.` +
+            ` Either include the difference in spec.key(...) or pass identical args.`,
+        )
       }
     }
     return entry

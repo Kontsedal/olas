@@ -1,4 +1,4 @@
-import type { AsyncState, AsyncStatus, Field, ReadSignal } from '@kontsedal/olas-core'
+import type { AsyncState, AsyncStatus, Field, Mutation, ReadSignal } from '@kontsedal/olas-core'
 import { useCallback, useRef, useSyncExternalStore } from 'react'
 
 /**
@@ -209,5 +209,105 @@ export function useField<T>(field: Field<T>): {
     markTouched: () => field.markTouched(),
     revalidate: () => field.revalidate(),
     setErrors: (errs: ReadonlyArray<string>) => field.setErrors(errs),
+  }
+}
+
+/**
+ * Subscribe to all signals on a `Mutation<V, R>` with a single
+ * useSyncExternalStore call. Returns the four observable values plus the
+ * actions (`mutate` is a friendlier alias for `run`).
+ *
+ * `mutate(vars)` is the canonical way to trigger from JSX. It returns the
+ * resolved Promise so callers can `await` or chain `.then`. Errors are
+ * captured on `error` (no need to try/catch unless you specifically want
+ * to). For tight latest-wins / serial concurrency semantics, the
+ * underlying `Mutation` was already configured in the controller; the hook
+ * is a pure subscription layer.
+ *
+ * `onSuccess` / `onError` / `onSettled` callbacks fire AFTER the run
+ * resolves; they fire from the React layer, NOT the controller, so don't
+ * use them for cache writes — put cache work on the mutation's spec
+ * (`onSuccess`/`onError` there are the real lifecycle hooks).
+ */
+export function useMutation<V, R>(
+  mutation: Mutation<V, R>,
+  callbacks?: {
+    onSuccess?: (data: R, variables: V) => void
+    onError?: (error: unknown, variables: V) => void
+    onSettled?: (data: R | undefined, error: unknown | undefined, variables: V) => void
+  },
+): {
+  data: R | undefined
+  error: unknown | undefined
+  isPending: boolean
+  lastVariables: V | undefined
+  isIdle: boolean
+  isSuccess: boolean
+  isError: boolean
+  mutate: (vars: V) => Promise<R>
+  mutateAsync: (vars: V) => Promise<R>
+  reset: () => void
+} {
+  const versionRef = useRef(0)
+  const cbRef = useRef(callbacks)
+  cbRef.current = callbacks
+
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const bump = () => {
+        versionRef.current++
+        onChange()
+      }
+      const unsubs = [
+        subscribeOnChange(mutation.data, bump),
+        subscribeOnChange(mutation.error, bump),
+        subscribeOnChange(mutation.isPending, bump),
+        subscribeOnChange(mutation.lastVariables, bump),
+      ]
+      return () => {
+        for (const u of unsubs) u()
+      }
+    },
+    [mutation],
+  )
+  const getSnapshot = useCallback(() => versionRef.current, [])
+  useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+
+  const mutate = useCallback(
+    (vars: V): Promise<R> => {
+      const p = (mutation.run as (vars: V) => Promise<R>)(vars)
+      p.then(
+        (data) => {
+          cbRef.current?.onSuccess?.(data, vars)
+          cbRef.current?.onSettled?.(data, undefined, vars)
+        },
+        (err) => {
+          cbRef.current?.onError?.(err, vars)
+          cbRef.current?.onSettled?.(undefined, err, vars)
+        },
+      )
+      return p
+    },
+    [mutation],
+  )
+
+  const status =
+    mutation.error.peek() !== undefined
+      ? 'error'
+      : mutation.data.peek() !== undefined
+        ? 'success'
+        : 'idle'
+
+  return {
+    data: mutation.data.peek(),
+    error: mutation.error.peek(),
+    isPending: mutation.isPending.peek(),
+    lastVariables: mutation.lastVariables.peek(),
+    isIdle: status === 'idle' && !mutation.isPending.peek(),
+    isSuccess: status === 'success',
+    isError: status === 'error',
+    mutate,
+    mutateAsync: mutate,
+    reset: () => mutation.reset(),
   }
 }

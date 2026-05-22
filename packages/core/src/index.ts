@@ -24,7 +24,7 @@ export type { DebugBus, DebugCacheEntry, DebugEvent } from './devtools'
 // Emitter
 export type { Emitter, EmitterErrorReporter } from './emitter'
 export { createEmitter } from './emitter'
-export type { ErrorContext } from './errors'
+export type { ErrorContext, ErrorHandler } from './errors'
 // Forms — stdlib validators + Standard Schema adapter + debouncedValidator
 export type { StandardSchemaV1, Validator } from './forms'
 export {
@@ -96,6 +96,7 @@ export type {
   DehydratedEntry,
   DehydratedState,
   LocalCache,
+  NetworkMode,
   Query,
   QuerySpec,
   QuerySubscription,

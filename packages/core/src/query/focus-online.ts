@@ -14,9 +14,6 @@ type Sub = () => void
 const focusSubs = new Set<Sub>()
 const onlineSubs = new Set<Sub>()
 
-let focusInstalled = false
-let onlineInstalled = false
-
 function fireFocus(): void {
   for (const fn of focusSubs) {
     try {
@@ -37,37 +34,69 @@ function fireOnline(): void {
   }
 }
 
-function ensureFocusInstalled(): void {
+function onVisibilityChange(): void {
+  if (document.visibilityState === 'visible') fireFocus()
+}
+
+let focusInstalled = false
+let onlineInstalled = false
+
+function installFocus(): void {
   if (focusInstalled) return
   if (typeof window === 'undefined') return
   window.addEventListener('focus', fireFocus)
   if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') fireFocus()
-    })
+    document.addEventListener('visibilitychange', onVisibilityChange)
   }
   focusInstalled = true
 }
 
-function ensureOnlineInstalled(): void {
+function uninstallFocus(): void {
+  if (!focusInstalled) return
+  if (typeof window === 'undefined') return
+  window.removeEventListener('focus', fireFocus)
+  if (typeof document !== 'undefined') {
+    document.removeEventListener('visibilitychange', onVisibilityChange)
+  }
+  focusInstalled = false
+}
+
+function installOnline(): void {
   if (onlineInstalled) return
   if (typeof window === 'undefined') return
   window.addEventListener('online', fireOnline)
   onlineInstalled = true
 }
 
+function uninstallOnline(): void {
+  if (!onlineInstalled) return
+  if (typeof window === 'undefined') return
+  window.removeEventListener('online', fireOnline)
+  onlineInstalled = false
+}
+
 export function subscribeWindowFocus(fn: Sub): () => void {
-  ensureFocusInstalled()
+  installFocus()
   focusSubs.add(fn)
   return () => {
     focusSubs.delete(fn)
+    if (focusSubs.size === 0) uninstallFocus()
   }
 }
 
 export function subscribeReconnect(fn: Sub): () => void {
-  ensureOnlineInstalled()
+  installOnline()
   onlineSubs.add(fn)
   return () => {
     onlineSubs.delete(fn)
+    if (onlineSubs.size === 0) uninstallOnline()
   }
+}
+
+/** Test-only — force-detach global listeners regardless of subscriber state. */
+export function __resetFocusOnlineForTests(): void {
+  focusSubs.clear()
+  onlineSubs.clear()
+  uninstallFocus()
+  uninstallOnline()
 }

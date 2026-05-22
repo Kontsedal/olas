@@ -89,6 +89,12 @@ export type Form<S extends FormSchema> = {
   readonly isDirty: ReadSignal<boolean>
   readonly touched: ReadSignal<boolean>
   readonly isValidating: ReadSignal<boolean>
+  /**
+   * Dotted paths of every leaf whose `isDirty` is true. Useful for PATCH
+   * payloads and "highlight changed inputs" UIs. Field paths use dot
+   * notation; array items use bracket notation (`items[0].title`).
+   */
+  readonly dirtyFields: ReadSignal<string[]>
 
   /**
    * `true` while a `submit(...)` is in flight. Clears when the handler

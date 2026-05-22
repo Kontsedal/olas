@@ -143,35 +143,22 @@ function attachRootControls<Api>(
       )
     }
   }
-  Object.defineProperty(target, 'dispose', {
-    value: dispose,
-    enumerable: false,
-    configurable: true,
-  })
-  Object.defineProperty(target, 'suspend', {
-    value: suspend,
-    enumerable: false,
-    configurable: true,
-  })
-  Object.defineProperty(target, 'resume', {
-    value: resume,
-    enumerable: false,
-    configurable: true,
-  })
-  Object.defineProperty(target, '__debug', {
-    value: debug,
-    enumerable: false,
-    configurable: true,
-  })
+  // Lock root controls: writable:false + configurable:false so user code
+  // can't `delete api.dispose` (orphaning the root) or shadow them with a
+  // typo. The `in`-check above is the friendly preflight; this is the
+  // hard fence in case a consumer mutates the api after construction.
+  const lock = { enumerable: false, writable: false, configurable: false }
+  Object.defineProperty(target, 'dispose', { value: dispose, ...lock })
+  Object.defineProperty(target, 'suspend', { value: suspend, ...lock })
+  Object.defineProperty(target, 'resume', { value: resume, ...lock })
+  Object.defineProperty(target, '__debug', { value: debug, ...lock })
   Object.defineProperty(target, 'dehydrate', {
     value: () => queryClient.dehydrate(),
-    enumerable: false,
-    configurable: true,
+    ...lock,
   })
   Object.defineProperty(target, 'waitForIdle', {
     value: () => queryClient.waitForIdle(),
-    enumerable: false,
-    configurable: true,
+    ...lock,
   })
 
   return api as Root<Api>

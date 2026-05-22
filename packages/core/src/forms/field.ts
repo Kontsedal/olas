@@ -13,6 +13,43 @@ import { isAbortError } from '../utils'
 import type { Validator } from './types'
 
 /**
+ * Structural equality used by `Field.set` to decide whether a write returns
+ * the field to its initial value (clearing `isDirty`). Cheap path for
+ * primitives + `Object.is`; deep walk for arrays and plain objects. Class
+ * instances, Map, Set, Date fall back to reference identity — same trade-off
+ * `structural-share.ts` makes for cache data.
+ */
+function isStructurallyEqual(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false
+    for (let i = 0; i < a.length; i++) {
+      if (!isStructurallyEqual(a[i], b[i])) return false
+    }
+    return true
+  }
+  if (Array.isArray(b)) return false
+  const protoA = Object.getPrototypeOf(a)
+  const protoB = Object.getPrototypeOf(b)
+  // Plain-object guard only — class instances aren't safe to walk by keys.
+  if (protoA !== Object.prototype && protoA !== null) return false
+  if (protoB !== Object.prototype && protoB !== null) return false
+  const keysA = Object.keys(a as Record<string, unknown>)
+  const keysB = Object.keys(b as Record<string, unknown>)
+  if (keysA.length !== keysB.length) return false
+  for (const k of keysA) {
+    if (!Object.hasOwn(b as object, k)) return false
+    if (
+      !isStructurallyEqual((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
+/**
  * Hook attached by `ctx.form` (or `createForm`) so a Field can publish
  * `field:validated` devtools events with its owning controller path + the
  * field's name within the form schema. See devtools §20.9 and FieldImpl.bind.
@@ -33,6 +70,27 @@ export type FieldDevtoolsOwner = {
  * array so the UI surfaces the problem.
  */
 export type ValidatorErrorReporter = (err: unknown) => void
+
+/**
+ * When a field's validators are first allowed to run.
+ *
+ * - `'change'` (default) — validators run on every `set()`. Matches the
+ *   current behavior, ideal for "type and see errors live."
+ * - `'blur'` — first run is gated on `markTouched()`. After that, subsequent
+ *   value changes do trigger re-validation. UI binding should call
+ *   `markTouched()` on `onBlur`.
+ * - `'submit'` — first run is gated on `revalidate()` / `Form.submit()`.
+ *   After that, subsequent value changes re-validate. Use when you want
+ *   "show errors only after the user explicitly tried to submit."
+ *
+ * `revalidate()` always unlocks the field regardless of mode.
+ */
+export type ValidateOn = 'change' | 'blur' | 'submit'
+
+export type FieldOptions = {
+  onValidatorError?: ValidatorErrorReporter
+  validateOn?: ValidateOn
+}
 
 class FieldImpl<T> implements Field<T> {
   private readonly value$: Signal<T>
@@ -64,12 +122,15 @@ class FieldImpl<T> implements Field<T> {
   private disposed = false
   private devtoolsOwner: FieldDevtoolsOwner | null = null
   private onValidatorError: ValidatorErrorReporter | null = null
+  private readonly validateOn: ValidateOn
+  /** Reactive gate — when false, the validator effect skips its run. Flipped
+   * on by the relevant trigger for the field's `validateOn` mode. Once on,
+   * stays on for the lifetime of the field (matches RHF's `mode + reValidateMode`
+   * default semantics: after the first activation, subsequent changes
+   * re-validate). `reset()` flips it back to false. */
+  private readonly validateUnlocked$: Signal<boolean>
 
-  constructor(
-    initial: T,
-    validators: ReadonlyArray<Validator<T>> = [],
-    options?: { onValidatorError?: ValidatorErrorReporter },
-  ) {
+  constructor(initial: T, validators: ReadonlyArray<Validator<T>> = [], options?: FieldOptions) {
     this.initial = initial
     this.validators = validators
     // Capture the reporter BEFORE the validator effect kicks off so a sync
@@ -77,6 +138,7 @@ class FieldImpl<T> implements Field<T> {
     // disappearing into the effect (`bindValidatorErrorReporter` is a
     // post-construct hook so it can't catch the first run).
     this.onValidatorError = options?.onValidatorError ?? null
+    this.validateOn = options?.validateOn ?? 'change'
     this.value$ = signal(initial)
     this.validatorErrors$ = signal<string[]>([])
     this.serverErrors$ = signal<string[]>([])
@@ -84,6 +146,9 @@ class FieldImpl<T> implements Field<T> {
     this.dirty$ = signal(false)
     this.validating$ = signal(false)
     this.revalidateTrigger$ = signal(0)
+    // 'change' mode is unlocked from construction; 'blur' / 'submit' wait
+    // for their trigger so initial typing doesn't surface errors.
+    this.validateUnlocked$ = signal(this.validateOn === 'change')
     this.errors$ = computed(() => {
       const v = this.validatorErrors$.value
       const s = this.serverErrors$.value
@@ -147,7 +212,11 @@ class FieldImpl<T> implements Field<T> {
     if (this.disposed) return
     batch(() => {
       this.value$.set(value)
-      this.dirty$.set(true)
+      // Equality-aware dirty: setting back to initial clears dirty, so
+      // "Disable Save when unchanged" UIs work without consumer code. Uses
+      // a structural comparison for primitive / shallow-object / array
+      // payloads; falls back to reference identity for class instances.
+      this.dirty$.set(!isStructurallyEqual(value, this.initial))
       // Server errors are pinned externally and survive validator re-runs,
       // but they MUST clear when the user edits the field — otherwise a
       // server error like "username taken" would persist after the user
@@ -175,6 +244,10 @@ class FieldImpl<T> implements Field<T> {
     batch(() => {
       this.value$.set(value)
       this.dirty$.set(false)
+      // Re-seating from a fresh server payload means the previous server
+      // response is no longer relevant. Without clearing, errors like
+      // "username taken" persist across a successful re-hydrate.
+      if (this.serverErrors$.peek().length > 0) this.serverErrors$.set([])
     })
   }
 
@@ -189,16 +262,28 @@ class FieldImpl<T> implements Field<T> {
       this.validatorErrors$.set([])
       this.serverErrors$.set([])
       this.validating$.set(false)
+      // Re-lock validation if the field was in blur/submit mode — a reset
+      // means we're back to a clean slate, so the user shouldn't immediately
+      // see errors again until they re-trigger.
+      if (this.validateOn !== 'change') this.validateUnlocked$.set(false)
     })
   }
 
   markTouched(): void {
     if (this.disposed) return
     this.touched$.set(true)
+    // 'blur' mode unlocks validation on first blur. Subsequent set() calls
+    // then re-validate live (matches RHF `reValidateMode: onChange` default).
+    if (this.validateOn === 'blur' && !this.validateUnlocked$.peek()) {
+      this.validateUnlocked$.set(true)
+    }
   }
 
   async revalidate(): Promise<boolean> {
     if (this.disposed) return this.isValid$.peek()
+    // `revalidate()` always unlocks the field — same trigger as a successful
+    // submit attempt. 'submit' mode uses this as its first activation.
+    if (!this.validateUnlocked$.peek()) this.validateUnlocked$.set(true)
     // Bump the trigger to force re-run.
     this.revalidateTrigger$.update((n) => n + 1)
     await this.waitUntilSettled()
@@ -258,6 +343,16 @@ class FieldImpl<T> implements Field<T> {
     // Track value and revalidate trigger.
     const value = this.value$.value
     void this.revalidateTrigger$.value
+    // Track the gate so the effect re-runs when the field becomes unlocked.
+    // While locked, skip the pass entirely — errors stay empty, the field
+    // reads as valid, no async work starts.
+    if (!this.validateUnlocked$.value) {
+      batch(() => {
+        if (this.validatorErrors$.peek().length > 0) this.validatorErrors$.set([])
+        if (this.validating$.peek()) this.validating$.set(false)
+      })
+      return
+    }
 
     // Abort previous in-flight run.
     this.currentAbort?.abort()
@@ -367,7 +462,7 @@ export function bindFieldValidatorErrorReporter<T>(
 export function createField<T>(
   initial: T,
   validators?: ReadonlyArray<Validator<T>>,
-  options?: { onValidatorError?: ValidatorErrorReporter },
+  options?: FieldOptions,
 ): Field<T> {
   return new FieldImpl(initial, validators, options)
 }
