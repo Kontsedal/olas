@@ -127,7 +127,6 @@ describe('ctx.use(query, { select })', () => {
     const root = createRoot(def, { deps: emptyDeps }) as unknown as Api & { dispose(): void }
 
     await vi.waitFor(() => expect(root.itemIds.data.value).toEqual(['a', 'b']))
-    const firstRef = root.itemIds.data.peek()
 
     payloadQuery.invalidateAll()
     await vi.waitFor(() => {

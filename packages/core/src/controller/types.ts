@@ -158,12 +158,10 @@ export type CollectionFactoryOptions<Item, K, R, TDeps = AmbientDeps> = {
 }
 
 /** Constraint for the factory form's return shape. */
-// biome-ignore lint/suspicious/noExplicitAny: per-branch types vary
 export type CollectionFactoryResult = { controller: ControllerDef<any, any>; props: any }
 
 /** Extract the union of every branch's controller Api. Distributes over R. */
 export type CollectionFactoryApi<R> = R extends {
-  // biome-ignore lint/suspicious/noExplicitAny: distributive infer across the union
   controller: ControllerDef<any, infer A>
 }
   ? A

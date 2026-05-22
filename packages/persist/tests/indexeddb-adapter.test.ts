@@ -28,9 +28,7 @@ class FakeIdbRequest<T> {
 }
 
 class FakeObjectStore {
-  // biome-ignore lint/suspicious/noExplicitAny: in-memory store
   private readonly map: Map<string, any>
-  // biome-ignore lint/suspicious/noExplicitAny: in-memory store
   constructor(map: Map<string, any>) {
     this.map = map
   }
@@ -56,7 +54,6 @@ class FakeObjectStore {
 }
 
 class FakeIdbDatabase {
-  // biome-ignore lint/suspicious/noExplicitAny: in-memory store
   readonly stores = new Map<string, Map<string, any>>()
   readonly objectStoreNames = {
     contains: (name: string): boolean => this.stores.has(name),
@@ -67,7 +64,7 @@ class FakeIdbDatabase {
     return new FakeObjectStore(map)
   }
   transaction(
-    name: string,
+    _name: string,
     _mode: IDBTransactionMode,
   ): { objectStore: (n: string) => FakeObjectStore } {
     return {

@@ -74,7 +74,7 @@ export function use<T, U = T>(
     const last = lastRef.current
     if (!last.initialized || !Object.is(last.raw, raw)) {
       const next = (select ? select(raw) : raw) as T | U
-      if (last.initialized && isEqual !== undefined && isEqual(last.out as U, next as U)) {
+      if (last.initialized && isEqual?.(last.out as U, next as U)) {
         last.raw = raw // remember the new raw so the equality check fires once
         return last.out
       }
