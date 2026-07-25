@@ -391,7 +391,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Test (part 1):** load 3 pages; trigger interval refetch; assert 3 pages retained and
   refetched, no truncation flash.
 
-### [ ] T3.8 — **[MAJOR]** `stableHash` Date/class handling is dead code
+### [x] T3.8 — **[MAJOR]** `stableHash` Date/class handling is dead code
 - **File:** `packages/core/src/query/keys.ts:34, 42-47`
 - **Problem (confirmed):** `JSON.stringify` applies `toJSON` BEFORE the replacer, so the
   `__date` tag never fires — `stableHash([date]) === stableHash([date.toISOString()])`,
