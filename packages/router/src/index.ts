@@ -1,2 +1,2 @@
-export { createRouterAdapter, type RouterAdapter } from './adapter'
+export { createRouterAdapter, type RouterAdapter, type RouteState } from './adapter'
 export { RouteParamsScope, RoutePathnameScope, RouteSearchScope } from './scopes'

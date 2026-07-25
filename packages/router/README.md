@@ -84,12 +84,18 @@ function RouterShell() {
 ## API
 
 ```ts
-function createRouterAdapter(): RouterAdapter
+function createRouterAdapter(initial?: RouteState): RouterAdapter
+
+type RouteState = {
+  params?: Record<string, string | undefined>
+  search?: Record<string, unknown>
+  pathname?: string
+}
 
 type RouterAdapter = {
   readonly scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]>
   readonly Bridge: (props: {
-    params: Record<string, string>
+    params: Record<string, string | undefined>
     search?: Record<string, unknown>
     pathname?: string
     children?: ReactNode
@@ -97,23 +103,23 @@ type RouterAdapter = {
 }
 
 // Module-scope scope handles, resolvable from any controller:
-const RouteParamsScope:   Scope<ReadSignal<Record<string, string>>>
+const RouteParamsScope:   Scope<ReadSignal<Record<string, string | undefined>>>
 const RouteSearchScope:   Scope<ReadSignal<Record<string, unknown>>>
 const RoutePathnameScope: Scope<ReadSignal<string>>
 ```
 
 | Symbol | What |
 |---|---|
-| `createRouterAdapter()` | Mints a fresh `{ scopes, Bridge }`. One adapter per root — separate roots (SSR per-request, isolated test fixtures) need separate adapters so they don't share state. |
+| `createRouterAdapter(initial?)` | Mints a fresh `{ scopes, Bridge }`. One adapter per root — separate roots (SSR per-request, isolated test fixtures) need separate adapters so they don't share state. Pass `initial` to seed route state for the server render (see SSR below). |
 | `adapter.scopes` | Pass to `createRoot({ scopes })`. Resolves the three module-scope `Scope`s to this adapter's adapter-local signals. |
-| `adapter.Bridge` | React component. Renders `children`. On every prop change, writes `params` / `search` / `pathname` into the underlying signals inside one `batch(...)`. |
-| `RouteParamsScope` | `ReadSignal<Record<string, string>>`. Values are strings (routers vary; the common shape wins). Narrow in the consumer if your router parses to other types. |
+| `adapter.Bridge` | React component. Renders `children`. On every prop change, writes `params` / `search` / `pathname` into the underlying signals inside one `batch(...)`, in a `useLayoutEffect` (runs before paint on the client; does not run on the server — seed with `initial`). |
+| `RouteParamsScope` | `ReadSignal<Record<string, string \| undefined>>`. Values are `string \| undefined` (`undefined` = an optional segment absent from the URL, matching React Router). Narrow / guard in the consumer if your router parses to other types. |
 | `RouteSearchScope` | `ReadSignal<Record<string, unknown>>`. Values are `unknown` because TanStack Router gives parsed values while React Router v6 gives strings. |
 | `RoutePathnameScope` | `ReadSignal<string>`. URL path only — no search, no hash. |
 
 ## How it works
 
-The adapter holds three internal signals. `Bridge` is a `useEffect` that calls `signal.set(...)` for each slot whose value shallow-changed (routers re-allocate `params` / `search` on every render, so a vanilla `Object.is` check would write on every commit). All writes are wrapped in `batch(...)` so a controller depending on multiple slots never observes an intermediate state.
+The adapter holds three internal signals. `Bridge` is a `useLayoutEffect` that calls `signal.set(...)` for each slot whose value shallow-changed (routers re-allocate `params` / `search` on every render, so a vanilla `Object.is` check would write on every commit). All writes are wrapped in `batch(...)` so a controller depending on multiple slots never observes an intermediate state. `useLayoutEffect` runs before the browser paints, so the pre-Bridge value is visible for at most the very first commit on the client (and not at all on the server if you seed — below).
 
 ```
 your router  →  <adapter.Bridge params={...} search={...} pathname={...}>
@@ -128,6 +134,30 @@ your router  →  <adapter.Bridge params={...} search={...} pathname={...}>
 ### Multiple roots / SSR
 
 `createRouterAdapter()` allocates its signals **per call**. Two roots that both `createRoot({ scopes: makeAdapter().scopes })` get independent route state — vital for per-request SSR isolation and for tests that mount multiple roots in parallel.
+
+**Seed route state on the server.** `Bridge` pushes state in a `useLayoutEffect`, which never runs during SSR. So without seeding, `params` / `search` / `pathname` are empty (`{}` / `''`) for the *entire* server render — a controller that reads `params.value.userId` sees `undefined`, fetches nothing (or the wrong thing), and the server HTML is wrong. Pass `initial` derived from the request URL:
+
+```ts
+// server, per request
+const adapter = createRouterAdapter({
+  params: matchedRouteParams,   // from your server-side router match
+  search: parsedSearch,
+  pathname: url.pathname,
+})
+const root = createRoot(appController, { deps, scopes: adapter.scopes })
+// ...renderToString(<OlasProvider root={root}>…</OlasProvider>)
+```
+
+**First-render footgun (client-only apps).** If you *don't* seed (pure client render), the scopes are empty on the very first commit — before the `Bridge`'s layout effect fires. A controller that reads `params.value.id` at construction gets `undefined` for that one tick. Guard queries so they don't fire against a missing param:
+
+```ts
+const params = ctx.inject(RouteParamsScope)
+const user = ctx.use(userQuery, () => [params.value.id], {
+  enabled: () => params.value.id !== undefined, // don't fetch until the id lands
+})
+```
+
+Since `params` values are now `string | undefined`, the `enabled` guard is also what the type wants — `params.value.id` is `string | undefined` and the query key should only fire once it's defined.
 
 ## Patterns
 

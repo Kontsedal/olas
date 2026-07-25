@@ -2,12 +2,14 @@ import { defineScope, type ReadSignal, type Scope } from '@kontsedal/olas-core'
 
 /**
  * Route URL params. Shape matches what a typical router exposes:
- * `{ userId: '42', tab: 'profile' }` etc. Values are always strings — if
- * your router parses them to other types, do that in the consumer
- * controller (`computed(() => Number(params.value.id))`).
+ * `{ userId: '42', tab: 'profile' }` etc. Values are `string | undefined` —
+ * `undefined` for an optional segment not present in the current URL (matches
+ * React Router). If your router parses them to other types, do that in the
+ * consumer controller (`computed(() => Number(params.value.id))`), and guard
+ * the `undefined` (e.g. `enabled: () => params.value.id !== undefined`).
  */
-export const RouteParamsScope: Scope<ReadSignal<Record<string, string>>> = defineScope<
-  ReadSignal<Record<string, string>>
+export const RouteParamsScope: Scope<ReadSignal<Record<string, string | undefined>>> = defineScope<
+  ReadSignal<Record<string, string | undefined>>
 >({ name: 'route:params' })
 
 /**
