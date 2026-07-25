@@ -296,6 +296,11 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         batch(() => {
           this.pages.set([...this.pages.peek(), page])
           this.pageParams.set([...this.pageParams.peek(), param])
+          this.error.set(undefined)
+          // A successful page op owns the terminal status: restore 'success'
+          // so paging that superseded a mid-flight full refetch (which left
+          // status at 'pending') can't wedge the entry / Suspense (T3.3).
+          this.status.set('success')
           this.isFetchingNextPage.set(false)
           this.isFetching.set(false)
           this.lastUpdatedAt.set(Date.now())
@@ -338,6 +343,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         batch(() => {
           this.pages.set([page, ...this.pages.peek()])
           this.pageParams.set([param, ...this.pageParams.peek()])
+          this.error.set(undefined)
+          // A successful page op owns the terminal status — see fetchNextPage
+          // (T3.3).
+          this.status.set('success')
           this.isFetchingPreviousPage.set(false)
           this.isFetching.set(false)
           this.lastUpdatedAt.set(Date.now())
@@ -403,6 +412,20 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         batch(() => {
           if (direction === 'next') this.isFetchingNextPage.set(false)
           if (direction === 'prev') this.isFetchingPreviousPage.set(false)
+          // Status repair (T3.3): a superseded fetch must never leave the
+          // entry wedged at 'pending' when data is present and nothing is
+          // fetching. The superseding fetch normally owns the final status
+          // (its onSuccess sets 'success'); this is the safety net for the
+          // terminal fetch of a supersede chain. Only repair 'pending' — never
+          // clobber a real 'error' — and only when no fetch is still running.
+          if (
+            !this.disposed &&
+            this.status.peek() === 'pending' &&
+            !this.isFetching.peek() &&
+            this.pages.peek().length > 0
+          ) {
+            this.status.set('success')
+          }
         })
       }
     }

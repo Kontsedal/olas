@@ -1276,3 +1276,52 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
     vi.useRealTimers()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-Q3.3 (T3.3) — a successful fetchNextPage / fetchPreviousPage while a full
+// (invalidate) refetch is mid-flight must restore status to 'success'. The
+// paging fetch supersedes the refetch (bumping the fetch id) but previously
+// left `status` wedged at 'pending' — data present, isFetching false,
+// firstValue() (Suspense) hanging forever.
+// ---------------------------------------------------------------------------
+describe('regression: infinite paging over a mid-flight refetch un-wedges status (R-Q3.3)', () => {
+  test('fetchNextPage superseding an invalidate refetch restores success status', async () => {
+    const calls: Array<{ pageParam: number; d: ReturnType<typeof deferred<number>> }> = []
+    const entry = new InfiniteEntry<number, number, number>({
+      fetcher: ({ pageParam, signal }) => {
+        const d = deferred<number>()
+        calls.push({ pageParam, d })
+        signal.addEventListener('abort', () => d.reject(new DOMException('aborted', 'AbortError')))
+        return d.promise
+      },
+      initialPageParam: 0,
+      getNextPageParam: (last) => (last === 0 ? 1 : null),
+    })
+
+    // Initial load → page [0], status success.
+    entry.startFetch().catch(() => {})
+    calls[0]!.d.resolve(0)
+    await flush()
+    expect(entry.pages.peek()).toEqual([0])
+    expect(entry.status.peek()).toBe('success')
+
+    // Invalidate → a full refetch goes in flight (status → pending); hold it.
+    entry.invalidate().catch(() => {})
+    expect(entry.status.peek()).toBe('pending')
+
+    // User pages while revalidating → supersedes (aborts) the refetch.
+    const paged = entry.fetchNextPage()
+    const nextCall = calls[calls.length - 1]!
+    expect(nextCall.pageParam).toBe(1)
+    nextCall.d.resolve(1)
+    await paged
+    await flush()
+
+    // Without the fix: status stays 'pending' and firstValue() hangs.
+    expect(entry.pages.peek()).toEqual([0, 1])
+    expect(entry.status.peek()).toBe('success')
+    await expect(entry.firstValue()).resolves.toEqual([0, 1])
+
+    entry.dispose()
+  })
+})
