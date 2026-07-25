@@ -96,10 +96,12 @@ If a sub-controller has UI-driven lifecycle (e.g. hidden routes), the `<KeepAliv
 
 Default behavior in olas: unmounting the React component does NOT dispose the controller (the controller is owned by its parent and `createRoot`'s consumer). `<KeepAlive>` opts the wrapped sub-tree into a different policy:
 
-- on React unmount → `controller.suspend()`
 - on React (re-)mount → `controller.resume()`
+- on React unmount → `controller.suspend()`
 
-`useSuspendOnHidden` is the same idea keyed off `document.visibilityState`. Guards `typeof document !== 'undefined'` so it's safe to import from SSR code (no-op on the server).
+**Refcounted across wrappers (T4.6).** A module-level `WeakMap<controller, count>` means `resume()` fires only when the FIRST wrapper on a controller mounts and `suspend()` only when the LAST unmounts. So during a cross-fade — the entering screen mounts while the exiting one is still mounted — the controller stays resumed regardless of effect order, and the exiting screen's unmount can't suspend a controller the entering screen still uses. Uses an isomorphic `useLayoutEffect` so `resume()` runs before the first paint after a remount. Pinned by `keep-alive.test.tsx` (R4.6).
+
+`useSuspendOnHidden` is the same idea keyed off `document.visibilityState` (not refcounted — it's a single per-controller visibility hook). Guards `typeof document !== 'undefined'` so it's safe to import from SSR code (no-op on the server).
 
 ## `HydrationBoundary` — root ownership (T4.1)
 

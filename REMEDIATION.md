@@ -525,7 +525,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   outside React after render but before effects (e.g. in a layout-effect of a sibling
   rendered later), assert the final paint shows the new value.
 
-### [ ] T4.6 — **[MAJOR]** `SuspendOnUnmount`/KeepAlive has no refcounting; overlap ordering ends wrong
+### [x] T4.6 — **[MAJOR]** `SuspendOnUnmount`/KeepAlive has no refcounting; overlap ordering ends wrong
 - **File:** `packages/react/src/keep-alive.ts:23-35` (docstring `:17-22` admits the problem)
 - **Problem:** during cross-fades the exiting screen's `suspend()` runs AFTER the entering
   screen's `resume()` → controller suspended while visibly mounted. Also first paint after

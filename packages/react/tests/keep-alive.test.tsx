@@ -119,3 +119,49 @@ describe('useSuspendOnHidden', () => {
     removeSpy.mockRestore()
   })
 })
+
+// R4.6 (T4.6) — cross-fade overlap: two wrappers around the SAME controller must
+// refcount so the exiting screen's unmount doesn't suspend a controller the
+// entering screen is still using.
+describe('KeepAlive refcounting (R4.6)', () => {
+  test('overlapping consumers keep the controller resumed until the LAST unmounts', () => {
+    let resumed = false
+    const controller: SuspendableController = {
+      resume() {
+        resumed = true
+      },
+      suspend() {
+        resumed = false
+      },
+    }
+    function Harness({ a, b }: { a: boolean; b: boolean }) {
+      return (
+        <>
+          {a && (
+            <KeepAlive controller={controller}>
+              <div />
+            </KeepAlive>
+          )}
+          {b && (
+            <KeepAlive controller={controller}>
+              <div />
+            </KeepAlive>
+          )}
+        </>
+      )
+    }
+    const { rerender } = render(<Harness a b={false} />)
+    expect(resumed).toBe(true)
+
+    // Cross-fade: B enters (overlaps A), then A exits.
+    rerender(<Harness a b />)
+    expect(resumed).toBe(true)
+    rerender(<Harness a={false} b />)
+    // The bug: A's cleanup suspended a controller B is still mounted on.
+    expect(resumed).toBe(true)
+
+    // Only when the LAST consumer unmounts does it suspend.
+    rerender(<Harness a={false} b={false} />)
+    expect(resumed).toBe(false)
+  })
+})
