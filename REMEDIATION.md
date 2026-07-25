@@ -711,17 +711,20 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - [x] Debounce the inspector filter input (it `JSON.stringify`s every cache payload per
   keystroke on top of the 800ms poll).
 
-### [ ] T6.4 — cross-tab: dead config + receive-side hygiene
+### [x] T6.4 — cross-tab: dead config + receive-side hygiene
 - **Files:** `packages/cross-tab/src/plugin.ts:139-154, 219-223, 240-241`;
   core `client.ts:612, 719` (receive path drops infinite payloads)
-- [ ] `crossTab: 'infinite' | 'both'` broadcasts payloads NO peer can apply (core's
+- [x] `crossTab: 'infinite' | 'both'` broadcasts payloads NO peer can apply (core's
   `applyRemoteSetData`/`applyRemoteInvalidate` early-return for non-`'query'` defs).
   Decision: **remove the `'infinite' | 'both'` option values** (type-level) and dev-warn
   if passed; add a BACKLOG entry for infinite-query cross-tab support. Do not silently
   no-op.
-- [ ] Apply the `shouldBroadcast` filter on RECEIVE as well as send, so a tab ignores
+  > Narrowed `QuerySpec`/`InfiniteQuerySpec.crossTab` to `boolean | 'data'`; `registerQueryId`
+  > (`define.ts`) dev-warns on a JS/cast `'infinite'`/'both'` and `shouldBroadcast` maps it to
+  > `'data'` (infinite `kind` is dropped by the send gate anyway). BACKLOG entry added.
+- [x] Apply the `shouldBroadcast` filter on RECEIVE as well as send, so a tab ignores
   messages for queries it wouldn't broadcast.
-- [ ] Document (README) the conflict model honestly: last-delivery-wins per tab, no
+- [x] Document (README) the conflict model honestly: last-delivery-wins per tab, no
   arbitration; simultaneous writes in two tabs can diverge permanently. Recommend
   server-refetch (invalidate) for authoritative sync.
 

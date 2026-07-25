@@ -58,6 +58,10 @@ Examples:
 
 ## Storage / sync
 
+### [idea] Cross-tab sync for infinite queries
+
+[from T6.4] `@kontsedal/olas-cross-tab` and core's remote-apply paths (`applyRemoteSetData` / `applyRemoteInvalidate`) only handle regular (`'query'`) defs — infinite queries early-return, so their page arrays can't be applied cross-tab. The `crossTab: 'infinite'` / `'both'` option values were removed (they broadcast noise no peer could apply). Real support needs a receive path that reconstructs an infinite entry's page array + params (heavier payload, and the receiving tab may have a different page count / cursor), plus a size guard since page arrays can be large. Until then, cross-tab infinite lists should refetch (`invalidate`) rather than sync.
+
 ### [idea] Cross-`mutationId` causal ordering in the mutation queue
 
 [from T6.2] `@kontsedal/olas-mutation-queue` replays entries serially **within** a `mutationId` (sorted by `seq`), but different `mutationId`s replay in parallel and cross-tab order isn't coordinated. So a logical dependency like `order/cancel` needing to land after `order/create` (distinct ids) isn't guaranteed on replay. A full fix needs a cross-id dependency DAG (or a global replay sequence with per-entry `dependsOn` edges) plus cross-tab agreement on that order — significant design. Today's guidance: model dependent steps under one `mutationId`, or make the server tolerant of out-of-order arrival (idempotency + reconciliation). Documented as a limitation in the package README.

@@ -57,12 +57,12 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
    */
   queryId?: string
   /**
-   * Opt into cross-tab sync. `'infinite'` or `'both'` lifts the cross-tab
-   * plugin's infinite-query gate. See `QuerySpec.crossTab` for the full
-   * shape; legacy `true` keeps the old "data-only" mapping (a no-op here
-   * since infinite queries don't emit data-only events).
+   * Accepted for API symmetry, but infinite queries do NOT propagate
+   * cross-tab: peers can't apply page-array payloads (core's remote-apply
+   * paths early-return for infinite defs). The `'infinite'` / `'both'` values
+   * were removed in T6.4; infinite cross-tab is tracked in `BACKLOG.md`.
    */
-  crossTab?: boolean | 'data' | 'infinite' | 'both'
+  crossTab?: boolean | 'data'
 }
 
 /**
