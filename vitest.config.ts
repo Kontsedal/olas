@@ -30,6 +30,16 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.ts'],
       exclude: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/index.ts'],
+      // Ratchet: seeded a few points below the current measured levels
+      // (~83 stmts / 71 branch / 86 funcs / 87 lines as of the T7.2 pass) so CI
+      // fails on a real regression without flaking on measurement jitter. Raise
+      // these as coverage improves — never lower them to make a red build pass.
+      thresholds: {
+        statements: 80,
+        branches: 68,
+        functions: 82,
+        lines: 83,
+      },
     },
   },
 })

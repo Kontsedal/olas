@@ -803,16 +803,27 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   > auto-opened "Version Packages" PR (runs `changeset version` → publishes). The combined
   > changelog is the changeset body above.
 
-### [ ] T7.2 — verify what you ship
-- [ ] Add `publint` and `@arethetypeswrong/cli` for every package to CI (after `pnpm build`).
-- [ ] Add a dist smoke test: a small script that `import`s (ESM) and `require`s (CJS) each
+### [x] T7.2 — verify what you ship
+- [x] Add `publint` and `@arethetypeswrong/cli` for every package to CI (after `pnpm build`).
+  > Root `publint` / `attw` scripts (recursive over `./packages/*`, excluding the private
+  > integration pkg) + CI steps after build. Both **clean** — publint's only note was the
+  > missing `engines` (fixed below); attw "No problems found" for all 10 (node16 CJS/ESM +
+  > bundler 🟢).
+- [x] Add a dist smoke test: a small script that `import`s (ESM) and `require`s (CJS) each
   built package and touches one export; run in CI after build.
-- [ ] `packages/core/tests/dev-flag.test.ts` tests the vitest define, not the shipped
+  > `scripts/verify-dist.mjs` (`pnpm smoke:dist`) — zero-dep; passes for all 10 published
+  > packages.
+- [x] `packages/core/tests/dev-flag.test.ts` tests the vitest define, not the shipped
   artifact — after the build step in CI, grep the built `dist/*.mjs` for a `__DEV__`
   leftover (should be none in the production build).
-- [ ] Add `engines: { node: ">=18" }` to every published package.json.
-- [ ] Add coverage thresholds to `vitest.config.ts` (start at current levels, ratchet up)
+  > Folded into `verify-dist.mjs` (greps every published `dist/*.{mjs,cjs}`). **No leak** —
+  > `tsdown.config.ts` defines `__DEV__: JSON.stringify(NODE_ENV !== 'production')`, so the
+  > prod build eliminates it (0 occurrences in dist). No build bug; the guard now pins it.
+- [x] Add `engines: { node: ">=18" }` to every published package.json.
+- [x] Add coverage thresholds to `vitest.config.ts` (start at current levels, ratchet up)
   and run coverage in CI.
+  > Seeded below current (~83/71/86/87 → thresholds 80/68/82/83); CI's test step is now
+  > `pnpm test:coverage` so thresholds are enforced.
 
 ### [ ] T7.3 — documentation debt
 - [ ] **API.md is frozen at the ~0.0.4 surface.** Add: `@kontsedal/olas-mutation-queue`,
