@@ -403,7 +403,12 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Test:** `stableHash([new Date(0)]) !== stableHash(['1970-01-01T00:00:00.000Z'])`;
   class-with-toJSON still throws.
 
-### [ ] T3.9 — query minor batch (split into 2–3 commits as sensible)
+### [x] T3.9 — query minor batch (split into 2–3 commits as sensible)
+> Done across 5 commits (a–e2): onMutate-throw-aborts + refetch-no-reject-on-supersede;
+> retry backoff default + dispose-resets-isFetching; focus double-fire debounce +
+> isFetching join; invalidate-marks-stale-only (subscriber-less); registry
+> globalThis-sharing + queryId dup-warn + _unregisterMutationById unexport;
+> streaming flush guard. Infinite parity applied where it was the same bug.
 - [x] `onMutate` throw is swallowed and the mutation still runs (`mutation.ts:295-303`) —
   abort the mutation instead: route the error to `onError`/reject the run promise, do not
   call `mutate`.
@@ -418,7 +423,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   Check SPEC §5 wording and update. (`Entry.markStale`/`forcedStale` +
   `client.invalidateEntry` subscriber check; SPEC §5.7 already said "if subscribed",
   clarified. Also InfiniteEntry.)
-- [ ] Streaming `flush()` unguarded `JSON.stringify` (`streaming.ts:144`) — try/catch;
+- [x] Streaming `flush()` unguarded `JSON.stringify` (`streaming.ts:144`) — try/catch;
   on failure dev-warn + skip that entry rather than corrupting the stream.
 - [x] `waitForIdle` hangs if racing dispose — disposed entries keep `isFetching: true`
   (`entry.ts:454-479`) — reset `isFetching` to false in entry dispose. (Also InfiniteEntry.)

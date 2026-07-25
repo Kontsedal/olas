@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { createRoot, defineController, defineQuery, effect } from '@kontsedal/olas-core'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   createStreamingHydrator,
   createStreamingTransform,
@@ -55,6 +55,37 @@ describe('createStreamingHydrator (server side)', () => {
     // No queryId → cross-tab / streaming hooks don't fire.
     expect(flush()).toBe('')
 
+    dispose()
+    root.dispose()
+  })
+
+  // R-Q3.9 (T3.9) — an un-serializable payload must not throw out of flush()
+  // and corrupt the whole stream chunk; skip it (dev-warn), keep the rest.
+  test('flush skips an un-serializable entry instead of corrupting the chunk', async () => {
+    const bad = defineQuery({
+      queryId: 'streaming-bad',
+      key: () => [],
+      fetcher: async () => ({ n: 10n }), // BigInt → JSON.stringify throws
+    })
+    const good = defineQuery({
+      queryId: 'streaming-good',
+      key: () => [],
+      fetcher: async () => ['ok'],
+    })
+    const def = defineController((ctx) => ({ bad: ctx.use(bad), good: ctx.use(good) }))
+
+    const { plugin, flush, dispose } = createStreamingHydrator()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    await root.waitForIdle()
+
+    // Must NOT throw. The good entry survives; the BigInt one is skipped + warned.
+    const html = flush()
+    expect(html).toContain('"queryId":"streaming-good"')
+    expect(html).not.toContain('streaming-bad')
+    expect(warn).toHaveBeenCalled()
+
+    warn.mockRestore()
     dispose()
     root.dispose()
   })
