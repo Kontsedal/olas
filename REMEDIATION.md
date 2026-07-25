@@ -287,7 +287,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 
 ## Phase 3 — query cache majors (`packages/core/src/query/`)
 
-### [ ] T3.1 — **[MAJOR]** out-of-order rollback of parallel optimistic mutations corrupts data
+### [x] T3.1 — **[MAJOR]** out-of-order rollback of parallel optimistic mutations corrupts data
 - **File:** `packages/core/src/query/entry.ts:394-403` (rollback restores `record.prev` blindly)
 - **Problem (confirmed):** data 0 → mutation A applies +1 → B applies +10 → data 11.
   A fails first (rollback → 0), then B fails (rollback → **1**, resurrecting A's delta).

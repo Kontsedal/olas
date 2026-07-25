@@ -76,7 +76,7 @@ A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it re
 ## How mutations integrate with the cache
 
 - `onMutate` typically calls `query.setData(...)`. That writes through `client.setData` which calls `entry.setData(updater)`. The Entry records a snapshot (pre-value) and returns `{ rollback }`.
-- `onError(err, vars, snapshot)` typically calls `snapshot?.rollback()`. The Entry restores the captured pre-value.
+- `onError(err, vars, snapshot)` typically calls `snapshot?.rollback()`. Rolling back the top-of-stack snapshot restores its captured pre-value; a non-top rollback under concurrency chain-splices instead so out-of-order rollbacks still converge on the original value (spec §6.4, `entities/entry.md`).
 - For `concurrency: 'latest-wins'`, the previous run's snapshot rolls back **synchronously before the new run's `onMutate` is called** — see `pitfalls/latest-wins-rollback-order.md`.
 - Mutation inflight is tracked centrally on `queryClient.mutationsInflight$`. `root.waitForIdle()` waits on it plus per-entry `isFetching`.
 
