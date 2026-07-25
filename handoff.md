@@ -1,16 +1,16 @@
 # handoff.md — REMEDIATION.md execution, session handoff
 
 **Transient file** (like `REMEDIATION.md`). Delete both when the remediation lands.
-Written 2026-07-25 after completing Phases 0–2.
+Written 2026-07-25 after completing Phases 0–3.
 
 ---
 
 ## TL;DR
 
 - Working on branch **`remediation`** (off `main`). All work is committed.
-- **Phases 0, 1, 2 are DONE** — 14 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8), 16 commits.
-- Pipeline is **green**: `pnpm test` → 649/649, typecheck clean, biome lint clean.
-- **Next task: T3.1** (Phase 3 — query cache majors). The full task list + "decisions
+- **Phases 0, 1, 2, 3 are DONE** — 23 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9).
+- Pipeline is **green**: `pnpm test` → 673/673, typecheck clean, biome lint clean.
+- **Next task: T4.1** (Phase 4 — React adapter). The full task list + "decisions
   made" live in `REMEDIATION.md`; the checkboxes there are the source of truth.
 
 ## Read this first (resume order)
@@ -96,17 +96,34 @@ must be green, then add a `## [date] ingest | REMEDIATION.md phase N` entry to `
 | 0 — infra | T0.1–T0.4 | ✅ done |
 | 1 — query criticals | T1.1, T1.2 | ✅ done |
 | 2 — lifecycle criticals+majors | T2.1–T2.8 | ✅ done (T2.8 pathKey = `[?]`) |
-| 3 — query majors | T3.1–T3.9 | ⬜ **next** |
-| 4 — React adapter | T4.1–T4.7 | ⬜ |
+| 3 — query majors | T3.1–T3.9 | ✅ done |
+| 4 — React adapter | T4.1–T4.7 | ⬜ **next** |
 | 5 — forms | T5.1–T5.3 | ⬜ |
 | 6 — satellites | T6.1–T6.7 | ⬜ |
 | 7 — delivery/docs/release | T7.1–T7.3 | ⬜ |
 | 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ |
 
-**Next up — T3.1** (`entry.ts` rollback): out-of-order rollback of parallel optimistic
-mutations corrupts data; fix is chain-splice (see REMEDIATION.md for the exact decision).
-Note several Phase 3 tasks touch `entry.ts`/`client.ts`/`infinite.ts` — the same files
-Phase 1 changed, so re-read the current code, don't trust the plan's line numbers.
+**Next up — T4.1** (`packages/react/src/context.ts`): `HydrationBoundary` builds a root in
+`useMemo` — leaks, StrictMode double-root, no unmount dispose. Fix is ref + effect ownership
+(see REMEDIATION.md for the exact decision); new test file
+`packages/react/tests/hydration-boundary.test.tsx`.
+
+**Phase 4 notes (React adapter):**
+- **React tests are jsdom** — per-file `// @vitest-environment jsdom` pragma, `.tsx`. See
+  the existing `packages/react/tests/*.test.tsx`; they use `@testing-library/react`
+  (`render`, `act`, `<StrictMode>`).
+- `packages/react` has **no `__DEV__` build define** — use `console.warn` directly for dev
+  warnings, NOT `__DEV__` (learned in T3.9-e2; grep `packages/react/src` — zero `__DEV__`).
+- Phase 4 builds on Phase 3 additions: T4.2 adds `Mutation.status` (core mutation.ts),
+  T4.3 relies on `Entry.applyFailure` keeping `data`, T4.5 replaces the version-counter
+  snapshots. `packages/react/src/hooks.ts` is the biggest Phase 4 surface — re-read it.
+- `packages/react/src/streaming.ts` and `packages/core/src/query/define.ts` are **UTF-16 /
+  contain NUL bytes** — git shows them as `Bin` in diffs (pre-existing; the Edit tool
+  preserves the encoding fine). Not a corruption; don't "fix" it under a bug task.
+
+**Phase 3 recap (just completed):** new public surface a Phase 4 task may lean on —
+`query.cancel`/`cancelAll`, `subscription.cancel`, `AsyncState.isPaused`, and internal
+`Entry.markStale`/`cancel`. Full details in `.wiki/log.md` (phase 3 ingest entry).
 
 ## Handy commands
 

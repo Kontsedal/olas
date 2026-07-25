@@ -436,3 +436,23 @@ Regression tests R-L2.1…R-L2.8 (+ R-Q1.1/1.2 from phase 1) all under `packages
 ### Gates
 
 `pnpm typecheck` clean (after `pnpm build` — satellites resolve core via dist; see BACKLOG); `pnpm lint` clean; `pnpm test` → 649/649 across 55 files.
+
+## [2026-07-25 14:25] ingest | REMEDIATION.md phase 3 (query cache majors)
+
+Phase 3 — query cache majors + a 10-item minor batch (`packages/core/src/query/`, `packages/react/src/streaming.ts`).
+
+- **T3.1** — out-of-order optimistic rollback **chain-splices** instead of blindly restoring `record.prev`; rolling back every layer in any order returns to the pre-mutation baseline. `Entry` + `InfiniteEntry`. SPEC §6.4; `entities/entry.md`. Full updater-replay rebasing → BACKLOG.
+- **T3.2** — `refetchInterval` **joins** an in-flight fetch (`isFetching.peek()`) instead of aborting it (was a livelock when fetch > interval). Both interval sites. `entities/query-client.md`.
+- **T3.3** — infinite `fetchNextPage`/`fetchPreviousPage` onSuccess now set `status:'success'`; `runFetch` finally repairs a wedged `'pending'`. Un-wedges Suspense after paging over a mid-flight refetch.
+- **T3.4** — new `query.cancel` / `cancelAll` + `subscription.cancel` (+ infinite parity), backed by `Entry.cancel` / `InfiniteEntry.cancel`; `applySuccess` rebases live snapshots onto server truth so a later rollback can't resurrect pre-fetch data. SPEC §5.5/§6.4; API.md; README optimistic recipe.
+- **T3.5** — `networkMode:'offlineFirst'` parks a fetch-`TypeError`-while-offline and retries on reconnect; new **`isPaused`** signal on `AsyncState` (added to every producer — Entry/InfiniteEntry/both subs/LocalCache/fakeAsyncState). SPEC §5.3/§5.5; API.md.
+- **T3.6** — optimistic `snapshot.rollback()` re-emits a `SetDataEvent` (guarded on an actual data change) so cross-tab / entity peers drop failed optimistic state. `entities/query-client.md`.
+- **T3.7** — infinite refetch re-fetches **all** loaded pages (`runRefetchAll`), not collapse-to-page-one; atomic update, no truncation flash. SPEC §5.7. Infinite SSR dehydrate deferred → BACKLOG + SPEC §15 + react README.
+- **T3.8** — `stableHash` reads the raw holder property (`this[key]`) so Date tagging + the class-instance throw aren't dead code (`toJSON` runs before the replacer).
+- **T3.9** (commits a–e2) — onMutate-throw aborts the run; `subscription.refetch()` resolves (not AbortError-rejects) on supersede; exponential retry-backoff default; `dispose()` resets `isFetching`; focus/visibilitychange debounce + isFetching join; `invalidate` marks-stale-only when subscriber-less (`markStale`/`forcedStale` + `client.invalidateEntry`); query + mutation registries shared on `globalThis` (dual-package hazard); duplicate `queryId` dev-warn; `_unregisterMutationById` moved to `/testing`; streaming `flush()` skips un-serializable entries.
+
+New public surface: `Query.cancel` / `cancelAll`, `subscription.cancel`, `AsyncState.isPaused`. New `Entry`/`InfiniteEntry` methods: `cancel`, `markStale`. Regression tests R-Q3.1…R-Q3.9 in `regressions.test.ts` (+ `stableHash` cases in `query.test.ts`; offlineFirst / focus-double-fire in `query-focus-online.test.ts`; streaming guard in react `streaming.test.tsx`).
+
+### Gates
+
+`pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome lint .` clean (273 files); `pnpm test` → 673/673 across 55 files.
