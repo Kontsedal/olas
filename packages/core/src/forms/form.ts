@@ -393,13 +393,16 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       // owning submit() flow can flip it back.
       this.submitCount$.set(0)
       this.submitError$.set(undefined)
+      // Re-apply initial (as initial, no dirty bump) INSIDE the batch — a
+      // separate pass would fire a second notification and briefly expose the
+      // "reset to construction seed, then re-seat to current initial" tearing
+      // (visible with a reactive `initial: () => …` whose deps changed) (T5.3).
+      if (this.options?.initial !== undefined) {
+        const ini =
+          typeof this.options.initial === 'function' ? this.options.initial() : this.options.initial
+        if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+      }
     })
-    // Re-apply initial if provided — as initial (no dirty bump).
-    if (this.options?.initial !== undefined) {
-      const ini =
-        typeof this.options.initial === 'function' ? this.options.initial() : this.options.initial
-      if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
-    }
   }
 
   markAllTouched(): void {
@@ -620,7 +623,12 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         } catch {
           // The reporter must not propagate.
         }
-        syncIssues.push({ path: [], message: err instanceof Error ? err.message : String(err) })
+        // Prod shows a generic message (don't leak internal error text into
+        // form errors); the real error still reaches `onValidatorError` (T5.3).
+        syncIssues.push({
+          path: [],
+          message: __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
+        })
       }
     }
 
@@ -1043,7 +1051,12 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
         } catch {
           // The reporter must not propagate.
         }
-        syncIssues.push({ path: [], message: err instanceof Error ? err.message : String(err) })
+        // Prod shows a generic message (don't leak internal error text into
+        // form errors); the real error still reaches `onValidatorError` (T5.3).
+        syncIssues.push({
+          path: [],
+          message: __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
+        })
       }
     }
 

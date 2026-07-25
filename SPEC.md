@@ -717,6 +717,8 @@ const confirm = ctx.field('', [
 
 Sync validators run first and short-circuit; async validators only run after all syncs pass.
 
+**Built-in validators.** `required`, `minLength`, `maxLength`, `min`, `max`, `email`, `pattern`, and `mustBeTrue`. `required` rejects empty values (`''`, `null`, `undefined`, `[]`) but a boolean `false` is a legitimate value and **passes** — for a consent / terms checkbox that must be ticked, use `mustBeTrue(message?)`, which rejects anything that isn't `true`.
+
 ### 8.2 Debounced async validators
 
 For server-side checks (username taken, email exists), use `debouncedValidator`:
@@ -733,7 +735,7 @@ const username = ctx.field('', [
 ])
 ```
 
-While debouncing or the request is in flight, `isValidating` is `true` and `isValid` is `false` (treat-as-invalid-until-proven-valid).
+While debouncing or the request is in flight, `isValidating` is `true` and `isValid` **holds its last settled value** — editing an already-valid field keeps `isValid: true` mid-check, so a submit button bound to it doesn't strobe to disabled on every keystroke. A field with no prior settled validation defaults to valid. `isValid` only flips when a validation pass completes.
 
 ### 8.3 Form — aggregate of fields & nested forms
 

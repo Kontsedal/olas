@@ -1,8 +1,17 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import { required } from '../src/forms/validators'
+import { signal } from '../src/signals'
 
 const emptyDeps = {}
+
+const deferred = <T>() => {
+  let resolve: (v: T) => void = () => {}
+  const promise = new Promise<T>((res) => {
+    resolve = res
+  })
+  return { promise, resolve }
+}
 
 describe('ctx.form — basic aggregation', () => {
   test('value aggregates leaf fields', () => {
@@ -574,6 +583,159 @@ describe('flatErrors walker — fieldArray of forms', () => {
       expect(errs[0]).toEqual(['Required'])
       expect(errs[1]).toBeUndefined()
     })
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// T5.3 — forms minor batch: validateOn, dirtyFields/clearSubtree, isValid
+// stability during validation, and reset() batching.
+// ---------------------------------------------------------------------------
+describe('field validateOn (T5.3)', () => {
+  test("'blur' defers validation until markTouched, then re-validates on change", async () => {
+    const def = defineController((ctx) => ({
+      name: ctx.field<string>('', [required()], { validateOn: 'blur' }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    // Locked: an invalid (empty) value surfaces NO error and reads valid.
+    expect(root.name.errors.value).toEqual([])
+    expect(root.name.isValid.value).toBe(true)
+    // A change while still locked doesn't surface errors either.
+    root.name.set('')
+    expect(root.name.errors.value).toEqual([])
+    // Blur unlocks → validates now.
+    root.name.markTouched()
+    await vi.waitFor(() => expect(root.name.errors.value).toEqual(['Required']))
+    // Subsequent changes re-validate live (RHF reValidateMode: onChange).
+    root.name.set('ok')
+    await vi.waitFor(() => expect(root.name.errors.value).toEqual([]))
+    root.name.set('')
+    await vi.waitFor(() => expect(root.name.errors.value).toEqual(['Required']))
+    root.dispose()
+  })
+
+  test("'submit' defers until revalidate(); markTouched does NOT unlock it", async () => {
+    const def = defineController((ctx) => ({
+      name: ctx.field<string>('', [required()], { validateOn: 'submit' }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.name.errors.value).toEqual([])
+    root.name.markTouched()
+    root.name.set('')
+    expect(root.name.errors.value).toEqual([])
+    // revalidate() unlocks + runs.
+    await root.name.revalidate()
+    expect(root.name.errors.value).toEqual(['Required'])
+    root.dispose()
+  })
+
+  test('reset() re-locks a blur/submit field', async () => {
+    const def = defineController((ctx) => ({
+      name: ctx.field<string>('', [required()], { validateOn: 'blur' }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.name.markTouched()
+    await vi.waitFor(() => expect(root.name.errors.value).toEqual(['Required']))
+    root.name.reset()
+    expect(root.name.errors.value).toEqual([])
+    root.name.set('') // still locked → no error
+    expect(root.name.errors.value).toEqual([])
+    root.dispose()
+  })
+})
+
+describe('Form.dirtyFields + clearSubtree (T5.3)', () => {
+  test('dirtyFields lists dotted / bracket paths of dirty leaves, depth-first', () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form({
+        name: ctx.field<string>('a'),
+        address: ctx.form({ city: ctx.field<string>('') }),
+        tags: ctx.fieldArray((i?: string) => ctx.field<string>(i ?? ''), { initial: ['x'] }),
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.form.dirtyFields.value).toEqual([])
+    root.form.fields.name.set('b')
+    root.form.fields.address.fields.city.set('NYC')
+    root.form.fields.tags.at(0)?.set('y')
+    expect(root.form.dirtyFields.value).toEqual(['name', 'address.city', 'tags[0]'])
+    // Setting a leaf back to its initial drops it from the list.
+    root.form.fields.name.set('a')
+    expect(root.form.dirtyFields.value).toEqual(['address.city', 'tags[0]'])
+    root.dispose()
+  })
+
+  test('clearSubtree resets a named subtree; empty path resets the whole form', () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form({
+        a: ctx.field<string>('x'),
+        b: ctx.field<string>('y'),
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.form.fields.a.set('A')
+    root.form.fields.b.set('B')
+    root.form.clearSubtree('a')
+    expect(root.form.fields.a.value).toBe('x') // reset to initial
+    expect(root.form.fields.b.value).toBe('B') // untouched
+    root.form.fields.a.set('A2')
+    root.form.clearSubtree('') // whole form
+    expect(root.form.fields.a.value).toBe('x')
+    expect(root.form.fields.b.value).toBe('y')
+    root.dispose()
+  })
+})
+
+describe('field isValid stays stable while validating (T5.3)', () => {
+  test('async validation holds last-known validity mid-flight (no strobe)', async () => {
+    let gate = deferred<string | null>()
+    const def = defineController((ctx) => ({
+      name: ctx.field<string>('ok', [() => gate.promise]),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    // Initial run in flight: default last-known validity is `true`, so isValid
+    // reads true (not a false flash).
+    expect(root.name.isValidating.value).toBe(true)
+    expect(root.name.isValid.value).toBe(true)
+    gate.resolve(null)
+    await vi.waitFor(() => expect(root.name.isValidating.value).toBe(false))
+    expect(root.name.isValid.value).toBe(true)
+
+    // Edit → a fresh validation is in flight. isValid must HOLD the last
+    // settled (valid) value, not strobe to false.
+    gate = deferred<string | null>()
+    root.name.set('ok2')
+    expect(root.name.isValidating.value).toBe(true)
+    expect(root.name.isValid.value).toBe(true)
+    gate.resolve(null)
+    await vi.waitFor(() => expect(root.name.isValidating.value).toBe(false))
+    expect(root.name.isValid.value).toBe(true)
+    root.dispose()
+  })
+})
+
+describe('Form.reset batching (T5.3)', () => {
+  test('reset() re-applies a reactive initial in one batch (no tearing)', () => {
+    const seed = signal('a')
+    const def = defineController((ctx) => ({
+      form: ctx.form({ name: ctx.field<string>('') }, { initial: () => ({ name: seed.value }) }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.form.fields.name.value).toBe('a') // construction applied initial
+    // Make it dirty so the reactive-initial auto-reseat is blocked while we
+    // change the seed underneath it.
+    root.form.fields.name.set('dirty')
+    seed.set('b')
+    expect(root.form.fields.name.value).toBe('dirty')
+
+    // reset() must revert AND re-seat to the current initial ('b') in a single
+    // notification — no intermediate 'a' (the pre-fix out-of-batch re-apply).
+    const seen: string[] = []
+    const unsub = root.form.fields.name.subscribeChanges((v) => seen.push(v))
+    root.form.reset()
+    unsub()
+    expect(root.form.fields.name.value).toBe('b')
+    expect(seen).toEqual(['b'])
     root.dispose()
   })
 })

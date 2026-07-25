@@ -25,7 +25,7 @@ confidence: high
 
 ## Purpose
 
-Form primitives — `Field<T>`, `Form<S>`, `FieldArray<I>` — plus stdlib validators (`required`, `min`, `max`, `minLength`, `maxLength`, `email`, `pattern`) and `debouncedValidator`. Spec §8, §20.7.
+Form primitives — `Field<T>`, `Form<S>`, `FieldArray<I>` — plus stdlib validators (`required`, `mustBeTrue`, `min`, `max`, `minLength`, `maxLength`, `email`, `pattern`) and `debouncedValidator`. `required` accepts a boolean `false` (a legit value); `mustBeTrue` is the consent-checkbox rule (T5.3). Spec §8, §20.7.
 
 ## Files
 
@@ -84,6 +84,10 @@ effect(() => {
 ```
 
 The whole body runs inside an `effect`, so any signal read inside any validator becomes a tracked dependency — that's what makes cross-field rules like `(v) => v === password.value ? null : 'mismatch'` reactive. The async portion (`.then`) is outside the tracking scope. A validator that returns a `FormIssue[]` is flattened to its messages here (`messagesFromResult` — a leaf field has no descendants to route paths to).
+
+**`validateOn` gate.** A field can defer its first validation: `'change'` (default, runs immediately), `'blur'` (first run gated on `markTouched()`), `'submit'` (gated on `revalidate()` / `Form.validate()`). A reactive `validateUnlocked$` gate short-circuits the runner while locked; once unlocked it stays unlocked (subsequent changes re-validate), and `reset()` re-locks. Covered by `form.test.ts`.
+
+**`isValid` stability (T5.3).** `isValid` reads live `errors` when settled but **holds the last settled validity while `isValidating`** (a `lastValid$` signal updated at every settle point). Without this, a `debouncedValidator` cleared `validatorErrors$` on each async start and `isValid` strobed to `false` on every keystroke, flickering a bound submit button. A field with no prior settled run defaults to valid (no false-invalid flash on mount). This replaced the older "treat-as-invalid-while-validating" rule (spec §8.2 updated).
 
 `debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` (not the widened `Validator<T>`), so a direct caller that stores the result in a `string | null` signal type-checks — still assignable wherever a `Validator<T>` is expected (`field.ts:545-548`).
 
