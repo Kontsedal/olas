@@ -74,6 +74,10 @@ Examples:
 
 [from SPEC §6.4] T3.4 rebases live optimistic snapshots onto fresh server truth in `Entry.applySuccess`, so a rollback after an intervening fetch restores server data, not a pre-fetch baseline. `InfiniteEntry` does **not** do this: its success paths (initial refetch, `fetchNextPage`, `fetchPreviousPage`) don't touch live snapshots' captured `prev`/`prevParams`. So an optimistic `setData` on an infinite query, followed by a successful page fetch and then a rollback, restores the pre-fetch pages (dropping an appended page). Rare (infinite + optimistic + concurrent fetch) and the rebase semantics for a paginated append are non-obvious (rebase `prev` to the *current* pages array?), so deferred. `query.cancel(...)` already lets callers avoid the race for infinite queries too.
 
+### [idea] `offlineFirst` park for infinite queries
+
+[from SPEC §5.5] T3.5 implemented the `offlineFirst` network-error park (wait for reconnect, then retry) in `Entry.runWithRetry`, but `InfiniteEntry.runFetch` does not — an `offlineFirst` infinite query that hits a network error while offline still surfaces the error rather than parking. `InfiniteEntry.isPaused` is wired for the `online`-mode offline-defer path only. Adding the park to `runFetch` needs per-direction handling (initial/next/prev) and interacts with the collapse-to-page-one behavior (T3.7). Deferred until infinite offline support is a real requirement.
+
 ### [dropped] Next.js app-router / RSC support
 
 Next.js is fundamentally misaligned with olas's philosophy: the controller-tree model assumes a client-driven, signal-reactive runtime where lifecycle, dispose, and `ctx.use` keying live in user space. RSC inverts that — the server owns rendering, components are render functions of props, and the framework dictates data-fetching boundaries. Trying to bolt olas onto that model would either (a) make olas a thin pass-through to whatever Next.js already does, defeating the point, or (b) require a parallel server-side controller runtime, doubling the surface area for an audience that's already well served by TanStack Query and `'use server'` actions.

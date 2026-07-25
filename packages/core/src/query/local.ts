@@ -79,6 +79,9 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   get hasPendingMutations(): ReadSignal<boolean> {
     return this.entry.hasPendingMutations
   }
+  get isPaused(): ReadSignal<boolean> {
+    return this.entry.isPaused
+  }
 
   refetch = (): Promise<T> => this.entry.refetch()
   reset = (): void => this.entry.reset()

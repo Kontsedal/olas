@@ -120,6 +120,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   readonly isStale: Signal<boolean> = signal(true)
   readonly lastUpdatedAt: Signal<number | undefined> = signal(undefined)
   readonly hasPendingMutations: Signal<boolean> = signal(false)
+  /** True while a fetch is parked waiting for reconnect (online-mode defer).
+   *  See spec §5.5, T3.5. Mirrors `Entry.isPaused`. */
+  readonly isPaused: Signal<boolean> = signal(false)
 
   readonly isFetchingNextPage: Signal<boolean> = signal(false)
   readonly isFetchingPreviousPage: Signal<boolean> = signal(false)
@@ -239,6 +242,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.status.set('pending')
       this.isFetching.set(true)
       this.isLoading.set(!previouslyHadPages)
+      this.isPaused.set(false)
     })
 
     return this.runFetch(
@@ -609,6 +613,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }
 
   private scheduleDeferredFetch(direction: 'initial' | 'next' | 'prev'): Promise<unknown> {
+    // Parked waiting for reconnect (T3.5). Cleared when a fetch actually
+    // starts (`startFetch` batch) or on drain.
+    this.isPaused.set(true)
     if (this.reconnectUnsub === null) {
       this.reconnectUnsub = subscribeReconnect(() => this.drainDeferred())
     }
@@ -620,6 +627,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private drainDeferred(): void {
     if (this.deferredResolvers.length === 0) return
     if (this.disposed) return
+    this.isPaused.set(false)
     const pending = this.deferredResolvers
     this.deferredResolvers = []
     if (this.reconnectUnsub !== null) {

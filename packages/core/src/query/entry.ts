@@ -58,6 +58,9 @@ export class Entry<T> {
   readonly lastUpdatedAt: Signal<number | undefined>
   readonly hasPendingMutations: Signal<boolean> = signal(false)
   readonly isStale: Signal<boolean> = signal(true)
+  /** True while a fetch is parked waiting for reconnect (online-mode defer or
+   *  offlineFirst network-error park). See spec §5.5, T3.5. */
+  readonly isPaused: Signal<boolean> = signal(false)
 
   fetcherProvider: () => (signal: AbortSignal) => Promise<T>
   private staleTime: number
@@ -155,6 +158,7 @@ export class Entry<T> {
       this.status.set('pending')
       this.isFetching.set(true)
       this.isLoading.set(!previouslyHadData)
+      this.isPaused.set(false)
     })
 
     this.fetchStartTime = Date.now()
@@ -172,6 +176,10 @@ export class Entry<T> {
   }
 
   private scheduleDeferredFetch(): Promise<T> {
+    // Parked waiting for reconnect — surface it so the UI can show "waiting
+    // for network" instead of a silent `idle` (T3.5). Cleared when the fetch
+    // actually starts (`startFetch` batch) or settles.
+    this.isPaused.set(true)
     // Lazy-install one reconnect listener for the entry. Cleared on dispose
     // and on the first successful drain. Each call appends a fresh resolver.
     if (this.reconnectUnsub === null) {
@@ -222,6 +230,18 @@ export class Entry<T> {
       } catch (err) {
         if (myId !== this.currentFetchId || this.disposed || isAbortError(err)) {
           throw err
+        }
+        // offlineFirst: a network-shaped failure while offline parks the entry
+        // (wait for reconnect, then retry) instead of surfacing the error. A
+        // `fetch()` network failure surfaces as a `TypeError`; `AbortError` is
+        // already handled above. Spec §5.5, T3.5.
+        if (this.networkMode === 'offlineFirst' && this.isOffline() && err instanceof TypeError) {
+          batch(() => {
+            this.isFetching.set(false)
+            this.isLoading.set(false)
+            this.status.set(this.data.peek() !== undefined ? 'success' : 'idle')
+          })
+          return this.scheduleDeferredFetch()
         }
         if (!this.shouldRetry(attempt, err)) {
           return this.applyFailure(err)

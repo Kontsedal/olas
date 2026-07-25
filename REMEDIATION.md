@@ -347,7 +347,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Docs:** SPEC §5 (queries) + §6.4; API.md; README optimistic-update recipe gains the
   cancel step.
 
-### [ ] T3.5 — **[MAJOR]** `networkMode: 'offlineFirst'` is documented but not implemented
+### [x] T3.5 — **[MAJOR]** `networkMode: 'offlineFirst'` is documented but not implemented
 - **Files:** `types.ts:130-134` (the promise), `entry.ts:143-147, 209-234` (no such code)
 - **Problem:** `offlineFirst` behaves identically to `always`. Also offline-deferred
   fetches sit at `status:'idle'` with nothing telling the UI they're waiting for network.
