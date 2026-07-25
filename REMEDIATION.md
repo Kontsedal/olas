@@ -539,7 +539,12 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   assert final state is resumed. Two consumers of the same handle: unmounting one keeps it
   resumed.
 
-### [ ] T4.7 — React minor batch
+### [x] T4.7 — React minor batch
+> Done across 2 commits: (hooks) aria-errormessage removal, transform ref, reset/
+> suspense docstrings; (streaming+context) plugin-through-options docstring,
+> teardown re-installs a queue (not an inert sink), `options as any` → `RootOptions`.
+> The disabled+suspense guard is `[?]` (could-not-implement-cleanly — see sub-item;
+> logged in BACKLOG).
 - [x] `aria-errormessage` gets error TEXT (`hooks.ts:398`) — per ARIA it takes an element
   ID reference. Remove it from `useFieldInput`'s props (keep `aria-invalid`); document
   that consumers should wire `aria-describedby` themselves.
@@ -557,12 +562,12 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   > node's `uncaughtException`, failing the vitest run. Reverted to the original
   > idle→suspend; documented the "disabled + suspense hangs" limitation in `BACKLOG.md`
   > (needs a `disabled`/`enabled` flag on the subscription to fix properly).
-- [ ] Streaming docstring wires the plugin to the wrong root (`streaming.ts:165-173`) —
+- [x] Streaming docstring wires the plugin to the wrong root (`streaming.ts:165-173`) —
   the example creates a plugin'd root then lets `HydrationBoundary` create ANOTHER root.
   Rewrite the example to pass the plugin through HydrationBoundary's options.
-- [ ] Teardown intake drops late entries (`streaming.ts:257-261`, `push: () => {}`) —
+- [x] Teardown intake drops late entries (`streaming.ts:257-261`, `push: () => {}`) —
   queue them (re-install the bootstrap queue) instead of dropping.
-- [ ] `options as any` at `context.ts:154` — type it properly with `RootOptions<…>`.
+- [x] `options as any` at `context.ts:154` — type it properly with `RootOptions<…>`.
 
 ---
 

@@ -1,4 +1,4 @@
-import { createRoot, type DehydratedState, type Root } from '@kontsedal/olas-core'
+import { createRoot, type Root, type RootOptions } from '@kontsedal/olas-core'
 import {
   type Context,
   createContext,
@@ -136,13 +136,7 @@ export function createOlasContext<Api>(displayName?: string): {
  */
 export function HydrationBoundary<Api extends object>(props: {
   def: import('@kontsedal/olas-core').ControllerDef<void, Api>
-  options: {
-    deps: Record<string, unknown>
-    hydrate?: DehydratedState
-    onError?: (err: unknown, ctx: unknown) => void
-    scopes?: ReadonlyArray<readonly [unknown, unknown]>
-    plugins?: ReadonlyArray<unknown>
-  }
+  options: RootOptions<Record<string, unknown>>
   /**
    * When `true` (default), installs the streaming intake on mount so
    * `<script>` tags written by `createStreamingHydrator().flush()` on
@@ -173,7 +167,7 @@ export function HydrationBoundary<Api extends object>(props: {
   // root. A ref mutated in render creates exactly one root across StrictMode's
   // double render.
   if (rootRef.current === null) {
-    rootRef.current = createRoot(def, optionsRef.current as any) as Root<Api>
+    rootRef.current = createRoot(def, optionsRef.current) as Root<Api>
     defRef.current = def
   }
   const root = rootRef.current
@@ -185,7 +179,7 @@ export function HydrationBoundary<Api extends object>(props: {
   // double-construct is acceptable (matches TanStack).
   useEffect(() => {
     if (rootRef.current === null) {
-      rootRef.current = createRoot(defRef.current, optionsRef.current as any) as Root<Api>
+      rootRef.current = createRoot(defRef.current, optionsRef.current) as Root<Api>
       forceRender()
     }
     return () => {
