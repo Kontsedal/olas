@@ -8,15 +8,21 @@ Written 2026-07-25; updated after completing Phase 6 (all satellite packages, T6
 ## TL;DR
 
 - Working on branch **`remediation`** (off `main`). All work is committed.
-- **Phases 0–6 DONE** — 40 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9, T4.1–T4.7,
-  T5.1–T5.3, T6.1–T6.7). Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce),
-  T4.7 disabled+suspense (could-not-implement-cleanly → BACKLOG).
-- Pipeline is **green**: `pnpm test` → 751/751, typecheck clean, biome lint clean,
-  `pnpm wiki:lint` 0 errors.
-- **Next task: T7.1** (Phase 7 — delivery/docs/release). ⚠️ **T7.1 ends in `npm publish` — an
-  outward-facing action that needs the user's explicit go-ahead. Do the CHANGELOG/changeset/CI
-  prep, then STOP and ask before publishing.** See "Next up" below; `REMEDIATION.md` is the
-  source of truth.
+- **Phases 0–7 DONE — 43 tasks** (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9, T4.1–T4.7,
+  T5.1–T5.3, T6.1–T6.7, T7.1–T7.3). Two `[?]` items along the way: T2.8 pathKey
+  (could-not-reproduce), T4.7 disabled+suspense (could-not-implement-cleanly → BACKLOG).
+- Pipeline is **green**: `pnpm test` → 751/751 (coverage gate green), typecheck clean, biome
+  lint clean, `pnpm wiki:lint` 0 errors.
+- **The remediation's core work is COMPLETE.** Only two things remain, **both intentionally
+  deferred**:
+  1. **`npm publish`** — maintainer-gated. T7.1 did all the prep (fixed CHANGELOG headers +
+     backfill, a `patch` changeset, a `main`-only `NPM_TOKEN`-gated `release.yml`). To ship:
+     add the `NPM_TOKEN` secret, `pnpm changeset version`, review, merge to `main` (CI
+     publishes) — or publish manually. T7.1's Publish sub-item is left `[ ]` on purpose.
+  2. **Phase 8 — devtools overhaul** (T8.1–T8.10): a large *additive feature* (not bug fixes),
+     captured in `.wiki/candidates/decisions/devtools-overhaul.md`. Start there if pursued.
+- **Do NOT delete `REMEDIATION.md` yet** — Publish + all of Phase 8 are still `[ ]`. When those
+  land (or Phase 8 is formally dropped), fold leftovers into `BACKLOG.md` and delete it.
 
 ## Read this first (resume order)
 
@@ -105,51 +111,34 @@ must be green, then add a `## [date] ingest | REMEDIATION.md phase N` entry to `
 | 4 — React adapter | T4.1–T4.7 | ✅ done (T4.7 disabled+suspense = `[?]`) |
 | 5 — forms | T5.1–T5.3 | ✅ done |
 | 6 — satellites | T6.1–T6.7 | ✅ done |
-| 7 — delivery/docs/release | T7.1–T7.3 | ⬜ (next) |
-| 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ |
+| 7 — delivery/docs/release | T7.1–T7.3 | ✅ done (npm publish deferred to maintainer) |
+| 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ deferred → `.wiki/candidates/decisions/devtools-overhaul.md` |
 
-**Next up — Phase 7 (delivery/docs/release), T7.1–T7.3.** Mostly CI/docs work — safe to do or
-delegate — EXCEPT the final publish. REMEDIATION lines ~780-824.
+**How to finish the two remaining deferred items:**
 
-- **T7.1 — un-wedge the release pipeline.** npm is frozen at **0.0.6** (2026-05-21) while the
-  repo is at 0.0.15; changesets abandoned after 0.0.6 (no changelogs/tags for 9 versions).
-  (a) Back-fill `CHANGELOG.md` per package for 0.0.7–0.0.15 (summarize from `git log --oneline`)
-  and fix the stale `# @olas/core` / `# @olas/react` headers → `@kontsedal/*`. (b) Create a
-  changeset for the remediation release; version + tag via changesets going forward. (c) Add a
-  CI publish job (changesets/action on `main`, `NPM_TOKEN` secret). (d) **PUBLISH — ⚠️
-  outward-facing, irreversible, needs the user's explicit go-ahead. Do (a)–(c), then STOP and
-  ask.** Honest combined changelog (many behavior changes, but 0.x = patch/minor).
-- **T7.2 — verify what you ship.** `publint` + `@arethetypeswrong/cli` per package in CI (after
-  build); a dist smoke test (import ESM + require CJS each built package, touch one export);
-  grep built `dist/*.mjs` for a `__DEV__` leftover (should be none — `dev-flag.test.ts` only
-  tests the vitest define, not the artifact); `engines: { node: ">=18" }` on every published
-  package.json; coverage thresholds in `vitest.config.ts` (start at current, ratchet).
-- **T7.3 — documentation debt.** API.md is frozen at ~0.0.4 — add mutation-queue, router,
-  `ctx.session`/`collection`/`lazyChild`, suspense option, `HydrationBoundary`, streaming SSR,
-  `indexedDbAdapter`, plus this plan's additions (`Mutation.status`, `query.cancel`, `isPaused`,
-  `FormIssue`, `mustBeTrue`, `TimingSignal.dispose`, persist `version`/`migrate`/`onError`,
-  mutation-queue `onReplaySettle`/`replayNow`, realtime `'unknown'`). README fixes (Windows `\`
-  in package-table links; stale "React adapter ~230 lines"). `packages/realtime/package.json`
-  description says `defineLiveStream` (export is `useLiveStream`); `packages/persist` desc omits
-  `indexedDbAdapter`. `regressions.test.ts:3` cites nonexistent `ASSESSMENT.md`. `query.test.ts`
-  raw-`Promise.resolve()` flush → `vi.waitFor`. **Wiki sweep**: bump stale `last_verified` on
-  pages this plan touched, **add the missing `.wiki/modules/router.md`** (T6.6 left it), confirm
-  the T2.1 pitfall page exists, final `log.md` ingest. This is the big-but-mechanical one.
+*Publish (T7.1 (d)) — all prep is committed.* npm is frozen at **0.0.6** while the repo is at
+0.0.15. To ship the accumulated 0.0.7–0.0.15 + the remediation:
+1. Add an `NPM_TOKEN` repo secret (npm automation token with publish rights).
+2. `pnpm changeset version` — consumes `.changeset/remediation-correctness-pass.md`, bumps the
+   10 published packages (patch), rewrites their CHANGELOGs. Review the diff.
+3. Merge to `main` → `.github/workflows/release.yml` (`changesets/action`) publishes. Or
+   publish manually after `pnpm build`. (Nothing auto-publishes today: the workflow is
+   `main`-only and no-ops without the secret.)
 
-**Then Phase 8 — devtools overhaul (T8.1–T8.10, sub-phases 8A–8D).** A large, ambitious feature
-build (causal-chain inspector, subscription/effect tracing, live actions) — NOT bug fixes.
-Treat it as its own project; read the Phase 8 preamble in REMEDIATION carefully first. T6.3
-already fixed the outright devtools bugs, so Phase 8 is purely additive.
+*Phase 8 (devtools overhaul).* A large **additive feature**, not bug fixes — full design in
+**`.wiki/candidates/decisions/devtools-overhaul.md`** (rescued from REMEDIATION so it survives
+this file's deletion). Start with 8A (event-driven store + `causeId` correlation) — it's the
+foundation everything else stands on. Read that candidate page + the Phase 8 preamble in
+REMEDIATION first. T6.3 already fixed the outright devtools bugs, so this is purely additive.
 
-**Delegation pattern that worked well this phase:** T6.3–T6.6 were each executed by a `fork`
-subagent (inherits full context → same test-first workflow + commit conventions) and
+**Delegation pattern (worked well for the satellite + Phase-7 tasks):** each was executed by a
+`fork` subagent (inherits full context → same test-first workflow + commit conventions) and
 independently gate-verified afterward. Instruct the fork NOT to touch `handoff.md` /
 `.wiki/log.md`, then verify `pnpm test` + `pnpm exec biome lint .` + `pnpm wiki:lint` (and
 `build`+`typecheck` if core changed) before trusting it. Great when context is tight.
 
-**Note:** `REMEDIATION.md` picked up a stray NUL byte somewhere (git shows it as `Bin` in
-diffs; the Read/Edit tools handle it fine). It's transient (deleted at the end), so not worth
-chasing — just don't expect a text diff for it.
+**Note:** `REMEDIATION.md` picked up a stray NUL byte (git shows it as `Bin` in diffs; Read/Edit
+handle it fine). Transient file → not worth chasing.
 
 **Phase 6 notes (satellite packages — leaving core):**
 - Phase 6 = T6.1–T6.7, one package each: persist (T6.1), mutation-queue (T6.2), devtools
