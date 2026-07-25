@@ -57,9 +57,15 @@ export function use<T, U = T>(
   // Cache the last derived slice + raw input so `getSnapshot` returns a
   // stable reference unless `isEqual` says otherwise. Without this, a
   // selector returning a fresh object every call would loop React.
-  const lastRef = useRef<{ raw: T; out: T | U; initialized: boolean }>({
+  const lastRef = useRef<{
+    raw: T
+    out: T | U
+    select: ((value: T) => U) | undefined
+    initialized: boolean
+  }>({
     raw: undefined as unknown as T,
     out: undefined as unknown as T | U,
+    select: undefined,
     initialized: false,
   })
   const select = options?.select
@@ -72,14 +78,21 @@ export function use<T, U = T>(
   const getSnapshot = useCallback((): T | U => {
     const raw = signal.peek()
     const last = lastRef.current
-    if (!last.initialized || !Object.is(last.raw, raw)) {
+    // Recompute when `raw` changed OR the `select` identity changed — a new
+    // selector (e.g. `s => s.items[props.index]` with a fresh index) must
+    // re-derive even when `raw` is the same reference, else the hook returns
+    // the PREVIOUS selector's slice (T4.4).
+    if (!last.initialized || !Object.is(last.raw, raw) || last.select !== select) {
       const next = (select ? select(raw) : raw) as T | U
-      if (last.initialized && isEqual?.(last.out as U, next as U)) {
+      // `isEqual` stabilizes the reference only across re-evaluations of the
+      // SAME selector; a selector change always yields the new slice.
+      if (last.initialized && last.select === select && isEqual?.(last.out as U, next as U)) {
         last.raw = raw // remember the new raw so the equality check fires once
         return last.out
       }
       last.raw = raw
       last.out = next
+      last.select = select
       last.initialized = true
     }
     return last.out
