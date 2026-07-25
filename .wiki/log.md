@@ -456,3 +456,21 @@ New public surface: `Query.cancel` / `cancelAll`, `subscription.cancel`, `AsyncS
 ### Gates
 
 `pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome lint .` clean (273 files); `pnpm test` → 673/673 across 55 files.
+
+## [2026-07-25 15:54] ingest | REMEDIATION.md phase 4 (React adapter)
+
+Phase 4 — `packages/react/src/` (context, hooks, keep-alive, streaming).
+
+- **T4.1** — `HydrationBoundary` owns its root via ref+effect, not `useMemo` (which StrictMode double-invoked → orphaned live root; inline `options` recreated every render; never disposed). Lazy create-in-render (ref-deduped), options read once, def-change recreate, dispose on unmount; empirically confirmed StrictMode does NOT re-render after its effect remount, so the effect recreates + `forceRender()`s to keep one live root. New `hydration-boundary.test.tsx`. `modules/react.md`.
+- **T4.2** — added `Mutation.status` signal (core `mutation.ts`); `useMutation`'s `isSuccess`/`isIdle`/`isError` derive from it, so a **`void` mutation** reports success (the old `data !== undefined` heuristic left it stuck idle). A superseded latest-wins run doesn't flip status. SPEC §6; API.md; `entities/mutation.md` (last_verified bumped).
+- **T4.3** — `useSuspenseQuery` throws to the ErrorBoundary only when there's **no data** — a background-refetch failure keeps the last-good data rendered (was nuking the subtree on a blip).
+- **T4.4** — `use(signal, { select })` re-derives when the **selector identity** changes (was returning the previous selector's slice when raw was unchanged). First `isEqual` coverage.
+- **T4.5** — replaced the version-counter `getSnapshot` (which defeated uSES's mount-consistency check — a write between render and subscription was invisible) with a memoized core **`computed` snapshot** whose `.value` reflects real store state. All four multi-signal hooks (`useQuery`/`useField`/`useFieldInput`/`useMutation`). `modules/react.md` rewritten.
+- **T4.6** — `SuspendOnUnmount`/`KeepAlive` **refcounted** across overlapping wrappers (module-level WeakMap): `resume` on 0→1, `suspend` on 1→0, so a cross-fade can't suspend a controller the entering screen still uses. Isomorphic `useLayoutEffect`. `modules/react.md`.
+- **T4.7** (2 commits) — dropped `aria-errormessage` (ARIA wants an ID ref, not text); `useFieldInput` transform-in-ref so handlers memo on `[field]`; fixed reset/suspense docstrings; streaming docstring passes the plugin through `HydrationBoundary` options; teardown re-installs a **queue** (not an inert sink) so late stream entries aren't dropped; `context.ts` `options as any` → `RootOptions`. `[?]` disabled+suspense guard: an idle-no-data sub is indistinguishable from one torn down at dispose (teardown false-positives + React-19 `uncaughtError`) — reverted; limitation in BACKLOG.
+
+New public surface: `Mutation.status`. Tests in `packages/react/tests/*` (hydration-boundary, adapter, suspense, keep-alive, streaming).
+
+### Gates
+
+`pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome lint .` clean (274 files); `pnpm test` → 689/689 across 56 files.
