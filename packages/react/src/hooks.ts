@@ -174,8 +174,13 @@ export function useQuery<T>(
   if (options?.suspense === true) {
     const status = subscription.status.peek()
     const data = subscription.data.peek()
-    // Error first — Suspense will not catch this, ErrorBoundary will.
-    if (status === 'error') {
+    // Throw to the ErrorBoundary ONLY when there's no data to show. A
+    // background-refetch failure keeps the last-good `data` (Entry.applyFailure
+    // preserves it) but sets `status: 'error'` — throwing then would nuke a
+    // rendered subtree to the ErrorBoundary on a transient focus/interval blip.
+    // TanStack's suspense throws only when data is absent; the error stays
+    // observable via a non-suspense `useQuery`'s `error`/`status` (T4.3).
+    if (status === 'error' && data === undefined) {
       throw subscription.error.peek()
     }
     // First-load suspend: only when we genuinely have no data yet. After
@@ -202,9 +207,11 @@ export function useQuery<T>(
 /**
  * Suspense-first variant of `useQuery`. `data` is always `T` (the hook
  * suspends until the first success, after which refetches don't re-suspend).
- * Errors throw to the nearest ErrorBoundary. Same fan-out as `useQuery` —
- * one `useSyncExternalStore` registration over the eight subscription
- * signals.
+ * Errors throw to the nearest ErrorBoundary **only on the initial load, before
+ * any data lands** — a later background-refetch failure keeps the last-good
+ * data rendered (the error stays observable via a non-suspense `useQuery`).
+ * Same fan-out as `useQuery` — one `useSyncExternalStore` registration over the
+ * subscription signals.
  *
  * Sugar over `useQuery(sub, { suspense: true })`; exists so call sites
  * read as `useSuspenseQuery(sub)` without an options bag.
