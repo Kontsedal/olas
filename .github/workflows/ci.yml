@@ -30,4 +30,8 @@ jobs:
 
       - run: pnpm test
 
+      # The examples ship their own vitest configs (react plugin + jsdom) and
+      # are excluded from the root `pnpm test` include, so run them explicitly.
+      - run: pnpm --filter "./examples/*" test
+
       - run: pnpm build
