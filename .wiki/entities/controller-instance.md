@@ -65,6 +65,8 @@ type LifecycleEntry =
 
 **Resume re-activation guard (T2.2).** `resume()` sets `state = 'active'` before the forward loop, so an effect registered *during* resume (e.g. from an `onResume` handler calling `ctx.effect`) is activated immediately by `ctx.effect` (its `dispose` is non-null). The loop then reaches that freshly-pushed node — the `effect` case re-activates **only when `entry.dispose === null`** (i.e. only effects that `suspend()` cleared), so it never overwrites a live `dispose` ref. Without the guard the effect ran twice per change and one copy survived `dispose()`. Pinned by `regressions.test.ts` R-L2.2 (and B9 covers the symmetric `onSuspend`-registered case).
 
+**Explicit-suspension flag (T2.6).** The `child` lifecycle entry carries `explicitlySuspended?: boolean`. `attach.suspend()` / `collection.suspendItem()` set it; `attach.resume()` / `resumeItem()` clear it. The `resume()` cascade's `case 'child'` **skips** entries with the flag set, so a whole-tree resume (KeepAlive) doesn't wake a child that was explicitly suspended (e.g. a scrolled-out virtualized row). `attach.resume()` / `resumeItem()` called while the parent `isSuspended()` clears the flag but does NOT activate — the child rejoins the parent's next resume cascade instead of running inside a frozen tree. Pinned by `regressions.test.ts` R-L2.6.
+
 ## Path naming
 
 `makeChildSegment(factory)` produces `${factory.name || 'anonymous'}[${index}]`. The counter is per-parent. So `defineController(function userProfile(ctx) {...})` makes children show up as `['root', 'userProfile[0]']`. Anonymous arrow factories get `['root', 'anonymous[0]']`. The DevtoolsEmitter uses `path` for its events.

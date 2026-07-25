@@ -225,7 +225,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Repro test:** mirror `controller.test.ts:504-525` but with an api that defines
   `dispose`; assert the tree's `onDispose` hooks ran and window listeners are gone.
 
-### [ ] T2.6 — **[MAJOR]** explicit item suspension doesn't survive a tree suspend/resume cascade
+### [x] T2.6 — **[MAJOR]** explicit item suspension doesn't survive a tree suspend/resume cascade
 - **Files:** `packages/core/src/controller/instance.ts:355-358` (cascade resume),
   `:697-707` (`attach.resume`), `packages/core/src/controller/types.ts:110-116`
   (`suspendItem` contract)

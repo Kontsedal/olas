@@ -109,9 +109,10 @@ export type Collection<K, Api> = {
    * lists where rows scrolled out of view should stop running their
    * effects but stay reconstructible without re-fetching their state.
    *
-   * No-op if the key isn't in the collection. The collection reconcile
-   * will not auto-resume a suspended item; call `resumeItem(key)` to
-   * bring it back.
+   * No-op if the key isn't in the collection. Neither the collection
+   * reconcile nor a whole-tree `suspend()`/`resume()` cascade (e.g.
+   * KeepAlive) will auto-resume a suspended item — call `resumeItem(key)`
+   * to bring it back (spec §4.1).
    */
   suspendItem(key: K): void
   /** Resume a previously-suspended item. No-op if not suspended / not present. */

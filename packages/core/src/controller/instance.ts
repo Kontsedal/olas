@@ -70,7 +70,7 @@ type LifecycleEntry =
       suspend: () => void
       resume: () => void
     }
-  | { kind: 'child'; instance: ControllerInstance }
+  | { kind: 'child'; instance: ControllerInstance; explicitlySuspended?: boolean }
   | { kind: 'onDispose'; fn: () => void }
   | { kind: 'onSuspend'; fn: () => void }
   | { kind: 'onResume'; fn: () => void }
@@ -364,6 +364,11 @@ export class ControllerInstance {
             entry.resume()
             break
           case 'child':
+            // Skip children explicitly suspended via attach.suspend() or
+            // collection suspendItem() — a whole-tree resume (KeepAlive) must
+            // not wake them. They resume only via their own attach.resume() /
+            // resumeItem(). (T2.6)
+            if (entry.explicitlySuspended) break
             entry.instance.resume()
             break
           case 'onResume':
@@ -691,7 +696,11 @@ export class ControllerInstance {
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
         const api = childInstance.construct(getFactory(def), props)
-        const entry: LifecycleEntry = { kind: 'child', instance: childInstance }
+        const entry = {
+          kind: 'child' as const,
+          instance: childInstance,
+          explicitlySuspended: false,
+        }
         const node = self.entries.push(entry)
         let disposed = false
         return {
@@ -716,6 +725,7 @@ export class ControllerInstance {
           // extra flag here.
           suspend: () => {
             if (disposed) return
+            entry.explicitlySuspended = true
             try {
               childInstance.suspend()
             } catch (err) {
@@ -727,6 +737,12 @@ export class ControllerInstance {
           },
           resume: () => {
             if (disposed) return
+            // Clear the explicit-suspend mark. Under a still-suspended parent,
+            // DON'T activate now — a child must not run inside a frozen tree; it
+            // rejoins the parent's next resume cascade (which no longer skips it
+            // now the mark is clear). (T2.6)
+            entry.explicitlySuspended = false
+            if (self.isSuspended()) return
             try {
               childInstance.resume()
             } catch (err) {
@@ -947,11 +963,17 @@ export class ControllerInstance {
           suspendItem: (key: K) => {
             const info = childMap.get(key)
             if (info === undefined) return
+            // Mark the child entry so a whole-tree resume cascade skips it. (T2.6)
+            if (info.node.entry.kind === 'child') info.node.entry.explicitlySuspended = true
             info.instance.suspend()
           },
           resumeItem: (key: K) => {
             const info = childMap.get(key)
             if (info === undefined) return
+            if (info.node.entry.kind === 'child') info.node.entry.explicitlySuspended = false
+            // Under a suspended parent, defer to the parent's next resume
+            // cascade (which no longer skips the cleared entry). (T2.6)
+            if (self.isSuspended()) return
             info.instance.resume()
           },
           isItemSuspended: (key: K) => {

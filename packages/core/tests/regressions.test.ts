@@ -1039,3 +1039,82 @@ describe('regression: root-controls conflict disposes the tree (R-L2.5)', () => 
     expect(pluginDispose).toHaveBeenCalledTimes(1) // queryClient.dispose() ran
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-L2.6 (T2.6) — an explicitly-suspended child (attach.suspend / collection
+// suspendItem) must survive a whole-tree suspend()/resume() cascade (what
+// KeepAlive does). Before the fix the tree resume woke every child, so a
+// virtualized list's scrolled-out rows all resumed; and attach.resume() under
+// a still-suspended parent activated a child inside a frozen tree.
+// ---------------------------------------------------------------------------
+describe('regression: explicit suspension survives tree suspend/resume (R-L2.6)', () => {
+  test('(a) collection suspendItem survives a tree cycle', async () => {
+    const { signal } = await import('../src/signals')
+    const item = defineController(() => ({}))
+    const source = signal<ReadonlyArray<{ id: string }>>([{ id: 'a' }, { id: 'b' }])
+    const def = defineController((ctx) => ({
+      c: ctx.collection({
+        source,
+        keyOf: (i) => i.id,
+        controller: item,
+        propsOf: () => ({}),
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    root.c.suspendItem('a')
+    expect(root.c.isItemSuspended('a')).toBe(true)
+
+    root.suspend()
+    root.resume()
+
+    expect(root.c.isItemSuspended('a')).toBe(true) // still suspended
+    expect(root.c.isItemSuspended('b')).toBe(false) // resumed with the tree
+    root.dispose()
+  })
+
+  test('(b) attach.suspend survives a tree cycle', () => {
+    let resumes = 0
+    const child = defineController((ctx) => {
+      ctx.onResume(() => {
+        resumes += 1
+      })
+      return {}
+    })
+    let handle: { suspend: () => void; resume: () => void } | undefined
+    const def = defineController((ctx) => {
+      handle = ctx.attach(child, undefined)
+      return {}
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    handle!.suspend()
+    root.suspend()
+    root.resume()
+    expect(resumes).toBe(0) // the tree resume must NOT wake the suspended child
+    handle!.resume()
+    expect(resumes).toBe(1) // explicit resume does
+    root.dispose()
+  })
+
+  test('(c) attach.resume under a suspended parent defers activation', () => {
+    let resumes = 0
+    const child = defineController((ctx) => {
+      ctx.onResume(() => {
+        resumes += 1
+      })
+      return {}
+    })
+    let handle: { suspend: () => void; resume: () => void } | undefined
+    const def = defineController((ctx) => {
+      handle = ctx.attach(child, undefined)
+      return {}
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    handle!.suspend()
+    root.suspend()
+    handle!.resume() // resume under a suspended parent → defer, don't activate now
+    expect(resumes).toBe(0)
+    root.resume() // parent resumes → the cleared child activates in the cascade
+    expect(resumes).toBe(1)
+    root.dispose()
+  })
+})

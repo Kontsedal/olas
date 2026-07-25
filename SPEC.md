@@ -266,6 +266,8 @@ Some controllers also support `suspend()` / `resume()`. This is for "definitely 
 - A fetch that was already in flight when suspend was called continues to completion (we don't abort, since the result may be immediately useful on resume).
 - On resume, any cache past its `staleTime` refetches.
 
+**Explicit child suspension survives tree cascades.** A child suspended explicitly via `attach.suspend()` or `collection.suspendItem(key)` stays suspended through a whole-tree `suspend()` → `resume()` cycle (what `<KeepAlive>` performs). Only its matching `attach.resume()` / `resumeItem(key)` wakes it — otherwise a virtualized list's scrolled-out rows would all resume on a single tree resume. Symmetrically, `attach.resume()` / `resumeItem()` called while the parent is still suspended does not activate the child inside a frozen tree — it clears the explicit mark and the child rejoins the parent's next resume cascade.
+
 ### 4.2 Suspend vs dispose — picking the right one
 
 Two states preserve a controller's identity past "not currently active." Pick deliberately, because they have very different memory profiles:
