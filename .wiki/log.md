@@ -553,3 +553,60 @@ New/changed public surface: persist `version`/`migrate`/`throttleMs`/`onError`
 `pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome
 lint .` clean (275 files); `pnpm test` → 751/751 across 57 files; `pnpm wiki:lint`
 0 errors.
+
+## [2026-07-25 23:48] ingest | REMEDIATION.md phase 7 (delivery, docs, release) — publish deferred
+
+Phase 7 — delivery/docs/release. Three commits (`ba0b9cb`, `2800e1a`, `e6b0c94`),
+all executed by `fork` subagents + independently gate-verified. **No publish /
+version bump / tag / push** — the actual `npm publish` is deferred to the
+maintainer (outward-facing, needs authorization); T7.1's Publish sub-item stays
+`[ ]` on purpose.
+
+- **T7.1 release prep** (`ba0b9cb`) — fixed the stale `# @olas/*` CHANGELOG
+  headers → `@kontsedal/*`; back-filled a consolidated 0.0.7–0.0.15 block per
+  package (honestly flagged as bumped-but-never-published — npm froze at 0.0.6);
+  a `patch` changeset for the remediation across all 10 published packages; a
+  `main`-only, `NPM_TOKEN`-gated `.github/workflows/release.yml` (changesets/
+  action — can't fire by accident without the secret). No `changeset version`.
+- **T7.2 verify what you ship** (`2800e1a`) — `publint` + `@arethetypeswrong/cli`
+  per package in CI (both already clean — only finding was the missing
+  `engines`, now added: `node >=18` on all 10 published packages); a zero-dep
+  dist smoke test (`scripts/verify-dist.mjs`, `pnpm smoke:dist`: ESM import + CJS
+  require each built entry + a `__DEV__`-leak grep — none leaks, tsdown defines
+  it correctly); coverage thresholds in `vitest.config.ts` seeded just below
+  current (~83/71/86/87 → 80/68/82/83) with CI on `pnpm test:coverage`.
+- **T7.3 documentation debt** (`e6b0c94`) — API.md brought current from ~0.0.4:
+  new `@kontsedal/olas-mutation-queue` + `@kontsedal/olas-router` sections,
+  `ctx.session`/`collection`/`lazyChild`, `indexedDbAdapter` + persist
+  `version`/`migrate`/`throttleMs`/`onError`, and a **fix to the wrong
+  `StorageAdapter` shape** (`remove`/`subscribe` → `delete`/`onChange`/`keys`);
+  realtime/cross-tab additions; README de-stale ("~230 lines", mutation-queue
+  "Durable"→"Best-effort"); realtime/persist package.json descriptions fixed
+  (`defineLiveStream`→`useLiveStream`; persist mentions IDB); `regressions.test.ts`
+  off the nonexistent `ASSESSMENT.md`; `query.test.ts` flush hardened + convention
+  documented; new **`.wiki/modules/router.md`** (the package had no page). Two
+  honest deviations (both `[x]` w/ notes): `query.test.ts` kept its `flush` (not a
+  blanket `vi.waitFor` — many sites are negative "did-NOT-happen" assertions), and
+  the `last_verified` sweep was NOT blanket-bumped (re-verifying ~30 core/react
+  pages honestly is its own pass; false "verified" dates are worse than staleness
+  warnings).
+
+Also this session, at the user's request (`6ef3872`): a **candidate backlog**
+(`.wiki/candidates/backlog.md` + `candidates/decisions/devtools-overhaul.md`)
+rescued the Phase-8 devtools-overhaul vision out of the transient REMEDIATION.md
+so it survives that file's deletion, and spotlighted the other substantial
+proposals (`olas-offline`, infinite-query completeness, updater-replay rebasing,
+devtools extension, ecosystem adapters).
+
+### State
+
+Phases 0–7 complete (43 tasks). Remaining, both intentionally deferred: the
+`npm publish` (maintainer-gated) and **Phase 8** (devtools overhaul — a large
+additive feature, captured in `.wiki/candidates/`). REMEDIATION.md is NOT
+deleted yet (Publish + all of Phase 8 are still `[ ]`).
+
+### Gates
+
+`pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome
+lint .` clean (276 files); `pnpm test` → 751/751 across 57 files (coverage gate
+green); `pnpm wiki:lint` 0 errors (50 pages).
