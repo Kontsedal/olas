@@ -1,6 +1,20 @@
 import { batch, type Scope, type Signal, signal } from '@kontsedal/olas-core'
-import { type ReactElement, type ReactNode, useEffect } from 'react'
+import { type ReactElement, type ReactNode, useLayoutEffect } from 'react'
 import { RouteParamsScope, RoutePathnameScope, RouteSearchScope } from './scopes'
+
+/**
+ * A snapshot of route state. Params values are `string | undefined` to match
+ * React Router (an optional segment not present in the current URL is
+ * `undefined`), not just `string`. Pass to `createRouterAdapter(initial)` on
+ * the server to seed the scopes before the render — the `Bridge` only pushes
+ * state in a (client-only) effect, so without seeding, route-scoped signals
+ * would be empty for the entire server render.
+ */
+export type RouteState = {
+  params?: Record<string, string | undefined>
+  search?: Record<string, unknown>
+  pathname?: string
+}
 
 /**
  * Internal store backing one adapter instance. The signals are written by
@@ -13,7 +27,7 @@ import { RouteParamsScope, RoutePathnameScope, RouteSearchScope } from './scopes
  * adapter-local.
  */
 type AdapterStore = {
-  params: Signal<Record<string, string>>
+  params: Signal<Record<string, string | undefined>>
   search: Signal<Record<string, unknown>>
   pathname: Signal<string>
 }
@@ -27,7 +41,7 @@ type AdapterStore = {
 export type RouterAdapter = {
   readonly scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]>
   readonly Bridge: (props: {
-    params: Record<string, string>
+    params: Record<string, string | undefined>
     search?: Record<string, unknown>
     pathname?: string
     children?: ReactNode
@@ -76,12 +90,25 @@ export type RouterAdapter = {
  * The adapter is router-agnostic by design — wire whatever client-side
  * router you use. **Next.js is not supported**; see `BACKLOG.md` for the
  * philosophy reasoning.
+ *
+ * **SSR:** pass `initial` so the scopes hold real route state during the
+ * server render — the `Bridge` pushes state in a client-only effect, so
+ * without seeding, `params` / `search` / `pathname` are empty (`{}` / `''`)
+ * for the whole server render. Derive `initial` from the request URL:
+ *
+ * ```ts
+ * const adapter = createRouterAdapter({
+ *   params: matchedRouteParams,        // from your server router match
+ *   search: parsedSearch,
+ *   pathname: url.pathname,
+ * })
+ * ```
  */
-export function createRouterAdapter(): RouterAdapter {
+export function createRouterAdapter(initial?: RouteState): RouterAdapter {
   const store: AdapterStore = {
-    params: signal<Record<string, string>>({}),
-    search: signal<Record<string, unknown>>({}),
-    pathname: signal<string>(''),
+    params: signal<Record<string, string | undefined>>(initial?.params ?? {}),
+    search: signal<Record<string, unknown>>(initial?.search ?? {}),
+    pathname: signal<string>(initial?.pathname ?? ''),
   }
 
   const scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]> = [
@@ -91,17 +118,19 @@ export function createRouterAdapter(): RouterAdapter {
   ]
 
   function Bridge(props: {
-    params: Record<string, string>
+    params: Record<string, string | undefined>
     search?: Record<string, unknown>
     pathname?: string
     children?: ReactNode
   }): ReactElement | null {
     const { params, search, pathname, children } = props
-    // Push router state into the underlying signals. `batch` collapses
-    // the three writes into one notification round so consumers that
-    // depend on multiple slots (e.g. `params` + `pathname`) don't see an
-    // intermediate state.
-    useEffect(() => {
+    // Push router state into the underlying signals. `useLayoutEffect` (not
+    // `useEffect`) runs before the browser paints, shrinking the window where
+    // a consumer reads the pre-Bridge value on the client's first commit. It
+    // still doesn't run on the server — seed via `createRouterAdapter(initial)`
+    // for SSR. `batch` collapses the three writes into one notification round
+    // so consumers depending on multiple slots don't see an intermediate state.
+    useLayoutEffect(() => {
       batch(() => {
         if (!shallowEqual(store.params.peek(), params)) store.params.set(params)
         const nextSearch = search ?? EMPTY

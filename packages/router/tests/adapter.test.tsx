@@ -14,7 +14,7 @@ describe('createRouterAdapter — scope wiring', () => {
   test('exposes route params via ctx.inject after the Bridge mounts', async () => {
     const adapter = createRouterAdapter()
 
-    let injected: ReadSignal<Record<string, string>> | undefined
+    let injected: ReadSignal<Record<string, string | undefined>> | undefined
     const def = defineController((ctx) => {
       injected = ctx.inject(RouteParamsScope)
       return {}
@@ -35,7 +35,7 @@ describe('createRouterAdapter — scope wiring', () => {
   test('params updates re-publish to the scope signal', async () => {
     const adapter = createRouterAdapter()
 
-    let injected: ReadSignal<Record<string, string>> | undefined
+    let injected: ReadSignal<Record<string, string | undefined>> | undefined
     const def = defineController((ctx) => {
       injected = ctx.inject(RouteParamsScope)
       return {}
@@ -69,7 +69,7 @@ describe('createRouterAdapter — scope wiring', () => {
   test('search and pathname are wired through the same Bridge', async () => {
     const adapter = createRouterAdapter()
 
-    let params: ReadSignal<Record<string, string>> | undefined
+    let params: ReadSignal<Record<string, string | undefined>> | undefined
     let search: ReadSignal<Record<string, unknown>> | undefined
     let pathname: ReadSignal<string> | undefined
     const def = defineController((ctx) => {
@@ -101,7 +101,7 @@ describe('createRouterAdapter — scope wiring', () => {
     const def = defineController((ctx) => ({
       params: ctx.inject(RouteParamsScope),
     }))
-    type Api = { params: ReadSignal<Record<string, string>> }
+    type Api = { params: ReadSignal<Record<string, string | undefined>> }
     const root = createRoot(def, { deps: {}, scopes: adapter.scopes }) as unknown as Api & {
       dispose(): void
     }
@@ -133,8 +133,8 @@ describe('createRouterAdapter — scope wiring', () => {
     const a = createRouterAdapter()
     const b = createRouterAdapter()
 
-    let aSeen: ReadSignal<Record<string, string>> | undefined
-    let bSeen: ReadSignal<Record<string, string>> | undefined
+    let aSeen: ReadSignal<Record<string, string | undefined>> | undefined
+    let bSeen: ReadSignal<Record<string, string | undefined>> | undefined
 
     const defA = defineController((ctx) => {
       aSeen = ctx.inject(RouteParamsScope)
@@ -160,6 +160,48 @@ describe('createRouterAdapter — scope wiring', () => {
 
     rootA.dispose()
     rootB.dispose()
+  })
+
+  test('seeded initial state is visible on first render, no Bridge/effect (SSR)', () => {
+    // The server never runs effects, so route scopes must be populated at
+    // adapter-construction time. Seed via createRouterAdapter(initial) and
+    // read WITHOUT rendering the Bridge — exactly the server-render path.
+    const adapter = createRouterAdapter({
+      params: { userId: '42' },
+      search: { q: 'x' },
+      pathname: '/users/42',
+    })
+    let params: ReadSignal<Record<string, string | undefined>> | undefined
+    let search: ReadSignal<Record<string, unknown>> | undefined
+    let pathname: ReadSignal<string> | undefined
+    const def = defineController((ctx) => {
+      params = ctx.inject(RouteParamsScope)
+      search = ctx.inject(RouteSearchScope)
+      pathname = ctx.inject(RoutePathnameScope)
+      return {}
+    })
+    const root = createRoot(def, { deps: {}, scopes: adapter.scopes })
+    expect(params?.value).toEqual({ userId: '42' })
+    expect(search?.value).toEqual({ q: 'x' })
+    expect(pathname?.value).toBe('/users/42')
+    root.dispose()
+  })
+
+  test('params tolerate undefined values (React Router optional segments)', async () => {
+    const adapter = createRouterAdapter()
+    let params: ReadSignal<Record<string, string | undefined>> | undefined
+    const def = defineController((ctx) => {
+      params = ctx.inject(RouteParamsScope)
+      return {}
+    })
+    const root = createRoot(def, { deps: {}, scopes: adapter.scopes })
+    // `optional` is absent from the URL → undefined, not a string. The widened
+    // `Record<string, string | undefined>` type accepts it (typecheck), and it
+    // round-trips at runtime.
+    render(<adapter.Bridge params={{ id: '1', optional: undefined }} />)
+    await act(async () => {})
+    expect(params?.value).toEqual({ id: '1', optional: undefined })
+    root.dispose()
   })
 
   test('Bridge with no search/pathname props uses empty defaults', async () => {

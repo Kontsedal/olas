@@ -747,18 +747,22 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   > type/value note: field TYPE still reflects `z.infer`); union → `undefined` (fallthrough),
   > tested. `coerce.string()` stays `''` (still an instanceof `ZodString`).
 
-### [ ] T6.6 — router: SSR hole + first-paint emptiness
+### [x] T6.6 — router: SSR hole + first-paint emptiness
 - **File:** `packages/router/src/adapter.tsx:80-91, 94, 104-112`
-- [ ] `createRouterAdapter()` accepts no initial state and the Bridge pushes route state in
+- [x] `createRouterAdapter()` accepts no initial state and the Bridge pushes route state in
   `useEffect` (never on server) — route-scoped signals are `{}`/`''` for the whole server
   render, contradicting the SSR story. Fix: `createRouterAdapter(initial?: RouteState)`
   so server code seeds params/search/pathname before rendering; document the server usage
   in the README.
-- [ ] Switch the Bridge's push from `useEffect` to `useLayoutEffect` (shrinks the client
+- [x] Switch the Bridge's push from `useEffect` to `useLayoutEffect` (shrinks the client
   first-paint gap); document the remaining first-render-empty footgun and the
   `enabled: () => params.value.id !== undefined` guard pattern in the README.
-- [ ] Widen `params` to `Record<string, string | undefined>` (matches React Router; kills
-  the internal cast at `:94`).
+  > `useLayoutEffect` swap is a timing refinement (existing tests, which use `act()`, still
+  > pass; no separate unit test — verified via the suite + documented).
+- [x] Widen `params` to `Record<string, string | undefined>` (matches React Router; kills
+  the internal cast at `:94`). Also widened `RouteParamsScope` + `RouteState`; new SSR-seeding
+  + undefined-value tests. No router wiki page exists (pre-existing gap — left for the T7.3
+  wiki sweep; README is the doc surface).
 
 ### [ ] T6.7 — realtime: small honesty fixes
 - **File:** `packages/realtime/src/index.ts`
