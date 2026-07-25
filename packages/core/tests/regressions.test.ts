@@ -1451,3 +1451,47 @@ describe('regression: optimistic rollback re-emits a SetDataEvent (R-Q3.6)', () 
     root.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-Q3.7 (T3.7) — a background/interval refetch of an infinite entry must
+// refetch ALL currently-loaded pages in place, not collapse to page one. The
+// old refetch dropped every page but the first on each interval tick, so a
+// scrolled-down infinite list truncated on every poll.
+// ---------------------------------------------------------------------------
+describe('regression: infinite interval refetch retains all pages (R-Q3.7)', () => {
+  test('interval refetch re-fetches every loaded page in order, no collapse', async () => {
+    vi.useFakeTimers()
+    const pages: Record<number, { n: number; next: number | null }> = {
+      0: { n: 0, next: 1 },
+      1: { n: 1, next: 2 },
+      2: { n: 2, next: null },
+    }
+    const calls: number[] = []
+    const q = defineInfiniteQuery({
+      key: () => ['feed'],
+      fetcher: async ({ pageParam }: { pageParam: number; signal: AbortSignal }) => {
+        calls.push(pageParam)
+        return pages[pageParam]!
+      },
+      initialPageParam: 0,
+      getNextPageParam: (page) => page.next,
+      refetchInterval: 1000,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    await root.x.fetchNextPage()
+    await root.x.fetchNextPage()
+    expect(root.x.pages.value.length).toBe(3)
+
+    // One interval tick → refetch-all: fetches pages 0,1,2 in order; the pages
+    // array stays length 3 (atomic update, no truncation flash).
+    calls.length = 0
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls).toEqual([0, 1, 2])
+    expect(root.x.pages.value.length).toBe(3)
+
+    root.dispose()
+    vi.useRealTimers()
+  })
+})

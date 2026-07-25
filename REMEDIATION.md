@@ -371,7 +371,11 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   another set).
 - **Test:** plugin spy asserts a SetDataEvent fires on rollback with the restored payload.
 
-### [ ] T3.7 — **[MAJOR]** infinite queries: interval refetch truncates pages; invisible to SSR
+### [x] T3.7 — **[MAJOR]** infinite queries: interval refetch truncates pages; invisible to SSR
+> part 1 (refetch-all-pages) implemented — `InfiniteEntry.runRefetchAll` replaces
+> the collapse-to-page-one refetch; SPEC updated (silent → refetch-all for all
+> paths, TanStack-aligned). part 2 (infinite SSR dehydrate) deferred per plan:
+> BACKLOG entry added + limitation documented in SPEC §15 and packages/react README.
 - **Files:** `infinite.ts:219, 246-252` (invalidate collapses to page one),
   `client.ts:308-318` (interval on infinite), `client.ts:809-823` (dehydrate skips
   infinite), `packages/react/src/streaming.ts:114`, `client.ts:236-276`

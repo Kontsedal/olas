@@ -93,6 +93,10 @@ render(<UserCard profile={profile} />)
 
 The fakes satisfy the real `Field<T>` / `AsyncState<T>` types so they pass `useField` / `useQuery` without casts.
 
+## SSR & hydration
+
+Server rendering uses `root.dehydrate()` → `<HydrationBoundary>` (plus the streaming hydrator for progressive SSR). One limitation to know: **infinite queries (`defineInfiniteQuery`) are not dehydrated** — their page arrays are skipped, so a server-rendered infinite list refetches its currently-loaded pages on the client after hydration (SPEC §15). Guard the initial client render accordingly (e.g. render a skeleton until `status === 'success'`).
+
 ## Further reading
 
 - [`../../API.md`](../../API.md#olasreact) — every export, signature, example.

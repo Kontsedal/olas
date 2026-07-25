@@ -545,6 +545,8 @@ type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
 }
 ```
 
+**Refetch semantics.** A refetch of an infinite entry — `refetchInterval`, `invalidate()`, `refetch()`, focus/reconnect — **re-fetches every currently-loaded page** in order (from `initialPageParam`, chaining each next param via `getNextPageParam` off the freshly-fetched pages), not just the first. Pages update atomically at the end, so a scrolled-down list never flashes down to one page mid-refetch. This matches TanStack. A refetch that finds the dataset has shrunk (a page now returns `getNextPageParam === null` earlier) keeps only the pages that still exist. **Not dehydrated:** infinite entries are skipped by `dehydrate()` (§15) — a server-rendered infinite list refetches its first page(s) on the client.
+
 The `flat` selector is configurable per-query via an `itemsOf: (page) => page.items` field. If omitted, `flat` equals `pages`.
 
 Cache invalidation drops accumulated pages and re-fetches from `initialPageParam` — explicit, no "partial invalidate". For "refetch only the most recent N pages", users can call `setData` to keep what they want.
@@ -1365,7 +1367,7 @@ const root = createRoot(rootController, {
 - No cache entries are in `pending` status.
 - No pending mutations.
 
-`dehydrate()` only serializes the **query client cache** (data + lastUpdatedAt per entry). Controller state isn't serialized — controllers reconstruct from their props on the client.
+`dehydrate()` only serializes the **query client cache** (data + lastUpdatedAt per entry). Controller state isn't serialized — controllers reconstruct from their props on the client. **Infinite queries are not dehydrated** — their page arrays are skipped, so a server-rendered infinite list refetches (its currently-loaded pages, §5.7) on the client after hydration. This is a known limitation, not a bug; see `BACKLOG.md`.
 
 Each serialized entry also carries the query's **stable identity** (`id` — the `queryId` when set, otherwise an auto-assigned registration id) alongside its key. Hydration is namespaced by `id + keyHash`, so a client subscriber of query B can't adopt query A's payload merely because their `key()` outputs hash the same. Consequences: (1) a **hand-authored** `DehydratedState` (a server constructing the payload directly rather than via `dehydrate()`) must set `id` per entry to the target query's `queryId`, which means such a query needs an explicit `queryId`; (2) auto-ids are stable across a server/client pair evaluating the same bundle in the same order — if they drift (code-splitting), hydration degrades safely to a cache miss + refetch, never a cross-query adoption. Set an explicit `queryId` for a hard guarantee.
 
