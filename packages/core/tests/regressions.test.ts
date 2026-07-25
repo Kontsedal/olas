@@ -1118,3 +1118,44 @@ describe('regression: explicit suspension survives tree suspend/resume (R-L2.6)'
     root.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-L2.8 (T2.8) — minor batch. Effect CLEANUP throws must route to onError (the
+// body was already guarded, the returned cleanup was not); collection.items /
+// lazyChild.api are read-only at runtime (readOnly wrap), not just by type.
+// ---------------------------------------------------------------------------
+describe('regression: T2.8 minor batch (R-L2.8)', () => {
+  test('an effect cleanup throw routes to onError', async () => {
+    const { signal } = await import('../src/signals')
+    const onError = vi.fn()
+    const tick = signal(0)
+    const def = defineController((ctx) => {
+      ctx.effect(() => {
+        tick.value // track
+        return () => {
+          throw new Error('cleanup-boom')
+        }
+      })
+      return {}
+    })
+    const root = createRoot(def, { deps: emptyDeps, onError })
+    tick.set(1) // re-run → the previous run's cleanup fires (and throws)
+    await flush()
+    const eff = onError.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'effect')
+    expect(eff).toBeTruthy()
+    expect((eff![0] as Error).message).toBe('cleanup-boom')
+    root.dispose()
+  })
+
+  test('collection.items is read-only at runtime (no set)', async () => {
+    const { signal } = await import('../src/signals')
+    const item = defineController(() => ({}))
+    const source = signal<ReadonlyArray<{ id: string }>>([{ id: 'a' }])
+    const def = defineController((ctx) => ({
+      c: ctx.collection({ source, keyOf: (i) => i.id, controller: item, propsOf: () => ({}) }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect((root.c.items as unknown as { set?: unknown }).set).toBeUndefined()
+    root.dispose()
+  })
+})

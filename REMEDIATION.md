@@ -261,23 +261,27 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   trailing-only, both, flush/cancel for each.
 - **Docs:** `.wiki/modules/timing.md`; API.md timing section.
 
-### [ ] T2.8 — minor core batch (one commit, several small fixes)
-- [ ] Emitter docstring lies: `emitter.ts:4` claims handlers removed during emit are
+### [x] T2.8 — minor core batch (one commit, several small fixes)
+- [x] Emitter docstring lies: `emitter.ts:4` claims handlers removed during emit are
   skipped; code iterates a snapshot (`:41-44`) and the test pins the opposite
   (`emitter.test.ts:93-96`). **Fix the docstring** to match the pinned behavior. Also
   document the `Set`-dedupe behavior (`on(h); on(h)` registers once) in the same docstring.
-- [ ] Type-only immutability: `collection.items`/`size` (`instance.ts:754-755, 902-903`)
+- [x] Type-only immutability: `collection.items`/`size` (`instance.ts:754-755, 902-903`)
   and `lazyChild.status/api/error` (`:930-932, 1028-1031`) are writable `Signal`s typed as
   `ReadSignal`. Wrap with `readOnly()` (pattern at `selection.ts:173`).
-- [ ] Construction-rollback swallows teardown errors: `instance.ts:240-242` bare
+- [x] Construction-rollback swallows teardown errors: `instance.ts:240-242` bare
   `catch {}` — route through `dispatchError` like `dispose()` does (`:255-260`).
-- [ ] Effect **cleanup** throws bypass `onError`: `instance.ts:395-405` guards the body
+- [x] Effect **cleanup** throws bypass `onError`: `instance.ts:395-405` guards the body
   only. Wrap the returned cleanup: if the factory returns a function, return a wrapper
   that try/catches and routes to `dispatchError`.
-- [ ] `Root<Api>` lies for non-object apis (`root.ts:69-88`): constrain
+- [x] `Root<Api>` lies for non-object apis (`root.ts:69-88`): constrain
   `createRoot<Api extends object>` at the type level; keep the runtime wrap for JS callers.
-- [ ] Devtools `pathKey` joins with `' '` (`devtools.ts:76-78`) — controller names can
+- [?] Devtools `pathKey` joins with `' '` (`devtools.ts:76-78`) — controller names can
   contain spaces → collisions. Join with `' '`.
+  > could-not-reproduce: `pathKey` already joins with `\0` (a NUL byte), not a space —
+  > the audit (and most editors) render a NUL as blank, so it *looked* like a space.
+  > `od -c` on `devtools.ts:77` confirms `path.join('\0')`. A NUL can't appear in a
+  > controller name/segment, so the separator is already unambiguous. No change made.
 
 ---
 

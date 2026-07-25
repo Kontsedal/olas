@@ -129,7 +129,7 @@ export function createOlasContext<Api>(displayName?: string): {
  * a controller def + the dehydrated state and produces a root that
  * matches what the server rendered.
  */
-export function HydrationBoundary<Api>(props: {
+export function HydrationBoundary<Api extends object>(props: {
   def: import('@kontsedal/olas-core').ControllerDef<void, Api>
   options: {
     deps: Record<string, unknown>
