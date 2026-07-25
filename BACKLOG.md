@@ -58,6 +58,10 @@ Examples:
 
 ## Storage / sync
 
+### [idea] Cross-`mutationId` causal ordering in the mutation queue
+
+[from T6.2] `@kontsedal/olas-mutation-queue` replays entries serially **within** a `mutationId` (sorted by `seq`), but different `mutationId`s replay in parallel and cross-tab order isn't coordinated. So a logical dependency like `order/cancel` needing to land after `order/create` (distinct ids) isn't guaranteed on replay. A full fix needs a cross-id dependency DAG (or a global replay sequence with per-entry `dependsOn` edges) plus cross-tab agreement on that order — significant design. Today's guidance: model dependent steps under one `mutationId`, or make the server tolerant of out-of-order arrival (idempotency + reconciliation). Documented as a limitation in the package README.
+
 ## Forms
 
 ### [idea] Path-typed `form.fieldAt('a.b.c')` lookup

@@ -1,6 +1,8 @@
 # @kontsedal/olas-mutation-queue
 
-Durable, replay-safe queue for `@kontsedal/olas-core` mutations. When a `defineMutation({ persist: true })` run is in flight and the user reloads (or the browser crashes), the queue replays the run on the next page load instead of silently dropping it. SPEC §13.3.
+**Best-effort** persistent, replay-safe queue for `@kontsedal/olas-core` mutations. When a `defineMutation({ persist: true })` run is in flight and the user reloads (or the browser crashes), the queue replays the run on the next page load — or on **network reconnect** in the same session — instead of silently dropping it. SPEC §13.3.
+
+> **"Best-effort", not "durable."** The queue gives **at-least-once-until-success** delivery with these honest limits: the enqueue write is fire-and-forget (a sync plugin hook can't await storage, so a crash in the sub-millisecond window before the write commits loses that one entry); cross-tab replay coordination uses Web Locks where available and falls back to a best-effort `localStorage` lease; and causal ordering is guaranteed only *within* a `mutationId`, not across different ones. Pair it with server-side idempotency (`idempotencyKey`) — that's the authoritative gate.
 
 This is the offline-first complement to optimistic UI: the optimistic write lives in the cache (`@kontsedal/olas-core` + optionally `@kontsedal/olas-persist`), and the *server-side* write that backs it survives the reload via this queue.
 
@@ -64,7 +66,11 @@ That's the whole moving picture. The plugin is a [`QueryClientPlugin`](../../SPE
 ## API
 
 ```ts
-function mutationQueuePlugin(options: MutationQueueOptions): QueryClientPlugin
+// The returned plugin also exposes `replayNow(): Promise<void>` for manually
+// re-driving the queue (in addition to init + the `online` reconnect trigger).
+function mutationQueuePlugin(
+  options: MutationQueueOptions,
+): QueryClientPlugin & { replayNow(): Promise<void> }
 
 type MutationQueueOptions = {
   adapter: StorageAdapter
@@ -78,8 +84,12 @@ type MutationQueueOptions = {
   migrate?: (raw: unknown, fromVersion: number) => QueueEntry | null
   onReplayError?: (err: unknown, entry: QueueEntry) => void
   onReplayAttempt?: (err: unknown, entry: QueueEntry) => void
+  onReplaySettle?: (entry: QueueEntry, result: unknown, api: ReplaySettleApi) => void
   onWarn?: (message: string, cause?: unknown) => void
 }
+
+// api.invalidate(query, keyArgs) → query.invalidate(...keyArgs)
+type ReplaySettleApi = { invalidate(query: Query<any, any>, keyArgs?: readonly unknown[]): void }
 ```
 
 | Option | What |
@@ -94,6 +104,7 @@ type MutationQueueOptions = {
 | `migrate` | Translate entries written under a prior `PROTOCOL_VERSION` into the current shape. Return `null` to drop. Without a migrator, version mismatches silently discard the entry. |
 | `onReplayError` | Fires when replay gives up on an entry: `maxAttempts` exhausted, TTL expired, or no module registered the `mutationId`. The integration point for telemetry / "we couldn't deliver your action" UX. |
 | `onReplayAttempt` | Fires on every non-terminal replay failure — surfaces "we'll retry later" indicators. |
+| `onReplaySettle` | Fires after a queued mutation **replays successfully**, with `(entry, result, api)`. A replay writes server truth outside any live query's knowledge — call `api.invalidate(query, keyArgs)` here so subscribers refetch. **Without it, UIs stay stale after a replay** until their own `staleTime` lapses. |
 | `onWarn` | Soft conditions: variables not JSON-serializable, malformed entry on disk, adapter missing `keys()`. Default: `console.warn`. |
 
 ## How it works
@@ -114,7 +125,7 @@ ctx.mutation({...mutation}).run()  →  runner emits onMutationEnqueue
        plugin: delete entry                plugin: keep entry (replay next load)
 ```
 
-On `init` (root construction): list every entry under `keyPrefix`, group by `mutationId`, sort each group by `seq` (monotonic; falls back to `enqueuedAt`), wait for `navigator.onLine`, then replay serially per group. Different `mutationId` buckets run in parallel.
+On `init` (root construction): list every entry under `keyPrefix`, group by `mutationId`, sort each group by `seq` (monotonic; falls back to `enqueuedAt`), wait for `navigator.onLine`, then replay serially per group. Different `mutationId` buckets run in parallel. A replay pass also runs on every `online` event (so an in-session failure retries on reconnect, not only on reload) and on a manual `plugin.replayNow()`. All three paths funnel through one guarded runner (no overlapping replays) wrapped in a cross-tab lock (below). After each successful replay, `onReplaySettle` fires so the app can invalidate affected queries.
 
 ### Invariants
 
@@ -125,7 +136,11 @@ On `init` (root construction): list every entry under `keyPrefix`, group by `mut
 
 ### Online wait + abort on dispose
 
-Replay blocks on `navigator.onLine === true` before any `mutate` call. Tabs that boot offline don't burn `maxAttempts` against unreachable endpoints — they wait for the `online` event. When the root disposes, every in-flight replay aborts (the controller's `AbortSignal` rejects with `AbortError`) and any pending backoff sleep short-circuits.
+Replay blocks on `navigator.onLine === true` before any `mutate` call. Tabs that boot offline don't burn `maxAttempts` against unreachable endpoints — they wait for the `online` event. When the root disposes, every in-flight replay aborts (the controller's `AbortSignal` rejects with `AbortError`), the `online` listener is removed, and any pending backoff sleep short-circuits.
+
+### Cross-tab replay coordination
+
+Two tabs replaying the same entries on parallel reloads would double-POST. The queue serializes replay across tabs with the **Web Locks API** (`navigator.locks`): a tab that can't get the lock skips the pass — the holding tab replays every entry under the shared prefix (they share storage). Where Web Locks is unavailable (older Safari), it falls back to a **best-effort, TTL'd `localStorage` lease**; in Node / SSR (a single context) it just runs. This reduces — but, with the lease fallback, doesn't fully eliminate — duplicate replays, which is why server-side `idempotencyKey` dedupe remains the authoritative gate.
 
 ## Combining with `@kontsedal/olas-persist`
 
@@ -136,13 +151,15 @@ The two packages solve adjacent problems:
 | What lives durably | Selected signals / cache entries | Pending `persist: true` mutation runs |
 | When it writes | Every signal change | Mutation enqueue/settle |
 | When it reads | Synchronously on controller construction | Asynchronously on root `init` |
-| Cross-tab | Via the `storage` event | Not synced cross-tab in v1 |
+| Cross-tab | Via the `storage` event | Replay coordinated cross-tab (Web Locks / best-effort lease) |
 
 Use both together when optimistic state must outlive a reload AND the server-side write must replay: `usePersisted` persists the cache view; the queue persists the in-flight POST.
 
 ## Caveats (v1)
 
-- **No cross-tab arbitration.** Two tabs replaying the same `mutationId` on parallel reloads will both POST. Server-side dedupe (`idempotencyKey`) is the authoritative gate.
+- **Cross-tab coordination is best-effort.** Web Locks (when available) gives an exclusive replay lock; the `localStorage`-lease fallback narrows but doesn't fully close the double-replay window. Server-side dedupe (`idempotencyKey`) is the authoritative gate.
+- **Causal ordering holds only within a `mutationId`.** Across different `mutationId`s (and across tabs), replay order isn't guaranteed. If `order/cancel` must land after `order/create`, model them under one `mutationId` or encode the dependency in your server. (Tracked in `BACKLOG.md`.)
+- **Enqueue is fire-and-forget.** `onMutationEnqueue` is a synchronous hook, so the durable write can't be awaited; a crash in the sub-ms window before it commits loses that one entry (the failure is reported via `onWarn`).
 - **Adapter must implement `keys()`.** The `StorageAdapter` contract from `@kontsedal/olas-persist` doesn't require it, so custom adapters need to add it explicitly or replay is disabled (with a one-shot warning).
 - **`PROTOCOL_VERSION` is `1`.** A future bump without a `migrate` handler drops every queued entry. Wire `migrate` from day one if you ever expect to deploy a schema change.
 - **Entries are JSON, not structured-clone.** `BigInt`, `Date`, and typed arrays don't survive round-trip — convert at the boundary or store as strings.
