@@ -573,7 +573,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 
 ## Phase 5 — forms (`packages/core/src/forms/`)
 
-### [ ] T5.1 — **[CRITICAL]** structural FieldArray edits invisible to `isDirty` → background refetch destroys user rows
+### [x] T5.1 — **[CRITICAL]** structural FieldArray edits invisible to `isDirty` → background refetch destroys user rows
 - **Files:** `packages/core/src/forms/form.ts:707-717` (array isDirty), `:104-126` +
   `:120` (reactive initial + when-clean guard), `:227-241` (asInitial clear+re-add)
 - **Problem:** `FieldArray.isDirty` = "any item dirty". `add()`/`remove()`/`move()` leave
