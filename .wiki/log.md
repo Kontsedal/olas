@@ -474,3 +474,17 @@ New public surface: `Mutation.status`. Tests in `packages/react/tests/*` (hydrat
 ### Gates
 
 `pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome lint .` clean (274 files); `pnpm test` → 689/689 across 56 files.
+
+## [2026-07-25 16:47] ingest | REMEDIATION.md phase 5 (forms)
+
+Phase 5 — `packages/core/src/forms/` (field, form, validators). Three commits.
+
+- **T5.1** — `FieldArray` tracks **structural dirtiness** (`structurallyDirty$`, flipped by `add`/`insert`/`remove`/`move`/`clear`, reset by `reset()` / `replaceInitialItems`). `isDirty = structural || anyItemDirty`. Before this, a reactive `initial: () => queryData` + default `resetOnInitialChange: 'when-clean'` re-seated the array on a background refetch and silently **deleted rows the user just added**. Pinned `R-F5.1`. SPEC §8.5; `modules/forms.md`.
+- **T5.2** — form-/array-level validators can **target specific fields**. `Validator<T>` widened to also return `FormIssue[]` (`{ path, message }`); `runTopLevelValidators` collects issues (`appendIssues`) and `routeFormIssues(this, …)` routes empty-path → the node's `topLevelErrors`, path → `resolveNode`'s descendant via `setFormErrors`. Fields gain a **third error channel** `formErrors$` (merged into `errors`); Form/FieldArray merge parent-injected errors into `topLevelErrors` (now a computed) + `isValid`. Cleared/re-applied each run (`lastFormErrorTargets`). Standard-Schema `validator()` rewritten to return **all** issues as `FormIssue[]` with paths; `zodValidator` inherits it. `debouncedValidator` narrowed to a precise `string | null` return so direct callers still type-check. Pinned `R-F5.2` + `standard-schema.test.ts`. SPEC §8.1/§8.3/§20.7; API.md; `modules/forms.md` + `zod.md`. BACKLOG: formFromZod root `.refine({path})` routing.
+- **T5.3** — minor batch: `validateOn: 'blur'|'submit'` now tested (were zero); `dirtyFields`/`clearSubtree` tested; `required(false)` now **passes** (a boolean is a legit value) + new **`mustBeTrue`** validator for consent checkboxes; `isValid` **holds last-known validity while `isValidating`** (`lastValid$`) so a `debouncedValidator` no longer strobes a submit button (replaces the old "invalid-while-validating" rule — SPEC §8.2 + docstring updated); `Form.reset()` re-applies initial **inside** the batch (no tearing); thrown-validator messages are **generic in prod** (`'Validation failed'`, real error still routed via `onValidatorError`), dev keeps the message. New tests in `form.test.ts` + `validators.test.ts`; `controller.test.ts` isValid-while-pending assertion updated.
+
+New public surface: `FormIssue` / `ValidatorResult` types, `mustBeTrue` validator. `Validator<T>` return widened.
+
+### Gates
+
+`pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome lint .` clean (274 files); `pnpm test` → 708/708 across 56 files; `pnpm wiki:lint` 0 errors.
