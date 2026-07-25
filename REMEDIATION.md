@@ -764,12 +764,12 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   + undefined-value tests. No router wiki page exists (pre-existing gap — left for the T7.3
   wiki sweep; README is the doc surface).
 
-### [ ] T6.7 — realtime: small honesty fixes
+### [x] T6.7 — realtime: small honesty fixes
 - **File:** `packages/realtime/src/index.ts`
-- [ ] `useRealtimeConnection` returns `'connected'` when the transport lacks
+- [x] `useRealtimeConnection` returns `'connected'` when the transport lacks
   `onConnectionChange` (`:310-318`) — return `'unknown'` (add to the union) instead of a
   lie-shaped default.
-- [ ] Clarify the pause docs (`:140-148`): events arriving DURING pause are lost (the
+- [x] Clarify the pause docs (`:140-148`): events arriving DURING pause are lost (the
   buffer preserves only already-received events); recommend `onReconnect` + invalidate
   for gap recovery.
 

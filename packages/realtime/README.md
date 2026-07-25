@@ -96,7 +96,7 @@ Most transports already match this shape (Pusher, Ably, Supabase, raw WebSocket 
 ## Lifecycle notes
 
 - Subscriptions live inside `ctx.effect(...)`. They are unsubscribed on controller dispose.
-- `pause()` flips a tracked signal — the effect re-runs and the subscription is torn down. `resume()` restores it. The buffer is **preserved** across a pause; only the subscription is cycled.
+- `pause()` flips a tracked signal — the effect re-runs and the subscription is torn down. `resume()` restores it. Already-buffered events are **preserved** across a pause, but events that arrive **during** the pause are **lost** — the subscription is gone, so nothing is received (let alone buffered) until `resume()`. To recover a gap, pair with `onReconnect(...)` + a query `invalidate` (refetch authoritative state) rather than relying on the buffer.
 - `clear()` empties both the visible buffer and the pending-flush queue without touching the subscription.
 
 ## What's NOT included
