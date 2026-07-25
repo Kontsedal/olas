@@ -167,7 +167,19 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
           db.createObjectStore(storeName)
         }
       }
-      req.onsuccess = () => resolve(req.result)
+      req.onsuccess = () => {
+        const db = req.result
+        // Without this, holding the connection open BLOCKS another tab that
+        // wants to upgrade or `deleteDatabase` — a permanent silent stall.
+        // Close ours and drop the cached promise so the next op re-opens; a
+        // failed re-open then REJECTS and routes through the caller's onError
+        // instead of no-oping forever (T6.1).
+        db.onversionchange = () => {
+          db.close()
+          dbPromise = null
+        }
+        resolve(db)
+      }
       req.onerror = () => reject(req.error ?? new Error('[olas-persist] IDB open failed'))
     })
     // Lazy connection — if the open fails, future calls retry rather than
@@ -185,42 +197,56 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
     const db = await openDb()
     if (db === null) return undefined
     return new Promise<T | undefined>((resolve, reject) => {
+      let settled = false
+      const fail = (err: unknown): void => {
+        if (settled) return
+        settled = true
+        reject(err ?? new Error('[olas-persist] IDB request failed'))
+      }
       const tx = db.transaction(storeName, mode)
       const store = tx.objectStore(storeName)
       const req = build(store)
-      req.onsuccess = () => resolve(req.result)
-      req.onerror = () => reject(req.error ?? new Error('[olas-persist] IDB request failed'))
+      let result: T | undefined
+      // Capture the request's result on success, but resolve on the
+      // TRANSACTION's commit — a write's `req.onsuccess` fires before the data
+      // is durably committed, so quota / disk failures only surface as a
+      // `tx.onabort` at commit time. Resolving on `req.onsuccess` (the old
+      // behavior) acked writes that never landed (T6.1).
+      req.onsuccess = () => {
+        result = req.result
+      }
+      req.onerror = () => fail(req.error)
+      tx.oncomplete = () => {
+        if (settled) return
+        settled = true
+        resolve(result)
+      }
+      tx.onabort = () => fail(tx.error)
+      tx.onerror = () => fail(tx.error)
     })
   }
 
   return {
     async get(key: string): Promise<string | null> {
       if (idbFactory === undefined) return null
-      try {
-        const result = await runRequest<unknown>('readonly', (s) => s.get(key))
-        return typeof result === 'string' ? result : null
-      } catch {
-        return null
-      }
+      // A real read error (db closed, corrupt store) REJECTS so the caller's
+      // error routing runs (`usePersisted` → `onError('load')`). A missing key
+      // is not an error — `req.result` is `undefined`, so we return null.
+      const result = await runRequest<unknown>('readonly', (s) => s.get(key))
+      return typeof result === 'string' ? result : null
     },
     async set(key: string, value: string): Promise<void> {
       if (idbFactory === undefined) return
-      try {
-        await runRequest('readwrite', (s) => s.put(value, key))
-        ensureChannel()?.postMessage({ key, value })
-      } catch {
-        // Quota / version / closed-db errors — leave to caller's higher-level
-        // handling; persist's usePersisted swallows write rejections too.
-      }
+      // Do NOT swallow — a rejected write (quota, closed db, aborted commit)
+      // propagates so `usePersisted`'s `onError('write')` fires (T6.1). The
+      // cross-tab broadcast only runs once the commit actually lands.
+      await runRequest('readwrite', (s) => s.put(value, key))
+      ensureChannel()?.postMessage({ key, value })
     },
     async delete(key: string): Promise<void> {
       if (idbFactory === undefined) return
-      try {
-        await runRequest('readwrite', (s) => s.delete(key))
-        ensureChannel()?.postMessage({ key, value: null })
-      } catch {
-        /* swallow — see set() */
-      }
+      await runRequest('readwrite', (s) => s.delete(key))
+      ensureChannel()?.postMessage({ key, value: null })
     },
     onChange(handler: (key: string, value: string | null) => void): () => void {
       const ch = ensureChannel()
@@ -323,6 +349,14 @@ export function usePersisted<T>(
 
   const ready$ = signal(false)
   let writingFromLoad = false
+  // Ready-gate race bookkeeping (T6.1). A source write or a cross-tab change
+  // that lands BEFORE the initial async load settles must not be lost or
+  // clobbered by `applyLoaded`. We remember the latest of each and reconcile
+  // once ready flips true (a local user write wins over both stored + remote).
+  let userWroteBeforeReady = false
+  let pendingUserValueBeforeReady: T | undefined
+  let hasPendingRemote = false
+  let pendingRemoteRaw: string | null = null
 
   /**
    * On-disk envelope when `version` is set: `{"v": N, "d": "<serializedT>"}`.
@@ -343,11 +377,73 @@ export function usePersisted<T>(
     return JSON.stringify({ v: version, d: inner })
   }
 
+  // Apply a cross-tab raw value to the source (a null → `undefined` delete;
+  // otherwise parse/deserialize, honoring the version envelope). Shared by the
+  // live `onChange` path and the buffered-until-ready replay (T6.1).
+  const applyRemote = (rawValue: string | null): void => {
+    if (rawValue == null) {
+      writingFromLoad = true
+      try {
+        source.set(undefined as T)
+      } finally {
+        writingFromLoad = false
+      }
+      return
+    }
+    try {
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(rawValue)
+      } catch {
+        parsed = undefined
+      }
+      let value: T
+      if (version !== undefined && isEnvelope(parsed)) {
+        if (parsed.v !== version) return // peer on a different schema; ignore.
+        value = deserialize(parsed.d) as T
+      } else {
+        value = deserialize(rawValue) as T
+      }
+      writingFromLoad = true
+      try {
+        source.set(value)
+      } finally {
+        writingFromLoad = false
+      }
+    } catch (err) {
+      reportError(err, 'remoteChange')
+    }
+  }
+
+  // Flip `ready` and reconcile anything that raced the initial load: a local
+  // user write wins outright (and is flushed to storage); otherwise a buffered
+  // cross-tab change (the freshest one) is applied. `scheduleWrite` is only
+  // reached in the async-load path, where it is already defined below.
+  const settleReady = (): void => {
+    ready$.set(true)
+    if (userWroteBeforeReady) {
+      userWroteBeforeReady = false
+      hasPendingRemote = false
+      scheduleWrite(pendingUserValueBeforeReady as T)
+      return
+    }
+    if (hasPendingRemote) {
+      hasPendingRemote = false
+      applyRemote(pendingRemoteRaw)
+    }
+  }
+
   // Load initial value.
   const loaded = storage.get(key)
   const applyLoaded = async (raw: string | null): Promise<void> => {
+    // A local write already raced the load — it wins; don't apply storage.
+    // `settleReady` flushes the user's value.
+    if (userWroteBeforeReady) {
+      settleReady()
+      return
+    }
     if (raw == null) {
-      ready$.set(true)
+      settleReady()
       return
     }
     let value: T | undefined
@@ -368,19 +464,19 @@ export function usePersisted<T>(
           try {
             const migrated = await migrate(parsedEnvelope.d, parsedEnvelope.v)
             if (migrated === undefined) {
-              ready$.set(true)
+              settleReady()
               return
             }
             value = migrated
             needsRewrite = true
           } catch (err) {
             reportError(err, 'migrate')
-            ready$.set(true)
+            settleReady()
             return
           }
         } else {
           // Version mismatch with no migrator — discard.
-          ready$.set(true)
+          settleReady()
           return
         }
       } else if (version !== undefined && migrate !== undefined) {
@@ -389,14 +485,14 @@ export function usePersisted<T>(
         try {
           const migrated = await migrate(raw, undefined)
           if (migrated === undefined) {
-            ready$.set(true)
+            settleReady()
             return
           }
           value = migrated
           needsRewrite = true
         } catch (err) {
           reportError(err, 'migrate')
-          ready$.set(true)
+          settleReady()
           return
         }
       } else {
@@ -404,7 +500,12 @@ export function usePersisted<T>(
       }
     } catch (err) {
       reportError(err, 'deserialize')
-      ready$.set(true)
+      settleReady()
+      return
+    }
+    // A write may have landed while we awaited an async migrate — it wins.
+    if (userWroteBeforeReady) {
+      settleReady()
       return
     }
     writingFromLoad = true
@@ -413,10 +514,19 @@ export function usePersisted<T>(
     } finally {
       writingFromLoad = false
     }
-    ready$.set(true)
+    settleReady()
     if (needsRewrite) {
+      // Persist the migrated value so the next load doesn't re-migrate. Split
+      // serialize vs write so a storage-quota throw isn't mislabeled (T6.1).
+      let encoded: string
       try {
-        const writeResult = storage.set(key, encodeForStorage(value as T))
+        encoded = encodeForStorage(value as T)
+      } catch (err) {
+        reportError(err, 'serialize')
+        return
+      }
+      try {
+        const writeResult = storage.set(key, encoded)
         if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
       } catch (err) {
         reportError(err, 'write')
@@ -429,7 +539,7 @@ export function usePersisted<T>(
       (raw) => applyLoaded(raw),
       (err) => {
         reportError(err, 'load')
-        ready$.set(true)
+        settleReady()
       },
     )
   } else {
@@ -448,12 +558,22 @@ export function usePersisted<T>(
     hasPendingWrite = false
     pendingWriteValue = undefined
     writeTimer = null
+    // Encode and write are separate failure domains: encoding is a 'serialize'
+    // error; `storage.set` (sync for localStorage — quota throws here) is a
+    // 'write' error. The old single try mislabeled every write throw as
+    // 'serialize' (T6.1).
+    let raw: string
     try {
-      const raw = encodeForStorage(value)
+      raw = encodeForStorage(value)
+    } catch (err) {
+      reportError(err, 'serialize')
+      return
+    }
+    try {
       const writeResult = storage.set(key, raw)
       if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
     } catch (err) {
-      reportError(err, 'serialize')
+      reportError(err, 'write')
     }
   }
 
@@ -481,7 +601,15 @@ export function usePersisted<T>(
       return
     }
     if (writingFromLoad) return
-    if (!ready$.peek()) return
+    if (!ready$.peek()) {
+      // A real user write before the initial load settled — remember it so
+      // `settleReady` flushes it and `applyLoaded` doesn't clobber the source.
+      // The old code dropped it, then the load overwrote what the user typed
+      // (T6.1).
+      userWroteBeforeReady = true
+      pendingUserValueBeforeReady = value
+      return
+    }
     scheduleWrite(value)
   })
 
@@ -490,42 +618,18 @@ export function usePersisted<T>(
   if (crossTab && storage.onChange) {
     unsubChange = storage.onChange((changedKey, rawValue) => {
       if (changedKey !== key) return
-      // Storage delete in another tab (`localStorage.removeItem`) arrives as
-      // `rawValue == null`. Mirror the delete locally by writing `undefined`
-      // through to source — consumers whose `T` doesn't include `undefined`
-      // should treat that as "value gone, fall back to initial."
-      if (rawValue == null) {
-        writingFromLoad = true
-        try {
-          source.set(undefined as T)
-        } finally {
-          writingFromLoad = false
-        }
+      if (!ready$.peek()) {
+        // Buffer the freshest cross-tab change until the initial load settles;
+        // applying it now would race the load and get clobbered by
+        // `applyLoaded` (T6.1). A local user write still takes precedence in
+        // `settleReady`.
+        hasPendingRemote = true
+        pendingRemoteRaw = rawValue
         return
       }
-      try {
-        let parsed: unknown
-        try {
-          parsed = JSON.parse(rawValue)
-        } catch {
-          parsed = undefined
-        }
-        let value: T
-        if (version !== undefined && isEnvelope(parsed)) {
-          if (parsed.v !== version) return // peer is on a different schema; ignore.
-          value = deserialize(parsed.d) as T
-        } else {
-          value = deserialize(rawValue) as T
-        }
-        writingFromLoad = true
-        try {
-          source.set(value)
-        } finally {
-          writingFromLoad = false
-        }
-      } catch (err) {
-        reportError(err, 'remoteChange')
-      }
+      // A null value is a cross-tab delete (`localStorage.removeItem`) — mirror
+      // it locally as `undefined`; see `applyRemote`.
+      applyRemote(rawValue)
     })
   }
 
