@@ -213,7 +213,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Docs:** this is a behavior change — SPEC §4 (lifecycle) gets a sentence: "calling any
   `ctx.*` factory after dispose throws"; `.wiki/entities/ctx.md`.
 
-### [ ] T2.5 — **[MAJOR]** reserved-name conflict throw leaks the constructed tree
+### [x] T2.5 — **[MAJOR]** reserved-name conflict throw leaks the constructed tree
 - **File:** `packages/core/src/controller/root.ts:61-67` (try/catch covers `construct`
   only), `:88` + `:143-147` (`attachRootControls` throw site)
 - **Problem:** if the controller api defines `dispose`/`suspend`/etc., `attachRootControls`

@@ -1014,3 +1014,28 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
     root.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-L2.5 (T2.5) — a root-controls NAME CONFLICT (api defines `dispose` etc.)
+// throws inside attachRootControls, AFTER the tree is fully constructed. That
+// throw was outside any try/catch, so instance.dispose() / queryClient.dispose()
+// never ran — leaking effects + focus/online/plugin listeners. Mirrors the
+// factory-throw teardown test in controller.test.ts.
+// ---------------------------------------------------------------------------
+describe('regression: root-controls conflict disposes the tree (R-L2.5)', () => {
+  test('an api that defines `dispose` tears down instance + queryClient before throwing', () => {
+    const pluginDispose = vi.fn()
+    const onDisposeHook = vi.fn()
+    const plugin = { init: vi.fn(), dispose: pluginDispose }
+    const conflicting = defineController((ctx) => {
+      ctx.onDispose(onDisposeHook)
+      return { dispose: () => {} } // collides with the root controls
+    })
+    expect(() => createRoot(conflicting, { deps: emptyDeps, plugins: [plugin] })).toThrow(
+      /conflicts with the root controls/,
+    )
+    // The fully-constructed tree must be torn down before the throw propagates.
+    expect(onDisposeHook).toHaveBeenCalledTimes(1) // instance.dispose() ran
+    expect(pluginDispose).toHaveBeenCalledTimes(1) // queryClient.dispose() ran
+  })
+})
