@@ -1345,6 +1345,8 @@ const root = createRoot(rootController, {
 
 `dehydrate()` only serializes the **query client cache** (data + lastUpdatedAt per entry). Controller state isn't serialized — controllers reconstruct from their props on the client.
 
+Each serialized entry also carries the query's **stable identity** (`id` — the `queryId` when set, otherwise an auto-assigned registration id) alongside its key. Hydration is namespaced by `id + keyHash`, so a client subscriber of query B can't adopt query A's payload merely because their `key()` outputs hash the same. Consequences: (1) a **hand-authored** `DehydratedState` (a server constructing the payload directly rather than via `dehydrate()`) must set `id` per entry to the target query's `queryId`, which means such a query needs an explicit `queryId`; (2) auto-ids are stable across a server/client pair evaluating the same bundle in the same order — if they drift (code-splitting), hydration degrades safely to a cache miss + refetch, never a cross-query adoption. Set an explicit `queryId` for a hard guarantee.
+
 ---
 
 ## 16. UI adapter contract

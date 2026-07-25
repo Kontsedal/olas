@@ -75,6 +75,13 @@ export type LocalCache<T> = AsyncState<T> & {
 
 /** One entry inside a `DehydratedState`. */
 export type DehydratedEntry = {
+  /**
+   * Stable query identity — `spec.queryId` when set, else an auto-assigned
+   * registration id. Namespaces the hydration buffer so a subscriber of query
+   * B can't adopt query A's payload just because their `key()` outputs hash
+   * the same (spec §15).
+   */
+  id: string
   key: readonly unknown[]
   data: unknown
   lastUpdatedAt: number
