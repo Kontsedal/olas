@@ -13,6 +13,9 @@
     "forms"
   ],
   "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
   "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/zod#readme",
   "repository": {
