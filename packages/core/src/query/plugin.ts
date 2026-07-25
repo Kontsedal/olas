@@ -93,7 +93,9 @@ export type SetDataEvent = {
   isRemote: boolean
   /**
    * Origin of the write. `'set'` covers explicit `client.setData` (mutations,
-   * optimistic updates, plugin-initiated patches). `'fetch'` fires when the
+   * optimistic updates AND their `snapshot.rollback()`, plugin-initiated
+   * patches) — a rollback re-broadcasts the restored value so peers drop the
+   * failed optimistic state (T3.6). `'fetch'` fires when the
    * query fetcher resolved successfully and wrote the result into the entry
    * — emitted after the data signal is settled. `'remote'` is the
    * `applyRemoteSetData` path (cross-tab / server-push); equivalent to

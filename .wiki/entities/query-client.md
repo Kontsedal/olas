@@ -61,7 +61,7 @@ Disposes every `ClientEntry`/`InfiniteClientEntry` (clearing their timers and ab
 
 `QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`; spec §13.2). At construction, every plugin's `init(api)` is invoked with a `QueryClientPluginApi` view that closes over the client. The client then fires `onSetData` / `onInvalidate` / `onGc` for every cache mutation against a query with a `queryId` set:
 
-- `onSetData` — `setData` and `setInfiniteData`. `event.kind === 'data'` for regular queries; `'infinite'` for paginated. `event.isRemote === true` when the write was caused by `applyRemoteSetData` (so plugins skip rebroadcast).
+- `onSetData` — `setData` and `setInfiniteData`. `event.kind === 'data'` for regular queries; `'infinite'` for paginated. `event.isRemote === true` when the write was caused by `applyRemoteSetData` (so plugins skip rebroadcast). `client.setData`/`setInfiniteData` also **re-emit on `snapshot.rollback()`** with `source: 'set'` + the restored value (guarded on an actual data change, so a non-top chain-splice rollback is a no-op) — cross-tab / entity peers drop the failed optimistic state (T3.6).
 - `onInvalidate` — `invalidate`, `invalidateAll`, `invalidateInfinite`, `invalidateAllInfinite`. Same `isRemote` semantics.
 - `onGc` — `dropEntry`, `dropInfiniteEntry`. No `isRemote` (gc is local-only).
 

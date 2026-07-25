@@ -1405,3 +1405,49 @@ describe('regression: query cancellation + snapshot rebase (R-Q3.4)', () => {
     entry.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-Q3.6 (T3.6) — an optimistic rollback must re-emit a SetDataEvent so
+// cross-tab / entity plugins drop the failed optimistic value. Before the fix,
+// client.setData emitted on the optimistic write, but snapshot.rollback() wrote
+// data directly (an Entry closure) with no emit — peer tabs kept the failed
+// optimistic state forever.
+// ---------------------------------------------------------------------------
+describe('regression: optimistic rollback re-emits a SetDataEvent (R-Q3.6)', () => {
+  test('rollback broadcasts the restored value with source:set, isRemote:false', async () => {
+    type User = { id: string; name: string }
+    const events: Array<{ source: string; data: unknown; isRemote: boolean; kind: string }> = []
+    const q = defineQuery({
+      queryId: 'r-q36-user',
+      key: (id: string) => ['user', id] as const,
+      fetcher: async (_ctx, id: string): Promise<User> => ({ id, name: 'server' }),
+    })
+    const capture: QueryClientPlugin = {
+      name: 'capture',
+      onSetData: (e) => {
+        events.push({ source: e.source, data: e.data, isRemote: e.isRemote, kind: e.kind })
+      },
+    }
+    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1'] as const) }))
+    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
+    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'server' }))
+
+    // Optimistic write → broadcasts source:'set'.
+    events.length = 0
+    const snap = q.setData('1', (prev) => ({ ...(prev as User), name: 'optimistic' }))
+    expect(root.user.data.value).toEqual({ id: '1', name: 'optimistic' })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ source: 'set', isRemote: false, kind: 'data' })
+    expect((events[0]!.data as User).name).toBe('optimistic')
+
+    // Rollback → must broadcast the RESTORED value so peers drop the failed state.
+    events.length = 0
+    snap.rollback()
+    expect(root.user.data.value).toEqual({ id: '1', name: 'server' })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ source: 'set', isRemote: false, kind: 'data' })
+    expect((events[0]!.data as User).name).toBe('server')
+
+    root.dispose()
+  })
+})
