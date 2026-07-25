@@ -239,6 +239,12 @@ describe('useQuery({ suspense: true })', () => {
     }
   })
 
+  // Note (T4.7): a DISABLED query under `{ suspense: true }` suspends forever
+  // (idle, no data). Throwing a descriptive error instead was tried but is
+  // indistinguishable from a query torn down during dispose (both go idle),
+  // which produced teardown false-positives + React-19 uncaughtException noise —
+  // so it's a documented limitation in BACKLOG.md, not a hard throw.
+
   test('without suspense option, hook behaves as before (data: T | undefined)', async () => {
     const greetingQuery = defineQuery({
       queryId: 'suspense-test/no-suspense',

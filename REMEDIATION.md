@@ -540,17 +540,23 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   resumed.
 
 ### [ ] T4.7 — React minor batch
-- [ ] `aria-errormessage` gets error TEXT (`hooks.ts:398`) — per ARIA it takes an element
+- [x] `aria-errormessage` gets error TEXT (`hooks.ts:398`) — per ARIA it takes an element
   ID reference. Remove it from `useFieldInput`'s props (keep `aria-invalid`); document
   that consumers should wire `aria-describedby` themselves.
-- [ ] `useFieldInput` handler memo keyed on `[field, transform]` while the docstring shows
+- [x] `useFieldInput` handler memo keyed on `[field, transform]` while the docstring shows
   an inline `transform` literal — keep the latest transform in a ref, memo handlers on
   `[field]` only.
-- [ ] Docstring at `hooks.ts:106` says `subscription.reset()` re-suspends — false
+- [x] Docstring at `hooks.ts:106` says `subscription.reset()` re-suspends — false
   (`Entry.reset` at `entry.ts:366-372` sets `'success'` when data exists). Fix the doc.
-- [ ] `useSuspenseQuery` + disabled/idle query suspends forever (`hooks.ts:184-186`) —
+- [?] `useSuspenseQuery` + disabled/idle query suspends forever (`hooks.ts:184-186`) —
   throw a descriptive dev error if the subscription is disabled (mirror TanStack's
   "suspense requires enabled" stance).
+  > could-not-implement-cleanly: an idle-with-no-data subscription is indistinguishable
+  > from one torn down during `dispose()` (both detach → idle), so a hard throw fired
+  > during teardown (false positives), and — thrown in render — React 19 re-reports it to
+  > node's `uncaughtException`, failing the vitest run. Reverted to the original
+  > idle→suspend; documented the "disabled + suspense hangs" limitation in `BACKLOG.md`
+  > (needs a `disabled`/`enabled` flag on the subscription to fix properly).
 - [ ] Streaming docstring wires the plugin to the wrong root (`streaming.ts:165-173`) —
   the example creates a plugin'd root then lets `HydrationBoundary` create ANOTHER root.
   Rewrite the example to pass the plugin through HydrationBoundary's options.
