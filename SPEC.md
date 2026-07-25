@@ -461,6 +461,8 @@ userQuery.prefetch(id) // fire-and-forget warmup
 
 Internally these all dispatch to the root's query client.
 
+**Invalidate semantics.** `invalidate` / `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry — one kept warm by `gcTime` after its last subscriber left, or created by `prefetch` — is marked stale and *not* refetched; the next subscriber triggers the fetch. This matches TanStack and avoids waking data nobody is watching.
+
 **Deep updates.** `setData` returns the new value; you build it however you want. Two canonical patterns:
 
 ```ts

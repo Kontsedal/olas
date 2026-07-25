@@ -71,6 +71,9 @@ export class Entry<T> {
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
   private staleTimer: ReturnType<typeof setTimeout> | null = null
+  /** Set by `markStale()` (invalidate without fetch); forces `isStaleNow()`
+   *  true until the next successful fetch clears it. Spec §5.7, T3.9. */
+  private forcedStale = false
   private snapshots: Array<SnapshotRecord<T>> = []
   private nextSnapshotId = 0
   private disposed = false
@@ -298,6 +301,7 @@ export class Entry<T> {
       this.lastUpdatedAt.set(Date.now())
       this.isStale.set(this.staleTime === 0)
     })
+    this.forcedStale = false // fresh data clears a prior markStale() (T3.9)
     if (this.staleTime > 0) this.scheduleStaleness()
     try {
       this.events.onFetchSuccess?.(Date.now() - this.fetchStartTime)
@@ -388,12 +392,24 @@ export class Entry<T> {
     }
   }
 
-  invalidate(): Promise<T> {
+  /**
+   * Force this entry stale WITHOUT fetching. `isStaleNow()` returns true until
+   * the next successful fetch clears the flag, so the next subscriber refetches.
+   * Used by `client.invalidate` for subscriber-less entries — spec §5.7 says
+   * invalidate refetches only IF subscribed (T3.9).
+   */
+  markStale(): void {
+    if (this.disposed) return
     if (this.staleTimer != null) {
       clearTimeout(this.staleTimer)
       this.staleTimer = null
     }
+    this.forcedStale = true
     this.isStale.set(true)
+  }
+
+  invalidate(): Promise<T> {
+    this.markStale()
     return this.startFetch()
   }
 
@@ -537,6 +553,7 @@ export class Entry<T> {
    * Used by the query client to decide whether to refetch on subscribe.
    */
   isStaleNow(): boolean {
+    if (this.forcedStale) return true
     const last = this.lastUpdatedAt.peek()
     if (last === undefined) return true
     return Date.now() - last >= this.staleTime

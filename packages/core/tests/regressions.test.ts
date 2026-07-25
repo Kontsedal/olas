@@ -8,6 +8,7 @@ import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { Entry } from '../src/query/entry'
 import { InfiniteEntry } from '../src/query/infinite'
+import { signal } from '../src/signals'
 import type { QueryClientPlugin, QueryClientPluginApi } from '../src/query/plugin'
 
 const emptyDeps = {}
@@ -1588,5 +1589,38 @@ describe('regression: query minor batch (R-Q3.9)', () => {
     expect(entry.isFetching.peek()).toBe(true)
     entry.dispose()
     expect(entry.isFetching.peek()).toBe(false)
+  })
+
+  test('invalidate on a subscriber-less entry marks stale only; refetches on next subscribe', async () => {
+    const calls: Record<string, number> = {}
+    const q = defineQuery({
+      key: (id: string) => ['orphan', id],
+      fetcher: async (_ctx, id: string) => {
+        calls[id] = (calls[id] ?? 0) + 1
+        return `${id}:${calls[id]}`
+      },
+      gcTime: 60_000, // keep the released entry alive
+      staleTime: 60_000, // fresh — so only invalidate can force a re-subscribe refetch
+    })
+    const idSig = signal('a')
+    const def = defineController((ctx) => ({ x: ctx.use(q, () => [idSig.value]) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(calls.a).toBe(1))
+
+    // Switch key → entry 'a' is released (subscriber-less), kept alive by gcTime.
+    idSig.set('b')
+    await vi.waitFor(() => expect(calls.b).toBe(1))
+
+    // Invalidate the subscriber-less 'a' — spec §5.7: refetch only IF subscribed.
+    // So it must NOT refetch now; just mark stale.
+    q.invalidate('a')
+    await flush()
+    expect(calls.a).toBe(1)
+
+    // Re-subscribe to 'a' — now it refetches, because invalidate marked it stale.
+    idSig.set('a')
+    await vi.waitFor(() => expect(calls.a).toBe(2))
+
+    root.dispose()
   })
 })

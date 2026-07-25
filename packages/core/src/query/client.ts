@@ -306,6 +306,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     }
   }
 
+  hasSubscribers(): boolean {
+    return this.subscriberCount > 0
+  }
+
   release(): void {
     this.subscriberCount -= 1
     if (this.subscriberCount <= 0) {
@@ -996,6 +1000,32 @@ export class QueryClient {
     this.emitGc(entry.query, entry.keyArgs, 'data')
   }
 
+  /**
+   * Invalidate one entry: if it has subscribers, mark stale AND refetch; if
+   * not, mark stale only — the next subscriber refetches. Spec §5.7 says
+   * invalidate refetches only IF subscribed; the old always-fetch behavior woke
+   * orphaned entries that no one was watching (T3.9). Works for both
+   * `ClientEntry` and `InfiniteClientEntry`.
+   */
+  private invalidateEntry(entry: {
+    hasSubscribers(): boolean
+    keyArgs: readonly unknown[]
+    entry: { invalidate(): Promise<unknown>; markStale(): void }
+  }): void {
+    if (entry.hasSubscribers()) {
+      entry.entry.invalidate().catch((err) => {
+        if (isAbortError(err)) return
+        dispatchError(this.onError, err, {
+          kind: 'cache',
+          controllerPath: [],
+          queryKey: entry.keyArgs,
+        })
+      })
+    } else {
+      entry.entry.markStale()
+    }
+  }
+
   invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): void {
     const internal = query as AnyQuery
     const map = this.maps.get(internal)
@@ -1007,14 +1037,7 @@ export class QueryClient {
     if (__DEV__) {
       this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
     }
-    entry.entry.invalidate().catch((err) => {
-      if (isAbortError(err)) return
-      dispatchError(this.onError, err, {
-        kind: 'cache',
-        controllerPath: [],
-        queryKey: keyArgs,
-      })
-    })
+    this.invalidateEntry(entry)
     this.emitInvalidate(internal, keyArgs, 'data')
   }
 
@@ -1027,14 +1050,7 @@ export class QueryClient {
       if (__DEV__) {
         this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
       }
-      entry.entry.invalidate().catch((err) => {
-        if (isAbortError(err)) return
-        dispatchError(this.onError, err, {
-          kind: 'cache',
-          controllerPath: [],
-          queryKey: entry.keyArgs,
-        })
-      })
+      this.invalidateEntry(entry)
       this.emitInvalidate(internal, entry.keyArgs, 'data')
     }
   }
@@ -1144,14 +1160,7 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     const entry = map.get(hash)
     if (!entry) return
-    entry.entry.invalidate().catch((err) => {
-      if (isAbortError(err)) return
-      dispatchError(this.onError, err, {
-        kind: 'cache',
-        controllerPath: [],
-        queryKey: entry.keyArgs,
-      })
-    })
+    this.invalidateEntry(entry)
     this.emitInvalidate(internal, keyArgs, 'infinite')
   }
 
@@ -1160,14 +1169,7 @@ export class QueryClient {
     const map = this.infiniteMaps.get(internal)
     if (!map) return
     for (const entry of map.values()) {
-      entry.entry.invalidate().catch((err) => {
-        if (isAbortError(err)) return
-        dispatchError(this.onError, err, {
-          kind: 'cache',
-          controllerPath: [],
-          queryKey: entry.keyArgs,
-        })
-      })
+      this.invalidateEntry(entry)
       this.emitInvalidate(internal, entry.keyArgs, 'infinite')
     }
   }

@@ -413,9 +413,11 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   (`focus-online.ts:44-52`) and `triggerEventRefetch` doesn't check `isFetching`
   (`client.ts:206-211`) — add the isFetching join (T3.2's helper) and debounce the two
   events into one (e.g. microtask flag).
-- [ ] `invalidate()` on subscriber-less cached entries fetches immediately
+- [x] `invalidate()` on subscriber-less cached entries fetches immediately
   (`entry.ts:357-364`) — mark stale only; fetch on next subscribe (TanStack semantics).
-  Check SPEC §5 wording and update.
+  Check SPEC §5 wording and update. (`Entry.markStale`/`forcedStale` +
+  `client.invalidateEntry` subscriber check; SPEC §5.7 already said "if subscribed",
+  clarified. Also InfiniteEntry.)
 - [ ] Streaming `flush()` unguarded `JSON.stringify` (`streaming.ts:144`) — try/catch;
   on failure dev-warn + skip that entry rather than corrupting the stream.
 - [x] `waitForIdle` hangs if racing dispose — disposed entries keep `isFetching: true`
