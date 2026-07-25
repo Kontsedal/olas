@@ -97,7 +97,12 @@ function Render({
 
   if (Array.isArray(value)) {
     return (
-      <CollapsibleArray value={value} depth={depth} initiallyOpen={initiallyOpen} seen={childSeen} />
+      <CollapsibleArray
+        value={value}
+        depth={depth}
+        initiallyOpen={initiallyOpen}
+        seen={childSeen}
+      />
     )
   }
 

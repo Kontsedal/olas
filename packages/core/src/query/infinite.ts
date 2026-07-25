@@ -304,8 +304,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
               })
               throw err
             }
-            const delay =
-              this.computeRetryDelay(attempt)
+            const delay = this.computeRetryDelay(attempt)
             await abortableSleep(delay, signal)
             attempt += 1
           }
@@ -484,8 +483,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             })
             throw err
           }
-          const delay =
-            this.computeRetryDelay(attempt)
+          const delay = this.computeRetryDelay(attempt)
           await abortableSleep(delay, signal)
           attempt += 1
         }
@@ -564,10 +562,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
   }
 
-  setData(
-    updater: (prev: TPage[] | undefined) => TPage[],
-    opts?: { track?: boolean },
-  ): Snapshot {
+  setData(updater: (prev: TPage[] | undefined) => TPage[], opts?: { track?: boolean }): Snapshot {
     if (this.disposed) {
       return { rollback: () => {}, finalize: () => {} }
     }

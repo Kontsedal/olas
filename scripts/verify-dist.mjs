@@ -6,7 +6,7 @@
 //      ESM/CJS interop breakage, a missing built file).
 // Exits non-zero on any failure. Zero-dependency; pairs with publint + attw
 // (which check the packaging metadata) — this checks the artifacts actually run.
-import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -43,7 +43,9 @@ for (const name of readdirSync(join(root, 'packages'))) {
   for (const f of readdirSync(distDir)) {
     if (!/\.(mjs|cjs)$/.test(f)) continue
     if (readFileSync(join(distDir, f), 'utf8').includes('__DEV__')) {
-      failures.push(`${pkg.name}: \`__DEV__\` literal leaked into dist/${f} (build define misfired)`)
+      failures.push(
+        `${pkg.name}: \`__DEV__\` literal leaked into dist/${f} (build define misfired)`,
+      )
     }
   }
 

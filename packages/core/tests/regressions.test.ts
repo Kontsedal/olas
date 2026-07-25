@@ -7,13 +7,13 @@
  */
 import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
-import { validator } from '../src/forms'
 import type { FormIssue, StandardSchemaV1 } from '../src/forms'
+import { validator } from '../src/forms'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { Entry } from '../src/query/entry'
 import { InfiniteEntry } from '../src/query/infinite'
-import { signal } from '../src/signals'
 import type { QueryClientPlugin, QueryClientPluginApi } from '../src/query/plugin'
+import { signal } from '../src/signals'
 
 const emptyDeps = {}
 /**

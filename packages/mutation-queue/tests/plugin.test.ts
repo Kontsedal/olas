@@ -408,7 +408,11 @@ function stubOnlineEnv(initialOnline: boolean) {
   }
 }
 
-const seed = (adapter: ReturnType<typeof memoryAdapter>, prefix: string, e: Partial<QueueEntry>) => {
+const seed = (
+  adapter: ReturnType<typeof memoryAdapter>,
+  prefix: string,
+  e: Partial<QueueEntry>,
+) => {
   const entry: QueueEntry = {
     v: PROTOCOL_VERSION,
     mutationId: 'x',
@@ -430,8 +434,18 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
       keyPrefix: 'test/mq/dedupe',
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
-    plugin.onMutationEnqueue?.({ mutationId: 'm', runId: 'run-1', variables: { key: 'K' }, attempt: 0 })
-    plugin.onMutationEnqueue?.({ mutationId: 'm', runId: 'run-2', variables: { key: 'K' }, attempt: 0 })
+    plugin.onMutationEnqueue?.({
+      mutationId: 'm',
+      runId: 'run-1',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
+    plugin.onMutationEnqueue?.({
+      mutationId: 'm',
+      runId: 'run-2',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
     await settle()
     // Only the first enqueue wrote a durable entry.
     expect(adapter.store.size).toBe(1)
@@ -445,13 +459,23 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
       keyPrefix: 'test/mq/cancel',
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
-    plugin.onMutationEnqueue?.({ mutationId: 'm', runId: 'run-1', variables: { key: 'K' }, attempt: 0 })
+    plugin.onMutationEnqueue?.({
+      mutationId: 'm',
+      runId: 'run-1',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
     await settle()
     expect(adapter.store.size).toBe(1)
     // Reload mid-run looks like a cancel — entry + key must survive.
     plugin.onMutationSettle?.({ mutationId: 'm', runId: 'run-1', outcome: 'cancelled' })
     // Re-enqueue the same logical mutation under a new runId → collapses.
-    plugin.onMutationEnqueue?.({ mutationId: 'm', runId: 'run-2', variables: { key: 'K' }, attempt: 0 })
+    plugin.onMutationEnqueue?.({
+      mutationId: 'm',
+      runId: 'run-2',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
     await settle()
     expect(adapter.store.size).toBe(1) // NOT two entries
     plugin.dispose?.()

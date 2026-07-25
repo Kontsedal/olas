@@ -27,9 +27,7 @@ export function validator<I, O>(schema: StandardSchemaV1<I, O>): Validator<I> {
   }
 }
 
-function issuesFromResult(result: {
-  issues?: ReadonlyArray<StandardSchemaV1Issue>
-}): FormIssue[] {
+function issuesFromResult(result: { issues?: ReadonlyArray<StandardSchemaV1Issue> }): FormIssue[] {
   if (result.issues === undefined || result.issues.length === 0) return []
   return result.issues.map((issue) => ({
     path: normalizeIssuePath(issue.path),
@@ -42,9 +40,7 @@ function issuesFromResult(result: {
  * Flatten to the `(string | number)[]` shape `FormIssue` uses: numeric keys
  * stay numeric (array indices), everything else stringifies.
  */
-function normalizeIssuePath(
-  path: StandardSchemaV1Issue['path'],
-): (string | number)[] {
+function normalizeIssuePath(path: StandardSchemaV1Issue['path']): (string | number)[] {
   if (path === undefined) return []
   const out: (string | number)[] = []
   for (const seg of path) {

@@ -173,7 +173,11 @@ describe('DevtoolsStore.handle', () => {
     const store = new DevtoolsStore({ maxDisposedNodes: 2, now: fixedNow })
     store.handle({ type: 'controller:constructed', path: ['root'], props: undefined })
     for (let i = 0; i < 5; i++) {
-      store.handle({ type: 'controller:constructed', path: ['root', `item[${i}]`], props: undefined })
+      store.handle({
+        type: 'controller:constructed',
+        path: ['root', `item[${i}]`],
+        props: undefined,
+      })
       store.handle({ type: 'controller:disposed', path: ['root', `item[${i}]`] })
     }
     const rootNode = store.tree$.peek().children[0]
