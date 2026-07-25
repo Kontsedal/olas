@@ -417,3 +417,22 @@ Deep-audit remediation (see `REMEDIATION.md`), phases 0 (infra) and 1 (query cri
 ### Gates
 
 `pnpm typecheck` clean; `pnpm lint` (biome, LF) clean; `pnpm test` → 626/626 across 55 files.
+
+## [2026-07-25 12:06] ingest | REMEDIATION.md phase 2 (core lifecycle)
+
+Phase 2 — controller/query lifecycle criticals + majors + minor batch.
+
+- **T2.1** — `ctx.use` binding effect reads enabled/key BEFORE the `suspended` early-return, so a key change during suspension can't empty its deps. New pitfall `suspended-effects-lose-deps.md`; `flows/query-subscription.md`.
+- **T2.2** — `resume()` skips re-activating an effect whose `dispose` is already live (registered mid-resume). `entities/controller-instance.md`.
+- **T2.3** — `ctx.collection` reconcile untracks everything but `source.value`. `modules/controller.md`.
+- **T2.4** — every `ctx.*` factory throws after dispose (`assertLive`); `ctx.effect` no longer silently no-ops. SPEC §4; `entities/ctx.md` (covers range refreshed to `instance.ts:390-1130`).
+- **T2.5** — root-controls name-conflict throw now disposes instance + queryClient. (no doc page)
+- **T2.6** — `explicitlySuspended` flag on the child entry; explicit suspension survives tree cascade. SPEC §4.1; `controller-instance.md`; suspendItem contract.
+- **T2.7** — `debounced`/`throttled` gain `dispose()`, a read-only handle, trailing:false fixes, both-false validation. `modules/timing.md`; API.md.
+- **T2.8** — emitter docstring, readOnly on collection/lazyChild signals, rollback + effect-cleanup error routing, `createRoot<Api extends object>`. pathKey was could-not-reproduce (already joins with NUL).
+
+Regression tests R-L2.1…R-L2.8 (+ R-Q1.1/1.2 from phase 1) all under `packages/core/tests/regressions.test.ts` and the timing options matrix in `timing.test.ts`.
+
+### Gates
+
+`pnpm typecheck` clean (after `pnpm build` — satellites resolve core via dist; see BACKLOG); `pnpm lint` clean; `pnpm test` → 649/649 across 55 files.
