@@ -66,6 +66,10 @@ Examples:
 
 ## Queries / data layer
 
+### [idea] `useQuery({ suspense: true })` on a disabled query suspends forever
+
+A disabled query (`enabled: () => false`) is `status: 'idle'` with no data, so a suspense hook throws `subscription.promise()` and stays suspended indefinitely (the fallback never resolves). T4.7 tried throwing a descriptive error instead, but an idle-with-no-data subscription is **indistinguishable from one torn down during `root.dispose()`** (both detach → idle), so the hard throw fired during teardown (false positives) and — thrown in render — React 19 re-reports it to node's `uncaughtException`, failing the vitest run. A clean fix needs a way to tell "intentionally disabled" from "transiently idle": e.g. surface an `enabled`/`disabled` flag on the subscription, or a dedicated `status: 'disabled'`. Until then, don't combine `suspense` with a disabled query; gate the whole subtree instead (`{condition && <SuspenseView/>}`).
+
 ### [idea] Full updater-replay rebasing for concurrent optimistic rollback
 
 [from SPEC §6.4] Rollback today is snapshot-based with **chain-splice** ordering (T3.1): each `Snapshot` captures a baseline value, rolling back the top restores it, and rolling back a non-top layer threads its baseline down the chain so all-layers-rolled-back returns to the pre-mutation value. What it does **not** do: re-run the surviving layers' updater functions against a new baseline. So when A(+1) and B(+10) both apply and A fails first, the visible value stays 11 (both deltas) until B settles, rather than dropping to 10 (B's delta alone). True rebasing would store the updater fns (not just the pre-value), and on any rollback replay the still-live updaters in order over the current server/base value. Cost: `setData` must keep the updater closure alive for the snapshot's lifetime, and replay must be pure/idempotent. Worth it only if the "stale delta on screen until unwind" behavior bites a real app; `concurrency: 'serial'` sidesteps it for conflicting writes today.

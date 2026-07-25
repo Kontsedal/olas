@@ -110,14 +110,20 @@ export function use<T, U = T>(
  *
  *  - While `status === 'pending'` (no data yet) the hook **throws**
  *    `subscription.promise()` — caught by the nearest `<Suspense>` boundary.
- *  - When `status === 'error'` the hook **throws** `subscription.error` —
- *    caught by the nearest `<ErrorBoundary>` (React itself doesn't ship
- *    one; use `react-error-boundary` or your own).
+ *  - When `status === 'error'` AND there's no data yet, the hook **throws**
+ *    `subscription.error` — caught by the nearest `<ErrorBoundary>` (React
+ *    itself doesn't ship one; use `react-error-boundary` or your own). A
+ *    background-refetch failure that keeps the last-good data does NOT throw.
  *  - On success the hook returns synchronously and `data` is narrowed to
  *    `T` (never `undefined`).
+ *  - A DISABLED (`enabled: () => false`) query has no data and never fetches,
+ *    so it suspends indefinitely — don't combine `suspense` with a disabled
+ *    query (see `BACKLOG.md`).
  *
- *  Refetches AFTER a first success do NOT re-suspend — only the initial
- *  load throws. To re-suspend programmatically, call `subscription.reset()`.
+ *  Refetches AFTER a first success do NOT re-suspend — only the initial load
+ *  throws. `reset()` does NOT re-suspend either: it clears `error`/`status` but
+ *  keeps `data`, so `status` returns to `'success'` (spec §5). There is no
+ *  built-in way to force re-suspension short of a fresh subscription.
  */
 export function useQuery<T>(subscription: AsyncState<T>): {
   data: T | undefined
@@ -185,22 +191,21 @@ export function useQuery<T>(
   const getSnapshot = useCallback(() => snapshot.value, [snapshot])
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-  if (options?.suspense === true) {
-    // Throw to the ErrorBoundary ONLY when there's no data to show. A
-    // background-refetch failure keeps the last-good `data` (Entry.applyFailure
-    // preserves it) but sets `status: 'error'` — throwing then would nuke a
-    // rendered subtree to the ErrorBoundary on a transient focus/interval blip.
-    // TanStack's suspense throws only when data is absent; the error stays
-    // observable via a non-suspense `useQuery`'s `error`/`status` (T4.3).
-    if (snap.status === 'error' && snap.data === undefined) {
-      throw subscription.error.peek()
+  // Suspense decisions apply ONLY when there's no data to show. A
+  // background-refetch failure keeps the last-good `data` (Entry.applyFailure
+  // preserves it) but sets `status: 'error'` — this whole block is skipped then,
+  // so a transient blip can't nuke a rendered subtree to the ErrorBoundary. The
+  // error stays observable via a non-suspense `useQuery`'s `error`/`status` (T4.3).
+  if (options?.suspense === true && snap.data === undefined) {
+    if (snap.status === 'error') {
+      throw subscription.error.peek() // → ErrorBoundary (no data yet)
     }
-    // First-load suspend: only when we genuinely have no data yet. After
-    // a successful settle, refetches keep `data` defined and the hook
-    // returns normally (matches TanStack Query's `suspense` semantics).
-    if (snap.data === undefined && (snap.status === 'pending' || snap.status === 'idle')) {
-      throw subscription.promise()
-    }
+    // No data and not errored → suspend (pending / idle / offline-parked); the
+    // thrown promise resolves once data lands. NB: a DISABLED (idle) query stays
+    // suspended forever — see BACKLOG. Throwing a hard error for the idle case
+    // was tried (T4.7) but is indistinguishable from a query torn down during
+    // dispose, so it produced teardown false-positives.
+    throw subscription.promise()
   }
 
   return {
@@ -313,7 +318,10 @@ export function useField<T>(field: Field<T>): {
  * transform; `onBlur` calls `markTouched()` so `validateOn: 'blur'` modes
  * activate without any extra wiring. `aria-invalid` is set when the field
  * has been touched AND has errors (avoid the "errors on every keystroke"
- * UX even when validators run on change).
+ * UX even when validators run on change). For the error *message*, render your
+ * own element and point the input at it with `aria-describedby={errId}` — the
+ * hook does NOT emit `aria-errormessage` because per ARIA that attribute takes
+ * an element-ID reference, not the error text.
  */
 export function useFieldInput<T extends string>(
   field: Field<T>,
@@ -324,7 +332,6 @@ export function useFieldInput<T extends string>(
   onBlur: () => void
   name: string | undefined
   'aria-invalid': boolean | undefined
-  'aria-errormessage': string | undefined
 }
 export function useFieldInput<T>(
   field: Field<T>,
@@ -335,7 +342,6 @@ export function useFieldInput<T>(
   onBlur: () => void
   name: string | undefined
   'aria-invalid': boolean | undefined
-  'aria-errormessage': string | undefined
 }
 export function useFieldInput<T>(
   field: Field<T>,
@@ -346,9 +352,16 @@ export function useFieldInput<T>(
   onBlur: () => void
   name: string | undefined
   'aria-invalid': boolean | undefined
-  'aria-errormessage': string | undefined
 } {
   const transform = options?.transform
+  // Keep the latest transform in a ref so the handlers memo keys on [field]
+  // ONLY. The docstring shows an inline `transform={{ parse, format }}` literal,
+  // which is a new object each render — memoizing on [field, transform] would
+  // churn the handler identity every render and defeat downstream memoization
+  // (T4.7). Handlers read `transformRef.current` at call time.
+  const transformRef = useRef(transform)
+  transformRef.current = transform
+
   // Memoized `computed` snapshot — see `useQuery` (T4.5).
   const snapshot = useMemo(
     () =>
@@ -366,22 +379,20 @@ export function useFieldInput<T>(
   const getSnapshot = useCallback(() => snapshot.value, [snapshot])
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-  // Build the change/blur handlers once per field/transform — useMemo over
-  // [field, transform] so each remount of the same field doesn't churn
-  // identity (React downstream may use the function ref for memoization).
   const handlers = useMemo(() => {
     const onChangeHandler = (e: ChangeEvent<{ value: string }>): void => {
       const raw = e.target.value
-      if (transform === undefined) {
+      const t = transformRef.current
+      if (t === undefined) {
         // Caller asserted `T extends string`; safe to cast.
         field.set(raw as unknown as T)
       } else {
-        field.set(transform.parse(raw))
+        field.set(t.parse(raw))
       }
     }
     const onBlurHandler = (): void => field.markTouched()
     return { onChangeHandler, onBlurHandler }
-  }, [field, transform])
+  }, [field])
 
   const formatted =
     transform === undefined ? (snap.value as unknown as string) : transform.format(snap.value)
@@ -391,8 +402,10 @@ export function useFieldInput<T>(
     onChange: handlers.onChangeHandler,
     onBlur: handlers.onBlurHandler,
     name: options?.name,
+    // `aria-invalid` only — `aria-errormessage` per ARIA is an element-ID
+    // reference, NOT error text. Consumers wire `aria-describedby` to their own
+    // error element (T4.7).
     'aria-invalid': showError ? true : undefined,
-    'aria-errormessage': showError ? snap.errors[0] : undefined,
   }
 }
 
