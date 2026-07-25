@@ -73,7 +73,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Problem:** `NODE_ENV=production pnpm …` fails on Windows (the maintainer's own OS).
 - **Fix:** use `cross-env` (add as root devDependency) — `cross-env NODE_ENV=production …`.
 
-### [ ] T0.4 — stale BACKLOG entries for already-shipped work
+### [x] T0.4 — stale BACKLOG entries for already-shipped work
 - **File:** `BACKLOG.md`
 - **Problem:** `[planned] form.submit(handler) lifecycle + setErrors` and
   `[planned] Standard Schema adapter` both appear to have shipped already
