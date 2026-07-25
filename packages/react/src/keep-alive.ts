@@ -1,9 +1,23 @@
-import { type ReactElement, type ReactNode, useEffect } from 'react'
+import { type ReactElement, type ReactNode, useEffect, useLayoutEffect } from 'react'
 
 export type SuspendableController = {
   suspend(): void
   resume(): void
 }
+
+// Layout effect on the client (so `resume()` runs before the first paint after
+// a remount), plain effect on the server (useLayoutEffect warns during SSR and
+// effects don't run there anyway).
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
+
+/**
+ * Refcount per controller handle, shared across every `<SuspendOnUnmount>`
+ * mounted on the same controller. `resume()` fires on 0→1 (first consumer),
+ * `suspend()` on 1→0 (last consumer). A WeakMap so a controller that's no
+ * longer referenced is collected. Module-level on purpose — two wrappers in
+ * different React subtrees (a cross-fade) must share the count.
+ */
+const refCounts = new WeakMap<SuspendableController, number>()
 
 /**
  * Wrap a sub-tree so unmount calls `controller.suspend()` and re-mount
@@ -14,21 +28,31 @@ export type SuspendableController = {
  * computed state is expensive to rebuild but whose DOM you're happy to
  * re-render. See spec §20.10.
  *
- * **Concurrency contract.** `SuspendableController.suspend()` MUST be safe
- * to call when the controller is already suspended (idempotent) and from
- * multiple consumers. Two sibling `<SuspendOnUnmount>` wrappers around the
- * same controller will overlap their `resume`/`suspend` calls during a
- * cross-fade; the controller must tolerate that.
+ * **Cross-fade safe.** Multiple wrappers around the same controller are
+ * refcounted: `resume()` fires only when the FIRST mounts and `suspend()`
+ * only when the LAST unmounts. So during a cross-fade — the entering screen
+ * mounts while the exiting one is still mounted — the controller stays
+ * resumed regardless of the order React runs the effects, and the exiting
+ * screen's unmount can't suspend a controller the entering screen still uses
+ * (T4.6). `suspend()` should still be idempotent for safety.
  */
 export function SuspendOnUnmount(props: {
   controller: SuspendableController
   children: ReactNode
 }): ReactElement {
   const { controller, children } = props
-  useEffect(() => {
-    controller.resume()
+  useIsomorphicLayoutEffect(() => {
+    const prev = refCounts.get(controller) ?? 0
+    refCounts.set(controller, prev + 1)
+    if (prev === 0) controller.resume() // 0 → 1: first consumer
     return () => {
-      controller.suspend()
+      const next = (refCounts.get(controller) ?? 1) - 1
+      if (next <= 0) {
+        refCounts.delete(controller)
+        controller.suspend() // 1 → 0: last consumer
+      } else {
+        refCounts.set(controller, next)
+      }
     }
   }, [controller])
   return children as ReactElement
