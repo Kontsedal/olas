@@ -1,17 +1,17 @@
 ---
-"@kontsedal/olas-core": patch
-"@kontsedal/olas-react": patch
-"@kontsedal/olas-zod": patch
-"@kontsedal/olas-persist": patch
-"@kontsedal/olas-devtools": patch
-"@kontsedal/olas-cross-tab": patch
-"@kontsedal/olas-entities": patch
-"@kontsedal/olas-realtime": patch
-"@kontsedal/olas-mutation-queue": patch
-"@kontsedal/olas-router": patch
+"@kontsedal/olas-core": minor
+"@kontsedal/olas-react": minor
+"@kontsedal/olas-zod": minor
+"@kontsedal/olas-persist": minor
+"@kontsedal/olas-devtools": minor
+"@kontsedal/olas-cross-tab": minor
+"@kontsedal/olas-entities": minor
+"@kontsedal/olas-realtime": minor
+"@kontsedal/olas-mutation-queue": minor
+"@kontsedal/olas-router": minor
 ---
 
-Remediation correctness pass — a full-repo deep audit (five independent review passes, worst findings pinned with probe tests) fixed across core + every satellite. Kept `patch` under the 0.x convention, though several fixes change documented behavior (listed at the end).
+Remediation correctness pass — a full-repo deep audit (five independent review passes, worst findings pinned with probe tests) fixed across core + every satellite. Released as a **minor** bump under the 0.x convention to signal the documented behavior changes (listed at the end).
 
 Highlights:
 
