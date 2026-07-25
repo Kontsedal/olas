@@ -1,19 +1,21 @@
 # handoff.md — REMEDIATION.md execution, session handoff
 
 **Transient file** (like `REMEDIATION.md`). Delete both when the remediation lands.
-Written 2026-07-25 after completing Phases 0–4.
+Written 2026-07-25; updated after completing Phase 5 (T5.1–T5.3).
 
 ---
 
 ## TL;DR
 
 - Working on branch **`remediation`** (off `main`). All work is committed.
-- **Phases 0–4 DONE + T5.1 DONE** — 31 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9,
-  T4.1–T4.7, T5.1). Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce),
+- **Phases 0–5 DONE** — 34 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9,
+  T4.1–T4.7, T5.1–T5.3). Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce),
   T4.7 disabled+suspense (could-not-implement-cleanly → BACKLOG).
-- Pipeline is **green**: `pnpm test` → 691/691, typecheck clean, biome lint clean.
-- **Next task: T5.2** (Phase 5 — forms, mid-phase). The full task list + "decisions
-  made" live in `REMEDIATION.md`; the checkboxes there are the source of truth.
+- Pipeline is **green**: `pnpm test` → 708/708, typecheck clean, biome lint clean,
+  `pnpm wiki:lint` 0 errors.
+- **Next task: T6.1** (Phase 6 — satellite packages, starting with `@kontsedal/olas-persist`).
+  The full task list + "decisions made" live in `REMEDIATION.md`; the checkboxes there are
+  the source of truth.
 
 ## Read this first (resume order)
 
@@ -100,38 +102,42 @@ must be green, then add a `## [date] ingest | REMEDIATION.md phase N` entry to `
 | 2 — lifecycle criticals+majors | T2.1–T2.8 | ✅ done (T2.8 pathKey = `[?]`) |
 | 3 — query majors | T3.1–T3.9 | ✅ done |
 | 4 — React adapter | T4.1–T4.7 | ✅ done (T4.7 disabled+suspense = `[?]`) |
-| 5 — forms | T5.1–T5.3 | 🔶 in progress (T5.1 ✅; T5.2, T5.3 next) |
-| 6 — satellites | T6.1–T6.7 | ⬜ |
+| 5 — forms | T5.1–T5.3 | ✅ done |
+| 6 — satellites | T6.1–T6.7 | ⬜ (next) |
 | 7 — delivery/docs/release | T7.1–T7.3 | ⬜ |
 | 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ |
 
-**Next up — T5.2** (`packages/core/src/forms/form.ts` + `validators.ts`): **[MAJOR]**
-cross-field validation can't target fields; Standard Schema issues lose their `path`. A
-form-level validator returns one `string | null`, so "passwords must match" can't land on
-the confirm field; a whole-form Zod schema collapses to one anonymous top-level string.
-Fix (decision made in REMEDIATION.md): extend the form-level validator return to
-`string | null | FormIssue[]` (`FormIssue = { path: (string|number)[]; message: string }`);
-non-empty-path issues route into a NEW per-field `formErrors` signal (a third channel beside
-validator + server errors), merged into the field's visible `errors`, cleared on the next
-form-level run; empty-path issues → `topLevelErrors`. Rewrite the Standard Schema wrapper
-(`validators.ts:16-30`) to return ALL issues as `FormIssue[]`. Existing plumbing to reuse:
-`form.setErrors(pathMap)` + `resolvePath` (`form.ts:416-426`). SPEC §8 validators; API.md;
-`.wiki/modules/forms.md` + `zod.md`. Then **T5.3** — forms minor batch (validateOn tests,
-`required(false)` passes, `isValid` during `isValidating`, reset-batch, thrown-validator
-message in prod). That completes Phase 5 → run the phase gate + `.wiki/log.md` ingest.
+**Next up — T6.1** (`packages/persist/src/index.ts`): **persist — IDB adapter acks before
+commit; error routing is dead.** Sub-items (REMEDIATION lines ~636-652): (a) `runRequest`
+resolves on `req.onsuccess` → resolve `set`/`delete` on `tx.oncomplete`, reject on
+`onabort`/`onerror` (quota errors surface at COMMIT); (b) adapter swallows errors + resolves
+→ reject instead so `usePersisted`'s `onError` fires; (c) `flushWrite` mislabels a storage
+quota error as op `'serialize'` → split encode (`'serialize'`) vs storage.set (`'write'`);
+(d) ready-gate races (writes before load resolve get dropped/clobbered by `applyLoaded`;
+cross-tab `onChange` never checks `ready`); (e) no `onversionchange` handler; (f) **zero
+tests for `version`/`migrate`/`throttleMs`/`onError`** — write them. SPEC/persist README +
+`.wiki/modules/persist.md`.
 
-**Phase 5 notes (forms — `packages/core/src/forms/`, back to core):**
-- Core tests (node env, NOT jsdom) in `packages/core/tests/` — forms tests in
-  `form*.test.ts`, `field*.test.ts`. Regressions go in `regressions.test.ts` (`R-F5.x` tag).
-- `Field<T>.value` returns `T`; `Form.value` / `FieldArray.value` are `ReadSignal<...>`
-  (pitfall `field-value-shape.md`). Form traversal branches on this.
-- `__DEV__` IS available in core (unlike react) — use it for dev-only warnings.
-- T5.1 added `FieldArray.structurallyDirty$` (isDirty = structural || anyItemDirty).
+**Phase 6 notes (satellite packages — leaving core):**
+- Phase 6 = T6.1–T6.7, one package each: persist (T6.1), mutation-queue (T6.2), devtools
+  (T6.3), cross-tab (T6.4), zod (T6.5), router (T6.6), realtime (T6.7). Each has its OWN
+  test dir + README + `.wiki/modules/<pkg>.md`.
+- **jsdom vs node env:** persist/devtools/react tests need a DOM (`indexedDB`, `localStorage`,
+  `BroadcastChannel`, `navigator`). Check each package's `vitest` env; core is node-only.
+- Satellites import `@kontsedal/olas-core` via the vitest alias → **src** for tests but
+  **dist** for typecheck (handoff gotcha #2/#3): after changing core, `pnpm build` before the
+  full `pnpm typecheck`.
+- T6.2 (mutation-queue) is the heaviest — Web Locks / localStorage lease, `online` replay,
+  cache reconciliation, and a **README demotion** ("best-effort" not "durable") until it all
+  ships. T6.4 (cross-tab) removes the `'infinite'|'both'` option values (type-level) + dev-warn.
 
-**Phase 4 recap (just completed):** new public surface — `Mutation.status` (core), which
-`useMutation`'s `isSuccess`/`isIdle`/`isError` derive from. Full details in `.wiki/log.md`
-(phase 4 ingest entry). `packages/react/src/streaming.ts` + `packages/core/src/query/define.ts`
-are UTF-16/NUL-byte files (show as `Bin` in git diffs; Edit tool handles them — not corruption).
+**Phase 5 recap (just completed):** new public surface — `FormIssue` / `ValidatorResult`
+types + `mustBeTrue` validator; `Validator<T>` return widened to allow `FormIssue[]`. Full
+details in `.wiki/log.md` (phase 5 ingest). Key behavior changes: form-level validators can
+target fields by path (T5.2); `required(false)` now passes (use `mustBeTrue` for checkboxes);
+`isValid` holds last-known validity while `isValidating` (no submit-button strobe, T5.3).
+`packages/react/src/streaming.ts` + `packages/core/src/query/define.ts` are UTF-16/NUL-byte
+files (show as `Bin` in git diffs; Edit tool handles them — not corruption).
 
 ## Handy commands
 
