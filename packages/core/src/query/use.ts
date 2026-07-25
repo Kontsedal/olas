@@ -1,5 +1,6 @@
 import { computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
+import { isAbortError } from '../utils'
 import type { ClientEntry, InfiniteClientEntry, QueryClient } from './client'
 import type { InfiniteQuery, InfiniteQuerySpec, InfiniteQuerySubscription } from './infinite'
 import type {
@@ -87,7 +88,16 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
   refetch = (): Promise<U> => {
     const cur = this.current$.peek()
     if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
-    return cur.entry.refetch().then((v) => this.project(v))
+    return cur.entry.refetch().then(
+      (v) => this.project(v),
+      (err) => {
+        // A supersede (newer refetch / key change) aborts this fetch. Don't
+        // surface the spurious AbortError — resolve with the superseding
+        // fetch's eventual outcome instead (T3.9). Real errors still reject.
+        if (isAbortError(err)) return this.firstValue()
+        throw err
+      },
+    )
   }
 
   reset = (): void => {
@@ -332,7 +342,14 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   refetch = (): Promise<TPage[]> => {
     const cur = this.current$.peek()
     if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
-    return cur.entry.refetch().then(() => cur.entry.pages.peek())
+    return cur.entry.refetch().then(
+      () => cur.entry.pages.peek(),
+      (err) => {
+        // Supersede → resolve with the superseder's outcome, not AbortError (T3.9).
+        if (isAbortError(err)) return this.firstValue()
+        throw err
+      },
+    )
   }
 
   reset = (): void => {

@@ -1495,3 +1495,59 @@ describe('regression: infinite interval refetch retains all pages (R-Q3.7)', () 
     vi.useRealTimers()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-Q3.9 (T3.9) — minor batch. Each test pins one small correctness fix.
+// ---------------------------------------------------------------------------
+describe('regression: query minor batch (R-Q3.9)', () => {
+  test('onMutate throw aborts the mutation: mutate never runs, run() rejects', async () => {
+    let mutateCalled = false
+    const def = defineController((ctx) => ({
+      save: ctx.mutation({
+        onMutate: () => {
+          throw new Error('onMutate boom')
+        },
+        mutate: async () => {
+          mutateCalled = true
+          return 'ok'
+        },
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await expect(root.save.run()).rejects.toThrow('onMutate boom')
+    expect(mutateCalled).toBe(false)
+    expect(root.save.isPending.value).toBe(false)
+    root.dispose()
+  })
+
+  test('subscription.refetch() resolves (not AbortError-rejects) when superseded', async () => {
+    const held: Array<(v: number) => void> = []
+    let call = 0
+    const q = defineQuery({
+      key: () => ['s'],
+      fetcher: ({ signal }: { signal: AbortSignal }) => {
+        call += 1
+        if (call === 1) return Promise.resolve(0) // initial
+        if (call === 2) {
+          // held refetch #1 — must reject on abort so the supersede unsticks it
+          return new Promise<number>((res, rej) => {
+            held.push(res)
+            signal.addEventListener('abort', () => rej(new DOMException('aborted', 'AbortError')))
+          })
+        }
+        return Promise.resolve(42) // refetch #2 supersedes #1
+      },
+    })
+    const def = defineController((ctx) => ({ sub: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(root.sub.data.value).toBe(0))
+
+    const pA = root.sub.refetch() // call 2 (held)
+    const pB = root.sub.refetch() // call 3 — supersedes A, resolves 42
+    await expect(pB).resolves.toBe(42)
+    // A was superseded — it must resolve with the superseder's outcome, not
+    // reject with the spurious AbortError.
+    await expect(pA).resolves.toBe(42)
+    root.dispose()
+  })
+})
