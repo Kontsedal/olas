@@ -1623,4 +1623,14 @@ describe('regression: query minor batch (R-Q3.9)', () => {
 
     root.dispose()
   })
+
+  test('a different query overwriting a queryId dev-warns', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    defineQuery({ queryId: 'r-q39-dup', key: () => ['a'], fetcher: async () => 1 })
+    expect(warn).not.toHaveBeenCalled()
+    // Re-register the SAME id with a DIFFERENT query object → collision warning.
+    defineQuery({ queryId: 'r-q39-dup', key: () => ['b'], fetcher: async () => 2 })
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('duplicate queryId'))
+    warn.mockRestore()
+  })
 })

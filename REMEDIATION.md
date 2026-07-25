@@ -425,14 +425,14 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - [x] Default retry has no backoff (`entry.ts:101-102`) — keep `retry: 0` default, but
   when `retry > 0` and no `retryDelay` given, default to exponential:
   `min(1000 * 2 ** attempt, 30_000)`. (Also InfiniteEntry via `computeRetryDelay`.)
-- [ ] Duplicate `queryId` registration replaces silently (`plugin.ts:215-217`) —
+- [x] Duplicate `queryId` registration replaces silently (`plugin.ts:215-217`) —
   dev-warn.
-- [ ] `_unregisterMutationById` is documented "not exported" but exported
+- [x] `_unregisterMutationById` is documented "not exported" but exported
   (`plugin.ts:279-280` vs `index.ts:88`) — remove from the public entry; move to
-  `testing.ts` if tests need it.
-- [ ] Dual-package hazard: `mutationRegistry` is a module-level `Map`
+  `testing.ts` if tests need it. (Re-exported from `testing.ts`; two test imports updated.)
+- [x] Dual-package hazard: `mutationRegistry` is a module-level `Map`
   (`plugin.ts:261`) — key it on `globalThis` under a `Symbol.for('olas.mutationRegistry')`
-  so ESM+CJS copies share it.
+  so ESM+CJS copies share it. (Also `queryRegistry` — same hazard, via `globalRegistry` helper.)
 
 ---
 

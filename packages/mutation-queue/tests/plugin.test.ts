@@ -1,10 +1,5 @@
-import {
-  _unregisterMutationById,
-  createRoot,
-  defineController,
-  defineMutation,
-  type Mutation,
-} from '@kontsedal/olas-core'
+import { createRoot, defineController, defineMutation, type Mutation } from '@kontsedal/olas-core'
+import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { mutationQueuePlugin } from '../src/plugin'
