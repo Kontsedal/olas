@@ -196,7 +196,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   diff/construct/dispose body in `untracked(() => { … })`.
 - **Docs:** `.wiki/modules/controller.md`.
 
-### [ ] T2.4 — **[MAJOR]** every `ctx.*` except `effect` is unguarded after dispose
+### [x] T2.4 — **[MAJOR]** every `ctx.*` except `effect` is unguarded after dispose
 - **File:** `packages/core/src/controller/instance.ts` (only `ctx.effect` checks
   `isTerminal()`, ~line 388)
 - **Problem:** `ctx.session/attach/child/use/mutation/cache/form/field/…` called after

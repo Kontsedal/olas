@@ -389,13 +389,24 @@ export class ControllerInstance {
 
   private buildCtx(): Ctx {
     const self = this
+    // A ctx.* factory called after the controller was disposed would push into
+    // a cleared lifecycle list — a live child / subscription / effect that
+    // never gets torn down. It is always a programming error (a captured `ctx`
+    // used past its owner's lifetime), so throw rather than leak or no-op. Not
+    // routed through dispatchError — this is a bug in the caller, not a runtime
+    // condition. (T2.4, spec §4)
+    const assertLive = (method: string): void => {
+      if (self.isTerminal()) {
+        throw new Error(`[olas] ctx.${method}() called after the controller was disposed`)
+      }
+    }
     const ctx: Ctx = {
       get deps() {
         return self.deps
       },
 
       effect(fn) {
-        if (self.isTerminal()) return
+        assertLive('effect')
         const entry: LifecycleEntry = {
           kind: 'effect',
           factory: () => fn(),
@@ -427,12 +438,14 @@ export class ControllerInstance {
         fetcher: (signal: AbortSignal) => Promise<T>,
         options?: LocalCacheOptions<T>,
       ): LocalCache<T> {
+        assertLive('cache')
         const cache = createLocalCache<T>(fetcher, options)
         self.entries.push({ kind: 'cleanup', dispose: () => cache.dispose() })
         return cache
       },
 
       use(query: any, keyOrOptions?: any): any {
+        assertLive('use')
         const brand = (query as { __olas?: string }).__olas
         if (brand === 'infiniteQuery') {
           const handle = createInfiniteUse(
@@ -463,6 +476,7 @@ export class ControllerInstance {
       },
 
       mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R> {
+        assertLive('mutation')
         const queryClient = self.rootShared.queryClient
         const m = createMutation<V, R>(
           spec,
@@ -485,6 +499,7 @@ export class ControllerInstance {
       },
 
       emitter<T>(): Emitter<T> {
+        assertLive('emitter')
         const e = createEmitter<T>({
           // Spec §20.6: emit-time handler throws must not block sibling
           // handlers. Route to the root's onError with kind: 'emitter' and
@@ -508,6 +523,7 @@ export class ControllerInstance {
         validators?: ReadonlyArray<Validator<T>>,
         options?: { validateOn?: 'change' | 'blur' | 'submit' },
       ): Field<T> {
+        assertLive('field')
         // Pass the reporter at construct time so the FIRST validator pass
         // (which runs synchronously in the FieldImpl constructor's
         // validator-effect) is covered.
@@ -533,6 +549,7 @@ export class ControllerInstance {
       },
 
       form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S> {
+        assertLive('form')
         const reporter = (err: unknown): void => {
           dispatchError(self.rootShared.onError, err, {
             kind: 'effect',
@@ -563,6 +580,7 @@ export class ControllerInstance {
         itemFactory: (initial?: ItemInitial<I>) => I,
         options?: FieldArrayOptions<I>,
       ): FieldArray<I> {
+        assertLive('fieldArray')
         const reporter = (err: unknown): void => {
           dispatchError(self.rootShared.onError, err, {
             kind: 'effect',
@@ -630,6 +648,7 @@ export class ControllerInstance {
       },
 
       on<T>(emitter: Emitter<T>, handler: (value: T) => void): void {
+        assertLive('on')
         const wrapped = (value: T) => {
           try {
             handler(value)
@@ -649,6 +668,7 @@ export class ControllerInstance {
         props: Props,
         options?: { deps?: Partial<Record<string, unknown>> },
       ): Api {
+        assertLive('child')
         const segment = self.makeChildSegment(getFactory(def), getName(def))
         const override = options?.deps
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
@@ -665,6 +685,7 @@ export class ControllerInstance {
         props: Props,
         options?: { deps?: Partial<Record<string, unknown>> },
       ): { api: Api; dispose: () => void; suspend: () => void; resume: () => void } {
+        assertLive('attach')
         const segment = self.makeChildSegment(getFactory(def), getName(def))
         const override = options?.deps
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
@@ -723,6 +744,7 @@ export class ControllerInstance {
         props: Props,
         options?: { deps?: Partial<Record<string, unknown>> },
       ): readonly [Api, () => void] {
+        assertLive('session')
         const segment = self.makeChildSegment(getFactory(def), getName(def))
         const override = options?.deps
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
@@ -752,6 +774,7 @@ export class ControllerInstance {
           | CollectionHomogeneousOptions<Item, K, Props, Api>
           | CollectionFactoryOptions<Item, K, R>,
       ): Collection<K, Api> | Collection<K, CollectionFactoryApi<R>> {
+        assertLive('collection')
         type ChildInfo = {
           instance: ControllerInstance
           api: Api
@@ -944,6 +967,7 @@ export class ControllerInstance {
         props: Props,
         options?: { deps?: Partial<Record<string, unknown>> },
       ): LazyChild<Api> {
+        assertLive('lazyChild')
         const status$ = signal<'idle' | 'loading' | 'ready' | 'error'>('idle')
         const api$ = signal<Api | undefined>(undefined)
         const error$ = signal<unknown | undefined>(undefined)
@@ -1052,6 +1076,7 @@ export class ControllerInstance {
       },
 
       onDispose(fn) {
+        assertLive('onDispose')
         self.entries.push({
           kind: 'onDispose',
           fn: () => {
@@ -1068,6 +1093,7 @@ export class ControllerInstance {
       },
 
       onSuspend(fn) {
+        assertLive('onSuspend')
         self.entries.push({
           kind: 'onSuspend',
           fn: () => {
@@ -1084,6 +1110,7 @@ export class ControllerInstance {
       },
 
       onResume(fn) {
+        assertLive('onResume')
         self.entries.push({
           kind: 'onResume',
           fn: () => {
