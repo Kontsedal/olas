@@ -8,7 +8,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/zod/tests/zod.test.ts }
   - { type: uses, target: forms.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -23,7 +23,7 @@ zodValidator<T>(schema: z.ZodType<T>): Validator<T>
 zodValidatorAsync<T>(schema: z.ZodType<T>): Validator<T>
 ```
 
-Wraps a Zod schema as an Olas `Validator`. Sync (`safeParse`) and async (`safeParseAsync`) variants. Returns the first issue's message, or `null` if valid.
+Wraps a Zod schema as an Olas `Validator`. `zodValidator` is now a thin alias over `validator(...)` from core (Zod 4 implements Standard Schema), so it returns **all** issues as `FormIssue[]` — each carrying its `path` (T5.2). As a leaf field validator the paths are empty and collapse to messages; as a whole-object form-level validator the paths route each issue onto the matching field. `zodValidatorAsync` is unchanged — its own `safeParseAsync` wrapper still returns the **first** issue message as a `string | null` (it doesn't preserve paths).
 
 ## rootOnlyZodValidator
 
@@ -53,7 +53,7 @@ Walks a `z.object` schema and builds the corresponding `Form` / `FieldArray` / `
 
 `extraValidators` is keyed by dotted leaf path (`'title'`, `'address.street'`). Each entry's validator is appended to that leaf's validators list alongside the Zod check — both must pass. `FieldArray` items aren't separately addressable (one factory per array).
 
-What's still NOT lifted: array-level `.min(N)` from the outer Zod schema doesn't promote to a `FieldArray`-level validator (per-element rules already attach via the element schema).
+What's still NOT lifted: array-level `.min(N)` from the outer Zod schema doesn't promote to a `FieldArray`-level validator (per-element rules already attach via the element schema). Also, `rootOnlyZodValidator` still keeps only **empty-path** refine issues — a `z.object({...}).refine(fn, { path: ['confirm'] })` is dropped rather than routed onto `confirm`, even though core's `validator()` now preserves paths. Routing those cleanly (without double-reporting leaf issues) is a `BACKLOG.md` item.
 
 ## Peer dep contract
 

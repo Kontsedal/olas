@@ -592,7 +592,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   (c) `reset()` clears structural dirt; (d) remove/move also flip it.
 - **Docs:** SPEC §8 dirty semantics; `.wiki/modules/forms.md`.
 
-### [ ] T5.2 — **[MAJOR]** cross-field validation cannot target fields; Standard Schema issues lose paths
+### [x] T5.2 — **[MAJOR]** cross-field validation cannot target fields; Standard Schema issues lose paths
 - **Files:** `form.ts:489-546` (top-level errors), `validators.ts:16-30` (Standard Schema
   wrapper keeps only first issue's message, drops `issue.path`), existing plumbing:
   `form.setErrors(pathMap)` + `resolvePath` at `form.ts:416-426`

@@ -10,18 +10,24 @@ const flush = async () => {
 }
 
 describe('zodValidator', () => {
-  test('passes a valid value', async () => {
+  test('passes a valid value (empty issue array)', async () => {
     const v = zodValidator(z.string().min(3))
     const sig = new AbortController().signal
-    expect(await v('hello', sig)).toBeNull()
+    expect(await v('hello', sig)).toEqual([])
   })
 
-  test('rejects an invalid value with the first Zod issue message', async () => {
+  test('rejects an invalid value with a FormIssue carrying the Zod message', async () => {
+    // Since T5.2, the Standard-Schema adapter returns FormIssue[] (path +
+    // message) so whole-form schemas can route onto fields. A bare string
+    // schema produces one empty-path issue.
     const v = zodValidator(z.string().min(3))
     const sig = new AbortController().signal
-    const msg = await v('hi', sig)
-    expect(typeof msg).toBe('string')
-    expect(msg).toMatch(/3|at least/i)
+    const issues = await v('hi', sig)
+    expect(Array.isArray(issues)).toBe(true)
+    const list = issues as Array<{ path: (string | number)[]; message: string }>
+    expect(list).toHaveLength(1)
+    expect(list[0]?.path).toEqual([])
+    expect(list[0]?.message).toMatch(/3|at least|small/i)
   })
 
   test('zodValidatorAsync handles async refinements', async () => {

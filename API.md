@@ -701,14 +701,20 @@ type Field<T> = ReadSignal<T> & {
 ### Type: `Validator<T>`
 
 ```ts
+type FormIssue = { path: (string | number)[]; message: string }
+
 type Validator<T> = (value: T, signal: AbortSignal) =>
-  | string | null
-  | Promise<string | null>
+  | string | null | FormIssue[]
+  | Promise<string | null | FormIssue[]>
 ```
 
-Return `null` for "valid", a non-empty string for "invalid (here's the error)". Sync validators just return; async validators return a `Promise`. The `signal` aborts when the value changes mid-run.
+Return `null` (or `[]`) for "valid", a non-empty string for "invalid (here's the error)". Sync validators just return; async validators return a `Promise`. The `signal` aborts when the value changes mid-run.
 
-### `debouncedValidator<T>(fn: Validator<T>, ms: number): Validator<T>`
+Return a `FormIssue[]` to target **specific fields** from a form- or array-level validator (cross-field rules, whole-form schemas): each issue's `path` routes its `message` onto the matching descendant field/form/array (an empty `path` means the node itself — `topLevelErrors`). On a leaf `Field`, `FormIssue[]` collapses to its messages (a leaf has no descendants). See `Form` below and SPEC §8.3.
+
+### `debouncedValidator<T>(fn, ms): (value, signal) => Promise<string | null>`
+
+`fn: (value: T, signal: AbortSignal) => Promise<string | null>`. The returned validator yields `string | null` (never `FormIssue[]`), so calling it directly and storing the result in a `string | null` signal type-checks; it's still assignable wherever a `Validator<T>` is expected.
 
 Wrap an async validator so per-keystroke checks don't pile up. Cancels the prior run via `AbortSignal` when a new value arrives within `ms`.
 
@@ -786,7 +792,7 @@ type FormOptions<S> = {
 ```
 
 - `initial` — initial value object (or a thunk). If a thunk reads signals, the initial value re-applies when those signals change *and the form is not dirty* (no-clobber-while-dirty). Useful for "form-from-server" patterns.
-- `validators` — top-level validators that see the whole `FormValue<S>`.
+- `validators` — top-level validators that see the whole `FormValue<S>`. A validator that returns a `string` lands in `topLevelErrors`; one that returns `FormIssue[]` routes each issue by `path` onto the matching field (empty path → `topLevelErrors`). Field-targeted messages merge into that field's `errors` and clear on the next form-level run.
 
 ---
 
@@ -1309,7 +1315,7 @@ Bridge Zod schemas into Olas validators and forms.
 
 ### `zodValidator<T>(schema: z.ZodType<T>): Validator<T>`
 
-Wrap a Zod schema as a synchronous `Validator<T>`. Use as a field validator.
+Wrap a Zod schema as a synchronous `Validator<T>` (a thin alias over `validator(...)` from `@kontsedal/olas-core`, since Zod 4 implements Standard Schema). It returns `FormIssue[]` carrying each issue's `path` — so it works as a leaf **field** validator (leaf issues have empty paths and collapse to messages) *and*, given a whole-object schema, as a **form-level** validator that routes each issue onto the matching field.
 
 ```ts
 import { z } from 'zod'

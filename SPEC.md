@@ -693,13 +693,17 @@ See §8.4 for when to reach for `setAsInitial`. See `pitfalls/field-value-shape.
 `Validator<T>` signature:
 
 ```ts
+type FormIssue = { path: (string | number)[]; message: string }
+
 type Validator<T> = (
   value: T,
   signal: AbortSignal,
-) => string | null | Promise<string | null>
+) => string | null | FormIssue[] | Promise<string | null | FormIssue[]>
 ```
 
 The `AbortSignal` is triggered when the value changes again before the validator resolves (or the field is disposed) — async validators should pass it through to their I/O.
+
+A validator may return a `string` (an error on the node it's attached to), `null` / `[]` (valid), or a `FormIssue[]` to target descendants by `path` — see §8.3 for how form- and array-level validators route those onto specific fields. On a leaf `Field`, a returned `FormIssue[]` collapses to its messages (a leaf has no descendants to route to).
 
 **Validators run in a tracking scope.** Reading any signal inside a validator causes the validator to re-run automatically when that signal changes:
 
@@ -792,6 +796,27 @@ form.isValid    // false when ANY leaf is invalid OR topLevelErrors is non-empty
 ```
 
 `topLevelErrors` is separate from `errors` because the latter mirrors the schema shape; form-level errors don't belong to a specific leaf. UI typically shows `topLevelErrors` at the top of the form.
+
+**Targeting a specific field from a form-level validator.** A cross-field rule often belongs on one field, not at the top ("passwords must match" reads best on the confirm input). Return a `FormIssue[]` instead of a `string`:
+
+```ts
+const form = ctx.form({
+  password: ctx.field('', [minLength(8)]),
+  confirm: ctx.field(''),
+}, {
+  validators: [
+    (value) =>
+      value.password === value.confirm
+        ? []
+        : [{ path: ['confirm'], message: 'Passwords must match' }],
+  ],
+})
+
+form.fields.confirm.errors // ['Passwords must match'] — routed onto the field
+form.topLevelErrors        // [] — nothing landed at the top
+```
+
+Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` / `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel** beside a field's own validator output and `setErrors` server errors: they merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run** (so fixing the mismatch removes them, while a field's own `set()` does not). An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
 
 **Flat error summary.** For a11y "X errors at top of form" displays:
 
@@ -942,7 +967,7 @@ form.value.value
 
 Each leaf field's initial is the Zod schema's default if present, otherwise an empty value for that type (`''` for string, `0` for number, etc.). Override per-field via the `initials` option, or use `form.set(...)` after construction.
 
-`zodValidator(schema)` returns a `Validator<T>` that runs `schema.safeParse(value)` and reports the first `ZodIssue`'s `message` as the error. Async (`.refine(async ...)`) schemas are awaited.
+`zodValidator(schema)` returns a `Validator<T>` that runs `schema.safeParse(value)` and reports **all** issues as `FormIssue[]`, each carrying its `path`. As a leaf field validator the paths are empty and collapse to messages; as a whole-object form-level validator the paths route each issue onto the matching field (§8.3). Async (`.refine(async ...)`) schemas are awaited.
 
 Olas core stays Zod-free; `@kontsedal/olas-zod` has a peer dep on `zod ^3` and `@kontsedal/olas-core ^1`.
 
@@ -2346,10 +2371,14 @@ The conditional on `emit` means `ctx.emitter<void>()` gives you `emit()` (no arg
 ### 20.7 Fields, forms & validators
 
 ```ts
+// Non-empty `path` routes the message onto a descendant field/form/array;
+// empty `path` lands in the node's `topLevelErrors`. See §8.3.
+type FormIssue = { path: (string | number)[]; message: string }
+
 type Validator<T> = (
   value: T,
   signal: AbortSignal,
-) => string | null | Promise<string | null>
+) => string | null | FormIssue[] | Promise<string | null | FormIssue[]>
 
 type Field<T> = ReadSignal<T> & {
   errors: ReadSignal<string[]>
@@ -2393,7 +2422,7 @@ type FormErrors<S extends FormSchema> = {
 type FormValidator<S extends FormSchema> = (
   value: FormValue<S>,
   signal: AbortSignal,
-) => string | null | Promise<string | null>
+) => string | null | FormIssue[] | Promise<string | null | FormIssue[]>
 
 type FormOptions<S extends FormSchema> = {
   initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>
@@ -2441,7 +2470,7 @@ type ItemInitial<I> =
 type FieldArrayValidator<I> = (
   items: FieldArrayValue<I>,
   signal: AbortSignal,
-) => string | null | Promise<string | null>
+) => string | null | FormIssue[] | Promise<string | null | FormIssue[]>
 
 type FieldArrayOptions<I> = {
   initial?: ItemInitial<I>[]
