@@ -778,18 +778,30 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 ## Phase 7 — delivery, docs, release
 
 ### [ ] T7.1 — un-wedge the release pipeline (do this only after Phases 1–5 land)
+> Prep (a–c) DONE; only **Publish** remains — deferred to the maintainer (outward-facing,
+> needs npm auth + a human go-ahead). Flip this parent `[x]` after publishing.
 - npm is frozen at **0.0.6** (published 2026-05-21) while the repo is at 0.0.15 — two
   explicit correctness-pass releases never shipped. Changesets was abandoned after 0.0.6:
   no changelogs, no git tags for nine versions.
-- [ ] Back-fill `CHANGELOG.md` for 0.0.7–0.0.15 per package (summarize from
+- [x] Back-fill `CHANGELOG.md` for 0.0.7–0.0.15 per package (summarize from
   `git log --oneline`), fix the stale `# @olas/core` / `# @olas/react` headers to the
   `@kontsedal/*` names.
-- [ ] Create a changeset for the remediation release; version + tag via changesets from
+  > Consolidated `## 0.0.7 – 0.0.15` block (per-version one-liners from `git log`, flagged
+  > as never-published) added to all 10 published CHANGELOGs; 7 `# @olas/*` headers fixed.
+- [x] Create a changeset for the remediation release; version + tag via changesets from
   now on.
-- [ ] Add a CI publish job (changesets/action on main, `NPM_TOKEN` secret) so releases
+  > `.changeset/remediation-correctness-pass.md` (all 10 published pkgs, `patch`). `version`
+  > + tag run via the new release workflow at release time — NOT run here (no version bump).
+- [x] Add a CI publish job (changesets/action on main, `NPM_TOKEN` secret) so releases
   can't silently lapse again.
+  > `.github/workflows/release.yml` — changesets/action on push to `main`; opens a Version
+  > Packages PR, publishes on merge. No-op until `NPM_TOKEN` secret is set (can't publish
+  > by accident).
 - [ ] Publish. **Note:** many fixes above change behavior; under the project's 0.x
   convention that's still a patch/minor bump, but write an honest combined changelog.
+  > DEFERRED to the maintainer: set the `NPM_TOKEN` secret, merge to `main`, then merge the
+  > auto-opened "Version Packages" PR (runs `changeset version` → publishes). The combined
+  > changelog is the changeset body above.
 
 ### [ ] T7.2 — verify what you ship
 - [ ] Add `publint` and `@arethetypeswrong/cli` for every package to CI (after `pnpm build`).

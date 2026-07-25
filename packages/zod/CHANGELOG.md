@@ -1,4 +1,18 @@
-# @olas/zod
+# @kontsedal/olas-zod
+
+## 0.0.7 – 0.0.15
+
+> Versions bumped in lockstep across the workspace but **never published** — npm stayed at `0.0.6` (2026-05-21). Summaries reconstructed from `git log`; the next published release (see the pending changeset) rolls these up together with the remediation correctness pass.
+
+- **0.0.15** — streaming SSR phase 2 (client batching + Web `TransformStream`)
+- **0.0.14** — streaming SSR foundation (phase 1)
+- **0.0.13** — key-hash hardening, form `clearSubtree`, SSR `HydrationBoundary` (batch 6)
+- **0.0.12** — O(1) lifecycle teardown + `ctx` reactive primitives + mutation-queue size guard (batch 5)
+- **0.0.11** — signal/controller DX + realtime/collection ergonomics (batch 4)
+- **0.0.10** — ergonomic completions, devtools coalescing, mutation-queue hardening (batch 3)
+- **0.0.9** — ergonomic completions + plugin upgrades (review batch 2)
+- **0.0.8** — correctness pass + ergonomic upgrades (review findings)
+- **0.0.7** — correctness pass on `lazyChild`, forms, mutation-queue, keep-alive
 
 ## 0.0.6
 
