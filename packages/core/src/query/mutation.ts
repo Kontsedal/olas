@@ -296,10 +296,16 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       const raw = this.spec.onMutate?.(vars) ?? undefined
       snapshot = raw === undefined ? undefined : this.wrapSnapshot(raw)
     } catch (err) {
-      dispatchError(this.onError, err, {
-        kind: 'mutation',
-        controllerPath: this.controllerPath,
-      })
+      // onMutate threw — the optimistic setup failed, so running `mutate`
+      // against a half-applied state is unsafe. Abort the whole run: surface
+      // via the error signal, the mutation's onError/onSettled, and the
+      // rejected run promise (mirrors the mutate-failure path). No snapshot
+      // exists yet, so nothing to roll back; `mutate` is never called. T3.9.
+      this.error.set(err)
+      if (__DEV__) this.emit({ type: 'mutation:error', error: err })
+      this.safeCall(() => this.spec.onError?.(err, vars, undefined), 'mutation')
+      this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
+      throw err
     }
 
     const handle: RunHandle = { abort, snapshot }

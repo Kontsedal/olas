@@ -404,10 +404,10 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   class-with-toJSON still throws.
 
 ### [ ] T3.9 — query minor batch (split into 2–3 commits as sensible)
-- [ ] `onMutate` throw is swallowed and the mutation still runs (`mutation.ts:295-303`) —
+- [x] `onMutate` throw is swallowed and the mutation still runs (`mutation.ts:295-303`) —
   abort the mutation instead: route the error to `onError`/reject the run promise, do not
   call `mutate`.
-- [ ] `subscription.refetch()` rejects with `AbortError` on supersede (`use.ts:85-89`) —
+- [x] `subscription.refetch()` rejects with `AbortError` on supersede (`use.ts:85-89`) —
   never reject on supersede; resolve with the superseding fetch's outcome or resolve void.
 - [ ] Focus double-fire: `focus` + `visibilitychange` both trigger
   (`focus-online.ts:44-52`) and `triggerEventRefetch` doesn't check `isFetching`
