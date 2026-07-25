@@ -70,6 +70,16 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const filter = filters[tab]
   const setFilter = (q: string) => setFilters((prev) => ({ ...prev, [tab]: q }))
 
+  // The input stays responsive (`value={filter}`), but the expensive filtering
+  // (a JSON.stringify per entry) runs against a DEBOUNCED value so typing
+  // doesn't re-filter the whole log on every keystroke on top of the 800ms
+  // inspector poll (T6.3).
+  const [debouncedFilter, setDebouncedFilter] = useState(filter)
+  useEffect(() => {
+    const id = setTimeout(() => setDebouncedFilter(filter), 150)
+    return () => clearTimeout(id)
+  }, [filter])
+
   // Persist tab + filters back to the URL hash on every change.
   useEffect(() => {
     if (urlHashKey === undefined) return
@@ -207,10 +217,10 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
 
       <div className="olas-devtools-body" role="tabpanel">
         {tab === 'tree' && <TreeView tree={tree} mutations={liveMutations} />}
-        {tab === 'cache' && <CacheView entries={cache} filter={filter} />}
-        {tab === 'inspector' && <InspectorView entries={cacheEntries} filter={filter} />}
-        {tab === 'mutations' && <MutationsView entries={mutations} filter={filter} />}
-        {tab === 'fields' && <FieldsView entries={fields} filter={filter} />}
+        {tab === 'cache' && <CacheView entries={cache} filter={debouncedFilter} />}
+        {tab === 'inspector' && <InspectorView entries={cacheEntries} filter={debouncedFilter} />}
+        {tab === 'mutations' && <MutationsView entries={mutations} filter={debouncedFilter} />}
+        {tab === 'fields' && <FieldsView entries={fields} filter={debouncedFilter} />}
       </div>
     </div>
   )

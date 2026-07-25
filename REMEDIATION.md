@@ -688,19 +688,27 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   ship, re-review the wording. Cross-mutation causal ordering (parallel replay across
   mutationIds, `:477-504`) stays a documented limitation — add a BACKLOG entry.
 
-### [ ] T6.3 — devtools: false `[Circular]` rendering; unbounded tree growth
+### [x] T6.3 — devtools: false `[Circular]` rendering; unbounded tree growth
 - **Files:** `packages/devtools/src/JsonView.tsx:57-62`, `src/store.ts:211-217, 250,
   335-351, 407-409, 447-481`, `src/DevtoolsPanel.tsx:260-358, 424-426`
-- [ ] `JsonView` cycle guard uses a shared `WeakSet` populated during render and never
+- [x] `JsonView` cycle guard uses a shared `WeakSet` populated during render and never
   cleared — collapse→re-expand shows `[Circular]` for real data; under `<StrictMode>`
   EVERYTHING renders `[Circular]`. Fix: build the seen-set per render pass (local to the
   render function / passed down through recursion), never module/instance state.
   Test with StrictMode.
-- [ ] Disposed controllers accumulate forever — prune disposed subtrees beyond a cap
+  > The current code already threaded a fresh WeakSet per top-level render (not module-
+  > level), but the guard MUTATED that shared set, so a non-cyclic shared reference
+  > (`{a: obj, b: obj}`, a DAG) and collapse→re-expand still false-flagged `[Circular]`.
+  > Fixed with an ancestors-only set rebuilt immutably per level (`new Set(seen).add`).
+- [x] Disposed controllers accumulate forever — prune disposed subtrees beyond a cap
   (default ~200 retained, configurable).
-- [ ] Mutation durations pair `run`→`success` by `path#name` — include a runId in the
+- [x] Mutation durations pair `run`→`success` by `path#name` — include a runId in the
   pairing key so concurrent runs don't overwrite timestamps.
-- [ ] Debounce the inspector filter input (it `JSON.stringify`s every cache payload per
+  > The debug bus carries no per-run id (the runId in `mutation.ts` is core-internal, for
+  > persistence only), so threading one would be a core change out of this devtools-only
+  > task. Instead `mutationStarts` became a FIFO queue of start times per `path#name` —
+  > overlapping runs each pair (oldest-first) with their own duration; none is lost.
+- [x] Debounce the inspector filter input (it `JSON.stringify`s every cache payload per
   keystroke on top of the 800ms poll).
 
 ### [ ] T6.4 — cross-tab: dead config + receive-side hygiene

@@ -8,11 +8,16 @@
 import { type ReactElement, useState } from 'react'
 
 export function JsonView({ value, depth = 0 }: { value: unknown; depth?: number }): ReactElement {
-  // A fresh seen-set per render keeps the cycle guard local — re-renders
-  // start from the root again, so a partial expansion doesn't carry
-  // stale state.
-  return <Render value={value} depth={depth} initiallyOpen={depth === 0} seen={new WeakSet()} />
+  // `seen` is the set of ANCESTORS on the current path, not "everything ever
+  // rendered". It's rebuilt immutably at each level (a fresh copy per child),
+  // so a SHARED reference (`{a: obj, b: obj}` — a DAG) is not mistaken for a
+  // cycle, a collapse→re-expand doesn't carry stale state, and StrictMode's
+  // double-render stays independent. A true cycle (a node that is its own
+  // ancestor) is still caught. Root has no ancestors.
+  return <Render value={value} depth={depth} initiallyOpen={depth === 0} seen={EMPTY_SEEN} />
 }
+
+const EMPTY_SEEN: ReadonlySet<object> = new Set()
 
 function Render({
   value,
@@ -23,7 +28,7 @@ function Render({
   value: unknown
   depth: number
   initiallyOpen: boolean
-  seen: WeakSet<object>
+  seen: ReadonlySet<object>
 }): ReactElement {
   if (value === null) return <span className="olas-devtools-json-null">null</span>
   if (value === undefined) return <span className="olas-devtools-json-null">undefined</span>
@@ -53,12 +58,12 @@ function Render({
 
   // Cycle / circular reference guard — both arrays and plain objects can
   // re-enter themselves; without this guard the recursion stack-overflows
-  // and takes the panel down (the WORST failure mode for a debugger).
-  if (typeof value === 'object' && value !== null) {
-    if (seen.has(value as object)) {
-      return <span className="olas-devtools-json-summary">[Circular]</span>
-    }
-    seen.add(value as object)
+  // and takes the panel down (the WORST failure mode for a debugger). We flag
+  // only ANCESTORS (a true cycle), never a merely repeated reference — see the
+  // `seen` note in `JsonView`. The set is extended (immutably) below, only for
+  // the branches that actually recurse.
+  if (typeof value === 'object' && value !== null && seen.has(value as object)) {
+    return <span className="olas-devtools-json-summary">[Circular]</span>
   }
 
   // Specialized renderers for built-ins that don't survive
@@ -86,9 +91,13 @@ function Render({
     )
   }
 
+  // Recursing branches extend the ancestor set with THIS node (a fresh copy,
+  // so siblings and re-renders never accumulate each other's nodes).
+  const childSeen: ReadonlySet<object> = new Set(seen).add(value as object)
+
   if (Array.isArray(value)) {
     return (
-      <CollapsibleArray value={value} depth={depth} initiallyOpen={initiallyOpen} seen={seen} />
+      <CollapsibleArray value={value} depth={depth} initiallyOpen={initiallyOpen} seen={childSeen} />
     )
   }
 
@@ -98,7 +107,7 @@ function Render({
         value={value as Record<string, unknown>}
         depth={depth}
         initiallyOpen={initiallyOpen}
-        seen={seen}
+        seen={childSeen}
       />
     )
   }
@@ -115,7 +124,7 @@ function CollapsibleArray({
   value: unknown[]
   depth: number
   initiallyOpen: boolean
-  seen: WeakSet<object>
+  seen: ReadonlySet<object>
 }): ReactElement {
   const [open, setOpen] = useState(initiallyOpen && value.length <= 12)
   if (value.length === 0) {
@@ -163,7 +172,7 @@ function CollapsibleObject({
   value: Record<string, unknown>
   depth: number
   initiallyOpen: boolean
-  seen: WeakSet<object>
+  seen: ReadonlySet<object>
 }): ReactElement {
   const keys = Object.keys(value)
   const [open, setOpen] = useState(initiallyOpen && keys.length <= 8)

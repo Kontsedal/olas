@@ -78,9 +78,19 @@ export type FieldEntry = {
 /** Defaults — exported so callers can override via `new DevtoolsStore({ maxEntries: 500 })`. */
 export const DEFAULT_MAX_ENTRIES = 100
 
+/**
+ * Cap on disposed controller nodes retained in the tree. Beyond this, the
+ * oldest fully-disposed subtrees are pruned so a long session with churny
+ * controllers (virtualized lists, lazy children) doesn't grow the tree
+ * unbounded. Active/suspended nodes are never pruned.
+ */
+export const DEFAULT_MAX_DISPOSED_NODES = 200
+
 export type DevtoolsStoreOptions = {
   /** Cap on each event log (cache, mutation, field). Oldest entries drop first. */
   maxEntries?: number
+  /** Cap on retained disposed controller nodes. Oldest disposed subtrees drop first. */
+  maxDisposedNodes?: number
   /** Optional clock — useful for tests. Default: `() => Date.now()`. */
   now?: () => number
   /**
@@ -118,14 +128,17 @@ export class DevtoolsStore {
   readonly fields$: Signal<FieldEntry[]> = signal([])
 
   private readonly maxEntries: number
+  private readonly maxDisposedNodes: number
   private readonly now: () => number
   private readonly schedule: (fn: () => void) => number
   private readonly cancelSchedule: (handle: number) => void
   private nextId = 1
 
-  /** Keyed by `path|name` so a mutation:run can be paired with its
-   *  success/error to compute duration. Cleared after pairing. */
-  private mutationStarts = new Map<string, number>()
+  /** Keyed by `path#name` → a FIFO queue of `run` start times. Overlapping
+   *  runs of the same mutation each pair with their own start (shifted on
+   *  settle); the key is deleted when its queue empties. A single-value map
+   *  used to let a later run clobber an earlier run's start (T6.3). */
+  private mutationStarts = new Map<string, number[]>()
 
   /**
    * Coalesce buffers — events arrive synchronously off the bus but
@@ -147,6 +160,7 @@ export class DevtoolsStore {
 
   constructor(options?: DevtoolsStoreOptions) {
     this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES
+    this.maxDisposedNodes = options?.maxDisposedNodes ?? DEFAULT_MAX_DISPOSED_NODES
     this.now = options?.now ?? (() => Date.now())
     const coalesce = options?.coalesce ?? 'sync'
     if (coalesce === 'sync') {
@@ -214,6 +228,9 @@ export class DevtoolsStore {
         // ever fired) would otherwise leave its `mutation:run` start entry
         // in `mutationStarts` forever. Drop any starts under this path.
         this.dropStartsForPath(event.path)
+        // Bound the tree — prune the oldest fully-disposed subtrees once the
+        // retained-disposed count exceeds the cap (T6.3).
+        this.pruneDisposed()
         return
       case 'cache:subscribed':
         this.pushCache({
@@ -247,7 +264,10 @@ export class DevtoolsStore {
         this.pushCache({ kind: 'gc', queryKey: event.queryKey })
         return
       case 'mutation:run': {
-        this.mutationStarts.set(mutationKey(event.path, event.name), this.now())
+        const key = mutationKey(event.path, event.name)
+        const q = this.mutationStarts.get(key)
+        if (q === undefined) this.mutationStarts.set(key, [this.now()])
+        else q.push(this.now())
         this.pushMutation({ kind: 'run', path: event.path, name: event.name, vars: event.vars })
         return
       }
@@ -380,9 +400,14 @@ export class DevtoolsStore {
 
   private consumeStart(path: readonly string[], name: string | undefined): number | undefined {
     const key = mutationKey(path, name)
-    const startedAt = this.mutationStarts.get(key)
-    if (startedAt === undefined) return undefined
-    this.mutationStarts.delete(key)
+    const q = this.mutationStarts.get(key)
+    if (q === undefined || q.length === 0) return undefined
+    // FIFO: pair this settle with the OLDEST pending start so overlapping runs
+    // of the same mutation each get a duration (T6.3). Exact run↔settle
+    // attribution isn't possible — the debug bus carries no per-run id — but
+    // FIFO never loses a start the way the old single-value map did.
+    const startedAt = q.shift() as number
+    if (q.length === 0) this.mutationStarts.delete(key)
     return this.now() - startedAt
   }
 
@@ -401,6 +426,29 @@ export class DevtoolsStore {
         this.mutationStarts.delete(key)
       }
     }
+  }
+
+  /**
+   * Remove the oldest fully-disposed subtrees once the retained-disposed count
+   * exceeds `maxDisposedNodes`. "Fully-disposed subtree" = a node whose entire
+   * subtree is disposed, so an active/suspended node (or one with a live
+   * descendant) is never pruned. Roots are collected in depth-first
+   * (construction) order, so the earliest-constructed disposed subtrees drop
+   * first (T6.3).
+   */
+  private pruneDisposed(): void {
+    const tree = this.tree$.peek()
+    let remaining = countDisposed(tree)
+    if (remaining <= this.maxDisposedNodes) return
+    const roots: { path: readonly string[]; size: number }[] = []
+    collectPrunableRoots(tree, roots)
+    let next = tree
+    for (const r of roots) {
+      if (remaining <= this.maxDisposedNodes) break
+      next = removeNodeAt(next, r.path)
+      remaining -= r.size
+    }
+    if (next !== tree) this.tree$.set(next)
   }
 }
 
@@ -512,6 +560,74 @@ function setStateAt(
   if (idx === -1) return null
   const existing = node.children[idx]!
   const updatedChild = setStateAt(existing, path, depth + 1, state)
+  if (updatedChild === null) return null
+  const nextChildren = node.children.slice()
+  nextChildren[idx] = updatedChild
+  return { ...node, children: nextChildren }
+}
+
+/** Total disposed nodes in a subtree. */
+function countDisposed(node: ControllerNode): number {
+  let n = node.state === 'disposed' ? 1 : 0
+  for (const c of node.children) n += countDisposed(c)
+  return n
+}
+
+/** Total nodes in a subtree. */
+function countNodes(node: ControllerNode): number {
+  let n = 1
+  for (const c of node.children) n += countNodes(c)
+  return n
+}
+
+/** True iff `node` and every descendant is disposed. */
+function subtreeAllDisposed(node: ControllerNode): boolean {
+  return node.state === 'disposed' && node.children.every(subtreeAllDisposed)
+}
+
+/**
+ * Collect the roots of maximal fully-disposed subtrees, in depth-first
+ * (construction) order. A fully-disposed subtree is pruned as a unit, so we
+ * don't descend into one once found — and an active/suspended ancestor is
+ * never a root, protecting live nodes.
+ */
+function collectPrunableRoots(
+  node: ControllerNode,
+  out: { path: readonly string[]; size: number }[],
+): void {
+  if (subtreeAllDisposed(node)) {
+    out.push({ path: node.path, size: countNodes(node) })
+    return
+  }
+  for (const c of node.children) collectPrunableRoots(c, out)
+}
+
+/**
+ * Remove the node at `path` (and its subtree) from the tree. Returns a NEW
+ * tree object (immutable update); returns the input unchanged if the path
+ * doesn't resolve or targets the virtual root (never removed).
+ */
+export function removeNodeAt(root: ControllerNode, path: readonly string[]): ControllerNode {
+  if (path.length === 0) return root
+  return removeAt(root, path, 0) ?? root
+}
+
+function removeAt(
+  node: ControllerNode,
+  path: readonly string[],
+  depth: number,
+): ControllerNode | null {
+  const segment = path[depth] as string
+  const idx = node.children.findIndex(
+    (c) => c.path.length === depth + 1 && c.path[depth] === segment,
+  )
+  if (idx === -1) return null
+  if (depth + 1 === path.length) {
+    const nextChildren = node.children.slice()
+    nextChildren.splice(idx, 1)
+    return { ...node, children: nextChildren }
+  }
+  const updatedChild = removeAt(node.children[idx]!, path, depth + 1)
   if (updatedChild === null) return null
   const nextChildren = node.children.slice()
   nextChildren[idx] = updatedChild

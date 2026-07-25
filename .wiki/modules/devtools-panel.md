@@ -16,7 +16,7 @@ edges:
   - { type: tested-by, target: ../../packages/devtools/tests/panel.test.tsx }
   - { type: uses, target: devtools.md }
   - { type: uses, target: react.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: medium
 ---
 
@@ -77,6 +77,13 @@ The package splits into three pieces:
 `cache$` / `mutations$` / `fields$` are capped at `maxEntries` (default 100). When full, the oldest entry drops (via `appendBounded` — `slice` + `push`). Each entry has an auto-incrementing `id` for React `key`s and a `t` (ms epoch) for display.
 
 `tree$` is NOT a log — it's the live state of the controller tree. `clearLogs()` empties the three log signals but preserves the tree.
+
+## T6.3 hardening
+
+- **Bounded tree.** Disposed controllers used to accumulate in `tree$` forever (churny virtualized lists / lazy children). `pruneDisposed()` (called on `controller:disposed`) removes the oldest **fully-disposed subtrees** once the retained-disposed count exceeds `maxDisposedNodes` (option, default `DEFAULT_MAX_DISPOSED_NODES = 200`). Active/suspended nodes — and any disposed node with a live descendant — are never pruned (`subtreeAllDisposed` guard). Pure helpers `countDisposed` / `collectPrunableRoots` / `removeNodeAt` are exported and unit-tested.
+- **Concurrent mutation durations.** `mutationStarts` is now `Map<path#name, number[]>` — a FIFO queue of `run` start times. Overlapping runs of the same mutation each pair (oldest-first) with their own duration; the old single-value map let a later run's start clobber the earlier one's, losing a duration. Exact run↔settle attribution isn't possible (the debug bus carries no per-run id), but FIFO never loses a start.
+- **`JsonView` cycle guard.** `seen` is the set of **ancestors on the current path**, rebuilt immutably per level (`new Set(seen).add(value)`), not a mutated shared set of everything-rendered. A shared reference (`{a: obj, b: obj}` — a DAG) is no longer mis-flagged `[Circular]`, collapse→re-expand doesn't carry stale state, and StrictMode's double-render stays independent. True cycles (a node that is its own ancestor) are still caught. Tested in `jsonview.test.tsx`.
+- **Debounced filter.** The panel's filter `<input>` stays responsive (`value={filter}`), but views filter against a 150ms-debounced `debouncedFilter`, so a `JSON.stringify`-per-entry pass doesn't run on every keystroke on top of the 800ms inspector poll.
 
 ## Post-mount observability
 
