@@ -489,9 +489,25 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         if (!record.live || this.disposed) return
         record.live = false
         batch(() => {
-          this.pages.set(record.prev)
-          this.pageParams.set(record.prevParams)
-          this.snapshots = this.snapshots.filter((s) => s.id !== id)
+          const i = this.snapshots.indexOf(record)
+          if (i !== -1) {
+            if (i === this.snapshots.length - 1) {
+              // Top of the stack: restore this layer's captured baseline pair
+              // (pages + params stay length-aligned — see the snapshot note).
+              this.pages.set(record.prev)
+              this.pageParams.set(record.prevParams)
+            } else {
+              // Not the top: leave current pages/params alone and thread this
+              // layer's baseline down onto the next layer, so a later
+              // top-rollback lands on the correct pre-everything pages instead
+              // of resurrecting this layer's delta (chain-splice — T3.1, spec
+              // §6.4). Mirrors `Entry.setData`.
+              const below = this.snapshots[i + 1] as (typeof this.snapshots)[number]
+              below.prev = record.prev
+              below.prevParams = record.prevParams
+            }
+            this.snapshots.splice(i, 1)
+          }
           this.hasPendingMutations.set(this.snapshots.some((s) => s.live))
         })
       },

@@ -613,12 +613,14 @@ The rollback closure typically calls `query.setData(...)` with the pre-mutation 
 
 ### 6.4 Optimistic rollback under concurrency
 
-Rollback snapshots are **positional in the update queue**, not absolute. When mutation A and B both optimistically update the same query, and B fails:
+Each `Snapshot` captures the entry's value at the moment its `setData` ran — a **baseline**, not a delta. Snapshots form a stack in application order, and rollback is **positional**:
 
-- B's rollback reverts to the state observed **after A's update**, not the original value.
-- If A also fails later, A's rollback reverts to the original pre-A value.
+- Rolling back the **top** (most-recent live) snapshot restores its captured baseline as the current data. So if A applies then B applies and B fails first, B's rollback reverts to the state observed **after A's update**; a later A rollback then reverts to the original pre-A value. (LIFO — the common case.)
+- Rolling back a **non-top** snapshot does **not** rewrite the currently-displayed value — a middle layer can't be removed cleanly without replaying the updaters stacked above it. Instead that layer's baseline is spliced out of the chain and threaded down onto the next layer ("chain-splice"). The visible value keeps every still-pending optimistic delta until the top layer settles.
 
-This is the correct behavior for non-conflicting optimistic updates. For conflicting updates (both mutations writing the same field), users should prefer `concurrency: 'serial'` or implement explicit conflict resolution in their `onMutate`.
+The guarantee this buys: **once every optimistic layer has rolled back — in any order — the data returns to the original pre-mutation value.** Before the chain-splice, an out-of-order rollback (A applies, B applies, A fails first, then B fails) restored B's stale baseline last and resurrected A's delta, corrupting the final state.
+
+This is snapshot-based rollback, not full rebasing: it does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For genuinely conflicting updates (two mutations writing the same field), prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
 
 Only `query.setData(...)` (as used inside a mutation's `onMutate`) creates a rollback snapshot and flips `hasPendingMutations`. **Canonical cache writes** that do not originate from an optimistic mutation — cross-tab receive, entity backprop (`setEntryData`, §13.2), realtime patches — write straight through the entry without pushing a snapshot, so they never set `hasPendingMutations` and can never wedge it at `true`.
 

@@ -58,11 +58,18 @@ A retried fetch is one logical fetch to the consumer — `isFetching` stays true
 
 ## Snapshot stack (optimistic updates, §6.4)
 
-`setData(updater, opts?)` defaults to the **tracked** (optimistic) path: it records `{ id, prev: previousData, live: true }`, pushes onto `this.snapshots`, flips `hasPendingMutations`, and returns a working `{ rollback, finalize }` (`Snapshot`). Rollback sets `data` back to that snapshot's captured `prev` and marks the snapshot dead. `finalize` (called by mutation `onSuccess`) drops the snapshot from the live set without reverting — `hasPendingMutations` clears when no live snapshots remain.
+`setData(updater, opts?)` defaults to the **tracked** (optimistic) path: it records `{ id, prev: previousData, live: true }`, pushes onto `this.snapshots`, flips `hasPendingMutations`, and returns a working `{ rollback, finalize }` (`Snapshot`). `finalize` (called by mutation `onSuccess`) drops the snapshot from the live set without reverting — `hasPendingMutations` clears when no live snapshots remain.
+
+**Rollback is chain-spliced, not a blind restore** (`entry.ts:415-437`, spec §6.4). It marks the snapshot dead, then branches on its position in the live stack:
+
+- **Top of the stack** (most-recent live snapshot): restore `data` to the snapshot's captured `prev`, then drop it. This is the LIFO case — the only one previously tested.
+- **Not the top**: leave `data` untouched (a middle layer can't be removed cleanly without replaying the updaters above it) and thread this layer's `prev` down onto the next layer (`snapshots[i+1].prev = record.prev`), then drop it.
+
+The invariant this guarantees: **rolling back every live snapshot — in any order — returns `data` to the original pre-mutation value.** The prior code restored `record.prev` unconditionally, so an out-of-order rollback (A then B applied, A fails first, then B fails) resurrected A's delta and left the wrong final value. Pinned by `regressions.test.ts` (R-Q3.1). `InfiniteEntry.setData` mirrors the same chain-splice, threading both `prev` (pages) and `prevParams`.
 
 `setData(updater, { track: false })` is a **canonical cache write** — cross-tab receive (`client.applyRemoteSetData`), entity backprop / realtime patches (`client.setEntryData`). It writes `data` but pushes NO snapshot and does NOT flip `hasPendingMutations`, returning a no-op `Snapshot`. This is why a fire-and-forget plugin write can no longer wedge `hasPendingMutations` at `true` — the T1.1 bug was exactly that those callers went through the tracked path and discarded the returned snapshot. `InfiniteEntry.setData` mirrors the same `track` option. Pinned by `regressions.test.ts` (R-Q1.1).
 
-The stack is what enables positional rollback: when mutation B's snapshot rolls back, data goes to "state after mutation A's update" because that was the value captured at the moment of B's setData. Spec §6.4.
+The stack is what enables positional rollback: when top-of-stack mutation B rolls back, data goes to "state after mutation A's update" because that was the value B captured at its setData. Non-top rollbacks chain-splice instead (above). Spec §6.4.
 
 ## firstValue / dispose
 

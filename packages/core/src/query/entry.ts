@@ -416,10 +416,25 @@ export class Entry<T> {
         if (!record.live || this.disposed) return
         record.live = false
         batch(() => {
-          this.data.set(record.prev as T)
-          this.snapshots = this.snapshots.filter((s) => s.id !== id)
-          const anyLive = this.snapshots.some((s) => s.live)
-          this.hasPendingMutations.set(anyLive)
+          const i = this.snapshots.indexOf(record)
+          if (i !== -1) {
+            if (i === this.snapshots.length - 1) {
+              // Top of the stack: restore this layer's captured baseline as
+              // the current data.
+              this.data.set(record.prev as T)
+            } else {
+              // Not the top: leave the currently-displayed value alone and
+              // thread this layer's baseline down onto the next layer, so a
+              // later top-rollback lands on the correct pre-everything value
+              // instead of resurrecting this layer's delta (chain-splice —
+              // T3.1, spec §6.4). Out-of-order rollback of all layers now
+              // returns to the original pre-mutation value.
+              const below = this.snapshots[i + 1] as SnapshotRecord<T>
+              below.prev = record.prev
+            }
+            this.snapshots.splice(i, 1)
+          }
+          this.hasPendingMutations.set(this.snapshots.some((s) => s.live))
         })
       },
       finalize: () => {

@@ -7,6 +7,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { Entry } from '../src/query/entry'
+import { InfiniteEntry } from '../src/query/infinite'
 import type { QueryClientPlugin, QueryClientPluginApi } from '../src/query/plugin'
 
 const emptyDeps = {}
@@ -1157,5 +1158,75 @@ describe('regression: T2.8 minor batch (R-L2.8)', () => {
     const root = createRoot(def, { deps: emptyDeps })
     expect((root.c.items as unknown as { set?: unknown }).set).toBeUndefined()
     root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// R-Q3.1 (T3.1) — out-of-order rollback of parallel optimistic writes must not
+// resurrect an earlier layer's delta. Chain-splice: rolling back a NON-top
+// snapshot leaves the currently-displayed value untouched and threads that
+// layer's captured baseline down onto the next layer, so once every layer has
+// rolled back — in ANY order — data returns to the original pre-mutation value.
+// Before the fix, rollback blindly wrote `record.prev`; with A then B applied
+// and A rolling back first, B's later rollback restored the post-A value and
+// resurrected A's delta. Only LIFO order was pinned (mutation.test.ts:362-409).
+// ---------------------------------------------------------------------------
+describe('regression: out-of-order optimistic rollback returns to baseline (R-Q3.1)', () => {
+  test('Entry: A(+1) then B(+10); A rolls back first → final data is 0, not 1', () => {
+    const entry = new Entry<number>({
+      fetcher: () => () => Promise.resolve(0),
+      initialData: 0,
+    })
+    const a = entry.setData((p) => (p ?? 0) + 1) // data 1
+    const b = entry.setData((p) => (p ?? 0) + 10) // data 11
+    expect(entry.data.peek()).toBe(11)
+
+    // A fails FIRST — it is NOT the top of the stack. Chain-splice keeps the
+    // currently-displayed value (both optimistic deltas still visible) and
+    // rebases B's baseline down to A's pre-write value.
+    a.rollback()
+    expect(entry.data.peek()).toBe(11)
+
+    // B fails — now the top layer. Restores the (spliced) baseline 0, NOT 1.
+    b.rollback()
+    expect(entry.data.peek()).toBe(0)
+    expect(entry.hasPendingMutations.peek()).toBe(false)
+    entry.dispose()
+  })
+
+  test('Entry: LIFO order still lands on the post-A intermediate then baseline', () => {
+    const entry = new Entry<number>({
+      fetcher: () => () => Promise.resolve(0),
+      initialData: 0,
+    })
+    const a = entry.setData((p) => (p ?? 0) + 1) // data 1
+    const b = entry.setData((p) => (p ?? 0) + 10) // data 11
+    b.rollback() // top → post-A intermediate state
+    expect(entry.data.peek()).toBe(1)
+    a.rollback() // top → original baseline
+    expect(entry.data.peek()).toBe(0)
+    expect(entry.hasPendingMutations.peek()).toBe(false)
+    entry.dispose()
+  })
+
+  test('InfiniteEntry: out-of-order page rollback returns to baseline pages', () => {
+    const entry = new InfiniteEntry<number, number, number>({
+      fetcher: () => Promise.resolve(0),
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+    })
+    // Seed a canonical baseline page (track:false — no snapshot pushed).
+    entry.setData(() => [0], { track: false })
+    const a = entry.setData((p) => [(p?.[0] ?? 0) + 1]) // pages [1]
+    const b = entry.setData((p) => [(p?.[0] ?? 0) + 10]) // pages [11]
+    expect(entry.pages.peek()).toEqual([11])
+
+    a.rollback() // non-top → pages untouched, B's baseline spliced to [0]
+    expect(entry.pages.peek()).toEqual([11])
+
+    b.rollback() // top → restores the spliced baseline [0], not [1]
+    expect(entry.pages.peek()).toEqual([0])
+    expect(entry.hasPendingMutations.peek()).toBe(false)
+    entry.dispose()
   })
 })
