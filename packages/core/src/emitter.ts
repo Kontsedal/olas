@@ -1,7 +1,13 @@
 /**
  * Synchronous fan-out event bus. Handlers run in the order they subscribed.
- * Handlers added during emit don't fire for the current emission; handlers
- * removed during emit are skipped from that point in the iteration.
+ *
+ * Emission iterates a SNAPSHOT of the handler set taken at the start of
+ * `emit()`. So within one emission: a handler added during emit does NOT fire
+ * for the current emission, and a handler removed during emit STILL fires for
+ * the current emission (it was captured in the snapshot).
+ *
+ * Handlers are stored in a `Set` keyed by reference — calling `on(h)` twice
+ * with the same `h` registers it ONCE; a single unsubscribe then removes it.
  *
  * `Emitter<void>` exposes `emit()` (no argument); other shapes expose
  * `emit(value: T)`.

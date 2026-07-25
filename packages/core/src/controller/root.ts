@@ -188,7 +188,7 @@ function attachRootControls<Api>(
  * Construct a root controller. Root factories take no props — startup config
  * goes in `deps`.
  */
-export function createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>(
+export function createRoot<Api extends object, TDeps extends Record<string, unknown> = AmbientDeps>(
   def: ControllerDef<void, Api>,
   options: RootOptions<TDeps>,
 ): Root<Api> {

@@ -24,7 +24,8 @@ import { createMutation, type Mutation, type MutationSpec } from '../query/mutat
 import type { LocalCache, Query } from '../query/types'
 import { createInfiniteUse, createUse } from '../query/use'
 import type { Scope } from '../scope'
-import { computed, signal, untracked, effect as standaloneEffect } from '../signals'
+import { computed, signal, effect as standaloneEffect, untracked } from '../signals'
+import { readOnly } from '../signals/readonly'
 import { getFactory, getName } from './define'
 import type {
   Collection,
@@ -237,8 +238,14 @@ export class ControllerInstance {
     for (const entry of this.entries.reverse()) {
       try {
         this.disposeEntry(entry)
-      } catch {
-        // Rollback paths can't throw further.
+      } catch (err) {
+        // A teardown error during rollback must not mask the original
+        // construction throw or abort the rest of the rollback — route it to
+        // onError, same as dispose(). (T2.8)
+        dispatchError(this.rootShared.onError, err, {
+          kind: 'effect',
+          controllerPath: this.path,
+        })
       }
     }
     this.entries.clear()
@@ -420,7 +427,23 @@ export class ControllerInstance {
         // Wrap with error reporting so an effect throw goes through onError.
         const wrapped = (): void | (() => void) => {
           try {
-            return fn()
+            const cleanup = fn()
+            // The effect body may return a cleanup fn that the signals runtime
+            // calls on re-run / dispose — OUTSIDE this try. Wrap it so a throw
+            // there also routes to onError instead of escaping. (T2.8)
+            if (typeof cleanup === 'function') {
+              return () => {
+                try {
+                  cleanup()
+                } catch (err) {
+                  dispatchError(self.rootShared.onError, err, {
+                    kind: 'effect',
+                    controllerPath: self.path,
+                  })
+                }
+              }
+            }
+            return cleanup
           } catch (err) {
             dispatchError(self.rootShared.onError, err, {
               kind: 'effect',
@@ -956,8 +979,10 @@ export class ControllerInstance {
         self.entries.push(effectEntry)
 
         return {
-          items: items$,
-          size: size$,
+          // readOnly so the writable backing signals can't be mutated through
+          // the ReadSignal-typed public surface. (T2.8)
+          items: readOnly(items$),
+          size: readOnly(size$),
           get: (key: K) => childMap.get(key)?.api,
           has: (key: K) => childMap.has(key),
           suspendItem: (key: K) => {
@@ -1089,9 +1114,9 @@ export class ControllerInstance {
         }
 
         return {
-          status: status$,
-          api: api$,
-          error: error$,
+          status: readOnly(status$),
+          api: readOnly(api$),
+          error: readOnly(error$),
           load,
           dispose,
         }

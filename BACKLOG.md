@@ -105,6 +105,10 @@ plan for the rationale.
 
 `biome.json` sets `formatter.lineEnding: "lf"` but the repo has no `.gitattributes`, so with `core.autocrlf=true` (the default on the maintainer's Windows box) every source file is CRLF in the working tree and `biome check .` reports "Formatter would have printed…" for *every* file. CI passes only because Linux checks out LF. Fix options: add `.gitattributes` (`* text=auto eol=lf`) so checkouts are LF, then `git add --renormalize .` once; or set `core.autocrlf=input` locally. Deferred because renormalizing mid-remediation would bury the real diffs in line-ending noise. Local rule-checking meanwhile is `pnpm exec biome lint .` (skips the formatter); CI verifies formatting.
 
+### [idea] Satellite/integration packages typecheck against built `dist`, not `src`
+
+`tsconfig.base.json` has no `paths`, so `@kontsedal/olas-*` imports in the satellite packages (react, persist, entities, …) and the integration suite resolve to each package's built `dist/*.d.ts` (via `exports.types`). Consequences: (1) `pnpm typecheck` needs a prior `pnpm build` or it sees stale/absent types — and **CI runs `typecheck` BEFORE `build`**, so a fresh checkout can't resolve them; (2) core src type changes aren't seen by satellites until a rebuild. Adding `paths` → src does NOT work cleanly (it pulls core src into each satellite's `rootDir`, and `__DEV__` isn't declared outside the build-time define). Proper fix belongs in T7.2: reorder CI to `build` before `typecheck` (or add a pre-typecheck build step), and/or add TS project references plus a `__DEV__` ambient declaration so src↔src typecheck is viable. Surfaced when T1.2 added `DehydratedEntry.id` — the integration suite's hand-built payload only typechecked after a rebuild.
+
 ## Loose ends
 
 (nothing tagged yet — drop short, unclassified notes here when they don't fit above)
