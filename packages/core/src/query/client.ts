@@ -1061,7 +1061,21 @@ export class QueryClient {
     // not the updater function (which would be uncloneable across
     // BroadcastChannel).
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-    return snapshot
+    // Re-broadcast on rollback so cross-tab / entity plugins drop the failed
+    // optimistic value instead of keeping it (T3.6). Guard on an actual data
+    // change: a non-top chain-splice rollback (§6.4) leaves current data
+    // untouched, so there is nothing new to broadcast.
+    return {
+      rollback: () => {
+        const before = entry.entry.data.peek()
+        snapshot.rollback()
+        const after = entry.entry.data.peek()
+        if (!Object.is(before, after)) {
+          this.emitSetData(entry.query, entry.keyArgs, after, 'data', 'set')
+        }
+      },
+      finalize: () => snapshot.finalize(),
+    }
   }
 
   bindInfiniteEntry<Args extends unknown[], TPage, TItem>(
@@ -1177,7 +1191,19 @@ export class QueryClient {
     const entry = this.bindInfiniteEntry(query, args)
     const snapshot = entry.entry.setData(updater)
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
-    return snapshot
+    // Re-broadcast on rollback so peers drop the failed optimistic pages
+    // (T3.6); guard on an actual change (non-top chain-splice is a no-op).
+    return {
+      rollback: () => {
+        const before = entry.entry.pages.peek()
+        snapshot.rollback()
+        const after = entry.entry.pages.peek()
+        if (!Object.is(before, after)) {
+          this.emitSetData(entry.query, entry.keyArgs, after, 'infinite', 'set')
+        }
+      },
+      finalize: () => snapshot.finalize(),
+    }
   }
 
   prefetchInfinite<Args extends unknown[], TPage>(

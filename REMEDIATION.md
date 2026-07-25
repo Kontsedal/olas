@@ -362,7 +362,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   assert park → resume-on-reconnect → success; assert `isPaused` transitions.
 - **Docs:** SPEC §5.x networkMode; API.md `AsyncState` table (new signal); `.wiki/modules/query.md`.
 
-### [ ] T3.6 — **[MAJOR]** rollback/finalize emit no plugin events (cross-tab peers keep failed optimistic state)
+### [x] T3.6 — **[MAJOR]** rollback/finalize emit no plugin events (cross-tab peers keep failed optimistic state)
 - **Files:** `entry.ts:394-403` (rollback writes data directly), `client.ts:1026` (the
   emit path used by normal setData)
 - **Fix:** route the rollback data write through the same `emitSetData` path with
