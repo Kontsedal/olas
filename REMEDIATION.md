@@ -244,7 +244,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   parent → child stays inactive until parent resumes, then activates.
 - **Docs:** SPEC §4; `.wiki/entities/controller-instance.md`.
 
-### [ ] T2.7 — **[MAJOR]** `debounced`/`throttled` leak subscriptions; assorted timing bugs
+### [x] T2.7 — **[MAJOR]** `debounced`/`throttled` leak subscriptions; assorted timing bugs
 - **Files:** `packages/core/src/timing/debounced.ts:59,113`, `throttled.ts:51,64-77`
 - **Problems:** (a) the internal `effect` subscribes to `source` forever — no `dispose` on
   the returned handle, no ctx ownership; (b) the handle is a writable `Signal` typecast to

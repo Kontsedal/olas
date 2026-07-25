@@ -191,3 +191,118 @@ describe('lifecycle / AbortSignal', () => {
     expect(t.value).toBe(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// T2.7 — leading/trailing options matrix (previously ZERO coverage), plus
+// dispose(), validation, and the read-only handle.
+// ---------------------------------------------------------------------------
+describe('debounced options matrix (T2.7)', () => {
+  test('leading-only: emits on the leading edge, never the trailing', () => {
+    const a = signal(0)
+    const d = debounced(a, 100, { leading: true, trailing: false })
+    a.set(1)
+    expect(d.value).toBe(1) // leading
+    a.set(2)
+    vi.advanceTimersByTime(50)
+    a.set(3)
+    vi.advanceTimersByTime(100) // cooldown expires — no trailing
+    expect(d.value).toBe(1)
+  })
+
+  test('leading-only: flush during cooldown emits nothing', () => {
+    const a = signal(0)
+    const d = debounced(a, 100, { leading: true, trailing: false })
+    a.set(1) // leading → 1
+    a.set(2) // cooldown; trailing:false → not pending
+    d.flush()
+    expect(d.value).toBe(1)
+  })
+
+  test('leading + trailing: first and last', () => {
+    const a = signal(0)
+    const d = debounced(a, 100, { leading: true, trailing: true })
+    a.set(1)
+    expect(d.value).toBe(1) // first (leading)
+    a.set(2)
+    a.set(3)
+    vi.advanceTimersByTime(100)
+    expect(d.value).toBe(3) // last (trailing)
+  })
+
+  test('trailing-only (default): only the trailing edge', () => {
+    const a = signal(0)
+    const d = debounced(a, 100)
+    a.set(1)
+    expect(d.value).toBe(0) // no leading
+    vi.advanceTimersByTime(100)
+    expect(d.value).toBe(1)
+  })
+
+  test('dispose() clears pending + tears down the source subscription', () => {
+    const a = signal(0)
+    const d = debounced(a, 100)
+    a.set(1)
+    d.dispose()
+    vi.advanceTimersByTime(100)
+    expect(d.value).toBe(0) // pending emit cancelled
+    a.set(2)
+    vi.advanceTimersByTime(100)
+    expect(d.value).toBe(0) // effect gone — source changes ignored
+  })
+
+  test('throws when both leading and trailing are false', () => {
+    const a = signal(0)
+    expect(() => debounced(a, 100, { leading: false, trailing: false })).toThrow(/must be true/)
+  })
+
+  test('the handle does not expose set()', () => {
+    const a = signal(0)
+    const d = debounced(a, 100)
+    expect((d as unknown as { set?: unknown }).set).toBeUndefined()
+  })
+})
+
+describe('throttled options matrix (T2.7)', () => {
+  test('leading-only: no trailing timer, flush emits nothing', () => {
+    vi.setSystemTime(1000)
+    const a = signal(0)
+    const t = throttled(a, 100, { leading: true, trailing: false })
+    a.set(1) // leading → 1
+    vi.advanceTimersByTime(30)
+    a.set(2) // inside window; trailing:false → nothing scheduled, not pending
+    vi.advanceTimersByTime(30)
+    a.set(3)
+    expect(t.value).toBe(1)
+    t.flush() // must emit nothing (the pre-fix bug: flush emitted a value)
+    expect(t.value).toBe(1)
+    vi.advanceTimersByTime(300)
+    expect(t.value).toBe(1) // no stray trailing timer fired
+  })
+
+  test('trailing-only: no leading emit, trailing fires', () => {
+    vi.setSystemTime(1000)
+    const a = signal(0)
+    const t = throttled(a, 100, { leading: false, trailing: true })
+    a.set(1)
+    expect(t.value).toBe(0) // no leading
+    vi.advanceTimersByTime(100)
+    expect(t.value).toBe(1) // trailing
+  })
+
+  test('dispose() tears down the source subscription', () => {
+    vi.setSystemTime(1000)
+    const a = signal(0)
+    const t = throttled(a, 100)
+    a.set(1)
+    expect(t.value).toBe(1)
+    t.dispose()
+    a.set(2)
+    vi.advanceTimersByTime(200)
+    expect(t.value).toBe(1) // torn down
+  })
+
+  test('throws when both leading and trailing are false', () => {
+    const a = signal(0)
+    expect(() => throttled(a, 100, { leading: false, trailing: false })).toThrow(/must be true/)
+  })
+})

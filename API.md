@@ -161,9 +161,9 @@ type Computed<T> = ReadSignal<T>
 
 Derived signals that delay or rate-limit a source.
 
-### `debounced<T>(source: ReadSignal<T>, ms: number): ReadSignal<T>`
+### `debounced<T>(source, ms, options?): TimingSignal<T>`
 
-Reflects `source`, but waits `ms` after the last source change before emitting. Same value during the window; new value after. Great for "react after the user stops typing".
+`options?: { signal?: AbortSignal; leading?: boolean; trailing?: boolean }`. Reflects `source`, but waits `ms` after the last source change before emitting. Same value during the window; new value after. Great for "react after the user stops typing".
 
 ```ts
 import { signal, debounced } from '@kontsedal/olas-core'
@@ -173,11 +173,13 @@ const dTerm = debounced(term, 300)
 // dTerm.value lags term.value by up to 300ms after the last write.
 ```
 
+`TimingSignal<T>` is `ReadSignal<T>` plus `cancel()` (drop the pending emit), `flush()` (emit the pending value now), and `dispose()` (tear down the internal effect + timer). It exposes no `set()`. Pass `options.signal` OR call `dispose()` to release the `source` subscription — otherwise it lives for the process lifetime. `leading`/`trailing` default to `false`/`true`; `{ leading: false, trailing: false }` throws.
+
 **See also:** `debouncedValidator(...)` for async validators specifically.
 
-### `throttled<T>(source: ReadSignal<T>, ms: number): ReadSignal<T>`
+### `throttled<T>(source, ms, options?): TimingSignal<T>`
 
-Reflects `source` at most once every `ms`. Drops intermediate values during the window.
+`options?: { signal?: AbortSignal; leading?: boolean; trailing?: boolean }` (defaults `leading: true`, `trailing: true`). Reflects `source` at most once every `ms`. Drops intermediate values during the window. Returns the same `TimingSignal<T>` surface as `debounced` (see above).
 
 ```ts
 import { signal, throttled } from '@kontsedal/olas-core'
