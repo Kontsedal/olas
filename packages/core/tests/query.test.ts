@@ -47,6 +47,33 @@ describe('stableHash', () => {
     expect(() => stableHash([new Map([['a', 1]])])).toThrow(/Map\/Set/)
     expect(() => stableHash([new Set(['a'])])).toThrow(/Map\/Set/)
   })
+
+  // R-Q3.8 (T3.8) — JSON.stringify applies toJSON BEFORE the replacer, so the
+  // Date / class-instance checks ran on already-serialized values (dead code).
+  // Reading the raw holder property (`this[key]`) fixes both the Date collision
+  // and the class-with-toJSON bypass.
+  test('a Date does not collide with its ISO string (R-Q3.8)', () => {
+    expect(stableHash([new Date(0)])).not.toBe(stableHash(['1970-01-01T00:00:00.000Z']))
+    // Nested inside an object, too.
+    expect(stableHash([{ at: new Date(0) }])).not.toBe(
+      stableHash([{ at: '1970-01-01T00:00:00.000Z' }]),
+    )
+  })
+
+  test('different Dates hash differently; equal Dates hash equally (R-Q3.8)', () => {
+    expect(stableHash([new Date(0)])).toBe(stableHash([new Date(0)]))
+    expect(stableHash([new Date(0)])).not.toBe(stableHash([new Date(1)]))
+  })
+
+  test('a class instance with toJSON still throws — no bypass (R-Q3.8)', () => {
+    class Key {
+      constructor(readonly id: number) {}
+      toJSON(): number {
+        return this.id
+      }
+    }
+    expect(() => stableHash([new Key(1)])).toThrow(/class instance/)
+  })
 })
 
 describe('defineQuery + ctx.use', () => {

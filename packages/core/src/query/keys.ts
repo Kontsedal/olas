@@ -10,7 +10,16 @@ export function stableHash(args: readonly unknown[]): string {
   return JSON.stringify(args, replacer)
 }
 
-const replacer = (_key: string, value: unknown): unknown => {
+// A regular `function` (not an arrow) so `this` is bound to the holder object
+// by `JSON.stringify`. Critical: `JSON.stringify` applies `toJSON()` to a value
+// BEFORE calling the replacer, so the `value` argument for a `Date` is already
+// its ISO string and a class instance with a `toJSON` is already its serialized
+// form — inspecting `value` would miss both (the old arrow did, making the Date
+// tag and the class-instance throw dead code: `stableHash([date])` collided
+// with `stableHash([date.toISOString()])`). Reading the RAW property off the
+// holder (`this[key]`) recovers the true pre-`toJSON` value. Spec §5.4; T3.8.
+const replacer = function (this: unknown, key: string, _value: unknown): unknown {
+  const value = (this as Record<string, unknown>)[key]
   if (typeof value === 'function') {
     throw new Error('[olas] query keys cannot contain functions')
   }
