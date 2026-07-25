@@ -326,7 +326,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Repro test:** the exact interleaving above with deferred promises; assert
   `status === 'success'` and `firstValue()` resolves.
 
-### [ ] T3.4 — **[MAJOR]** no cancellation API; in-flight fetch clobbers optimistic writes
+### [x] T3.4 — **[MAJOR]** no cancellation API; in-flight fetch clobbers optimistic writes
 - **Files:** `packages/core/src/query/types.ts:188-198` (`Query` surface), `client.ts`,
   `entry.ts`
 - **Problem (confirmed):** refetch in flight → `setData(999)` → stale response lands →

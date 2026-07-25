@@ -255,6 +255,14 @@ export class Entry<T> {
     const prev = this.data.peek() as T | undefined
     const shared =
       prev === undefined || !this.structuralShareEnabled ? result : structuralShare(prev, result)
+    // Rebase live optimistic snapshots onto the fresh server truth: a
+    // subsequent rollback should restore to THIS value, not the pre-fetch
+    // baseline the snapshot captured before the fetch resolved. Without this,
+    // a fetch landing during an optimistic mutation, then that mutation
+    // failing, resurrects pre-fetch data (spec §6.4, T3.4).
+    if (this.snapshots.length > 0) {
+      for (const s of this.snapshots) s.prev = shared
+    }
     batch(() => {
       this.data.set(shared)
       this.error.set(undefined)
@@ -367,6 +375,27 @@ export class Entry<T> {
     if (this.disposed) return
     batch(() => {
       this.error.set(undefined)
+      this.status.set(this.data.peek() !== undefined ? 'success' : 'idle')
+    })
+  }
+
+  /**
+   * Cancel an in-flight fetch without touching `data`. Aborts the current
+   * request and supersedes it (bumps `currentFetchId` so its result can never
+   * land), then restores a settled status: `'success'` if data exists, else
+   * `'idle'`. No-op when nothing is fetching. This is the primitive behind
+   * `query.cancel(...)` / `subscription.cancel()`: the canonical optimistic
+   * recipe cancels outgoing refetches before an optimistic `setData` so a
+   * stale response can't clobber the optimistic value (spec §5, §6.4). T3.4.
+   */
+  cancel(): void {
+    if (this.disposed || !this.isFetching.peek()) return
+    this.currentFetchId += 1
+    this.currentAbort?.abort()
+    this.currentAbort = null
+    batch(() => {
+      this.isFetching.set(false)
+      this.isLoading.set(false)
       this.status.set(this.data.peek() !== undefined ? 'success' : 'idle')
     })
   }

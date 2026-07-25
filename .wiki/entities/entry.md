@@ -67,9 +67,15 @@ A retried fetch is one logical fetch to the consumer — `isFetching` stays true
 
 The invariant this guarantees: **rolling back every live snapshot — in any order — returns `data` to the original pre-mutation value.** The prior code restored `record.prev` unconditionally, so an out-of-order rollback (A then B applied, A fails first, then B fails) resurrected A's delta and left the wrong final value. Pinned by `regressions.test.ts` (R-Q3.1). `InfiniteEntry.setData` mirrors the same chain-splice, threading both `prev` (pages) and `prevParams`.
 
+**Fetch success rebases live snapshots** (`entry.ts` `applySuccess`, spec §6.4, T3.4). Before writing the fresh value, `applySuccess` sets `record.prev = shared` for every live snapshot. So if a fetch lands while an optimistic mutation is pending, a later rollback restores *server truth*, not the pre-fetch baseline the snapshot captured — otherwise a refetch mid-mutation then a mutation failure would resurrect stale pre-fetch data. Pinned by R-Q3.4.
+
 `setData(updater, { track: false })` is a **canonical cache write** — cross-tab receive (`client.applyRemoteSetData`), entity backprop / realtime patches (`client.setEntryData`). It writes `data` but pushes NO snapshot and does NOT flip `hasPendingMutations`, returning a no-op `Snapshot`. This is why a fire-and-forget plugin write can no longer wedge `hasPendingMutations` at `true` — the T1.1 bug was exactly that those callers went through the tracked path and discarded the returned snapshot. `InfiniteEntry.setData` mirrors the same `track` option. Pinned by `regressions.test.ts` (R-Q1.1).
 
 The stack is what enables positional rollback: when top-of-stack mutation B rolls back, data goes to "state after mutation A's update" because that was the value B captured at its setData. Non-top rollbacks chain-splice instead (above). Spec §6.4.
+
+## cancel
+
+`cancel()` aborts an in-flight fetch on demand without touching `data`: it bumps `currentFetchId` (so the running `runWithRetry` loses its supersede check and never writes), aborts `currentAbort`, and restores a settled status — `'success'` if data exists, else `'idle'`. No-op when nothing is fetching. It is the primitive behind the public `query.cancel(...)` / `subscription.cancel()` (wired in `define.ts` → `client.cancel`/`cancelAll` → `entry.cancel`) and the canonical optimistic recipe: cancel outgoing refetches before an optimistic `setData` so a stale response can't clobber it (spec §5.5, §6.4). `InfiniteEntry.cancel` mirrors it (also clears the per-direction paging flags). Pinned by R-Q3.4.
 
 ## firstValue / dispose
 

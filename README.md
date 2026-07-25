@@ -254,11 +254,13 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
       })
       if (!res.ok) throw new Error('save failed')
     },
-    onMutate: (newName) =>
-      userQuery.setData(props.id, (prev) => {
+    onMutate: (newName) => {
+      userQuery.cancel(props.id) // stop an in-flight refetch from clobbering the optimistic write
+      return userQuery.setData(props.id, (prev) => {
         if (!prev) throw new Error('updateName before user loaded')
         return { ...prev, name: newName }
-      }),
+      })
+    },
     onError: (_err, _vars, snapshot) => {
       snapshot?.rollback()
     },
@@ -268,7 +270,7 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
 })
 ```
 
-`onMutate` runs an optimistic update *before* the network call and returns a snapshot. If the call fails, `onError` calls `snapshot.rollback()` and the UI reverts.
+`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `userQuery.cancel(...)` so an outgoing refetch's stale response can't land on top of the optimistic value; if the call fails, `onError` calls `snapshot.rollback()` and the UI reverts (rollback restores server truth when a fetch succeeded in between — see SPEC §6.4).
 
 Three concurrency modes (`parallel` is default):
 

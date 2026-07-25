@@ -43,7 +43,7 @@ Why two? Regular and infinite queries differ enough (single `data` vs array of `
 
 ## Cross-root query operation
 
-A `Query` is module-scoped. When `bindEntry` runs on this client for that query, the client adds itself to `query.__clients`. On dispose, the client removes itself from every `touchedQueries`. So `query.invalidate(...)` reaches exactly the live clients, no GC concerns. See `../decisions/per-root-query-client.md`.
+A `Query` is module-scoped. When `bindEntry` runs on this client for that query, the client adds itself to `query.__clients`. On dispose, the client removes itself from every `touchedQueries`. So `query.invalidate(...)` reaches exactly the live clients, no GC concerns. The same fan-out serves `setData`, `cancel` / `cancelAll` (→ `client.cancel`/`cancelAll` → `entry.cancel`, T3.4), and `prefetch`. See `../decisions/per-root-query-client.md`.
 
 ## Mutation inflight counter
 

@@ -92,6 +92,10 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     this.current$.peek()?.entry.reset()
   }
 
+  cancel = (): void => {
+    this.current$.peek()?.entry.cancel()
+  }
+
   firstValue = (): Promise<U> => {
     const cur = this.current$.peek()
     if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
@@ -329,6 +333,10 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
 
   reset = (): void => {
     this.current$.peek()?.entry.reset()
+  }
+
+  cancel = (): void => {
+    this.current$.peek()?.entry.cancel()
   }
 
   firstValue = (): Promise<TPage[]> => {

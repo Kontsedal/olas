@@ -389,7 +389,7 @@ Shared, keyed, cacheable async data. Two controllers subscribing to the same que
 
 ### `defineQuery<Args, T>(spec: QuerySpec<Args, T>): Query<Args, T>`
 
-Declare a query at module scope. The returned `Query` value is passed to `ctx.use(...)` in subscribers, and exposes `invalidate`, `invalidateAll`, `setData`, `prefetch` at the module level for direct cache writes (e.g., from a mutation's `onMutate`).
+Declare a query at module scope. The returned `Query` value is passed to `ctx.use(...)` in subscribers, and exposes `invalidate`, `invalidateAll`, `setData`, `cancel`, `cancelAll`, `prefetch` at the module level for direct cache writes (e.g., from a mutation's `onMutate`).
 
 ```ts
 import { defineQuery } from '@kontsedal/olas-core'
@@ -438,6 +438,8 @@ type Query<Args extends unknown[], T> = {
   invalidate(...args: Args): void
   invalidateAll(): void
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
+  cancel(...args: Args): void
+  cancelAll(): void
   prefetch(...args: Args): Promise<T>
 }
 ```
@@ -445,6 +447,8 @@ type Query<Args extends unknown[], T> = {
 - `invalidate(...args)` — mark a specific keyed entry stale + refetch if it has subscribers.
 - `invalidateAll()` — same, every entry of this query.
 - `setData(...args, updater)` — patch the cached data for one key. Returns a `Snapshot` for rollback. Used in mutation `onMutate` for optimistic updates.
+- `cancel(...args)` — abort the in-flight fetch for one key (if any). Supersedes the request, restores a settled status, leaves `data` untouched. Call before an optimistic `setData` so a stale in-flight response can't clobber it (spec §5.5, §6.4).
+- `cancelAll()` — cancel in-flight fetches for every keyed entry of this query.
 - `prefetch(...args)` — fetch into the cache without subscribing (e.g., on hover before navigating).
 
 ### `ctx.use<Args, T>(query, key?): AsyncState<T>`
@@ -483,11 +487,12 @@ type AsyncState<T> = {
 
   refetch: () => Promise<T>
   reset: () => void
+  cancel: () => void                      // query subscription: abort in-flight fetch, keep data
   firstValue: () => Promise<T>            // resolves with the first non-undefined data
 }
 ```
 
-Subscribers can read any of the 8 signals individually, or use `useQuery(state)` in React to batch them into one render.
+Subscribers can read any of the 8 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` / `Query`; a `ctx.cache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
 
 ### Type: `UseOptions<Args>`
 
