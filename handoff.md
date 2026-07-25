@@ -1,16 +1,18 @@
 # handoff.md — REMEDIATION.md execution, session handoff
 
 **Transient file** (like `REMEDIATION.md`). Delete both when the remediation lands.
-Written 2026-07-25 after completing Phases 0–3.
+Written 2026-07-25 after completing Phases 0–4.
 
 ---
 
 ## TL;DR
 
 - Working on branch **`remediation`** (off `main`). All work is committed.
-- **Phases 0, 1, 2, 3 are DONE** — 23 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9).
-- Pipeline is **green**: `pnpm test` → 673/673, typecheck clean, biome lint clean.
-- **Next task: T4.1** (Phase 4 — React adapter). The full task list + "decisions
+- **Phases 0–4 are DONE** — 30 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9, T4.1–T4.7).
+  Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce), T4.7 disabled+suspense
+  (could-not-implement-cleanly → BACKLOG).
+- Pipeline is **green**: `pnpm test` → 689/689, typecheck clean, biome lint clean.
+- **Next task: T5.1** (Phase 5 — forms). The full task list + "decisions
   made" live in `REMEDIATION.md`; the checkboxes there are the source of truth.
 
 ## Read this first (resume order)
@@ -97,33 +99,35 @@ must be green, then add a `## [date] ingest | REMEDIATION.md phase N` entry to `
 | 1 — query criticals | T1.1, T1.2 | ✅ done |
 | 2 — lifecycle criticals+majors | T2.1–T2.8 | ✅ done (T2.8 pathKey = `[?]`) |
 | 3 — query majors | T3.1–T3.9 | ✅ done |
-| 4 — React adapter | T4.1–T4.7 | ⬜ **next** |
-| 5 — forms | T5.1–T5.3 | ⬜ |
+| 4 — React adapter | T4.1–T4.7 | ✅ done (T4.7 disabled+suspense = `[?]`) |
+| 5 — forms | T5.1–T5.3 | ⬜ **next** |
 | 6 — satellites | T6.1–T6.7 | ⬜ |
 | 7 — delivery/docs/release | T7.1–T7.3 | ⬜ |
 | 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ |
 
-**Next up — T4.1** (`packages/react/src/context.ts`): `HydrationBoundary` builds a root in
-`useMemo` — leaks, StrictMode double-root, no unmount dispose. Fix is ref + effect ownership
-(see REMEDIATION.md for the exact decision); new test file
-`packages/react/tests/hydration-boundary.test.tsx`.
+**Next up — T5.1** (`packages/core/src/forms/form.ts`): **[CRITICAL]** structural
+`FieldArray` edits (`add`/`remove`/`move`) are invisible to `isDirty`, so with a reactive
+`initial: () => queryData` + the default `resetOnInitialChange: 'when-clean'`, a background
+refetch silently deletes rows the user just added — the worst user-facing bug in the audit.
+Fix (decision made in REMEDIATION.md): a `structurallyDirty` signal on `FieldArray`, set by
+`add`/`remove`/`move`/`clear`, reset by `reset()` + initial-driven re-seat; `isDirty =
+structurallyDirty || anyItemDirty`. SPEC §8; `.wiki/modules/forms.md`.
 
-**Phase 4 notes (React adapter):**
-- **React tests are jsdom** — per-file `// @vitest-environment jsdom` pragma, `.tsx`. See
-  the existing `packages/react/tests/*.test.tsx`; they use `@testing-library/react`
-  (`render`, `act`, `<StrictMode>`).
-- `packages/react` has **no `__DEV__` build define** — use `console.warn` directly for dev
-  warnings, NOT `__DEV__` (learned in T3.9-e2; grep `packages/react/src` — zero `__DEV__`).
-- Phase 4 builds on Phase 3 additions: T4.2 adds `Mutation.status` (core mutation.ts),
-  T4.3 relies on `Entry.applyFailure` keeping `data`, T4.5 replaces the version-counter
-  snapshots. `packages/react/src/hooks.ts` is the biggest Phase 4 surface — re-read it.
-- `packages/react/src/streaming.ts` and `packages/core/src/query/define.ts` are **UTF-16 /
-  contain NUL bytes** — git shows them as `Bin` in diffs (pre-existing; the Edit tool
-  preserves the encoding fine). Not a corruption; don't "fix" it under a bug task.
+**Phase 5 notes (forms — `packages/core/src/forms/`, back to core):**
+- Core tests (node env, NOT jsdom) in `packages/core/tests/` — forms tests in
+  `form*.test.ts`, `field*.test.ts`. Regressions still go in `regressions.test.ts`
+  (`R-Q`/`R-L` tag style; use `R-F5.x` for phase 5).
+- `Field<T>.value` returns `T`; `Form.value` / `FieldArray.value` are `ReadSignal<...>`
+  (pitfall `field-value-shape.md`). Form traversal branches on this.
+- T5.2 extends the form-level validator return type to `string | null | FormIssue[]` (adds
+  a `formErrors` per-field channel) and rewrites the Standard Schema wrapper to keep all
+  issues + paths. T5.3 is a minor batch (validateOn tests, `required(false)`, etc.).
+- `__DEV__` IS available in core (unlike react) — use it for dev-only warnings.
 
-**Phase 3 recap (just completed):** new public surface a Phase 4 task may lean on —
-`query.cancel`/`cancelAll`, `subscription.cancel`, `AsyncState.isPaused`, and internal
-`Entry.markStale`/`cancel`. Full details in `.wiki/log.md` (phase 3 ingest entry).
+**Phase 4 recap (just completed):** new public surface — `Mutation.status` (core), which
+`useMutation`'s `isSuccess`/`isIdle`/`isError` derive from. Full details in `.wiki/log.md`
+(phase 4 ingest entry). `packages/react/src/streaming.ts` + `packages/core/src/query/define.ts`
+are UTF-16/NUL-byte files (show as `Bin` in git diffs; Edit tool handles them — not corruption).
 
 ## Handy commands
 
