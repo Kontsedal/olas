@@ -1144,6 +1144,23 @@ function Header() {
 
 Back-compat alias for `useRoot()`. Takes the root explicitly, so it's usable outside a provider (notably in tests).
 
+### `HydrationBoundary({ def, options, children, streaming? })`
+
+Client-side SSR boundary: constructs a `Root<Api>` from a controller `def` + dehydrated state and provides it to descendants — the mirror of the server's `root.dehydrate()`.
+
+```tsx
+<HydrationBoundary def={appController} options={{ deps, hydrate: window.__OLAS_STATE__ }}>
+  <App />
+</HydrationBoundary>
+```
+
+The boundary **owns** the root:
+
+- Created lazily during the first render (in a ref, so `createRoot`'s side effects don't run twice under StrictMode) and **disposed on unmount**.
+- `options` is read **once** on mount — a new inline `options={{...}}` on a parent re-render is intentionally ignored, so it won't discard cache state every render.
+- The root is recreated only when the **`def` identity** changes (pass a different `def`, or re-key the component, to swap it on navigation).
+- `streaming` (default `true`) installs the streaming-SSR intake so `<script>` tags flushed by `createStreamingHydrator()` route into this root; pass `false` for a one-shot `options.hydrate`.
+
 ### `use<T>(signal: ReadSignal<T>): T`
 
 Subscribe a component to one signal. Returns the current value; re-renders on change. Built on `useSyncExternalStore`.

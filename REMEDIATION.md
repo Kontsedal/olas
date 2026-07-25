@@ -443,7 +443,13 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 
 ## Phase 4 — React adapter (`packages/react/src/`)
 
-### [ ] T4.1 — **[CRITICAL]** `HydrationBoundary` builds a root in `useMemo`: leaks, StrictMode double-root, no dispose
+### [x] T4.1 — **[CRITICAL]** `HydrationBoundary` builds a root in `useMemo`: leaks, StrictMode double-root, no dispose
+> ref+effect ownership: lazy create-in-render (ref-deduped across StrictMode's
+> double render), options read once, def-change recreate, dispose on unmount.
+> Empirically confirmed StrictMode does NOT re-render after its effect remount,
+> so the effect recreates + `forceRender()`s to keep one live root. New tests
+> `hydration-boundary.test.tsx` (a–d). API.md + wiki + docstring updated. The
+> `options as any` cast stays for T4.7.
 - **File:** `packages/react/src/context.ts:154` (+ docstring `:114-117`, intake effect `:158-161`)
 - **Problem:** `createRoot` (side-effectful: fetches, timers, listeners) runs in a
   `useMemo` keyed `[def, options]`. StrictMode double-invokes → orphaned live root. No
