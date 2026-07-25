@@ -488,3 +488,68 @@ New public surface: `FormIssue` / `ValidatorResult` types, `mustBeTrue` validato
 ### Gates
 
 `pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome lint .` clean (274 files); `pnpm test` → 708/708 across 56 files; `pnpm wiki:lint` 0 errors.
+
+## [2026-07-25 22:57] ingest | REMEDIATION.md phase 6 (satellite packages)
+
+Phase 6 — the seven satellite packages. Seven commits (`9cc9934` persist →
+`601edb6` realtime). T6.3–T6.6 were executed by `fork` subagents (inherit full
+context → same test-first workflow + commit conventions) and independently
+gate-verified; T6.1/T6.2/T6.7 done directly.
+
+- **T6.1 persist** (`9cc9934`) — IndexedDB adapter now resolves on the
+  transaction's `oncomplete` (not `req.onsuccess`) so quota/commit failures
+  surface + REJECT (were swallowed); `onversionchange` closes the connection so
+  a stale one can't block another tab's upgrade. usePersisted: `flushWrite`
+  splits serialize-vs-write op labels; a user write before an async load settles
+  now WINS over the stored value (and a racing cross-tab change is buffered)
+  instead of being dropped + clobbered by `applyLoaded`. +17 tests for the
+  previously-untested version/migrate/throttleMs/onError surface (fake IDB made
+  transaction-aware).
+- **T6.2 mutation-queue** (`e13ac13`) — the three disqualifiers: reconnect
+  replay (`online` listener + `replayNow()`, one guarded `runReplay`), cross-tab
+  coordination (`withReplayLock`: Web Locks `ifAvailable` + best-effort
+  localStorage-lease fallback), and `onReplaySettle(entry,result,api)` cache
+  reconciliation. Honesty: `seqCounter=Date.now()` (kills the priming race),
+  dedupe key cleared only on entry-drop (not cancel/non-terminal error → no
+  double-write), README demoted to **best-effort**. +11 tests + new
+  `.wiki/modules/mutation-queue.md`. BACKLOG: cross-mutationId causal ordering.
+- **T6.3 devtools** (`c4eb61e`) — JsonView cycle guard is now an immutable
+  ancestors-only `ReadonlySet` per level (a DAG `{a:obj,b:obj}` / collapse→expand
+  / StrictMode no longer false-flag `[Circular]`; true cycles still caught);
+  `store.ts` prunes disposed subtrees past `maxDisposedNodes` (default 200) +
+  FIFO mutation-start queue per `path#name` (the debug bus has no per-run id — a
+  real runId would be a core change, noted); 150ms-debounced panel filter.
+- **T6.4 cross-tab** (`98e7038`) — removed the dead `crossTab: 'infinite'|'both'`
+  values (narrowed the core `QuerySpec.crossTab` type to `boolean|'data'`;
+  dev-warn + degrade-to-`'data'` for JS callers); the receive path now applies
+  the same `shouldBroadcast` filter as send; README documents the honest
+  last-delivery-wins conflict model. BACKLOG: infinite cross-tab.
+- **T6.5 zod** (`8cc13f0`) — `zodValidatorAsync` removes the abort listener in
+  `finally` + swallows the losing race promise (no unhandled rejection / leaked
+  listener); `isForeignZod`/`warnDuplicateZod` dev-warn on a duplicate-zod-copy
+  schema; `ZodDate` default → `undefined` (was `null` into a Date field),
+  `.transform()`/`.pipe()` seeds from the INPUT schema, unions → `undefined`;
+  fixed the stale "3.x/4.x" comment (peer is `^4.0.0`).
+- **T6.6 router** (`a3cebd4`) — `createRouterAdapter(initial?: RouteState)` seeds
+  route signals for the effect-less server render (SSR hole); Bridge push
+  `useEffect` → `useLayoutEffect`; `params` widened to
+  `Record<string, string | undefined>`. README documents server seeding + the
+  first-render-empty footgun + the `enabled`-guard pattern. (Router still has no
+  wiki page — left for the T7.3 sweep.)
+- **T6.7 realtime** (`601edb6`) — `useRealtimeConnection` reports `'unknown'`
+  (added to `ConnectionState`) when the transport has no `onConnectionChange`
+  instead of lying `'connected'`; clarified everywhere that events arriving
+  DURING a `pause()` are LOST (subscription torn down) — recover via
+  `onReconnect` + invalidate.
+
+New/changed public surface: persist `version`/`migrate`/`throttleMs`/`onError`
+(documented + tested), mutation-queue `onReplaySettle` + `replayNow()`, devtools
+`maxDisposedNodes`, cross-tab `crossTab` narrowed to `boolean|'data'`, zod
+`isForeignZod` warning, router `createRouterAdapter(initial?)` + widened
+`params`, realtime `ConnectionState` gains `'unknown'`.
+
+### Gates
+
+`pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome
+lint .` clean (275 files); `pnpm test` → 751/751 across 57 files; `pnpm wiki:lint`
+0 errors.
