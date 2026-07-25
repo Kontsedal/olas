@@ -71,25 +71,34 @@ function walkMarkdown(dir: string): string[] {
 }
 
 function parsePage(abs: string): Page {
-  const relPath = relative(REPO_ROOT, abs)
+  // Normalize to posix separators so the `.wiki/…` path comparisons below
+  // (FRONTMATTERLESS set, `/README.md` suffix checks) work on Windows, where
+  // `relative()` yields backslash paths.
+  const relPath = relative(REPO_ROOT, abs).replaceAll('\\', '/')
   const raw = readFileSync(abs, 'utf8')
-  const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/)
+  // CRLF-tolerant: on a CRLF checkout (Windows, `core.autocrlf=true`) the
+  // frontmatter delimiters are `---\r\n`, so an LF-only regex reads every page
+  // as frontmatter-less and silently disables all downstream checks.
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/)
   if (!match) {
-    return { path: relPath, abs, frontmatter: null, body: raw }
+    return { path: relPath, abs, frontmatter: null, body: raw.replace(/\r\n/g, '\n') }
   }
+  // Normalize line endings before YAML parse and any line-count logic downstream.
+  const fmBlock = match[1]!.replace(/\r\n/g, '\n')
+  const body = (match[2] ?? '').replace(/\r\n/g, '\n')
   let fm: Frontmatter | null = null
   try {
-    fm = parseYaml(match[1]!) as Frontmatter
+    fm = parseYaml(fmBlock) as Frontmatter
   } catch (err) {
     return {
       path: relPath,
       abs,
       frontmatter: null,
-      body: match[2] ?? '',
+      body,
       parseError: (err as Error).message,
     }
   }
-  return { path: relPath, abs, frontmatter: fm, body: match[2] ?? '' }
+  return { path: relPath, abs, frontmatter: fm, body }
 }
 
 const FRONTMATTERLESS = new Set(['.wiki/index.md', '.wiki/log.md'])
