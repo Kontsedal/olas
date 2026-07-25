@@ -409,7 +409,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   call `mutate`.
 - [x] `subscription.refetch()` rejects with `AbortError` on supersede (`use.ts:85-89`) —
   never reject on supersede; resolve with the superseding fetch's outcome or resolve void.
-- [ ] Focus double-fire: `focus` + `visibilitychange` both trigger
+- [x] Focus double-fire: `focus` + `visibilitychange` both trigger
   (`focus-online.ts:44-52`) and `triggerEventRefetch` doesn't check `isFetching`
   (`client.ts:206-211`) — add the isFetching join (T3.2's helper) and debounce the two
   events into one (e.g. microtask flag).

@@ -325,3 +325,36 @@ describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
     root.dispose()
   })
 })
+
+// R-Q3.9 (T3.9) — a tab-return fires BOTH `focus` and `visibilitychange`, which
+// both trigger the focus-refetch fan-out. They must coalesce into a single
+// refetch (microtask debounce), and triggerEventRefetch must join an in-flight
+// fetch rather than abort+restart it.
+describe('focus double-fire coalesces to one refetch (R-Q3.9)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  test('focus + visibilitychange in one tick refetch once, not twice', async () => {
+    let count = 0
+    const q = defineQuery({
+      key: () => ['dblfire'],
+      fetcher: async () => ++count,
+      refetchOnWindowFocus: true,
+      staleTime: 0, // always stale → focus refetches
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' })
+    window.dispatchEvent(new Event('focus'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Both events collapse into a single refetch (was 3 before: two fires, the
+    // second aborting + restarting the first).
+    expect(count).toBe(2)
+    root.dispose()
+  })
+})
