@@ -134,6 +134,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
   private staleTimer: ReturnType<typeof setTimeout> | null = null
+  /** Set by `markStale()` (invalidate without fetch). See `Entry.forcedStale`. */
+  private forcedStale = false
   private snapshots: Array<{
     id: number
     prev: TPage[]
@@ -331,6 +333,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         this.lastUpdatedAt.set(Date.now())
         this.isStale.set(this.staleTime === 0)
       })
+      this.forcedStale = false // fresh pages clear a prior markStale() (T3.9)
       if (this.staleTime > 0) this.scheduleStaleness()
       this.onSuccessData?.(this.pages.peek())
       return finalPages[0] as TPage
@@ -520,12 +523,19 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     return this.startFetch()
   }
 
-  invalidate(): Promise<TPage> {
+  /** Force stale without fetching — see `Entry.markStale` (spec §5.7, T3.9). */
+  markStale(): void {
+    if (this.disposed) return
     if (this.staleTimer != null) {
       clearTimeout(this.staleTimer)
       this.staleTimer = null
     }
+    this.forcedStale = true
     this.isStale.set(true)
+  }
+
+  invalidate(): Promise<TPage> {
+    this.markStale()
     return this.startFetch()
   }
 
@@ -677,6 +687,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }
 
   isStaleNow(): boolean {
+    if (this.forcedStale) return true
     const last = this.lastUpdatedAt.peek()
     if (last === undefined) return true
     return Date.now() - last >= this.staleTime

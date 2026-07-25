@@ -58,6 +58,8 @@ A retried fetch is one logical fetch to the consumer — `isFetching` stays true
 
 `isStale: Signal<boolean>`, NOT a computed. Why: `Date.now() - lastUpdatedAt > staleTime` would only re-evaluate when `lastUpdatedAt` changes; the passage of time alone wouldn't trigger anything. Instead, we set up a `setTimeout` on each successful fetch that flips `isStale` to true after `staleTime`. `invalidate()` clears the timer and flips immediately. See `../pitfalls/isstale-needs-timer.md`.
 
+`markStale()` forces the entry stale **without fetching**: it clears the timer, sets `isStale`, and sets a private `forcedStale` flag so `isStaleNow()` returns true until the next successful fetch clears it. `invalidate()` = `markStale()` + `startFetch()`. `client.invalidate` calls `markStale()` alone for a subscriber-less entry, so the next subscriber's staleness check refetches instead of waking data nobody watches (spec §5.7, T3.9). `InfiniteEntry` mirrors both.
+
 ## Snapshot stack (optimistic updates, §6.4)
 
 `setData(updater, opts?)` defaults to the **tracked** (optimistic) path: it records `{ id, prev: previousData, live: true }`, pushes onto `this.snapshots`, flips `hasPendingMutations`, and returns a working `{ rollback, finalize }` (`Snapshot`). `finalize` (called by mutation `onSuccess`) drops the snapshot from the live set without reverting — `hasPendingMutations` clears when no live snapshots remain.
