@@ -1,5 +1,14 @@
 # @olas/example-reader-ssr
 
+## 0.0.7
+
+### Patch Changes
+
+- Updated dependencies [ba0b9cb]
+  - @kontsedal/olas-core@0.1.0
+  - @kontsedal/olas-react@1.0.0
+  - @kontsedal/olas-persist@1.0.0
+
 ## 0.0.6
 
 ### Patch Changes
