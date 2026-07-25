@@ -630,12 +630,15 @@ type Mutation<V, R> = {
   run(vars: V): Promise<R>
   reset(): void
   readonly isPending: ReadSignal<boolean>
+  readonly status: ReadSignal<'idle' | 'pending' | 'success' | 'error'>
   readonly error: ReadSignal<unknown | undefined>
   readonly lastVariables: ReadSignal<V | undefined>
-  readonly lastResult: ReadSignal<R | undefined>
+  readonly data: ReadSignal<R | undefined>
   // ... see spec §20.5 for the full surface
 }
 ```
+
+`status` is the latest run's outcome; React's `useMutation` derives `isIdle` / `isSuccess` / `isError` from it, so a `void` mutation still reports `isSuccess` after it resolves (it isn't stuck on `isIdle`).
 
 ### Type: `Snapshot`
 

@@ -449,6 +449,7 @@ export function useMutation<V, R>(
         subscribeOnChange(mutation.data, bump),
         subscribeOnChange(mutation.error, bump),
         subscribeOnChange(mutation.isPending, bump),
+        subscribeOnChange(mutation.status, bump),
         subscribeOnChange(mutation.lastVariables, bump),
       ]
       return () => {
@@ -478,19 +479,17 @@ export function useMutation<V, R>(
     [mutation],
   )
 
-  const status =
-    mutation.error.peek() !== undefined
-      ? 'error'
-      : mutation.data.peek() !== undefined
-        ? 'success'
-        : 'idle'
+  // Derive from the core `status` signal, NOT from `data` — a `void` mutation
+  // resolves `undefined`, so the old `data !== undefined` heuristic left
+  // `isSuccess` false forever and `isIdle` true (T4.2).
+  const status = mutation.status.peek()
 
   return {
     data: mutation.data.peek(),
     error: mutation.error.peek(),
     isPending: mutation.isPending.peek(),
     lastVariables: mutation.lastVariables.peek(),
-    isIdle: status === 'idle' && !mutation.isPending.peek(),
+    isIdle: status === 'idle',
     isSuccess: status === 'success',
     isError: status === 'error',
     mutate,

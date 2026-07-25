@@ -4,7 +4,7 @@ import { batch, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
 import { registerMutationById } from './plugin'
-import type { RetryDelay, RetryPolicy, Snapshot } from './types'
+import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 /**
  * How concurrent calls to `mutation.run(...)` interact:
@@ -148,8 +148,17 @@ export type Mutation<V, R> = {
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
   isPending: ReadSignal<boolean>
+  /**
+   * Outcome of the latest run: `'idle'` (never run / reset), `'pending'`
+   * (in flight), `'success'`, `'error'`. Distinct from `isPending` (which
+   * stays true while ANY run is in flight, for parallel mode) and from `data`
+   * — a `void` mutation still reports `status: 'success'` after it resolves.
+   * A superseded `latest-wins` run does NOT flip status to `'error'`; the
+   * superseder owns the final status.
+   */
+  status: ReadSignal<AsyncStatus>
   lastVariables: ReadSignal<V | undefined>
-  /** Clear `data` / `error` / `lastVariables` without aborting in-flight runs. */
+  /** Clear `data` / `error` / `lastVariables` / `status` without aborting in-flight runs. */
   reset(): void
   /** Abort in-flight runs and tear down. Idempotent. Called by the parent controller's dispose. */
   dispose(): void
@@ -190,6 +199,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   readonly data: Signal<R | undefined> = signal(undefined)
   readonly error: Signal<unknown | undefined> = signal(undefined)
   readonly isPending: Signal<boolean> = signal(false)
+  readonly status: Signal<AsyncStatus> = signal<AsyncStatus>('idle')
   readonly lastVariables: Signal<V | undefined> = signal(undefined)
 
   private inflight = new Set<RunHandle>()
@@ -302,6 +312,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       // rejected run promise (mirrors the mutate-failure path). No snapshot
       // exists yet, so nothing to roll back; `mutate` is never called. T3.9.
       this.error.set(err)
+      this.status.set('error')
       if (__DEV__) this.emit({ type: 'mutation:error', error: err })
       this.safeCall(() => this.spec.onError?.(err, vars, undefined), 'mutation')
       this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
@@ -313,6 +324,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     this.inflightCounter?.update((n) => n + 1)
     batch(() => {
       this.isPending.set(true)
+      this.status.set('pending')
       this.lastVariables.set(vars)
     })
 
@@ -347,6 +359,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       batch(() => {
         this.data.set(result)
         this.error.set(undefined)
+        this.status.set('success')
       })
       if (__DEV__) this.emit({ type: 'mutation:success', result })
       this.safeCall(() => this.spec.onSuccess?.(result, vars), 'mutation')
@@ -369,6 +382,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         throw err
       }
       this.error.set(err)
+      this.status.set('error')
       if (__DEV__) this.emit({ type: 'mutation:error', error: err })
       this.safeCall(() => this.spec.onError?.(err, vars, snapshot), 'mutation')
       // Auto-rollback after the user's onError. The wrapped snapshot is
@@ -473,6 +487,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       this.error.set(undefined)
       this.lastVariables.set(undefined)
       this.isPending.set(false)
+      this.status.set('idle')
     })
   }
 

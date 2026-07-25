@@ -437,3 +437,74 @@ describe('ctx.mutation — retry', () => {
     root.dispose()
   })
 })
+
+// T4.2 — `Mutation.status` signal. `isSuccess`/`isIdle`/`isError` derive from it
+// in React, so a `void` mutation (data always undefined) still reports success.
+describe('ctx.mutation — status signal (T4.2)', () => {
+  test('parallel: idle → pending → success', async () => {
+    const d = deferred<string>()
+    const def = defineController((ctx) => ({ m: ctx.mutation({ mutate: async () => d.promise }) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.m.status.value).toBe('idle')
+    const p = root.m.run()
+    expect(root.m.status.value).toBe('pending')
+    d.resolve('ok')
+    await p
+    expect(root.m.status.value).toBe('success')
+    root.dispose()
+  })
+
+  test('a void mutation reports status success (data stays undefined)', async () => {
+    const def = defineController((ctx) => ({ m: ctx.mutation({ mutate: async () => {} }) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await root.m.run()
+    expect(root.m.status.value).toBe('success')
+    expect(root.m.data.value).toBeUndefined()
+    root.dispose()
+  })
+
+  test('a throwing mutation → status error', async () => {
+    const def = defineController((ctx) => ({
+      m: ctx.mutation({
+        mutate: async () => {
+          throw new Error('boom')
+        },
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await root.m.run().catch(() => {})
+    expect(root.m.status.value).toBe('error')
+    root.dispose()
+  })
+
+  test('latest-wins: a superseded run does not flip status to error', async () => {
+    const dB = deferred<string>()
+    const def = defineController((ctx) => ({
+      m: ctx.mutation({
+        mutate: async (v: 'a' | 'b') =>
+          v === 'b' ? dB.promise : new Promise<string>(() => {}), // 'a' hangs until aborted
+        concurrency: 'latest-wins',
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    const pA = root.m.run('a').catch(() => {}) // superseded by B
+    const pB = root.m.run('b')
+    expect(root.m.status.value).toBe('pending')
+    dB.resolve('B')
+    await pB
+    await pA
+    // B's success owns the terminal status; A's supersede must not overwrite it.
+    expect(root.m.status.value).toBe('success')
+    root.dispose()
+  })
+
+  test('reset → status idle', async () => {
+    const def = defineController((ctx) => ({ m: ctx.mutation({ mutate: async () => 'x' }) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await root.m.run()
+    expect(root.m.status.value).toBe('success')
+    root.m.reset()
+    expect(root.m.status.value).toBe('idle')
+    root.dispose()
+  })
+})

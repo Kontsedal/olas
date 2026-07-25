@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../flows/mutation-concurrency.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-05-21
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -27,11 +27,14 @@ type Mutation<V, R> = {
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
   isPending: ReadSignal<boolean>
+  status: ReadSignal<'idle' | 'pending' | 'success' | 'error'>
   lastVariables: ReadSignal<V | undefined>
   reset(): void
   dispose(): void
 }
 ```
+
+`status` (T4.2) is the outcome of the latest run — the thing React's `useMutation` derives `isIdle`/`isSuccess`/`isError` from, so a `void` mutation (which resolves `undefined`) still reports `'success'` rather than looking stuck at `'idle'` (the old React heuristic read `data !== undefined`). Distinct from `isPending` (true while *any* run is in flight, parallel mode). A superseded `latest-wins` run does NOT flip `status` to `'error'` — the superseder owns it.
 
 ## Concurrency modes
 
@@ -47,17 +50,17 @@ type Mutation<V, R> = {
 1. onMutate(vars) → snapshot
 2. handle = { abort, snapshot }; inflight.add(handle)
 3. inflightCounter.update(n => n+1)   # routes to client.mutationsInflight$
-4. isPending = true; lastVariables = vars
+4. isPending = true; status = 'pending'; lastVariables = vars
 5. try:
    result = await raceAbort(runWithRetry(vars, abort.signal), abort.signal)
    if aborted/disposed: snapshot?.rollback(); throw AbortError
-   data = result; error = undefined
+   data = result; error = undefined; status = 'success'
    onSuccess(result, vars)
    onSettled(result, undefined, vars)
    return result
 6. catch err:
-   if AbortError or signal.aborted: snapshot?.rollback(); throw   # supersede — no error/onError/onSettled
-   error = err
+   if AbortError or signal.aborted: snapshot?.rollback(); throw   # supersede — no error/status/onError/onSettled
+   error = err; status = 'error'
    onError(err, vars, snapshot)
    onSettled(undefined, err, vars)
    throw
@@ -81,4 +84,4 @@ Notes:
 
 Aborts every inflight handle. Drains the serial queue with `AbortError`. Sets `disposed: true`. Idempotent.
 
-`reset()` is similar but doesn't mark disposed — it aborts inflight, drains the queue, and clears `data`/`error`/`lastVariables`/`isPending`. The mutation remains usable.
+`reset()` is similar but doesn't mark disposed — it aborts inflight, drains the queue, and clears `data`/`error`/`lastVariables`/`isPending` and sets `status` back to `'idle'`. The mutation remains usable.
