@@ -418,11 +418,11 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   Check SPEC §5 wording and update.
 - [ ] Streaming `flush()` unguarded `JSON.stringify` (`streaming.ts:144`) — try/catch;
   on failure dev-warn + skip that entry rather than corrupting the stream.
-- [ ] `waitForIdle` hangs if racing dispose — disposed entries keep `isFetching: true`
-  (`entry.ts:454-479`) — reset `isFetching` to false in entry dispose.
-- [ ] Default retry has no backoff (`entry.ts:101-102`) — keep `retry: 0` default, but
+- [x] `waitForIdle` hangs if racing dispose — disposed entries keep `isFetching: true`
+  (`entry.ts:454-479`) — reset `isFetching` to false in entry dispose. (Also InfiniteEntry.)
+- [x] Default retry has no backoff (`entry.ts:101-102`) — keep `retry: 0` default, but
   when `retry > 0` and no `retryDelay` given, default to exponential:
-  `min(1000 * 2 ** attempt, 30_000)`.
+  `min(1000 * 2 ** attempt, 30_000)`. (Also InfiniteEntry via `computeRetryDelay`.)
 - [ ] Duplicate `queryId` registration replaces silently (`plugin.ts:215-217`) —
   dev-warn.
 - [ ] `_unregisterMutationById` is documented "not exported" but exported

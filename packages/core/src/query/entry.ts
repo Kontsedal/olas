@@ -65,7 +65,7 @@ export class Entry<T> {
   fetcherProvider: () => (signal: AbortSignal) => Promise<T>
   private staleTime: number
   private retry: RetryPolicy
-  private retryDelay: RetryDelay
+  private retryDelay: RetryDelay | undefined
   private networkMode: NetworkMode
   private structuralShareEnabled: boolean
   private currentFetchId = 0
@@ -102,7 +102,9 @@ export class Entry<T> {
     this.fetcherProvider = options.fetcher
     this.staleTime = options.staleTime ?? 0
     this.retry = options.retry ?? 0
-    this.retryDelay = options.retryDelay ?? 1000
+    // Left undefined when not given so `computeDelay` can pick the exponential
+    // default only when retries are actually enabled (T3.9).
+    this.retryDelay = options.retryDelay
     this.networkMode = options.networkMode ?? 'online'
     this.structuralShareEnabled = options.structuralShare ?? true
     this.events = options.events ?? {}
@@ -262,6 +264,10 @@ export class Entry<T> {
 
   private computeDelay(attempt: number): number {
     const d = this.retryDelay
+    // Default to exponential backoff (capped at 30s) when `retry > 0` but no
+    // `retryDelay` was given — a constant 1s default hammered a flapping
+    // backend on every attempt (T3.9). Explicit number/function still wins.
+    if (d === undefined) return Math.min(1000 * 2 ** attempt, 30_000)
     return typeof d === 'function' ? d(attempt) : d
   }
 
@@ -545,6 +551,13 @@ export class Entry<T> {
     }
     this.currentAbort?.abort()
     this.currentAbort = null
+    // A disposed entry is idle. Reset the in-flight flags so `waitForIdle`
+    // (which waits on `isFetching`) can't hang when a fetch races dispose — the
+    // aborted fetcher's applySuccess/applyFailure never runs to clear them (T3.9).
+    batch(() => {
+      this.isFetching.set(false)
+      this.isLoading.set(false)
+    })
     if (this.reconnectUnsub !== null) {
       this.reconnectUnsub()
       this.reconnectUnsub = null
