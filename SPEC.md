@@ -377,6 +377,7 @@ type QuerySubscription<T> = {
 
   refetch: () => Promise<T>
   reset: () => void                   // clear error+status, keep data; no fetch
+  cancel: () => void                  // abort in-flight fetch; keep data; settle status
   firstValue: () => Promise<T>        // resolves on first success — for SSR / navigation guards
 }
 ```
@@ -428,6 +429,8 @@ Every fetcher receives an `AbortSignal` as its last argument. The cache aborts a
 
 Fetchers are responsible for passing the signal to their I/O (`fetch(url, { signal })`, axios cancel tokens, etc.). If a fetcher ignores it, the cache will simply discard the eventual result.
 
+**Explicit cancellation.** `query.cancel(...keyArgs)` (and `subscription.cancel()` for the bound entry) aborts the in-flight fetch on demand: it supersedes the request so its result can never land, restores a settled status (`'success'` if data exists, else `'idle'`), and leaves `data` untouched. `query.cancelAll()` cancels every keyed entry of the query. The canonical use is the optimistic-write recipe (§6.4): cancel outgoing refetches *before* an optimistic `setData`, so a slower in-flight response can't land and clobber the optimistic value. Complementarily, on a **successful** fetch any live optimistic snapshots are rebased onto the fresh result, so a later rollback restores server truth rather than resurrecting pre-fetch data.
+
 ### 5.6 Race conditions
 
 Only the **latest** fetch's result is applied to a cache entry. If `refetch` is called three times in quick succession, results from the first two are discarded even if they resolve after the third. Errors from outdated fetches are also dropped.
@@ -442,6 +445,8 @@ Invalidation and write methods hang directly off the query value (no DI needed):
 userQuery.invalidate(id) // mark stale + refetch if subscribed
 userQuery.invalidateAll() // mark stale + refetch every entry for this query (TanStack-style)
 userQuery.setData(id, (u) => ({ ...u, name: 'X' })) // optimistic write, returns snapshot
+userQuery.cancel(id) // abort the in-flight fetch for this key (optimistic recipe, §6.4)
+userQuery.cancelAll() // abort in-flight fetches for every entry of this query
 userQuery.prefetch(id) // fire-and-forget warmup
 ```
 
@@ -619,6 +624,8 @@ Each `Snapshot` captures the entry's value at the moment its `setData` ran — a
 - Rolling back a **non-top** snapshot does **not** rewrite the currently-displayed value — a middle layer can't be removed cleanly without replaying the updaters stacked above it. Instead that layer's baseline is spliced out of the chain and threaded down onto the next layer ("chain-splice"). The visible value keeps every still-pending optimistic delta until the top layer settles.
 
 The guarantee this buys: **once every optimistic layer has rolled back — in any order — the data returns to the original pre-mutation value.** Before the chain-splice, an out-of-order rollback (A applies, B applies, A fails first, then B fails) restored B's stale baseline last and resurrected A's delta, corrupting the final state.
+
+**Fetch success rebases live snapshots.** When a fetch resolves while optimistic snapshots are live, each snapshot's captured baseline is updated to the fresh server value. A subsequent rollback therefore restores *server truth*, not the pre-fetch value — otherwise a refetch landing mid-mutation, followed by that mutation failing, would resurrect stale pre-fetch data. Pair this with `query.cancel(...)` (§5.5): cancelling outgoing refetches *before* an optimistic write prevents a stale response from overwriting it in the first place.
 
 This is snapshot-based rollback, not full rebasing: it does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For genuinely conflicting updates (two mutations writing the same field), prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
 

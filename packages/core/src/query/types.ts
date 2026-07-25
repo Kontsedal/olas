@@ -200,12 +200,24 @@ export type Query<Args extends unknown[], T> = {
   invalidateAll(): void
   /** Patch the current data for a specific key. Returns a `Snapshot` for rollback. */
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
+  /**
+   * Cancel the in-flight fetch for a specific key (if any). Aborts + supersedes
+   * it, restores a settled status (`'success'` if data exists, else `'idle'`),
+   * and does NOT touch data. Use before an optimistic `setData` so an
+   * outgoing refetch's stale response can't clobber it (spec §5, §6.4).
+   */
+  cancel(...args: Args): void
+  /** Cancel in-flight fetches for every keyed entry of this query. */
+  cancelAll(): void
   /** Eagerly fetch into the cache without subscribing. */
   prefetch(...args: Args): Promise<T>
 }
 
-/** What `ctx.use(query, ...)` returns. Alias of `AsyncState<T>`. */
-export type QuerySubscription<T> = AsyncState<T>
+/** What `ctx.use(query, ...)` returns — `AsyncState<T>` plus `cancel()`. */
+export type QuerySubscription<T> = AsyncState<T> & {
+  /** Cancel this subscription's in-flight fetch (if any). See `Query.cancel`. */
+  cancel: () => void
+}
 
 /**
  * Options passed to `ctx.use(query, opts)` to control the subscription

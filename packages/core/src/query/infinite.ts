@@ -74,6 +74,11 @@ export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
   invalidate(...args: Args): void
   invalidateAll(): void
   setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot
+  /** Cancel the in-flight fetch (initial/refetch or paging) for a key. See
+   *  `Query.cancel` (spec §5, §6.4). */
+  cancel(...args: Args): void
+  /** Cancel in-flight fetches for every keyed entry of this infinite query. */
+  cancelAll(): void
   prefetch(...args: Args): Promise<TPage>
 }
 
@@ -94,6 +99,8 @@ export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
   isFetchingPreviousPage: ReadSignal<boolean>
   fetchNextPage: () => Promise<void>
   fetchPreviousPage: () => Promise<void>
+  /** Cancel this subscription's in-flight fetch (if any). See `Query.cancel`. */
+  cancel: () => void
 }
 
 /**
@@ -448,6 +455,23 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     if (this.disposed) return
     batch(() => {
       this.error.set(undefined)
+      this.status.set(this.pages.peek().length > 0 ? 'success' : 'idle')
+    })
+  }
+
+  /** Cancel an in-flight fetch (initial/refetch or paging) without touching
+   *  pages. Supersedes + aborts the current request, then restores a settled
+   *  status. No-op when idle. Mirrors `Entry.cancel` (spec §5, §6.4, T3.4). */
+  cancel(): void {
+    if (this.disposed || !this.isFetching.peek()) return
+    this.currentFetchId += 1
+    this.currentAbort?.abort()
+    this.currentAbort = null
+    batch(() => {
+      this.isFetching.set(false)
+      this.isLoading.set(false)
+      this.isFetchingNextPage.set(false)
+      this.isFetchingPreviousPage.set(false)
       this.status.set(this.pages.peek().length > 0 ? 'success' : 'idle')
     })
   }

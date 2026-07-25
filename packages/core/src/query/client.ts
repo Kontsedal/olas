@@ -1036,6 +1036,20 @@ export class QueryClient {
     }
   }
 
+  cancel<Args extends unknown[]>(query: Query<Args, any>, args: Args): void {
+    const internal = query as AnyQuery
+    const map = this.maps.get(internal)
+    if (!map) return
+    const hash = stableHash(internal.__spec.key(...args))
+    map.get(hash)?.entry.cancel()
+  }
+
+  cancelAll(query: Query<any, any>): void {
+    const map = this.maps.get(query as AnyQuery)
+    if (!map) return
+    for (const entry of map.values()) entry.entry.cancel()
+  }
+
   setData<Args extends unknown[], T>(
     query: Query<Args, T>,
     args: Args,
@@ -1139,6 +1153,20 @@ export class QueryClient {
       })
       this.emitInvalidate(internal, entry.keyArgs, 'infinite')
     }
+  }
+
+  cancelInfinite<Args extends unknown[]>(query: InfiniteQuery<Args, any, any>, args: Args): void {
+    const internal = query as AnyInfiniteQuery
+    const map = this.infiniteMaps.get(internal)
+    if (!map) return
+    const hash = stableHash(internal.__spec.key(...args))
+    map.get(hash)?.entry.cancel()
+  }
+
+  cancelAllInfinite(query: InfiniteQuery<any, any, any>): void {
+    const map = this.infiniteMaps.get(query as AnyInfiniteQuery)
+    if (!map) return
+    for (const entry of map.values()) entry.entry.cancel()
   }
 
   setInfiniteData<Args extends unknown[], TPage>(

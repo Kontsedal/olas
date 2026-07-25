@@ -1325,3 +1325,83 @@ describe('regression: infinite paging over a mid-flight refetch un-wedges status
     entry.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-Q3.4 (T3.4) — cancellation API + snapshot rebase on fetch success. There
+// was no way to cancel an in-flight fetch, so the canonical optimistic recipe
+// ("cancel outgoing refetches, then setData") was unwritable and a stale
+// response could clobber an optimistic write. Separately, a fetch landing
+// during an optimistic mutation left the snapshot's baseline at the
+// pre-fetch value, so a later rollback resurrected pre-refetch data.
+// ---------------------------------------------------------------------------
+describe('regression: query cancellation + snapshot rebase (R-Q3.4)', () => {
+  const abortableEntry = (d: ReturnType<typeof deferred<number>>, initialData?: number) =>
+    new Entry<number>({
+      fetcher: () => (signal) =>
+        new Promise<number>((resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          d.promise.then(resolve, reject)
+        }),
+      initialData,
+    })
+
+  test('cancel() mid-fetch: no data write, status restored, no unhandled rejection', async () => {
+    const d = deferred<number>()
+    const entry = abortableEntry(d, 1)
+    const p = entry.refetch().catch(() => 'caught')
+    expect(entry.isFetching.peek()).toBe(true)
+
+    entry.cancel()
+    expect(entry.isFetching.peek()).toBe(false)
+    expect(entry.status.peek()).toBe('success') // data present → success
+    expect(entry.data.peek()).toBe(1)
+
+    // A late (superseded) response must not write.
+    d.resolve(999)
+    await flush()
+    expect(entry.data.peek()).toBe(1)
+    await expect(p).resolves.toBe('caught') // refetch rejected + caught
+    entry.dispose()
+  })
+
+  test('cancel() with no data restores status to idle', async () => {
+    const d = deferred<number>()
+    const entry = abortableEntry(d) // no initialData → idle
+    entry.refetch().catch(() => {})
+    entry.cancel()
+    expect(entry.status.peek()).toBe('idle')
+    entry.dispose()
+  })
+
+  test('cancel-then-setData: the optimistic value survives a stale response', async () => {
+    const d = deferred<number>()
+    const entry = abortableEntry(d, 1)
+    entry.refetch().catch(() => {})
+    // Canonical recipe: cancel the outgoing refetch, THEN write optimistically.
+    entry.cancel()
+    entry.setData(() => 999)
+    // The in-flight response lands late — must be superseded, not clobber 999.
+    d.resolve(500)
+    await flush()
+    expect(entry.data.peek()).toBe(999)
+    entry.dispose()
+  })
+
+  test('fetch success rebases live snapshots → rollback lands on server truth', async () => {
+    const d = deferred<number>()
+    const entry = abortableEntry(d, 0)
+    // Optimistic write captures baseline 0.
+    const snap = entry.setData(() => 5)
+    expect(entry.data.peek()).toBe(5)
+    // A refetch lands server truth 100 while the mutation is still pending.
+    entry.refetch().catch(() => {})
+    d.resolve(100)
+    await flush()
+    expect(entry.data.peek()).toBe(100)
+    // Mutation fails → rollback. Must stay at server truth 100, not revert to 0.
+    snap.rollback()
+    expect(entry.data.peek()).toBe(100)
+    expect(entry.hasPendingMutations.peek()).toBe(false)
+    entry.dispose()
+  })
+})
