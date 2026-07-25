@@ -8,12 +8,12 @@ Written 2026-07-25; updated after completing Phase 5 (T5.1–T5.3).
 ## TL;DR
 
 - Working on branch **`remediation`** (off `main`). All work is committed.
-- **Phases 0–5 DONE + T6.1, T6.2 DONE** — 36 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8,
-  T3.1–T3.9, T4.1–T4.7, T5.1–T5.3, T6.1–T6.2). Two `[?]` items along the way: T2.8 pathKey
+- **Phases 0–5 DONE + T6.1, T6.2, T6.3 DONE** — 37 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8,
+  T3.1–T3.9, T4.1–T4.7, T5.1–T5.3, T6.1–T6.3). Two `[?]` items along the way: T2.8 pathKey
   (could-not-reproduce), T4.7 disabled+suspense (could-not-implement-cleanly → BACKLOG).
-- Pipeline is **green**: `pnpm test` → 736/736, typecheck clean, biome lint clean,
+- Pipeline is **green**: `pnpm test` → 742/742, typecheck clean, biome lint clean,
   `pnpm wiki:lint` 0 errors.
-- **Next task: T6.3** (Phase 6 — `@kontsedal/olas-devtools`). See "Next up" below; the full
+- **Next task: T6.4** (Phase 6 — `@kontsedal/olas-cross-tab`). See "Next up" below; the full
   task list lives in `REMEDIATION.md` (source of truth).
 
 ## Read this first (resume order)
@@ -106,21 +106,31 @@ must be green, then add a `## [date] ingest | REMEDIATION.md phase N` entry to `
 | 7 — delivery/docs/release | T7.1–T7.3 | ⬜ |
 | 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ |
 
-**Next up — T6.3** (`packages/devtools/`): **devtools — false `[Circular]` rendering; unbounded
-tree growth.** These tests need **jsdom + React** (the devtools package renders components —
-unlike core/persist/mutation-queue). Sub-items (REMEDIATION lines ~686-700):
-- `JsonView` (`JsonView.tsx:57-62`) cycle guard uses a **shared** `WeakSet` populated during
-  render and never cleared — collapse→re-expand shows `[Circular]` for real data; under
-  `<StrictMode>` EVERYTHING renders `[Circular]`. Fix: build the seen-set **per render pass**
-  (local / passed down the recursion), never module/instance state. Test with StrictMode.
-- Disposed controllers accumulate forever (`store.ts`) — prune disposed subtrees beyond a cap
-  (default ~200 retained, configurable).
-- Mutation durations pair `run`→`success` by `path#name` (`store.ts`) — include a **runId** in
-  the pairing key so concurrent runs don't overwrite timestamps.
-- Debounce the inspector filter input (`DevtoolsPanel.tsx`) — it `JSON.stringify`s every cache
-  payload per keystroke on top of the 800ms poll.
-Docs: `.wiki/modules/devtools-panel.md` + devtools README if one exists. Then T6.4 (cross-tab),
-T6.5 (zod), T6.6 (router), T6.7 (realtime) finish Phase 6 → phase gate + `.wiki/log.md` ingest.
+**Next up — T6.4** (`packages/cross-tab/src/plugin.ts` + core `client.ts:612,719`): **cross-tab —
+dead config + receive-side hygiene.** Sub-items (REMEDIATION lines ~701-713):
+- `crossTab: 'infinite' | 'both'` broadcasts payloads NO peer can apply (core's
+  `applyRemoteSetData`/`applyRemoteInvalidate` early-return for non-`'query'` defs). **Remove
+  the `'infinite' | 'both'` option values** at the type level and **dev-warn** if passed; add a
+  BACKLOG entry for infinite-query cross-tab support. Do NOT silently no-op.
+- Apply the `shouldBroadcast` filter on **RECEIVE** as well as send, so a tab ignores messages
+  for queries it wouldn't broadcast.
+- Document (README) the conflict model honestly: last-delivery-wins per tab, no arbitration;
+  simultaneous writes in two tabs can diverge permanently. Recommend server-refetch
+  (`invalidate`) for authoritative sync.
+Docs: cross-tab README + `.wiki/modules/cross-tab.md`. Then T6.5 (zod), T6.6 (router),
+T6.7 (realtime) finish Phase 6 → phase gate + `.wiki/log.md` ingest.
+
+**T6.3 done** (`c4eb61e`): JsonView cycle guard = immutable ancestors-only set per level;
+`store.ts` prunes disposed subtrees past `maxDisposedNodes` (default 200) + FIFO mutation-start
+queue per `path#name` (the debug bus has no per-run id — a real runId would be a core change,
+noted `[x]` w/ a note in REMEDIATION); 150ms-debounced panel filter. Delegated to a fork +
+independently gate-verified.
+
+**Delegation note:** T6.3 was executed by a `fork` subagent (inherits full context → follows
+the same test-first workflow + commit conventions) and independently gate-verified afterward.
+A good pattern for the remaining satellite tasks when context is tight — instruct the fork NOT
+to touch `handoff.md` / `.wiki/log.md`, then verify `pnpm test` + `biome lint .` + `wiki:lint`
+before trusting it.
 
 **Phase 6 notes (satellite packages — leaving core):**
 - Phase 6 = T6.1–T6.7, one package each: persist (T6.1), mutation-queue (T6.2), devtools
