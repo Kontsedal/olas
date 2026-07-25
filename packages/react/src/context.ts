@@ -6,7 +6,8 @@ import {
   type ReactNode,
   useContext,
   useEffect,
-  useMemo,
+  useReducer,
+  useRef,
 } from 'react'
 import { installStreamingIntake } from './streaming'
 
@@ -119,9 +120,13 @@ export function createOlasContext<Api>(displayName?: string): {
  * </HydrationBoundary>
  * ```
  *
- * The root is memoized against `def` and `options` reference equality, so
- * the boundary must be mounted once at the tree root. To replace the root
- * on navigation, re-key the component or wrap in your own factory.
+ * The boundary **owns** the root: it is created lazily during the first render
+ * (in a ref, so `createRoot`'s side effects don't run twice under StrictMode)
+ * and **disposed on unmount**. `options` is read **once** on mount — a new
+ * inline `options={{...}}` on a parent re-render is intentionally ignored (so
+ * the example above doesn't discard cache state every render). The root is
+ * recreated only when the `def` identity changes; to swap it on navigation,
+ * pass a different `def` (or re-key the component).
  *
  * **SSR contract.** During server rendering, callers typically construct
  * a per-request root inline and pass it to `<OlasProvider root={...} />`.
@@ -149,15 +154,55 @@ export function HydrationBoundary<Api extends object>(props: {
   children: ReactNode
 }): ReactNode {
   const { def, options, children, streaming = true } = props
-  // Construct once per (def, options) identity. The caller controls
-  // identity — pass stable refs for stable roots, mutate to remount.
-  const root = useMemo(() => createRoot(def, options as any) as Root<Api>, [def, options])
-  // Drain the streaming intake queue + install a live forwarder. The
-  // first mount per page picks up everything the server flushed before
-  // the bundle loaded; subsequent stream pushes go straight through.
+
+  const rootRef = useRef<Root<Api> | null>(null)
+  // `options` is captured ONCE (first mount) so a new inline literal on a
+  // parent re-render can't recreate the root and discard its cache.
+  const optionsRef = useRef(options)
+  const defRef = useRef(def)
+  const [, forceRender] = useReducer((n: number) => n + 1, 0)
+
+  // `def` identity change → dispose the old root; a fresh one is created below.
+  if (rootRef.current !== null && defRef.current !== def) {
+    rootRef.current.dispose()
+    rootRef.current = null
+  }
+  // Create lazily during render. `createRoot` is side-effectful (fetches,
+  // timers, focus/online listeners), so it must NOT run in `useMemo` /
+  // `useState`-initializer — StrictMode re-invokes those and orphans a live
+  // root. A ref mutated in render creates exactly one root across StrictMode's
+  // double render.
+  if (rootRef.current === null) {
+    rootRef.current = createRoot(def, optionsRef.current as any) as Root<Api>
+    defRef.current = def
+  }
+  const root = rootRef.current
+
+  // Dispose on unmount. StrictMode simulates mount→unmount→remount but does NOT
+  // re-run render between the two — so when its cleanup disposes + nulls the ref
+  // below, the remount setup must recreate a fresh root and force a render, or
+  // the Provider would hand descendants a disposed root. A dev-only
+  // double-construct is acceptable (matches TanStack).
+  useEffect(() => {
+    if (rootRef.current === null) {
+      rootRef.current = createRoot(defRef.current, optionsRef.current as any) as Root<Api>
+      forceRender()
+    }
+    return () => {
+      rootRef.current?.dispose()
+      rootRef.current = null
+    }
+  }, [])
+
+  // Drain the streaming intake queue + install a live forwarder on the current
+  // root. Read `rootRef.current` (not the closed-over `root`) so a StrictMode
+  // remount installs on the fresh root, never a disposed one.
   useEffect(() => {
     if (!streaming) return undefined
-    return installStreamingIntake(root)
+    const active = rootRef.current
+    if (active === null) return undefined
+    return installStreamingIntake(active)
   }, [root, streaming])
+
   return createElement(OlasContext.Provider, { value: root }, children)
 }

@@ -101,6 +101,14 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 
 `useSuspendOnHidden` is the same idea keyed off `document.visibilityState`. Guards `typeof document !== 'undefined'` so it's safe to import from SSR code (no-op on the server).
 
+## `HydrationBoundary` — root ownership (T4.1)
+
+Unlike `<OlasProvider>` (which takes a root created outside React), `HydrationBoundary` **creates and owns** the root for client-side SSR hydration. `createRoot` is side-effectful (fetches, timers, focus/online listeners), so it must NOT run in `useMemo` / a `useState` initializer — StrictMode re-invokes those and orphans a live root (the original bug). Instead (`context.ts`):
+
+- The root is created **lazily during render** in a `useRef` (`if (rootRef.current === null) …`) — a ref mutated in render creates exactly one root across StrictMode's double render.
+- `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render). The root is recreated only when the **`def` identity** changes (dispose old + create new, in render).
+- A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount→unmount→remount **without re-rendering between them**, so the effect's remount-setup recreates the disposed root and `forceRender()`s so the Provider hands descendants a live root (a dev-only double-construct, as TanStack does). Pinned by `packages/react/tests/hydration-boundary.test.tsx`.
+
 ## Fakes for UI tests
 
 `@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` / `AsyncState<T>` so a test can pass them straight into a `useField`/`useQuery`-consuming component without building a real controller. See `testing.ts:31-132`.
