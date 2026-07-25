@@ -486,7 +486,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   react: void mutation → `isSuccess === true` after resolve.
 - **Docs:** SPEC §6 mutation surface; API.md.
 
-### [ ] T4.3 — **[MAJOR]** `useSuspenseQuery` throws on background-refetch failure while data exists
+### [x] T4.3 — **[MAJOR]** `useSuspenseQuery` throws on background-refetch failure while data exists
 - **File:** `packages/react/src/hooks.ts:177-180` (`:183` claims TanStack parity)
 - **Problem:** `Entry.applyFailure` keeps `data` (`entry.ts:277-283`), but the hook throws
   whenever `status === 'error'` — a focus-refetch blip nukes a rendered subtree to the

@@ -184,6 +184,61 @@ describe('useQuery({ suspense: true })', () => {
     root.dispose()
   })
 
+  // T4.3 — a background-refetch FAILURE keeps the last-good data (applyFailure
+  // preserves it), so the suspense hook must not throw the subtree to the
+  // ErrorBoundary over a transient blip.
+  test('background-refetch failure keeps data, does NOT hit the ErrorBoundary', async () => {
+    const restore = silenceConsoleError()
+    try {
+      let shouldFail = false
+      const q = defineQuery({
+        queryId: 'suspense-test/refetch-fail',
+        key: () => [],
+        fetcher: async (): Promise<string> => {
+          if (shouldFail) throw new Error('refetch boom')
+          return 'good'
+        },
+        retry: 0,
+        staleTime: 60_000,
+      })
+      const def = defineController((ctx) => ({ g: ctx.use(q, () => []) }))
+      const root = createRoot(def, { deps: {}, onError: () => {} })
+
+      function View() {
+        const { data } = useQuery(root.g, { suspense: true })
+        return <span data-testid="g">{data}</span>
+      }
+      render(
+        <OlasProvider root={root}>
+          <ErrorBoundary fallback={(err) => <span data-testid="err">{(err as Error).message}</span>}>
+            <Suspense fallback={<span data-testid="fallback">loading</span>}>
+              <View />
+            </Suspense>
+          </ErrorBoundary>
+        </OlasProvider>,
+      )
+
+      await act(async () => {
+        await root.g.firstValue()
+      })
+      expect(screen.getByTestId('g').textContent).toBe('good')
+
+      // Refetch fails: status → 'error' but `data` is kept. The suspense hook
+      // must NOT throw (data exists) — the subtree keeps showing the stale value.
+      shouldFail = true
+      await act(async () => {
+        await root.g.refetch().catch(() => {})
+      })
+
+      expect(screen.queryByTestId('err')).toBeNull()
+      expect(screen.getByTestId('g').textContent).toBe('good')
+
+      root.dispose()
+    } finally {
+      restore()
+    }
+  })
+
   test('without suspense option, hook behaves as before (data: T | undefined)', async () => {
     const greetingQuery = defineQuery({
       queryId: 'suspense-test/no-suspense',
