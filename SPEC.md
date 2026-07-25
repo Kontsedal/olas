@@ -1323,7 +1323,7 @@ usePersisted(ctx, 'draft', draft, {
 })
 ```
 
-`usePersisted` is bound to `ctx` so it cleans up subscriptions on dispose. Loading the initial value is synchronous for localStorage; for async storages, it returns a `{ ready: Signal<boolean> }` and the signal holds the default until ready.
+`usePersisted` is bound to `ctx` so it cleans up subscriptions on dispose. Loading the initial value is synchronous for localStorage; for async storages, it returns a `{ ready: Signal<boolean> }` and the signal holds the default until ready. A user write that lands **before** an async load settles is not lost — it wins over the stored value (and over a cross-tab change that also raced the load), and is flushed to storage; a cross-tab change that races the load is buffered and applied once ready. Fallible operations (`get`/`set`, `serialize`/`deserialize`, `migrate`, cross-tab `onChange`) route through the optional `onError(err, op, key)` — without it, errors are swallowed. `version` + `migrate` enable a `{"v":N,"d":…}` on-disk envelope with forward migration; `throttleMs` debounces writes (flushed on dispose).
 
 Cross-tab sync is opt-in and only supported by storages that emit change events (localStorage via `storage` event).
 
@@ -2730,13 +2730,21 @@ type StorageAdapter = {
   delete(key: string): void | Promise<void>
   // optional change notifications (e.g. localStorage 'storage' event)
   onChange?(handler: (key: string, value: string | null) => void): () => void
+  // optional key enumeration (e.g. mutation-queue replay, clearPersisted)
+  keys?(): Iterable<string> | Promise<Iterable<string>>
 }
+
+type PersistErrorOp = 'load' | 'deserialize' | 'serialize' | 'write' | 'migrate' | 'remoteChange'
 
 type PersistOptions<T> = {
   storage?: StorageAdapter // default: localStorage adapter
   serialize?: (value: T) => string
   deserialize?: (raw: string) => T
   crossTab?: boolean // requires storage.onChange
+  version?: number // enable the `{v,d}` envelope; migrate on version mismatch
+  migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
+  throttleMs?: number // debounce writes; flushed on dispose. Default 0
+  onError?: (err: unknown, op: PersistErrorOp, key: string) => void // else swallowed
 }
 
 type Persisted<T> = {

@@ -633,22 +633,22 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 
 ## Phase 6 — satellite packages
 
-### [ ] T6.1 — persist: IDB adapter acks before commit; error routing is dead
+### [x] T6.1 — persist: IDB adapter acks before commit; error routing is dead
 - **File:** `packages/persist/src/index.ts`
-- [ ] `runRequest` resolves on `req.onsuccess` (`:187-193`) — quota failures surface at
+- [x] `runRequest` resolves on `req.onsuccess` (`:187-193`) — quota failures surface at
   COMMIT. Resolve `set`/`delete` on `tx.oncomplete`, reject on `tx.onabort`/`onerror`.
-- [ ] The adapter swallows every error internally and resolves (`:199-224`) — so
+- [x] The adapter swallows every error internally and resolves (`:199-224`) — so
   `usePersisted`'s `onError` never fires for IDB. Reject instead; let `usePersisted`'s
   existing error routing do its job.
-- [ ] `flushWrite` labels a storage `QuotaExceededError` as op `'serialize'` (`:451-457`)
+- [x] `flushWrite` labels a storage `QuotaExceededError` as op `'serialize'` (`:451-457`)
   — split the try blocks: encode → `'serialize'`, storage.set → `'write'`.
-- [ ] Ready-gate races: writes before load resolve are dropped then clobbered by
+- [x] Ready-gate races: writes before load resolve are dropped then clobbered by
   `applyLoaded` (`:410-416, :484`) — if the user wrote before load resolved, SKIP
   applyLoaded (user wins) and flush the pending write. Cross-tab `onChange` never checks
   `ready` (`:491-529`) — buffer remote changes until ready, then apply the freshest.
-- [ ] No `onversionchange` handler (`:159-179`) — close the connection, mark the adapter
+- [x] No `onversionchange` handler (`:159-179`) — close the connection, mark the adapter
   broken, surface via `onError('load'|'write')` instead of permanent silent no-ops.
-- [ ] **Zero tests exist for `version`/`migrate`/`throttleMs`/`onError`** — write them
+- [x] **Zero tests exist for `version`/`migrate`/`throttleMs`/`onError`** — write them
   (envelope parse, legacy payload migration, remote-change version gating, quota error path).
 
 ### [ ] T6.2 — mutation-queue: fix the three disqualifiers, demote the claims
