@@ -22,6 +22,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Build FIRST: the satellite packages + examples typecheck against core's
+      # built `dist/*.d.ts` (via package `exports`), not its src — running
+      # typecheck before build fails with "Cannot find module
+      # '@kontsedal/olas-core'". (Local `pnpm typecheck` has the same
+      # prerequisite.)
+      - run: pnpm build
+
       - run: pnpm typecheck
 
       - run: pnpm lint
@@ -34,12 +41,10 @@ jobs:
       # are excluded from the root `pnpm test` include, so run them explicitly.
       - run: pnpm --filter "./examples/*" test
 
-      - run: pnpm build
-
-      # Verify the shipped ARTIFACTS, not just the source (T7.2). Runs after
-      # build so it checks real dist/: publint (packaging metadata), attw (type
-      # resolution across CJS/ESM), and a smoke test that ESM+CJS actually load
-      # and no `__DEV__` literal leaked into the production output.
+      # Verify the shipped ARTIFACTS, not just the source (T7.2), against the
+      # dist/ built above: publint (packaging metadata), attw (type resolution
+      # across CJS/ESM), and a smoke test that ESM+CJS actually load and no
+      # `__DEV__` literal leaked into the production output.
       - run: pnpm publint
       - run: pnpm attw
       - run: pnpm smoke:dist
