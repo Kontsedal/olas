@@ -91,7 +91,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
     root.dispose()
   })
 
-  test('invalidate drops accumulated pages and refetches from initialPageParam', async () => {
+  test('invalidate refetches all loaded pages in place (no collapse)', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
       key: () => ['chat'],
@@ -107,8 +107,12 @@ describe('defineInfiniteQuery + ctx.use', () => {
     await root.chat.fetchNextPage()
     expect(root.chat.pages.value.length).toBe(3)
 
+    // Refetch-all (T3.7): invalidate re-fetches every loaded page in order,
+    // it no longer collapses to page one. Pages stay length 3 throughout.
+    fx.calls.length = 0
     q.invalidate()
-    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
+    await vi.waitFor(() => expect(fx.calls).toEqual([0, 1, 2]))
+    expect(root.chat.pages.value.length).toBe(3)
     expect(root.chat.pages.value[0]).toEqual(fx.pages[0])
     root.dispose()
   })

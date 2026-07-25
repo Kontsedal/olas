@@ -45,7 +45,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 | `define.ts` | `defineQuery`, `defineInfiniteQuery`. Module-scoped values branded `__olas`. Carry a `__clients: Set<QueryClient>` for multi-root operation. |
 | `use.ts` | `createUse` and `createInfiniteUse`. Build a `SubscriptionImpl` that swaps entries reactively on key change. |
 | `mutation.ts` | `MutationImpl` — three concurrency modes, abort-race, snapshot rollback. |
-| `infinite.ts` | `InfiniteEntry<TPage, TItem, PageParam>` — paginated variant. Owns `pages`, `pageParams`, `fetchNextPage`, `fetchPreviousPage`. |
+| `infinite.ts` | `InfiniteEntry<TPage, TItem, PageParam>` — paginated variant. Owns `pages`, `pageParams`, `fetchNextPage`, `fetchPreviousPage`. A refetch (interval/invalidate/refetch) re-fetches ALL loaded pages via `runRefetchAll`, not just page one (T3.7). Not dehydrated for SSR (BACKLOG). |
 | `plugin.ts` | `QueryClientPlugin` contract + the `queryId → Query` registry. Used by `@kontsedal/olas-cross-tab`. Spec §13.2. |
 | `index.ts` | re-exports |
 

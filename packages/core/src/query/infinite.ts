@@ -226,7 +226,16 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
   }
 
-  /** Initial / refetch — drops all pages and fetches starting from initialPageParam. */
+  /**
+   * Initial load / refetch. On the initial load (no pages yet) this fetches
+   * the first page. On a refetch of an already-loaded entry (interval,
+   * invalidate, focus/reconnect) it **refetches every currently-loaded page**
+   * sequentially, re-deriving each page's param from the freshly-fetched data
+   * via `getNextPageParam` — matching TanStack and avoiding the old
+   * "collapse to page one" truncation that dropped every loaded page but the
+   * first on each refetch (T3.7). Pages/params update atomically at the end,
+   * so subscribers never observe a mid-refetch truncation flash.
+   */
   startFetch(): Promise<TPage> {
     if (this.disposed) return Promise.reject(new Error('Entry disposed'))
     if (this.networkMode === 'online' && this.isOffline()) {
@@ -237,43 +246,108 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     const abort = new AbortController()
     this.currentAbort = abort
 
-    const previouslyHadPages = this.pages.peek().length > 0
+    const previousPages = this.pages.peek()
     batch(() => {
       this.status.set('pending')
       this.isFetching.set(true)
-      this.isLoading.set(!previouslyHadPages)
+      this.isLoading.set(previousPages.length === 0)
       this.isPaused.set(false)
     })
 
-    return this.runFetch(
-      myId,
-      abort.signal,
-      this.initialPageParam,
-      (page, param) => {
-        if (myId !== this.currentFetchId || this.disposed) return
-        // Structurally share with the previous first-page on refresh, so
-        // unchanged pages keep their refs. We only share the head page —
-        // initial fetch wipes the rest of the array by definition.
-        const prevPages = this.pages.peek()
-        const sharedPage =
-          prevPages.length > 0 && this.structuralShareEnabled
-            ? structuralShare(prevPages[0] as TPage, page)
-            : page
-        batch(() => {
-          this.pages.set([sharedPage])
-          this.pageParams.set([param])
-          this.error.set(undefined)
-          this.status.set('success')
-          this.isLoading.set(false)
-          this.isFetching.set(false)
-          this.lastUpdatedAt.set(Date.now())
-          this.isStale.set(this.staleTime === 0)
-        })
-        if (this.staleTime > 0) this.scheduleStaleness()
-        this.onSuccessData?.(this.pages.peek())
-      },
-      'initial',
-    )
+    return this.runRefetchAll(myId, abort.signal, Math.max(1, previousPages.length), previousPages)
+  }
+
+  /**
+   * Fetch `targetCount` pages from `initialPageParam`, chaining each next param
+   * via `getNextPageParam` from the freshly-fetched pages. Applies the query's
+   * retry policy per page. Stops early if the dataset shrank (a page yields
+   * `getNextPageParam === null`). Writes pages/params in ONE batch at the end;
+   * a per-page failure keeps the existing pages and surfaces the error; a
+   * supersede/dispose throws `AbortError` without writing.
+   */
+  private async runRefetchAll(
+    myId: number,
+    signal: AbortSignal,
+    targetCount: number,
+    previousPages: TPage[],
+  ): Promise<TPage> {
+    const newPages: TPage[] = []
+    const newParams: PageParam[] = []
+    let pageParam: PageParam = this.initialPageParam
+    try {
+      for (let i = 0; i < targetCount; i++) {
+        let attempt = 0
+        while (true) {
+          if (myId !== this.currentFetchId || this.disposed) {
+            throw new DOMException('Superseded', 'AbortError')
+          }
+          try {
+            const page = await this.fetcher({ pageParam, signal })
+            if (myId !== this.currentFetchId || this.disposed) {
+              throw new DOMException('Superseded', 'AbortError')
+            }
+            newPages.push(page)
+            newParams.push(pageParam)
+            break
+          } catch (err) {
+            if (myId !== this.currentFetchId || this.disposed || isAbortError(err)) throw err
+            const shouldRetry =
+              typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err)
+            if (!shouldRetry) {
+              batch(() => {
+                this.error.set(err)
+                this.status.set('error')
+                this.isLoading.set(false)
+                this.isFetching.set(false)
+              })
+              throw err
+            }
+            const delay =
+              typeof this.retryDelay === 'function' ? this.retryDelay(attempt) : this.retryDelay
+            await abortableSleep(delay, signal)
+            attempt += 1
+          }
+        }
+        const next = this.getNextPageParam(newPages[newPages.length - 1] as TPage, newPages)
+        if (next === null) break
+        pageParam = next
+      }
+      if (myId !== this.currentFetchId || this.disposed) {
+        throw new DOMException('Superseded', 'AbortError')
+      }
+      // Structurally share the head page so an unchanged first page keeps its
+      // ref (downstream `computed`s / React snapshots don't thrash).
+      const finalPages =
+        previousPages.length > 0 && this.structuralShareEnabled && newPages.length > 0
+          ? [structuralShare(previousPages[0] as TPage, newPages[0] as TPage), ...newPages.slice(1)]
+          : newPages
+      batch(() => {
+        this.pages.set(finalPages)
+        this.pageParams.set(newParams)
+        this.error.set(undefined)
+        this.status.set('success')
+        this.isLoading.set(false)
+        this.isFetching.set(false)
+        this.lastUpdatedAt.set(Date.now())
+        this.isStale.set(this.staleTime === 0)
+      })
+      if (this.staleTime > 0) this.scheduleStaleness()
+      this.onSuccessData?.(this.pages.peek())
+      return finalPages[0] as TPage
+    } finally {
+      // Status repair (T3.3): a superseded refetch must never leave the entry
+      // wedged at 'pending' when data is present and nothing is fetching. The
+      // superseder owns the final status; this only fires for the terminal
+      // fetch of a supersede chain. Never clobbers a real 'error'.
+      if (
+        !this.disposed &&
+        this.status.peek() === 'pending' &&
+        !this.isFetching.peek() &&
+        this.pages.peek().length > 0
+      ) {
+        this.status.set('success')
+      }
+    }
   }
 
   fetchNextPage(): Promise<void> {
