@@ -64,19 +64,7 @@ Examples:
 
 [from SPEC §20.7] The current public API uses the nested `form.fields.a.fields.b.fields.c` access. A `fieldAt<P extends FormPath<S>>(path: P): FieldAt<S, P>` would be ergonomic for deep forms but needs template-literal-type machinery that's implementation-heavy. Nested access covers ~95% of cases today, so this is opportunistic, not blocking.
 
-### [planned] `form.submit(handler)` lifecycle + `setErrors` for server-side errors — phase 0.1
-
-Add: `form.submit(handler, { validateBeforeSubmit?, resetOnSuccess?, onError? })`, plus signals `isSubmitting` / `submitCount` / `submitError`. Handler runs after `validate()`; on invalid, `markAllTouched()` and bail without calling the handler. Plus `field.setErrors(string[])` and `form.setErrors({ path: [...] })` for server-side error injection — kept in a separate `serverErrors$` so a re-validate doesn't wipe them. Cleared on next user write to the field. RHF / TanStack-Form parity; biggest gap adopters hit today. Effort: 2–3 days.
-
-### [planned] Standard Schema adapter — phase 0.1
-
-Adopt the v1 `~standard` symbol (Zod 4, Valibot 1, ArkType 2). New `validator(schema)` in `@kontsedal/olas-core` accepts any `StandardSchemaV1`; `zodValidator` becomes an alias. `formFromZod` keeps Zod-specific introspection (no library-agnostic introspection exists yet in Standard Schema). Effort: 3–5 days.
-
 ## Queries / data layer
-
-### [planned] Router adapter packages — phase 0.2b
-
-`RECIPES.md` already documents the router-bridge pattern (TanStack Router + React Router v6) — recipes are sufficient for most apps. The dedicated `@kontsedal/olas-router-tanstack` and `@kontsedal/olas-router-react-router` packages still pending: each ships a small `<OlasRouterBridge>` component plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Effort: ~1 wk total. Low priority — recipes cover the 90% case.
 
 ### [dropped] Next.js app-router / RSC support
 
@@ -110,6 +98,12 @@ uplift, lift these out to `examples/_shared/ui/` and have each example
 extend the tokens. Already deliberately kept kanban-local for now to
 avoid premature abstraction — see the `cryptic-questing-twilight.md`
 plan for the rationale.
+
+## Tooling / DX
+
+### [idea] Local `pnpm lint` fails on Windows (CRLF vs biome `lineEnding: "lf"`)
+
+`biome.json` sets `formatter.lineEnding: "lf"` but the repo has no `.gitattributes`, so with `core.autocrlf=true` (the default on the maintainer's Windows box) every source file is CRLF in the working tree and `biome check .` reports "Formatter would have printed…" for *every* file. CI passes only because Linux checks out LF. Fix options: add `.gitattributes` (`* text=auto eol=lf`) so checkouts are LF, then `git add --renormalize .` once; or set `core.autocrlf=input` locally. Deferred because renormalizing mid-remediation would bury the real diffs in line-ending noise. Local rule-checking meanwhile is `pnpm exec biome lint .` (skips the formatter); CI verifies formatting.
 
 ## Loose ends
 
