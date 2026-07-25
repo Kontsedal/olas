@@ -734,3 +734,64 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
     root.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-Q1.2 (T1.2) — hydration must be namespaced by query identity, not just the
+// key hash. Two queries whose `key()` outputs collide would otherwise let a
+// subscriber of query B silently adopt query A's dehydrated payload (wrong
+// type at runtime) and — with staleTime > 0 — skip its own fetch entirely.
+// ---------------------------------------------------------------------------
+describe('regression: hydration does not steal data across colliding-key queries (R-Q1.2)', () => {
+  test('query B with a colliding key hydrates its OWN data, not query A payload', async () => {
+    const qA = defineQuery({
+      key: () => ['shared', 'k'] as const,
+      fetcher: async () => 'A-data',
+      staleTime: 60_000,
+    })
+    const qB = defineQuery({
+      key: () => ['shared', 'k'] as const,
+      fetcher: async () => 'B-data',
+      staleTime: 60_000,
+    })
+
+    // Server: only A is subscribed + fetched.
+    const serverDef = defineController((ctx) => ({ a: ctx.use(qA) }))
+    const server = createRoot(serverDef, { deps: emptyDeps })
+    await server.waitForIdle()
+    const state = server.dehydrate()
+    server.dispose()
+
+    // Client: fresh root, hydrate A's state, subscribe only B (colliding key).
+    const clientDef = defineController((ctx) => ({ b: ctx.use(qB) }))
+    const client = createRoot(clientDef, { deps: emptyDeps, hydrate: state })
+    // B must fetch its OWN data — not adopt A's payload and skip its fetch.
+    await vi.waitFor(() => expect(client.b.data.value).toBe('B-data'))
+    client.dispose()
+  })
+
+  test('a query round-trips its own hydrated data without refetching (no regression)', async () => {
+    let fetches = 0
+    const q = defineQuery({
+      key: () => ['solo'] as const,
+      fetcher: async () => {
+        fetches += 1
+        return `v${fetches}`
+      },
+      staleTime: 60_000,
+    })
+    const serverDef = defineController((ctx) => ({ x: ctx.use(q) }))
+    const server = createRoot(serverDef, { deps: emptyDeps })
+    await vi.waitFor(() => expect(server.x.data.value).toBe('v1'))
+    const state = server.dehydrate()
+    server.dispose()
+
+    const clientDef = defineController((ctx) => ({ x: ctx.use(q) }))
+    const client = createRoot(clientDef, { deps: emptyDeps, hydrate: state })
+    // Hydrated data is present immediately and fresh (staleTime 60s) → no refetch.
+    expect(client.x.data.value).toBe('v1')
+    await flush()
+    expect(client.x.data.value).toBe('v1')
+    expect(fetches).toBe(1)
+    client.dispose()
+  })
+})

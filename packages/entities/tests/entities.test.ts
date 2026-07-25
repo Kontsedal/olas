@@ -691,7 +691,7 @@ describe('entitiesPlugin', () => {
       version: 1 as const,
       entries: [
         {
-          queryId: 'ent-test/hydrate',
+          id: 'ent-test/hydrate',
           key: [] as readonly unknown[],
           data: {
             posts: [

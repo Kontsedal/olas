@@ -20,13 +20,24 @@ const DEFAULT_GC_TIME = 5 * 60_000
 
 type AnyQuery = Query<any, any> & {
   readonly __spec: QuerySpec<any, any>
+  readonly __id: string
   __clients: Set<QueryClient>
 }
 
 type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
   readonly __spec: InfiniteQuerySpec<any, any, any, any>
+  readonly __id: string
   __clients: Set<QueryClient>
 }
+
+/**
+ * Composite hydration-buffer key: query identity + key hash. Namespacing by
+ * identity stops a dehydrated entry for query A being adopted by query B that
+ * merely hashes to the same key (spec §15, T1.2). `JSON.stringify` of the pair
+ * is used rather than string concatenation so no separator char is ambiguous —
+ * both `id` (an arbitrary user `queryId`) and `hash` are unbounded strings.
+ */
+const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
 
 export class ClientEntry<T> {
   readonly entry: Entry<T>
@@ -666,9 +677,10 @@ export class QueryClient {
       }
     }
     // No local entry yet — buffer in the same map the constructor uses.
-    // The next bindEntry that hashes to this key will adopt the buffered
-    // payload and clear the slot.
-    this.hydratedData.set(hash, { data, lastUpdatedAt })
+    // The next bindEntry for this query + key will adopt the buffered payload
+    // and clear the slot. Namespaced by queryId so a colliding-key query can't
+    // steal it (spec §15, T1.2).
+    this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt })
   }
 
   /**
@@ -759,7 +771,7 @@ export class QueryClient {
     }
     for (const entry of state.entries) {
       const hash = stableHash(entry.key)
-      this.hydratedData.set(hash, {
+      this.hydratedData.set(hydrationKey(entry.id, hash), {
         data: entry.data,
         lastUpdatedAt: entry.lastUpdatedAt,
       })
@@ -808,10 +820,11 @@ export class QueryClient {
 
   dehydrate(): DehydratedState {
     const entries: DehydratedState['entries'] = []
-    for (const map of this.maps.values()) {
+    for (const [query, map] of this.maps) {
       for (const ce of map.values()) {
         if (ce.entry.status.peek() === 'success') {
           entries.push({
+            id: query.__id,
             key: ce.keyArgs,
             data: ce.entry.data.peek(),
             lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
@@ -891,8 +904,9 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as ClientEntry<T> | undefined
     if (!entry) {
-      const hydrated = this.hydratedData.get(hash) as { data: T; lastUpdatedAt: number } | undefined
-      if (hydrated) this.hydratedData.delete(hash)
+      const hkey = hydrationKey(internal.__id, hash)
+      const hydrated = this.hydratedData.get(hkey) as { data: T; lastUpdatedAt: number } | undefined
+      if (hydrated) this.hydratedData.delete(hkey)
       // Build the fetcher-success emitter here so `emitSetData` can stay
       // `private` — `ClientEntry` doesn't reach back into the client to call
       // it; the closure captures (query, keyArgs, this) in this scope and

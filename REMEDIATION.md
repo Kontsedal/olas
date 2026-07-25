@@ -117,7 +117,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Acceptance:** new regression test passes; existing mutation/rollback tests still pass;
   cross-tab + entities integration tests still pass.
 
-### [ ] T1.2 — **[CRITICAL]** hydration keyed by key-hash only → cross-query data theft
+### [x] T1.2 — **[CRITICAL]** hydration keyed by key-hash only → cross-query data theft
 - **Files:** `packages/core/src/query/types.ts:77-81` (`DehydratedEntry`),
   `client.ts:760-766` (`hydrate` buffering), `client.ts:894-895` (`bindEntry` adoption),
   `client.ts:671` (`applyDehydratedEntry`), `packages/react/src/streaming.ts` (payload shape)

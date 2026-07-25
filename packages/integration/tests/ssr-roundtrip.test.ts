@@ -95,11 +95,14 @@ describe('integration: SSR roundtrip', () => {
 
     // Hand-built dehydrated payload — simulates a prior server render that
     // we ship to the client untouched. Real apps would use `dehydrate()`,
-    // but this proves the contract: any well-formed payload hydrates.
+    // but this proves the contract: any well-formed payload hydrates. The
+    // entry `id` is the query identity (`queryId` here) — namespacing that
+    // stops a colliding-key query from adopting this payload (T1.2).
     const dehydrated: DehydratedState = {
       version: 1,
       entries: [
         {
+          id: 'int/ssr/feed-hydrate',
           key: [],
           data: {
             posts: [
@@ -186,6 +189,7 @@ describe('integration: SSR roundtrip', () => {
       version: 1,
       entries: [
         {
+          id: 'int/ssr/cards',
           key: [],
           data: [
             { id: 'c1', title: 'First', likes: 0 },
