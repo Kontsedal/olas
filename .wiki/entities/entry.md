@@ -10,7 +10,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../modules/signals.md }
   - { type: related, target: ../pitfalls/isstale-needs-timer.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -58,7 +58,9 @@ A retried fetch is one logical fetch to the consumer — `isFetching` stays true
 
 ## Snapshot stack (optimistic updates, §6.4)
 
-`setData(updater)` records `{ id, prev: previousData, live: true }` and pushes onto `this.snapshots`. Returns `{ rollback, finalize }` (`Snapshot`, see `entry.ts:248-287`). Rollback sets `data` back to that snapshot's captured `prev` and marks the snapshot dead. `finalize` (called by mutation `onSuccess`) drops the snapshot from the live set without reverting — `hasPendingMutations` clears when no live snapshots remain.
+`setData(updater, opts?)` defaults to the **tracked** (optimistic) path: it records `{ id, prev: previousData, live: true }`, pushes onto `this.snapshots`, flips `hasPendingMutations`, and returns a working `{ rollback, finalize }` (`Snapshot`). Rollback sets `data` back to that snapshot's captured `prev` and marks the snapshot dead. `finalize` (called by mutation `onSuccess`) drops the snapshot from the live set without reverting — `hasPendingMutations` clears when no live snapshots remain.
+
+`setData(updater, { track: false })` is a **canonical cache write** — cross-tab receive (`client.applyRemoteSetData`), entity backprop / realtime patches (`client.setEntryData`). It writes `data` but pushes NO snapshot and does NOT flip `hasPendingMutations`, returning a no-op `Snapshot`. This is why a fire-and-forget plugin write can no longer wedge `hasPendingMutations` at `true` — the T1.1 bug was exactly that those callers went through the tracked path and discarded the returned snapshot. `InfiniteEntry.setData` mirrors the same `track` option. Pinned by `regressions.test.ts` (R-Q1.1).
 
 The stack is what enables positional rollback: when mutation B's snapshot rolls back, data goes to "state after mutation A's update" because that was the value captured at the moment of B's setData. Spec §6.4.
 

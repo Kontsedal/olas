@@ -429,21 +429,28 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
   }
 
-  setData(updater: (prev: TPage[] | undefined) => TPage[]): Snapshot {
+  setData(
+    updater: (prev: TPage[] | undefined) => TPage[],
+    opts?: { track?: boolean },
+  ): Snapshot {
     if (this.disposed) {
       return { rollback: () => {}, finalize: () => {} }
     }
     const prev = this.pages.peek()
     const prevParams = this.pageParams.peek()
     const next = updater(prev.length === 0 ? undefined : prev)
-    const id = this.nextSnapshotId++
+    // `track: false` is a canonical cache write (plugin/remote/entities
+    // backprop) — no optimistic snapshot, no `hasPendingMutations` flip. See
+    // `Entry.setData` for the full rationale. Default `true` keeps the
+    // optimistic-update path (`query.setData` in `onMutate`).
+    const track = opts?.track ?? true
     // Snapshot BOTH pages and pageParams so rollback restores a consistent
     // pair. Without `prevParams`, an optimistic insert would shift `pages`
     // permanently out of sync with `pageParams` on rollback — and any
     // subsequent `fetchNextPage`/`getNextPageParam` would operate on the
     // wrong head.
-    const record = { id, prev, prevParams, live: true }
-    this.snapshots.push(record)
+    const record = track ? { id: this.nextSnapshotId++, prev, prevParams, live: true } : null
+    if (record) this.snapshots.push(record)
 
     // If the updater changed the page count, trim or pad pageParams so the
     // two arrays stay length-aligned. Padding uses the last known param,
@@ -470,9 +477,13 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         this.status.set('success')
       }
       this.lastUpdatedAt.set(Date.now())
-      this.hasPendingMutations.set(true)
+      if (record) this.hasPendingMutations.set(true)
     })
 
+    if (!record) {
+      return { rollback: () => {}, finalize: () => {} }
+    }
+    const id = record.id
     return {
       rollback: () => {
         if (!record.live || this.disposed) return

@@ -7,6 +7,7 @@ import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { Entry } from '../src/query/entry'
+import type { QueryClientPlugin, QueryClientPluginApi } from '../src/query/plugin'
 
 const emptyDeps = {}
 /**
@@ -637,6 +638,99 @@ describe('gap: dehydrate while a mutation is in flight', () => {
     // through setData and `onSuccess` didn't overwrite — mutate's `mutate`
     // resolves into save.data, not into the query.)
 
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// R-Q1.1 (T1.1) — plugin/remote setData must NOT push an optimistic snapshot.
+// applyRemoteSetData / setEntryData are canonical cache writes (cross-tab
+// receive, entities backprop, realtime patches). Before the fix they routed
+// through the *tracked* `Entry.setData`, discarded the returned Snapshot, and
+// so leaked a live record — wedging `hasPendingMutations` at `true` forever.
+// ---------------------------------------------------------------------------
+describe('regression: plugin/remote setData does not wedge hasPendingMutations (R-Q1.1)', () => {
+  test('applyRemoteSetData leaves hasPendingMutations false', async () => {
+    let api: QueryClientPluginApi | undefined
+    const q = defineQuery({
+      queryId: 'r-q1a-user',
+      key: (id: string) => ['user', id] as const,
+      fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
+    })
+    const capture: QueryClientPlugin = {
+      name: 'capture',
+      init: (a) => {
+        api = a
+      },
+    }
+    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1'] as const) }))
+    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
+    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'initial' }))
+    expect(root.user.hasPendingMutations.value).toBe(false)
+
+    const [keyArgs] = api!.subscribedKeys('r-q1a-user')
+    api!.applyRemoteSetData('r-q1a-user', keyArgs!, { id: '1', name: 'remote' })
+
+    expect(root.user.data.value).toEqual({ id: '1', name: 'remote' })
+    expect(root.user.hasPendingMutations.value).toBe(false)
+    root.dispose()
+  })
+
+  test('setEntryData leaves hasPendingMutations false', async () => {
+    let api: QueryClientPluginApi | undefined
+    const q = defineQuery({
+      queryId: 'r-q1b-user',
+      key: (id: string) => ['user', id] as const,
+      fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
+    })
+    const capture: QueryClientPlugin = {
+      name: 'capture',
+      init: (a) => {
+        api = a
+      },
+    }
+    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1'] as const) }))
+    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
+    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'initial' }))
+
+    const [keyArgs] = api!.subscribedKeys('r-q1b-user')
+    api!.setEntryData('r-q1b-user', keyArgs!, (prev) => ({
+      ...(prev as { id: string; name: string }),
+      name: 'patched',
+    }))
+
+    expect(root.user.data.value).toEqual({ id: '1', name: 'patched' })
+    expect(root.user.hasPendingMutations.value).toBe(false)
+    root.dispose()
+  })
+
+  test('setEntryData on an infinite query leaves hasPendingMutations false', async () => {
+    let api: QueryClientPluginApi | undefined
+    type Page = { items: string[]; next: number | null }
+    const q = defineInfiniteQuery<[], number, Page>({
+      queryId: 'r-q1c-feed',
+      key: () => [] as const,
+      fetcher: async ({ pageParam }) => ({ items: [`p${pageParam}`], next: null }),
+      initialPageParam: 0,
+      getNextPageParam: (page) => page.next,
+    })
+    const capture: QueryClientPlugin = {
+      name: 'capture',
+      init: (a) => {
+        api = a
+      },
+    }
+    const def = defineController((ctx) => ({ feed: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
+    await vi.waitFor(() => expect(root.feed.pages.value.length).toBe(1))
+
+    const [keyArgs] = api!.subscribedKeys('r-q1c-feed')
+    api!.setEntryData('r-q1c-feed', keyArgs!, (prev) => {
+      const pages = prev as Page[]
+      return [{ items: [...pages[0]!.items, 'patched'], next: null }]
+    })
+
+    expect(root.feed.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 })
