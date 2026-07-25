@@ -371,15 +371,32 @@ export class Entry<T> {
     })
   }
 
-  setData(updater: (prev: T | undefined) => T): Snapshot {
+  /**
+   * Write data into the entry.
+   *
+   * `track` (default `true`) is the optimistic-update path: it pushes a
+   * snapshot record and flips `hasPendingMutations`, so the returned
+   * `Snapshot.rollback()` can restore the pre-write baseline and
+   * `finalize()` commits it. This is what `query.setData(...)` inside a
+   * mutation's `onMutate` uses (spec §6.4).
+   *
+   * `track: false` is a canonical cache write — cross-tab receive, entities
+   * backprop, realtime patches (spec §13.2). It updates the data signal but
+   * pushes NO snapshot and does NOT flip `hasPendingMutations`, so a
+   * fire-and-forget plugin write can't wedge the pending flag at `true`
+   * forever. Returns a no-op `Snapshot`.
+   */
+  setData(updater: (prev: T | undefined) => T, opts?: { track?: boolean }): Snapshot {
     if (this.disposed) {
       return { rollback: () => {}, finalize: () => {} }
     }
     const prev = this.data.peek()
     const next = updater(prev)
-    const id = this.nextSnapshotId++
-    const record: SnapshotRecord<T> = { id, prev, live: true }
-    this.snapshots.push(record)
+    const track = opts?.track ?? true
+    const record: SnapshotRecord<T> | null = track
+      ? { id: this.nextSnapshotId++, prev, live: true }
+      : null
+    if (record) this.snapshots.push(record)
 
     batch(() => {
       this.data.set(next)
@@ -387,9 +404,13 @@ export class Entry<T> {
         this.status.set('success')
       }
       this.lastUpdatedAt.set(Date.now())
-      this.hasPendingMutations.set(true)
+      if (record) this.hasPendingMutations.set(true)
     })
 
+    if (!record) {
+      return { rollback: () => {}, finalize: () => {} }
+    }
+    const id = record.id
     return {
       rollback: () => {
         if (!record.live || this.disposed) return

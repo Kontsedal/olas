@@ -88,7 +88,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 
 ## Phase 1 — query cache criticals (`packages/core/src/query/`)
 
-### [ ] T1.1 — **[CRITICAL]** plugin/remote `setData` leaks snapshots and wedges `hasPendingMutations`
+### [x] T1.1 — **[CRITICAL]** plugin/remote `setData` leaks snapshots and wedges `hasPendingMutations`
 - **Files:** `packages/core/src/query/entry.ts:374-391` (`Entry.setData`),
   `packages/core/src/query/client.ts:621` (`applyRemoteSetData`),
   `client.ts:699,712` (`setEntryData`), `packages/core/src/query/plugin.ts:31-54`

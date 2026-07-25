@@ -616,6 +616,8 @@ Rollback snapshots are **positional in the update queue**, not absolute. When mu
 
 This is the correct behavior for non-conflicting optimistic updates. For conflicting updates (both mutations writing the same field), users should prefer `concurrency: 'serial'` or implement explicit conflict resolution in their `onMutate`.
 
+Only `query.setData(...)` (as used inside a mutation's `onMutate`) creates a rollback snapshot and flips `hasPendingMutations`. **Canonical cache writes** that do not originate from an optimistic mutation — cross-tab receive, entity backprop (`setEntryData`, §13.2), realtime patches — write straight through the entry without pushing a snapshot, so they never set `hasPendingMutations` and can never wedge it at `true`.
+
 ---
 
 ## 7. Emitter
@@ -1288,7 +1290,7 @@ Only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) do not 
 
 `SetDataEvent` carries a `source: 'set' | 'fetch' | 'remote'` field so layered plugins can distinguish explicit `setData` calls from fetcher-result writes (`'fetch'`) and remote-applied writes (`'remote'`). The cross-tab plugin only rebroadcasts `source: 'set'` — fetcher results are a per-tab concern, since every tab runs its own fetcher and rebroadcasting would be quadratic noise. Plugins that need a holistic view of cache writes (entity normalization — see §18.1) observe all three.
 
-`QueryClientPluginApi` exposes `setEntryData(queryId, keyArgs, updater)` for plugins that need to write back into the cache via the local-write path (the resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast). Used by the entity-normalization plugin (§18.1) to patch every query holding a given entity in one batched round of writes.
+`QueryClientPluginApi` exposes `setEntryData(queryId, keyArgs, updater)` for plugins that need to write back into the cache via the local-write path (the resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast). Used by the entity-normalization plugin (§18.1) to patch every query holding a given entity in one batched round of writes. `setEntryData` and `applyRemoteSetData` are **canonical writes** — they update the entry and emit the event but push no optimistic snapshot and do not set `hasPendingMutations` (§6.4); only `query.setData` in a mutation's `onMutate` does.
 
 **Channel-name versioning.** Channel names are user-supplied. Receivers drop messages whose protocol `v` they don't understand; users who want clean cross-deploy isolation should include a version suffix in their `channelName` (e.g. `'my-app/cache/v2'`).
 

@@ -618,7 +618,7 @@ export class QueryClient {
     if (!entry) return
     this.applyingRemote = true
     try {
-      entry.entry.setData(() => data as never)
+      entry.entry.setData(() => data as never, { track: false })
       this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
     } finally {
       this.applyingRemote = false
@@ -696,7 +696,7 @@ export class QueryClient {
       if (!map) return
       const entry = map.get(hash)
       if (!entry) return
-      entry.entry.setData(updater as (prev: unknown) => never)
+      entry.entry.setData(updater as (prev: unknown) => never, { track: false })
       this.emitSetData(internal, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
       return
     }
@@ -709,7 +709,7 @@ export class QueryClient {
     if (!map) return
     const entry = map.get(hash)
     if (!entry) return
-    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[])
+    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], { track: false })
     this.emitSetData(internal, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
   }
 
