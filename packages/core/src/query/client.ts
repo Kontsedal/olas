@@ -222,6 +222,9 @@ export class ClientEntry<T> {
   /** Refetch on focus / reconnect, but only if the data is actually stale. */
   private triggerEventRefetch(): void {
     if (!this.entry.isStaleNow()) return
+    // Join an in-flight fetch instead of aborting + restarting it — a focus /
+    // reconnect landing mid-fetch shouldn't cancel it (T3.9, cf. T3.2 interval).
+    if (this.entry.isFetching.peek()) return
     this.entry.startFetch().catch(() => {
       /* error already captured on entry */
     })

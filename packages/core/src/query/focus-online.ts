@@ -34,8 +34,21 @@ function fireOnline(): void {
   }
 }
 
+// A tab-return commonly fires BOTH `focus` and `visibilitychange` in the same
+// tick. Coalesce them into a single `fireFocus` via a microtask flag so
+// subscribers refetch once, not twice (T3.9).
+let focusScheduled = false
+function scheduleFocus(): void {
+  if (focusScheduled) return
+  focusScheduled = true
+  queueMicrotask(() => {
+    focusScheduled = false
+    fireFocus()
+  })
+}
+
 function onVisibilityChange(): void {
-  if (document.visibilityState === 'visible') fireFocus()
+  if (document.visibilityState === 'visible') scheduleFocus()
 }
 
 let focusInstalled = false
@@ -44,7 +57,7 @@ let onlineInstalled = false
 function installFocus(): void {
   if (focusInstalled) return
   if (typeof window === 'undefined') return
-  window.addEventListener('focus', fireFocus)
+  window.addEventListener('focus', scheduleFocus)
   if (typeof document !== 'undefined') {
     document.addEventListener('visibilitychange', onVisibilityChange)
   }
@@ -54,7 +67,7 @@ function installFocus(): void {
 function uninstallFocus(): void {
   if (!focusInstalled) return
   if (typeof window === 'undefined') return
-  window.removeEventListener('focus', fireFocus)
+  window.removeEventListener('focus', scheduleFocus)
   if (typeof document !== 'undefined') {
     document.removeEventListener('visibilitychange', onVisibilityChange)
   }
