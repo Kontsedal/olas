@@ -1,5 +1,14 @@
 import { describe, expect, test } from 'vitest'
-import { email, max, maxLength, min, minLength, pattern, required } from '../src/forms/validators'
+import {
+  email,
+  max,
+  maxLength,
+  min,
+  minLength,
+  mustBeTrue,
+  pattern,
+  required,
+} from '../src/forms/validators'
 
 const sig = new AbortController().signal
 
@@ -10,20 +19,39 @@ describe('required', () => {
     [null, 'Required'],
     [undefined, 'Required'],
     [[], 'Required'],
-    // `false` is empty for booleans — an unchecked "I agree" checkbox shouldn't
-    // pass `required()`. `true` and `0` (number) remain accepts.
-    [false, 'Required'],
   ])('rejects %j', async (value, msg) => {
     expect(await v(value, sig)).toBe(msg)
   })
 
-  test.each([['x'], [' '], [0], [true], [[1]]])('accepts %j', async (value) => {
+  // `false` is a legitimate boolean value (a toggle set to off), so `required`
+  // accepts it (T5.3). Use `mustBeTrue` for a consent checkbox that must be
+  // ticked. `true`, `0` (number), non-empty string/array also pass.
+  test.each([['x'], [' '], [0], [true], [false], [[1]]])('accepts %j', async (value) => {
     expect(await v(value, sig)).toBeNull()
   })
 
   test('accepts a custom message', async () => {
     const r = required<string>('Name is required')
     expect(await r('', sig)).toBe('Name is required')
+  })
+})
+
+describe('mustBeTrue', () => {
+  test('rejects everything that is not boolean true', async () => {
+    const v = mustBeTrue()
+    expect(await v(false, sig)).toBe('Required')
+    expect(await (v as (x: unknown, s: AbortSignal) => unknown)(0, sig)).toBe('Required')
+    expect(await (v as (x: unknown, s: AbortSignal) => unknown)(null, sig)).toBe('Required')
+  })
+
+  test('accepts boolean true', async () => {
+    expect(await mustBeTrue()(true, sig)).toBeNull()
+  })
+
+  test('accepts a custom message', async () => {
+    expect(await mustBeTrue('You must accept the terms')(false, sig)).toBe(
+      'You must accept the terms',
+    )
   })
 })
 

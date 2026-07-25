@@ -852,9 +852,10 @@ type FieldArray<I extends Field<any> | Form<any>> = {
 Pre-built `Validator<T>` factories. Each accepts an optional custom message.
 
 ```ts
-import { required, minLength, maxLength, min, max, email, pattern } from '@kontsedal/olas-core'
+import { required, mustBeTrue, minLength, maxLength, min, max, email, pattern } from '@kontsedal/olas-core'
 
-required('Name is required')
+required('Name is required') // rejects '', null, undefined, []. A boolean `false` PASSES.
+mustBeTrue('You must accept the terms') // rejects anything that isn't `true` — consent checkboxes
 minLength(3, 'Min 3 characters')
 maxLength(80)
 min(18, 'Must be 18+')

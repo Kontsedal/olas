@@ -240,7 +240,10 @@ describe('ctx.field — async validators', () => {
     // Wait one microtask so the effect's async branch kicks off.
     await Promise.resolve()
     expect(root.name.isValidating.value).toBe(true)
-    expect(root.name.isValid.value).toBe(false)
+    // isValid HOLDS the last-known validity while a pass is in flight (T5.3) —
+    // a fresh field with no prior settle defaults to valid, so it does not flash
+    // invalid mid-check (which would strobe a submit button on every keystroke).
+    expect(root.name.isValid.value).toBe(true)
 
     resolveValidator(null)
     await Promise.resolve()

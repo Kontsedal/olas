@@ -611,21 +611,21 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   two field errors → both fields show their message; issues clear when fixed.
 - **Docs:** SPEC §8 validators; API.md; `.wiki/modules/forms.md`, `.wiki/modules/zod.md`.
 
-### [ ] T5.3 — forms minor batch
-- [ ] `validateOn: 'blur' | 'submit'` has ZERO tests (grep confirms). Write them:
+### [x] T5.3 — forms minor batch
+- [x] `validateOn: 'blur' | 'submit'` has ZERO tests (grep confirms). Write them:
   blur-locked field doesn't validate on change, validates on `markTouched`;
   submit-locked validates only on `form.validate()`; interaction with `reset()`
   re-locking and `revalidate()` force-unlock (`field.ts:125-131, 149-151, 272-294, 350-359`).
-- [ ] `dirtyFields` and `clearSubtree` untested — add coverage.
-- [ ] `required()` rejects `false` (`validators.ts:40-41`) — wrong for genuine booleans.
+- [x] `dirtyFields` and `clearSubtree` untested — add coverage.
+- [x] `required()` rejects `false` (`validators.ts:40-41`) — wrong for genuine booleans.
   Change: `false` passes `required`; add `mustBeTrue(message?)` validator for
   confirm-checkboxes. Update any tests/docs relying on the old behavior; SPEC §8 note.
-- [ ] `isValid === false` while `isValidating` (`field.ts:159`) — with `debouncedValidator`
+- [x] `isValid === false` while `isValidating` (`field.ts:159`) — with `debouncedValidator`
   the submit button strobes. Keep last-known validity while a validation is in flight
   (only flip on completion).
-- [ ] `Form.reset()` re-applies initial outside the batch (`form.ts:296-301`) — move
+- [x] `Form.reset()` re-applies initial outside the batch (`form.ts:296-301`) — move
   inside the batch.
-- [ ] Thrown-validator `err.message` lands in user-visible errors (`field.ts:391`) — keep
+- [x] Thrown-validator `err.message` lands in user-visible errors (`field.ts:391`) — keep
   fail-loud, but in prod builds replace with a generic "Validation failed" and route the
   real error to `dispatchError` (dev keeps the message).
 

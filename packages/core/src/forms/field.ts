@@ -131,6 +131,15 @@ class FieldImpl<T> implements Field<T> {
   private readonly dirty$: Signal<boolean>
   private readonly validating$: Signal<boolean>
   private readonly isValid$: Computed<boolean>
+  /**
+   * Validity as of the last *settled* validation pass. While a pass is in
+   * flight (`validating$`), `isValid` reads this instead of the live `errors`
+   * — otherwise a `debouncedValidator` would flip `isValid` to `false` on every
+   * keystroke (the async-start clears `validatorErrors$`), strobing a submit
+   * button. Updated only when a pass completes (T5.3). Defaults `true` (an
+   * untouched field with a pending first run reads valid, not invalid).
+   */
+  private readonly lastValid$: Signal<boolean>
   private readonly revalidateTrigger$: Signal<number>
 
   private readonly validators: ReadonlyArray<Validator<T>>
@@ -167,6 +176,7 @@ class FieldImpl<T> implements Field<T> {
     this.touched$ = signal(false)
     this.dirty$ = signal(false)
     this.validating$ = signal(false)
+    this.lastValid$ = signal(true)
     this.revalidateTrigger$ = signal(0)
     // 'change' mode is unlocked from construction; 'blur' / 'submit' wait
     // for their trigger so initial typing doesn't surface errors.
@@ -180,7 +190,11 @@ class FieldImpl<T> implements Field<T> {
       if (v.length === 0 && s.length === 0) return f
       return [...v, ...s, ...f]
     })
-    this.isValid$ = computed(() => this.errors$.value.length === 0 && !this.validating$.value)
+    this.isValid$ = computed(() =>
+      // While a validation pass is in flight, hold the last settled validity so
+      // the field doesn't strobe invalid mid-check (T5.3). Otherwise it's live.
+      this.validating$.value ? this.lastValid$.value : this.errors$.value.length === 0,
+    )
 
     if (validators.length > 0) {
       this.validatorDispose = effect(() => {
@@ -395,6 +409,7 @@ class FieldImpl<T> implements Field<T> {
       batch(() => {
         if (this.validatorErrors$.peek().length > 0) this.validatorErrors$.set([])
         if (this.validating$.peek()) this.validating$.set(false)
+        this.lastValid$.set(this.errors$.peek().length === 0)
       })
       return
     }
@@ -425,15 +440,17 @@ class FieldImpl<T> implements Field<T> {
         }
       } catch (err) {
         // A buggy validator that throws synchronously: surface it twice.
-        // (1) Route through `onError` so the user knows something is wrong.
-        // (2) Convert to a validation error string so the field reads invalid
-        //     until the bug is fixed (don't pretend everything's OK).
+        // (1) Route through `onError` so the developer knows something is wrong.
+        // (2) Mark the field invalid until the bug is fixed (don't pretend OK).
+        // In prod the user-visible message is generic — leaking an internal
+        // error's text into form errors is a footgun; the real error still
+        // reaches `onValidatorError` (T5.3). Dev keeps the message for DX.
         try {
           this.onValidatorError?.(err)
         } catch {
           // The reporter must not propagate.
         }
-        syncErrors.push(err instanceof Error ? err.message : String(err))
+        syncErrors.push(__DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed')
       }
     }
 
@@ -441,6 +458,7 @@ class FieldImpl<T> implements Field<T> {
       batch(() => {
         this.validatorErrors$.set(syncErrors)
         this.validating$.set(false)
+        this.lastValid$.set(this.errors$.peek().length === 0)
       })
       this.emitValidated(false, syncErrors)
       return
@@ -450,6 +468,7 @@ class FieldImpl<T> implements Field<T> {
       batch(() => {
         this.validatorErrors$.set([])
         this.validating$.set(false)
+        this.lastValid$.set(this.errors$.peek().length === 0)
       })
       this.emitValidated(true, [])
       return
@@ -474,6 +493,7 @@ class FieldImpl<T> implements Field<T> {
       batch(() => {
         this.validatorErrors$.set(asyncErrors)
         this.validating$.set(false)
+        this.lastValid$.set(this.errors$.peek().length === 0)
       })
       this.emitValidated(asyncErrors.length === 0, asyncErrors)
     })
@@ -540,7 +560,9 @@ export type FieldTransform<T> = {
 /**
  * Wrap an async validator with a debounce. The debounce timer resets on every
  * value change. While debouncing or the request is in flight, the field's
- * `isValidating` is true and `isValid` is false (treat-as-invalid-until-proven-valid).
+ * `isValidating` is true and `isValid` HOLDS its last settled value (T5.3) — so
+ * editing an already-valid field doesn't strobe a submit button to disabled on
+ * every keystroke. A field with no prior settled validation defaults to valid.
  */
 export function debouncedValidator<T>(
   fn: (value: T, signal: AbortSignal) => Promise<string | null>,

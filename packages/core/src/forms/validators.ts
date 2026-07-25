@@ -60,17 +60,27 @@ const isEmpty = (value: unknown): boolean => {
   if (value === undefined || value === null) return true
   if (typeof value === 'string') return value.length === 0
   if (Array.isArray(value)) return value.length === 0
-  // Unchecked boolean fields are "empty" — `required` on a confirm-checkbox
-  // should reject `false` the same way it rejects `''`.
-  if (typeof value === 'boolean') return value === false
+  // A boolean `false` is a legitimate value (a toggle set to "off"), NOT empty
+  // — `required` accepts it. For a consent / confirm checkbox that MUST be
+  // ticked, use `mustBeTrue` instead (T5.3).
   return false
 }
 
-/** Reject empty values (undefined, null, empty string, empty array, false). */
+/** Reject empty values (undefined, null, empty string, empty array). Booleans always pass. */
 export const required =
   <T>(message = 'Required'): Validator<T> =>
   (value) =>
     isEmpty(value) ? message : null
+
+/**
+ * Reject any value that isn't boolean `true` — the "you must check this box"
+ * rule for consent / terms-of-service / confirm checkboxes. Unlike `required`
+ * (which now accepts `false` as a valid boolean), this fails on `false`.
+ */
+export const mustBeTrue =
+  (message = 'Required'): Validator<boolean> =>
+  (value) =>
+    value === true ? null : message
 
 /** Reject strings / arrays shorter than `n`. Allows null/undefined (use with `required` to forbid). */
 export const minLength =

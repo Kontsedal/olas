@@ -41,6 +41,7 @@ export {
   maxLength,
   min,
   minLength,
+  mustBeTrue,
   pattern,
   required,
   validator,
