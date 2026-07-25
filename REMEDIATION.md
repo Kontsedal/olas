@@ -304,7 +304,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   removes that layer's baseline from the chain; current data is only rewritten when the
   top layer rolls back").
 
-### [ ] T3.2 — **[MAJOR]** `refetchInterval` livelocks when fetch duration > interval
+### [x] T3.2 — **[MAJOR]** `refetchInterval` livelocks when fetch duration > interval
 - **Files:** `client.ts:146-158` (interval tick), `entry.ts:148-151` (startFetch aborts in-flight)
 - **Problem (confirmed):** each tick aborts the in-flight fetch — 11 starts, 0 completions
   over 10 simulated seconds; data forever `undefined`; request-per-interval hammering.

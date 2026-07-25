@@ -163,6 +163,12 @@ export class ClientEntry<T> {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
       }
+      // Join an in-flight fetch instead of aborting it. `startFetch()` aborts
+      // the current request, so a fetch slower than the interval would
+      // livelock — abort→restart every tick, never completing, hammering one
+      // aborted request per interval (T3.2). Skip the tick; the running fetch
+      // will finish and the next tick re-arms once it's idle.
+      if (this.entry.isFetching.peek()) return
       this.entry.startFetch().catch(() => {
         /* error already captured on entry */
       })
@@ -323,6 +329,9 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
       }
+      // Join an in-flight fetch instead of aborting it (T3.2) — see the
+      // regular `ClientEntry.startIntervalTimer` for the livelock rationale.
+      if (this.entry.isFetching.peek()) return
       this.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
