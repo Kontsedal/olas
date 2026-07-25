@@ -1,5 +1,5 @@
 import { createRoot, defineController } from '@kontsedal/olas-core'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import { formFromZod, zodValidator, zodValidatorAsync } from '../src'
 
@@ -231,6 +231,68 @@ describe('formFromZod', () => {
     }))
     const root = createRoot(def, { deps: emptyDeps })
     expect(root.form.value.value).toEqual({ now: 42 })
+    root.dispose()
+  })
+})
+
+// ─── T6.5: async abort-race hygiene, dual-copy warn, defaultInitial gaps ─────
+
+describe('zodValidatorAsync — abort-race cleanup (T6.5)', () => {
+  test('removes its abort listener after a completed validation (no leak / late rejection)', async () => {
+    const schema = z.string().refine(async () => true, { message: 'nope' })
+    const v = zodValidatorAsync(schema)
+    const controller = new AbortController()
+    const removeSpy = vi.spyOn(controller.signal, 'removeEventListener')
+    const result = await v('anything', controller.signal)
+    expect(result).toBeNull()
+    // The `abort` listener registered for the race must be cleaned up on the
+    // happy path — otherwise a later abort rejects a promise nothing awaits.
+    expect(removeSpy).toHaveBeenCalledWith('abort', expect.any(Function))
+    // Aborting AFTER completion must be a no-op (listener already gone).
+    controller.abort()
+    await flush()
+  })
+})
+
+describe('formFromZod — duplicate zod copy detection (T6.5)', () => {
+  test('warns when a nested schema is not an instanceof this package’s zod', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // A schema-shaped object from "another zod copy": has a `def` marker but
+      // fails every `instanceof z.ZodX` check against the zod we import.
+      const foreign = { def: { type: 'object', shape: {} } } as unknown as z.ZodType
+      const schema = z.object({ nested: foreign })
+      const def = defineController((ctx) => ({
+        form: formFromZod(ctx, schema as z.ZodObject<z.ZodRawShape>),
+      }))
+      const root = createRoot(def, { deps: emptyDeps })
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringMatching(/duplicate zod|two copies|instanceof/i),
+      )
+      root.dispose()
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+})
+
+describe('formFromZod — defaultInitial gaps (T6.5)', () => {
+  test('ZodDate → undefined; transform introspects input; union → undefined', () => {
+    const schema = z.object({
+      when: z.date(),
+      len: z.string().transform((s) => s.length),
+      either: z.union([z.string(), z.number()]),
+    })
+    const def = defineController((ctx) => ({ form: formFromZod(ctx, schema) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    const fields = root.form.fields as unknown as {
+      when: { value: unknown }
+      len: { value: unknown }
+      either: { value: unknown }
+    }
+    expect(fields.when.value).toBeUndefined() // was null (wrong for a Date field)
+    expect(fields.len.value).toBe('') // transform → the INPUT (string) default
+    expect(fields.either.value).toBeUndefined() // union → undefined fallback
     root.dispose()
   })
 })

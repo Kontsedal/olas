@@ -31,17 +31,29 @@ export function zodValidator<T>(schema: z.ZodType<T>): Validator<T> {
 export function zodValidatorAsync<T>(schema: z.ZodType<T>): Validator<T> {
   return async (value, signal) => {
     if (signal?.aborted) throw makeAbortError()
+    let onAbort: (() => void) | undefined
     const abortPromise = signal
       ? new Promise<never>((_, reject) => {
-          const onAbort = () => reject(makeAbortError())
-          signal.addEventListener('abort', onAbort, { once: true })
+          onAbort = () => reject(makeAbortError())
+          signal.addEventListener('abort', onAbort)
         })
       : undefined
-    const parsePromise = schema.safeParseAsync(value)
-    const result = await (abortPromise ? Promise.race([parsePromise, abortPromise]) : parsePromise)
-    if (signal?.aborted) throw makeAbortError()
-    if (result.success) return null
-    return result.error.issues[0]?.message ?? 'Invalid'
+    // If `safeParseAsync` wins the race, `abortPromise` is left pending; a
+    // later `abort()` would then reject it with nothing awaiting → an
+    // unhandled rejection, and the listener would leak. Swallow the loser's
+    // rejection, and ALWAYS remove the listener in `finally` (T6.5).
+    abortPromise?.catch(() => {})
+    try {
+      const parsePromise = schema.safeParseAsync(value)
+      const result = await (abortPromise
+        ? Promise.race([parsePromise, abortPromise])
+        : parsePromise)
+      if (signal?.aborted) throw makeAbortError()
+      if (result.success) return null
+      return result.error.issues[0]?.message ?? 'Invalid'
+    } finally {
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort)
+    }
   }
 }
 
@@ -54,6 +66,33 @@ function makeAbortError(): Error {
   const err = new Error('Aborted')
   err.name = 'AbortError'
   return err
+}
+
+/**
+ * Heuristic: does `s` look like a zod schema from a DIFFERENT copy of zod?
+ * A schema from the copy WE import is `instanceof z.ZodType`; a foreign one
+ * fails that but still carries a `def` (Zod 4) / `_def` (Zod 3) marker. All of
+ * `formFromZod`'s introspection is `instanceof`-based, so a foreign schema
+ * silently degrades to a flat field — hence the dev warning (T6.5).
+ */
+function isForeignZod(s: unknown): boolean {
+  if (s === null || typeof s !== 'object') return false
+  if (s instanceof z.ZodType) return false // our zod — fine
+  const o = s as { def?: unknown; _def?: unknown }
+  return o.def !== undefined || o._def !== undefined
+}
+
+function warnDuplicateZod(): void {
+  // Not gated on NODE_ENV: this package has no build-time dev flag (`__DEV__`
+  // is core-only), and the warning fires ONLY on a genuine misconfiguration (a
+  // schema from a foreign zod copy) that's broken in every environment — so
+  // there's no prod-noise concern.
+  console.warn(
+    '[olas-zod] a schema failed every zod `instanceof` check but looks like a zod schema ' +
+      '(it has a `def`/`_def`). This almost always means TWO copies of `zod` are installed — ' +
+      '`formFromZod` can only introspect schemas built with the SAME copy it imports, so a ' +
+      'nested object/array here silently degrades to a flat field. Dedupe zod (e.g. `pnpm why zod`).',
+  )
 }
 
 /**
@@ -91,8 +130,9 @@ function unwrap(schema: AnyZodType): AnyZodType {
   while (!seen.has(s)) {
     seen.add(s)
     if (s instanceof z.ZodDefault) {
-      // ZodDefault stores the inner schema on `def.innerType`. The runtime
-      // shape is stable across 3.x and 4.x; the public type just shifts.
+      // ZodDefault stores the inner schema on `def.innerType` in Zod 4 (the
+      // peer dep is `^4.0.0`). The public type is opaque, so read `def`
+      // through a cast.
       s = (s as unknown as { def: { innerType: AnyZodType } }).def.innerType
     } else if (s instanceof z.ZodOptional) {
       s = (s as z.ZodOptional<AnyZodType>).unwrap() as AnyZodType
@@ -112,6 +152,13 @@ function defaultInitial(schema: AnyZodType): unknown {
     return typeof raw === 'function' ? (raw as () => unknown)() : raw
   }
   const inner = unwrap(schema)
+  // A `.transform(...)` / `.pipe(...)` is a `ZodPipe`. The form field holds the
+  // INPUT the user edits (the transform runs on parse), so seed from the input
+  // schema, not the piped output (T6.5). NOTE: `ZodToLeaf` still types the field
+  // by `z.infer` (the output); the runtime initial is the input default.
+  if (inner instanceof z.ZodPipe) {
+    return defaultInitial((inner as unknown as { def: { in: AnyZodType } }).def.in)
+  }
   if (inner instanceof z.ZodString) return ''
   if (inner instanceof z.ZodNumber) return 0
   if (inner instanceof z.ZodBoolean) return false
@@ -123,7 +170,10 @@ function defaultInitial(schema: AnyZodType): unknown {
     const first = opts[0]
     return typeof first === 'string' ? first : ''
   }
-  if (inner instanceof z.ZodDate) return null
+  // A Date field starts EMPTY — `null` was wrong (it flows a non-Date into a
+  // `Date`-typed field). `undefined` + a required() validator is the clean
+  // "user must pick a date" shape (T6.5).
+  if (inner instanceof z.ZodDate) return undefined
   if (inner instanceof z.ZodBigInt) return 0n
   if (inner instanceof z.ZodLiteral) {
     const vals = (inner as unknown as { def: { values: readonly unknown[] } }).def?.values
@@ -279,6 +329,11 @@ function buildLeaf(
       initial !== undefined ? { initial: initial as Array<unknown> } : undefined,
     )
   }
+
+  // Reached the leaf fallthrough: if `inner` still LOOKS like a zod schema but
+  // isn't an instanceof ours, it's from a duplicate zod copy and a nested
+  // object/array would have degraded to a flat field here — warn in dev (T6.5).
+  if (isForeignZod(inner)) warnDuplicateZod()
 
   const ini = initial !== undefined ? initial : defaultInitial(schema)
   const validators: Array<Validator<unknown>> = [zodValidator(schema as z.ZodType<unknown>)]
