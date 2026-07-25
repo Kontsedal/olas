@@ -15,13 +15,8 @@
  * contract), mutation-queue (enqueue / replay / drain semantics).
  */
 
-import {
-  _unregisterMutationById,
-  createRoot,
-  defineController,
-  defineMutation,
-  type Mutation,
-} from '@kontsedal/olas-core'
+import { createRoot, defineController, defineMutation, type Mutation } from '@kontsedal/olas-core'
+import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { memoryAdapter, settle } from './_helpers'

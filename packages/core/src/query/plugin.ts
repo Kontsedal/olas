@@ -206,15 +206,45 @@ export type RegisteredQuery = {
   readonly __spec: { queryId?: string; crossTab?: boolean }
 }
 
-const queryRegistry = new Map<string, RegisteredQuery>()
+/**
+ * Back a module-level registry on `globalThis` under a shared `Symbol.for`
+ * key. Guards the dual-package hazard: if a consumer ends up with both the ESM
+ * and CJS build of `@kontsedal/olas-core` (common with mixed bundler configs),
+ * each copy would otherwise own a SEPARATE registry `Map` — a mutation
+ * registered via the ESM copy would be invisible to the mutation-queue plugin
+ * loaded against the CJS copy, and cross-tab query lookups would miss. Sharing
+ * one Map on `globalThis` makes both copies agree. T3.9.
+ */
+function globalRegistry<V>(key: symbol): Map<string, V> {
+  const store = globalThis as unknown as Record<symbol, Map<string, V> | undefined>
+  const existing = store[key]
+  if (existing) return existing
+  const created = new Map<string, V>()
+  store[key] = created
+  return created
+}
+
+const queryRegistry = globalRegistry<RegisteredQuery>(Symbol.for('olas.queryRegistry'))
 
 /**
  * Register a query by its `queryId`. Internal — called from `defineQuery` /
  * `defineInfiniteQuery`. Replaces any previous registration with the same
  * id (matches Olas's "full root rebuild" HMR story; a mid-flight remote
- * message routed against the old `Query` simply misses).
+ * message routed against the old `Query` simply misses). Dev-warns when a
+ * *different* query overwrites an existing id — a genuine collision, since
+ * cross-tab / persistence route by `queryId` (expected during HMR).
  */
 export function registerQueryById(queryId: string, query: RegisteredQuery): void {
+  if (__DEV__) {
+    const existing = queryRegistry.get(queryId)
+    if (existing !== undefined && existing !== query) {
+      console.warn(
+        `[olas] duplicate queryId "${queryId}": a different query is replacing an existing ` +
+          'registration. `queryId` must be unique per query (cross-tab / persistence route by it). ' +
+          'Expected during HMR; a collision bug otherwise.',
+      )
+    }
+  }
   queryRegistry.set(queryId, query)
 }
 
@@ -260,7 +290,7 @@ export type RegisteredMutation = {
   readonly mutate: (vars: unknown, signal: AbortSignal) => Promise<unknown>
 }
 
-const mutationRegistry = new Map<string, RegisteredMutation>()
+const mutationRegistry = globalRegistry<RegisteredMutation>(Symbol.for('olas.mutationRegistry'))
 
 /** Register a mutation by its `mutationId`. Internal — called from `defineMutation`. */
 export function registerMutationById(mutationId: string, entry: RegisteredMutation): void {

@@ -3,6 +3,11 @@ import type { ControllerDef, Field, Root, RootOptions } from './controller/types
 import type { AsyncState, AsyncStatus } from './query/types'
 import { computed, type ReadSignal, type Signal, signal } from './signals'
 
+// Test-only registry teardown — lives on the `@kontsedal/olas-core/testing`
+// sub-path, NOT the public entry (T3.9). Lets tests reusing a `mutationId`
+// across cases avoid registry bleed.
+export { _unregisterMutationById } from './query/plugin'
+
 /**
  * Construct an isolated root wrapping a single controller. The returned object
  * is the controller's api plus the standard Root lifecycle controls

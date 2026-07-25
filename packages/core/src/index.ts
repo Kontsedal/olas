@@ -84,11 +84,7 @@ export type {
   RegisteredQuery,
   SetDataEvent,
 } from './query/plugin'
-export {
-  _unregisterMutationById,
-  lookupRegisteredMutation,
-  lookupRegisteredQuery,
-} from './query/plugin'
+export { lookupRegisteredMutation, lookupRegisteredQuery } from './query/plugin'
 // Query primitives
 export type {
   AsyncState,
