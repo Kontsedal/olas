@@ -231,6 +231,34 @@ describe('installStreamingIntake (client side)', () => {
     uninstall()
     root.dispose()
   })
+
+  // R4.7 (T4.7) — teardown must re-install a QUEUE, not an inert sink, so entries
+  // still arriving from the stream after unmount are buffered (a later boundary
+  // drains them) instead of silently dropped.
+  test('teardown buffers late pushes instead of dropping them', () => {
+    ;(globalThis as unknown as Record<string, unknown>)[STREAMING_GLOBAL] = {
+      q: [],
+      push(batch: unknown) {
+        const g = (globalThis as unknown as Record<string, { q: unknown[] }>)[STREAMING_GLOBAL]
+        if (g !== undefined) g.q.push(batch)
+      },
+    }
+    const q = defineQuery({ queryId: 'streaming-late', key: () => [], fetcher: async () => 'x' })
+    const def = defineController((ctx) => ({ v: ctx.use(q) }))
+    const root = createRoot(def, { deps: {} })
+    const uninstall = installStreamingIntake(root)
+    uninstall() // teardown → re-installs a bootstrap-style queue
+
+    const intake = (globalThis as unknown as Record<string, { push: (b: unknown) => void; q: unknown[] }>)[
+      STREAMING_GLOBAL
+    ]
+    if (intake === undefined) throw new Error('intake missing')
+    intake.push([{ queryId: 'streaming-late', key: [], data: ['late'], lastUpdatedAt: 3000 }])
+    // Was the bug: `push: () => {}` dropped it → q stayed empty.
+    expect(intake.q.length).toBe(1)
+
+    root.dispose()
+  })
 })
 
 describe('createStreamingTransform', () => {
