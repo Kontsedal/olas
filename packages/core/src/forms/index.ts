@@ -1,7 +1,7 @@
 export type { FieldTransform, ValidateOn } from './field'
 export type { StandardSchemaV1 } from './standard-schema'
 export { isStandardSchema } from './standard-schema'
-export type { Validator } from './types'
+export type { FormIssue, Validator, ValidatorResult } from './types'
 export {
   email,
   max,

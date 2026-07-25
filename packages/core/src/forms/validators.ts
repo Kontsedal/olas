@@ -1,13 +1,16 @@
-import type { StandardSchemaV1 } from './standard-schema'
-import type { Validator } from './types'
+import type { StandardSchemaV1, StandardSchemaV1Issue } from './standard-schema'
+import type { FormIssue, Validator } from './types'
 
 /**
  * Wrap any Standard-Schema-compatible schema (Zod 4, Valibot 1, ArkType 2,
- * …) as an Olas validator. The validator returns the first issue's message
- * on failure (or `'Invalid'` if no issues are produced), `null` on success.
+ * …) as an Olas validator. Returns **all** issues as `FormIssue[]`, each
+ * carrying the schema's own `path` — so a whole-form schema used as a
+ * form-level validator routes each issue onto the matching field (T5.2),
+ * and a leaf schema (whose issues have empty paths) still reports on the
+ * field it's attached to. An empty array means "valid".
  *
  * Standard Schema validators may be sync or async; this wrapper threads
- * through whichever the schema returns — `Promise<string|null>` only when
+ * through whichever the schema returns — `Promise<FormIssue[]>` only when
  * the underlying validate call is itself async.
  *
  * `signal` is accepted to match the `Validator<T>` shape but isn't forwarded
@@ -18,15 +21,37 @@ export function validator<I, O>(schema: StandardSchemaV1<I, O>): Validator<I> {
     void signal
     const result = schema['~standard'].validate(value)
     if (result instanceof Promise) {
-      return result.then(messageFromResult)
+      return result.then(issuesFromResult)
     }
-    return messageFromResult(result)
+    return issuesFromResult(result)
   }
 }
 
-function messageFromResult(result: { issues?: ReadonlyArray<{ message: string }> }): string | null {
-  if (result.issues === undefined || result.issues.length === 0) return null
-  return result.issues[0]?.message ?? 'Invalid'
+function issuesFromResult(result: {
+  issues?: ReadonlyArray<StandardSchemaV1Issue>
+}): FormIssue[] {
+  if (result.issues === undefined || result.issues.length === 0) return []
+  return result.issues.map((issue) => ({
+    path: normalizeIssuePath(issue.path),
+    message: issue.message ?? 'Invalid',
+  }))
+}
+
+/**
+ * Standard Schema issue paths are `(PropertyKey | { key: PropertyKey })[]`.
+ * Flatten to the `(string | number)[]` shape `FormIssue` uses: numeric keys
+ * stay numeric (array indices), everything else stringifies.
+ */
+function normalizeIssuePath(
+  path: StandardSchemaV1Issue['path'],
+): (string | number)[] {
+  if (path === undefined) return []
+  const out: (string | number)[] = []
+  for (const seg of path) {
+    const key = typeof seg === 'object' && seg !== null ? seg.key : seg
+    out.push(typeof key === 'number' ? key : String(key))
+  }
+  return out
 }
 
 export { isStandardSchema, type StandardSchemaV1 } from './standard-schema'

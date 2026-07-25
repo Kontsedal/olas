@@ -17,7 +17,7 @@ edges:
   - { type: uses, target: ../decisions/brand-markers-not-classes.md }
   - { type: related, target: ../pitfalls/field-value-shape.md }
   - { type: related, target: ../pitfalls/fieldarray-factory-uses-initial.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -29,12 +29,12 @@ Form primitives — `Field<T>`, `Form<S>`, `FieldArray<I>` — plus stdlib valid
 
 ## Files
 
-- **`types.ts`** — `Validator<T>` type only.
-- **`validators.ts`** — stdlib functions. All return `Validator<T>`. Most short-circuit on `null` / `undefined` so they compose with `required()` cleanly.
-- **`field.ts`** — `FieldImpl<T>` class + `createField` factory + `debouncedValidator`. Field IS a `ReadSignal<T>` (delegates `.value` / `peek` / `subscribe` to an internal signal). Owns the validator runner.
+- **`types.ts`** — `Validator<T>`, `ValidatorResult` (`string | null | FormIssue[]`), and `FormIssue` (`{ path: (string|number)[]; message }`). Validators may target descendant fields by path (T5.2).
+- **`validators.ts`** — stdlib functions + the Standard-Schema `validator()` adapter. Stdlib fns return `Validator<T>` and short-circuit on `null` / `undefined` so they compose with `required()`. `validator(schema)` returns **all** issues as `FormIssue[]` (each with its `path`) — `[]` on success.
+- **`field.ts`** — `FieldImpl<T>` class + `createField` factory + `debouncedValidator`. Field IS a `ReadSignal<T>` (delegates `.value` / `peek` / `subscribe` to an internal signal). Owns the validator runner. Three error channels merged into `errors`: `validatorErrors$` (own validators), `serverErrors$` (`setErrors`), `formErrors$` (parent-form-validator routing — T5.2).
 - **`form-types.ts`** — heavy type machinery: `FormSchema`, `FormValue<S>`, `FormErrors<S>`, `FieldArrayValue<I>`, `Form<S>`, `FieldArray<I>`. Plus the brand symbols.
-- **`form.ts`** — `FormImpl` and `FieldArrayImpl` + factories + brand-based predicates.
-- **`index.ts`** — re-exports validators + the `Validator` type.
+- **`form.ts`** — `FormImpl` and `FieldArrayImpl` + factories + brand-based predicates + the form-issue router (`resolveNode` / `routeFormIssues`).
+- **`index.ts`** — re-exports validators + the `Validator` / `ValidatorResult` / `FormIssue` types.
 
 `form.ts` is the longest file (~450 lines). Read it side-by-side with `form-types.ts`.
 
@@ -83,9 +83,18 @@ effect(() => {
 })
 ```
 
-The whole body runs inside an `effect`, so any signal read inside any validator becomes a tracked dependency — that's what makes cross-field rules like `(v) => v === password.value ? null : 'mismatch'` reactive. The async portion (`.then`) is outside the tracking scope.
+The whole body runs inside an `effect`, so any signal read inside any validator becomes a tracked dependency — that's what makes cross-field rules like `(v) => v === password.value ? null : 'mismatch'` reactive. The async portion (`.then`) is outside the tracking scope. A validator that returns a `FormIssue[]` is flattened to its messages here (`messagesFromResult` — a leaf field has no descendants to route paths to).
 
-`debouncedValidator(fn, ms)` returns a `Validator<T>` whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first).
+`debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` (not the widened `Validator<T>`), so a direct caller that stores the result in a `string | null` signal type-checks — still assignable wherever a `Validator<T>` is expected (`field.ts:545-548`).
+
+## Form-level validators that target fields (T5.2)
+
+A form-level validator (`FormOptions.validators`) or array-level validator (`FieldArrayOptions.validators`) may return a `FormIssue[]` instead of a `string`. `FormImpl.runTopLevelValidators` / `FieldArrayImpl.runTopLevelValidators` collect all results (sync + async, via `appendIssues`) and hand them to `routeFormIssues(this, issues, topLevelErrors$, lastTargets)` (`form.ts`):
+
+- **empty-path** (and unresolvable) issues → the node's own `topLevelErrors$`.
+- **path** issues → `resolveNode(this, path)` walks keys (Form) / numeric indices (FieldArray) to the target node, whose `setFormErrors(msgs)` is called.
+
+Each node type (`FieldImpl`, `FormImpl`, `FieldArrayImpl`) exposes `setFormErrors`. On a Field it feeds `formErrors$` (merged into `errors`); on a Form/FieldArray it feeds `parentFormErrors$`, merged into that node's **`topLevelErrors`** getter (now a `computed` over own + parent-injected) and factored into `isValid`. `routeFormIssues` clears any target written last run but not this one (tracked in `lastFormErrorTargets`), so a fixed rule removes its message. The router runs inside the validator `effect` but only *reads* the tracked form `value` and *writes* error signals (peeks elsewhere), so it adds no spurious dependencies and can't loop (errors aren't part of `value`). Pinned by `regressions.test.ts` (R-F5.2); the Standard-Schema path (`validator(schema)` → `FormIssue[]`) is pinned by `standard-schema.test.ts`.
 
 ## `Form.set(partial)` — batched deep merge
 

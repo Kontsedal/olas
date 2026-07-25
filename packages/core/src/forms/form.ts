@@ -22,6 +22,7 @@ import type {
   FormValue,
   ItemInitial,
 } from './form-types'
+import type { FormIssue, ValidatorResult } from './types'
 
 const FORM_BRAND = Symbol.for('olas.form')
 const FIELD_ARRAY_BRAND = Symbol.for('olas.fieldArray')
@@ -34,6 +35,87 @@ const isFieldArray = (x: unknown): x is FieldArray<Field<unknown> | Form<FormSch
 
 const isField = (x: unknown): x is Field<unknown> =>
   typeof x === 'object' && x !== null && !isForm(x) && !isFieldArray(x)
+
+/** Any node that can receive parent-form-validator-routed errors (T5.2). */
+type FormErrorTarget = { setFormErrors?: (msgs: ReadonlyArray<string>) => void }
+
+/**
+ * Walk a form tree from `root` following `FormIssue.path` segments. Forms walk
+ * keys; field-arrays walk numeric indices. Returns the resolved node, or
+ * `undefined` if the path runs off the tree (bad index, or a leaf reached with
+ * an unconsumed path segment). Reads are untracked (`fields` is a static object;
+ * `at()` peeks) so calling this inside a validator effect adds no dependencies.
+ */
+function resolveNode(root: unknown, segments: ReadonlyArray<string | number>): unknown {
+  let cursor: unknown = root
+  for (const seg of segments) {
+    if (cursor === undefined || cursor === null) return undefined
+    if (isForm(cursor)) {
+      cursor = (cursor.fields as Record<string, unknown>)[String(seg)]
+    } else if (isFieldArray(cursor)) {
+      const idx = Number(seg)
+      if (!Number.isInteger(idx) || idx < 0) return undefined
+      cursor = (cursor as { at(i: number): unknown }).at(idx)
+    } else {
+      return undefined
+    }
+  }
+  return cursor
+}
+
+/**
+ * Normalize one validator result into the shared `FormIssue[]` shape. A plain
+ * string is a message on the node itself (empty path); `null` contributes
+ * nothing; a `FormIssue[]` is appended verbatim.
+ */
+function appendIssues(out: FormIssue[], result: ValidatorResult): void {
+  if (result == null) return
+  if (typeof result === 'string') {
+    out.push({ path: [], message: result })
+    return
+  }
+  for (const issue of result) out.push(issue)
+}
+
+/**
+ * Route a fully-collected issue set for one form-level validation run:
+ *  - empty-path (and unresolvable) issues → `topLevelErrors$` on the owning node
+ *  - path issues → the resolved descendant's `setFormErrors`
+ *
+ * Targets that received an error last run but not this one are cleared, so a
+ * fixed cross-field rule removes its message from the field it landed on.
+ * Returns the new target set for the caller to retain. MUST run inside a batch.
+ */
+function routeFormIssues(
+  root: unknown,
+  issues: FormIssue[],
+  topLevelErrors$: Signal<string[]>,
+  lastTargets: Set<FormErrorTarget>,
+): Set<FormErrorTarget> {
+  const topLevel: string[] = []
+  const byTarget = new Map<FormErrorTarget, string[]>()
+  for (const issue of issues) {
+    if (issue.path.length === 0) {
+      topLevel.push(issue.message)
+      continue
+    }
+    const target = resolveNode(root, issue.path) as FormErrorTarget | undefined
+    if (target === undefined || typeof target.setFormErrors !== 'function') {
+      // Unresolvable path — surface at the top level rather than dropping it.
+      topLevel.push(issue.message)
+      continue
+    }
+    const list = byTarget.get(target)
+    if (list) list.push(issue.message)
+    else byTarget.set(target, [issue.message])
+  }
+  topLevelErrors$.set(topLevel)
+  for (const t of lastTargets) {
+    if (!byTarget.has(t)) t.setFormErrors?.([])
+  }
+  for (const [t, msgs] of byTarget) t.setFormErrors?.(msgs)
+  return new Set(byTarget.keys())
+}
 
 class FormImpl<S extends FormSchema> implements Form<S> {
   readonly [FORM_BRAND] = true
@@ -56,8 +138,24 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   readonly dirtyFields: ReadSignal<string[]>
 
   private readonly topLevelErrors$: Signal<string[]> = signal([])
-  readonly topLevelErrors: ReadSignal<string[]> = this.topLevelErrors$
+  /**
+   * Errors routed to THIS form by an ancestor form-level validator (a
+   * `FormIssue` whose path resolves to this node). Merged into `topLevelErrors`
+   * beside this form's own validator output, so `topLevelErrors` means "errors
+   * attached to this node itself, whatever their source". Owned by the ancestor
+   * router (T5.2) — see `setFormErrors`.
+   */
+  private readonly parentFormErrors$: Signal<string[]> = signal([])
+  readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
+    const own = this.topLevelErrors$.value
+    const parent = this.parentFormErrors$.value
+    if (parent.length === 0) return own
+    if (own.length === 0) return parent
+    return [...own, ...parent]
+  })
   private readonly topLevelValidating$: Signal<boolean> = signal(false)
+  /** Targets written by the last form-level run — cleared next run if absent. */
+  private lastFormErrorTargets: Set<FormErrorTarget> = new Set()
 
   // Submission lifecycle.
   private readonly isSubmitting$: Signal<boolean> = signal(false)
@@ -137,7 +235,9 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       return false
     })
     this.isValid = computed(() => {
-      if (this.topLevelErrors$.value.length > 0) return false
+      // Merged view: this form's own top-level validators AND any errors an
+      // ancestor form-level validator routed onto this node (T5.2).
+      if (this.topLevelErrors.value.length > 0) return false
       if (this.isValidating.value) return false
       for (const child of Object.values(this.fields)) {
         if (!(child as { isValid: ReadSignal<boolean> }).isValid.value) return false
@@ -194,7 +294,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   private computeFlatErrors(): Array<{ path: string; errors: string[] }> {
     const out: Array<{ path: string; errors: string[] }> = []
-    const tle = this.topLevelErrors$.value
+    const tle = this.topLevelErrors.value
     if (tle.length > 0) out.push({ path: '', errors: tle })
     walkErrors(this.fields, '', out)
     return out
@@ -285,6 +385,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         }
       }
       this.topLevelErrors$.set([])
+      this.parentFormErrors$.set([])
       // Submission lifecycle is conceptually part of "form state"; resetting
       // a form means the user is starting over. Without these clears, a UI
       // bound to `submitCount`/`submitError` would show stale state after
@@ -426,6 +527,18 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   }
 
   /**
+   * Internal — receive errors routed here by an ancestor form-level validator
+   * (a `FormIssue` whose path resolved to this nested form). Guards against
+   * spurious writes so a whole-tree clear pass doesn't wake subscribers. See
+   * `routeFormIssues`.
+   */
+  setFormErrors(errors: ReadonlyArray<string>): void {
+    if (this.disposed) return
+    if (this.parentFormErrors$.peek().length === 0 && errors.length === 0) return
+    this.parentFormErrors$.set(errors.length === 0 ? [] : [...errors])
+  }
+
+  /**
    * Reset a named subtree to its initial. `path` uses the same dotted /
    * bracket notation as `setErrors` / `flatErrors`. Useful when
    * `Form.set({foo: undefined})` would be ambiguous ("clear" vs "leave
@@ -494,26 +607,31 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     this.currentValidatorAbort = abort
     const myId = ++this.currentValidatorRun
 
-    const syncErrors: string[] = []
-    const asyncPromises: Promise<string | null>[] = []
+    const syncIssues: FormIssue[] = []
+    const asyncPromises: Promise<ValidatorResult>[] = []
     for (const v of this.validators) {
       try {
         const r = v(value, abort.signal)
         if (r instanceof Promise) asyncPromises.push(r)
-        else if (r != null) syncErrors.push(r)
+        else appendIssues(syncIssues, r)
       } catch (err) {
         try {
           this.onValidatorError?.(err)
         } catch {
           // The reporter must not propagate.
         }
-        syncErrors.push(err instanceof Error ? err.message : String(err))
+        syncIssues.push({ path: [], message: err instanceof Error ? err.message : String(err) })
       }
     }
 
-    if (syncErrors.length > 0) {
+    if (syncIssues.length > 0) {
       batch(() => {
-        this.topLevelErrors$.set(syncErrors)
+        this.lastFormErrorTargets = routeFormIssues(
+          this,
+          syncIssues,
+          this.topLevelErrors$,
+          this.lastFormErrorTargets,
+        )
         this.topLevelValidating$.set(false)
       })
       return
@@ -521,25 +639,40 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
     if (asyncPromises.length === 0) {
       batch(() => {
-        this.topLevelErrors$.set([])
+        this.lastFormErrorTargets = routeFormIssues(
+          this,
+          [],
+          this.topLevelErrors$,
+          this.lastFormErrorTargets,
+        )
         this.topLevelValidating$.set(false)
       })
       return
     }
 
     batch(() => {
-      this.topLevelErrors$.set([])
+      this.lastFormErrorTargets = routeFormIssues(
+        this,
+        [],
+        this.topLevelErrors$,
+        this.lastFormErrorTargets,
+      )
       this.topLevelValidating$.set(true)
     })
 
     Promise.allSettled(asyncPromises).then((results) => {
       if (myId !== this.currentValidatorRun || this.disposed) return
-      const errs: string[] = []
+      const issues: FormIssue[] = []
       for (const r of results) {
-        if (r.status === 'fulfilled' && r.value != null) errs.push(r.value)
+        if (r.status === 'fulfilled') appendIssues(issues, r.value)
       }
       batch(() => {
-        this.topLevelErrors$.set(errs)
+        this.lastFormErrorTargets = routeFormIssues(
+          this,
+          issues,
+          this.topLevelErrors$,
+          this.lastFormErrorTargets,
+        )
         this.topLevelValidating$.set(false)
       })
     })
@@ -660,8 +793,19 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
    */
   private readonly structurallyDirty$: Signal<boolean> = signal(false)
   private readonly topLevelErrors$: Signal<string[]> = signal([])
-  readonly topLevelErrors: ReadSignal<string[]> = this.topLevelErrors$
+  /** Errors routed to this array by an ancestor form-level validator (T5.2) —
+   *  merged into `topLevelErrors` beside the array's own validator output. */
+  private readonly parentFormErrors$: Signal<string[]> = signal([])
+  readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
+    const own = this.topLevelErrors$.value
+    const parent = this.parentFormErrors$.value
+    if (parent.length === 0) return own
+    if (own.length === 0) return parent
+    return [...own, ...parent]
+  })
   private readonly topLevelValidating$: Signal<boolean> = signal(false)
+  /** Targets written by the last array-level run — cleared next run if absent. */
+  private lastFormErrorTargets: Set<FormErrorTarget> = new Set()
 
   private readonly itemFactory: (initial?: ItemInitial<I>) => I
   private initialItems: Array<ItemInitial<I>> = []
@@ -733,7 +877,9 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       return false
     })
     this.isValid = computed(() => {
-      if (this.topLevelErrors$.value.length > 0) return false
+      // Merged view: the array's own top-level validators AND any errors an
+      // ancestor form-level validator routed onto this node (T5.2).
+      if (this.topLevelErrors.value.length > 0) return false
       if (this.isValidating.value) return false
       for (const item of this.items$.value) {
         if (!(item as { isValid: ReadSignal<boolean> }).isValid.value) return false
@@ -748,6 +894,16 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   at(index: number): I | undefined {
     return this.items$.peek()[index]
+  }
+
+  /**
+   * Internal — receive errors routed here by an ancestor form-level validator
+   * (a `FormIssue` whose path resolved to this array). See `routeFormIssues`.
+   */
+  setFormErrors(errors: ReadonlyArray<string>): void {
+    if (this.disposed) return
+    if (this.parentFormErrors$.peek().length === 0 && errors.length === 0) return
+    this.parentFormErrors$.set(errors.length === 0 ? [] : [...errors])
   }
 
   add(initial?: ItemInitial<I>): void {
@@ -817,6 +973,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
         this.add(ini)
       }
       this.topLevelErrors$.set([])
+      this.parentFormErrors$.set([])
       // clear()/add() above flipped structural dirt; reset() lands on the
       // clean initial baseline (T5.1).
       this.structurallyDirty$.set(false)
@@ -873,26 +1030,31 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     this.currentValidatorAbort = abort
     const myId = ++this.currentValidatorRun
 
-    const syncErrors: string[] = []
-    const asyncPromises: Promise<string | null>[] = []
+    const syncIssues: FormIssue[] = []
+    const asyncPromises: Promise<ValidatorResult>[] = []
     for (const v of this.validators) {
       try {
         const r = v(value, abort.signal)
         if (r instanceof Promise) asyncPromises.push(r)
-        else if (r != null) syncErrors.push(r)
+        else appendIssues(syncIssues, r)
       } catch (err) {
         try {
           this.onValidatorError?.(err)
         } catch {
           // The reporter must not propagate.
         }
-        syncErrors.push(err instanceof Error ? err.message : String(err))
+        syncIssues.push({ path: [], message: err instanceof Error ? err.message : String(err) })
       }
     }
 
-    if (syncErrors.length > 0) {
+    if (syncIssues.length > 0) {
       batch(() => {
-        this.topLevelErrors$.set(syncErrors)
+        this.lastFormErrorTargets = routeFormIssues(
+          this,
+          syncIssues,
+          this.topLevelErrors$,
+          this.lastFormErrorTargets,
+        )
         this.topLevelValidating$.set(false)
       })
       return
@@ -900,25 +1062,40 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
     if (asyncPromises.length === 0) {
       batch(() => {
-        this.topLevelErrors$.set([])
+        this.lastFormErrorTargets = routeFormIssues(
+          this,
+          [],
+          this.topLevelErrors$,
+          this.lastFormErrorTargets,
+        )
         this.topLevelValidating$.set(false)
       })
       return
     }
 
     batch(() => {
-      this.topLevelErrors$.set([])
+      this.lastFormErrorTargets = routeFormIssues(
+        this,
+        [],
+        this.topLevelErrors$,
+        this.lastFormErrorTargets,
+      )
       this.topLevelValidating$.set(true)
     })
 
     Promise.allSettled(asyncPromises).then((results) => {
       if (myId !== this.currentValidatorRun || this.disposed) return
-      const errs: string[] = []
+      const issues: FormIssue[] = []
       for (const r of results) {
-        if (r.status === 'fulfilled' && r.value != null) errs.push(r.value)
+        if (r.status === 'fulfilled') appendIssues(issues, r.value)
       }
       batch(() => {
-        this.topLevelErrors$.set(errs)
+        this.lastFormErrorTargets = routeFormIssues(
+          this,
+          issues,
+          this.topLevelErrors$,
+          this.lastFormErrorTargets,
+        )
         this.topLevelValidating$.set(false)
       })
     })

@@ -5,6 +5,8 @@
  */
 import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
+import { validator } from '../src/forms'
+import type { FormIssue, StandardSchemaV1 } from '../src/forms'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { Entry } from '../src/query/entry'
 import { InfiniteEntry } from '../src/query/infinite'
@@ -1688,6 +1690,153 @@ describe('regression: structural FieldArray edits mark isDirty (R-F5.1)', () => 
     seed.set(['x', 'y'])
     expect(root.form.fields.tags.size.value).toBe(3)
     expect(root.form.fields.tags.at(2)?.value).toBe('c')
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// R-F5.2 (T5.2) — a form-level validator can target a specific field, and a
+// Standard-Schema whole-form validator keeps each issue's `path`. Before the
+// fix a form-level validator returned a single `string | null` that could only
+// land in `topLevelErrors`, so "passwords must match" couldn't appear on the
+// confirm field and a whole-form schema collapsed to one anonymous top-level
+// string. SPEC §8.3.
+// ---------------------------------------------------------------------------
+describe('regression: cross-field validation targets fields (R-F5.2)', () => {
+  test('a FormIssue with a non-empty path lands on the matching field', async () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { password: ctx.field<string>('secret'), confirm: ctx.field<string>('nope') },
+        {
+          validators: [
+            (v): FormIssue[] =>
+              v.password === v.confirm
+                ? []
+                : [{ path: ['confirm'], message: 'passwords must match' }],
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    // The message lands on the confirm field, NOT in topLevelErrors.
+    expect(root.form.fields.confirm.errors.value).toContain('passwords must match')
+    expect(root.form.topLevelErrors.value).toEqual([])
+    expect(root.form.fields.password.errors.value).toEqual([])
+    expect(root.form.isValid.value).toBe(false)
+
+    // Fixing the mismatch clears the field error on the next form-level run.
+    root.form.fields.confirm.set('secret')
+    await flush()
+    expect(root.form.fields.confirm.errors.value).toEqual([])
+    expect(root.form.isValid.value).toBe(true)
+    root.dispose()
+  })
+
+  test('an empty-path FormIssue still routes to topLevelErrors', async () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { a: ctx.field<string>('x') },
+        { validators: [(): FormIssue[] => [{ path: [], message: 'whole form bad' }]] },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.form.topLevelErrors.value).toContain('whole form bad')
+    root.dispose()
+  })
+
+  test('a nested path routes to a nested form field', async () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { address: ctx.form({ city: ctx.field<string>('') }) },
+        {
+          validators: [
+            (v): FormIssue[] =>
+              v.address.city === ''
+                ? [{ path: ['address', 'city'], message: 'city required' }]
+                : [],
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.form.fields.address.fields.city.errors.value).toContain('city required')
+    root.dispose()
+  })
+
+  test('a Standard-Schema whole-form validator routes issues to two fields', async () => {
+    // Hand-rolled Standard Schema (no Zod dep in core tests) producing one
+    // issue per empty field, each carrying its own `path`.
+    const schema: StandardSchemaV1<{ a: string; b: string }, { a: string; b: string }> = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate(value) {
+          const v = value as { a: string; b: string }
+          const issues: Array<{ message: string; path: (string | number)[] }> = []
+          if (v.a === '') issues.push({ message: 'a required', path: ['a'] })
+          if (v.b === '') issues.push({ message: 'b required', path: ['b'] })
+          return issues.length > 0 ? { issues } : { value: v }
+        },
+      },
+    }
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { a: ctx.field<string>(''), b: ctx.field<string>('') },
+        { validators: [validator(schema) as never] },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.form.fields.a.errors.value).toContain('a required')
+    expect(root.form.fields.b.errors.value).toContain('b required')
+    expect(root.form.topLevelErrors.value).toEqual([])
+    root.dispose()
+  })
+
+  test('an async form-level validator routes issues to fields once settled', async () => {
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { password: ctx.field<string>('a'), confirm: ctx.field<string>('b') },
+        {
+          validators: [
+            async (v): Promise<FormIssue[]> => {
+              await Promise.resolve()
+              return v.password === v.confirm
+                ? []
+                : [{ path: ['confirm'], message: 'must match (async)' }]
+            },
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() =>
+      expect(root.form.fields.confirm.errors.value).toContain('must match (async)'),
+    )
+    expect(root.form.topLevelErrors.value).toEqual([])
+    root.dispose()
+  })
+
+  test('a field-array-level validator targets a specific item by index', async () => {
+    const def = defineController((ctx) => ({
+      arr: ctx.fieldArray((initial) => ctx.field<string>((initial as string) ?? ''), {
+        initial: ['ok', ''],
+        validators: [
+          (items): FormIssue[] =>
+            items.flatMap((v, i) => (v === '' ? [{ path: [i], message: `item ${i} empty` }] : [])),
+        ],
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.arr.at(0)?.errors.value).toEqual([])
+    expect(root.arr.at(1)?.errors.value).toContain('item 1 empty')
+    // The array itself is invalid because a routed item is invalid.
+    expect(root.arr.isValid.value).toBe(false)
     root.dispose()
   })
 })

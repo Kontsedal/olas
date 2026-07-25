@@ -10,7 +10,18 @@ import {
   signal,
 } from '../signals'
 import { isAbortError } from '../utils'
-import type { Validator } from './types'
+import type { Validator, ValidatorResult } from './types'
+
+/**
+ * Flatten a single validator result to plain message strings for a leaf field.
+ * A leaf has no descendants, so a `FormIssue[]`'s paths don't route anywhere —
+ * every issue's `message` applies to this field. `null` → no messages.
+ */
+function messagesFromResult(result: ValidatorResult): string[] {
+  if (result == null) return []
+  if (typeof result === 'string') return [result]
+  return result.map((issue) => issue.message)
+}
 
 /**
  * Structural equality used by `Field.set` to decide whether a write returns
@@ -96,8 +107,9 @@ class FieldImpl<T> implements Field<T> {
   private readonly value$: Signal<T>
   /**
    * Validator-produced errors. The public `errors` getter merges this with
-   * `serverErrors$` so consumers see a single flat array. Kept separate so a
-   * re-run of validators (after a new value) doesn't clobber server errors.
+   * `serverErrors$` and `formErrors$` so consumers see a single flat array.
+   * Kept separate so a re-run of validators (after a new value) doesn't clobber
+   * the other two channels.
    */
   private readonly validatorErrors$: Signal<string[]>
   /**
@@ -105,6 +117,15 @@ class FieldImpl<T> implements Field<T> {
    * `set()`, on `reset()`, or via an explicit `setErrors([])`.
    */
   private readonly serverErrors$: Signal<string[]>
+  /**
+   * Errors routed here by a parent (or ancestor) form-level validator that
+   * targeted this field via a `FormIssue` path — the third error channel
+   * beside validator + server errors (T5.2). Owned by the routing form: cleared
+   * and re-applied on every form-level validation run, so it does NOT clear on
+   * the field's own `set()` (a stale cross-field error survives until the next
+   * form-level run recomputes it). Cleared by `reset()` / `setAsInitial()`.
+   */
+  private readonly formErrors$: Signal<string[]>
   private readonly errors$: Computed<string[]>
   private readonly touched$: Signal<boolean>
   private readonly dirty$: Signal<boolean>
@@ -142,6 +163,7 @@ class FieldImpl<T> implements Field<T> {
     this.value$ = signal(initial)
     this.validatorErrors$ = signal<string[]>([])
     this.serverErrors$ = signal<string[]>([])
+    this.formErrors$ = signal<string[]>([])
     this.touched$ = signal(false)
     this.dirty$ = signal(false)
     this.validating$ = signal(false)
@@ -152,9 +174,11 @@ class FieldImpl<T> implements Field<T> {
     this.errors$ = computed(() => {
       const v = this.validatorErrors$.value
       const s = this.serverErrors$.value
-      if (s.length === 0) return v
-      if (v.length === 0) return s
-      return [...v, ...s]
+      const f = this.formErrors$.value
+      if (s.length === 0 && f.length === 0) return v
+      if (v.length === 0 && f.length === 0) return s
+      if (v.length === 0 && s.length === 0) return f
+      return [...v, ...s, ...f]
     })
     this.isValid$ = computed(() => this.errors$.value.length === 0 && !this.validating$.value)
 
@@ -236,6 +260,19 @@ class FieldImpl<T> implements Field<T> {
   }
 
   /**
+   * Internal — set the parent-form-validator error channel (`formErrors$`).
+   * Called by the owning form's issue router when a `FormIssue` path resolves
+   * to this field. Guards against churning the signal when nothing changes so
+   * a whole-tree clear pass doesn't wake unrelated subscribers. See T5.2 /
+   * `routeFormIssues` in `form.ts`.
+   */
+  setFormErrors(errors: ReadonlyArray<string>): void {
+    if (this.disposed) return
+    if (this.formErrors$.peek().length === 0 && errors.length === 0) return
+    this.formErrors$.set(errors.length === 0 ? [] : [...errors])
+  }
+
+  /**
    * Reseat the field as if this value had been its constructor `initial`.
    * Sets the value, re-anchors `reset()`'s target, and does NOT mark dirty.
    * Used by `Form` when applying its own `initial` (in the constructor and
@@ -252,6 +289,9 @@ class FieldImpl<T> implements Field<T> {
       // response is no longer relevant. Without clearing, errors like
       // "username taken" persist across a successful re-hydrate.
       if (this.serverErrors$.peek().length > 0) this.serverErrors$.set([])
+      // A stale cross-field error from the old value is likewise irrelevant;
+      // the next form-level run recomputes it against the fresh value.
+      if (this.formErrors$.peek().length > 0) this.formErrors$.set([])
     })
   }
 
@@ -265,6 +305,7 @@ class FieldImpl<T> implements Field<T> {
       this.touched$.set(false)
       this.validatorErrors$.set([])
       this.serverErrors$.set([])
+      this.formErrors$.set([])
       this.validating$.set(false)
       // Re-lock validation if the field was in blur/submit mode — a reset
       // means we're back to a clean slate, so the user shouldn't immediately
@@ -365,7 +406,7 @@ class FieldImpl<T> implements Field<T> {
     const myId = ++this.runId
 
     const syncErrors: string[] = []
-    const asyncPromises: Promise<string | null>[] = []
+    const asyncPromises: Promise<ValidatorResult>[] = []
 
     for (const validator of this.validators) {
       try {
@@ -375,8 +416,12 @@ class FieldImpl<T> implements Field<T> {
           // with a thrown error (rare but legal) — the catch-handler in
           // `Promise.allSettled` covers true async rejection.
           asyncPromises.push(result)
-        } else if (result != null) {
-          syncErrors.push(result)
+        } else {
+          // A Standard-Schema validator returns `FormIssue[]`; a stdlib one
+          // returns `string | null`. Flatten both to messages (a leaf field
+          // has no descendants to route issue paths to).
+          const msgs = messagesFromResult(result)
+          if (msgs.length > 0) syncErrors.push(...msgs)
         }
       } catch (err) {
         // A buggy validator that throws synchronously: surface it twice.
@@ -420,7 +465,7 @@ class FieldImpl<T> implements Field<T> {
       const asyncErrors: string[] = []
       for (const r of results) {
         if (r.status === 'fulfilled') {
-          if (r.value != null) asyncErrors.push(r.value)
+          asyncErrors.push(...messagesFromResult(r.value))
         } else if (!isAbortError(r.reason)) {
           const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
           asyncErrors.push(msg)
@@ -500,7 +545,12 @@ export type FieldTransform<T> = {
 export function debouncedValidator<T>(
   fn: (value: T, signal: AbortSignal) => Promise<string | null>,
   ms: number,
-): Validator<T> {
+): (value: T, signal: AbortSignal) => Promise<string | null> {
+  // Precise return (not the wide `Validator<T>`): the wrapped `fn` only ever
+  // yields `string | null`, so callers that invoke the debounced validator
+  // directly — e.g. surfacing its result in a signal — keep that narrow type
+  // after `Validator<T>` was widened to allow `FormIssue[]` (T5.2). Still
+  // assignable wherever a `Validator<T>` is expected.
   return (value, signal) =>
     new Promise<string | null>((resolve, reject) => {
       if (signal.aborted) {

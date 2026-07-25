@@ -49,38 +49,65 @@ describe('isStandardSchema', () => {
 describe('validator(schema)', () => {
   const signal = new AbortController().signal
 
-  test('returns null on success (sync schema)', () => {
+  test('returns an empty issue array on success (sync schema)', () => {
     const v = validator(stringSchema)
-    expect(v('hello', signal)).toBeNull()
+    expect(v('hello', signal)).toEqual([])
   })
 
-  test('returns the first issue message on failure (sync schema)', () => {
+  test('returns ALL issues (with paths) on failure (sync schema)', () => {
     const v = validator(stringSchema)
-    expect(v('', signal)).toBe('must be non-empty string')
+    expect(v('', signal)).toEqual([{ path: [], message: 'must be non-empty string' }])
   })
 
   test('non-string value yields the schema error', () => {
     const v = validator(stringSchema)
     // The validator's input type is `unknown` at runtime — Standard Schema
     // accepts whatever and rejects in its `validate`.
-    expect((v as (v: unknown, s: AbortSignal) => unknown)(42, signal)).toBe(
-      'must be non-empty string',
-    )
+    expect((v as (v: unknown, s: AbortSignal) => unknown)(42, signal)).toEqual([
+      { path: [], message: 'must be non-empty string' },
+    ])
   })
 
-  test('returns a Promise when the schema is async', async () => {
+  test('preserves each issue path (segments and { key } wrappers both flatten)', () => {
+    const pathSchema: StandardSchemaV1<unknown, unknown> = {
+      '~standard': {
+        version: 1,
+        vendor: 'test',
+        validate() {
+          return {
+            issues: [
+              { message: 'a bad', path: ['a'] },
+              // Standard Schema also allows `{ key }` path segments and numeric
+              // array indices — both must flatten to `(string | number)[]`.
+              { message: 'nested', path: [{ key: 'items' }, 0, { key: 'name' }] },
+            ],
+          }
+        },
+      },
+    }
+    const v = validator(pathSchema)
+    expect(v('anything', signal)).toEqual([
+      { path: ['a'], message: 'a bad' },
+      { path: ['items', 0, 'name'], message: 'nested' },
+    ])
+  })
+
+  test('returns a Promise resolving to ALL issues when the schema is async', async () => {
     const v = validator(asyncEmailSchema)
     const r = v('not-an-email', signal)
     expect(r).toBeInstanceOf(Promise)
-    expect(await r).toBe('invalid email')
+    expect(await r).toEqual([
+      { path: [], message: 'invalid email' },
+      { path: [], message: 'second' },
+    ])
   })
 
-  test('async schema resolves to null on success', async () => {
+  test('async schema resolves to an empty array on success', async () => {
     const v = validator(asyncEmailSchema)
-    expect(await v('a@b.com', signal)).toBeNull()
+    expect(await v('a@b.com', signal)).toEqual([])
   })
 
-  test('"Invalid" fallback if schema produces an empty issues array', () => {
+  test('empty issues array means valid — adapter returns []', () => {
     // Pathological schema — issues present but empty. Defensive default.
     const odd: StandardSchemaV1<unknown, unknown> = {
       '~standard': {
@@ -91,9 +118,8 @@ describe('validator(schema)', () => {
         },
       },
     }
-    // Empty issues array means "valid" per the spec — adapter returns null.
     const v = validator(odd)
-    expect(v('anything', signal)).toBeNull()
+    expect(v('anything', signal)).toEqual([])
   })
 
   test('message defaults to "Invalid" if an issue is missing its message field', () => {
@@ -107,6 +133,6 @@ describe('validator(schema)', () => {
       },
     }
     const v = validator(odd)
-    expect(v('anything', signal)).toBe('Invalid')
+    expect(v('anything', signal)).toEqual([{ path: [], message: 'Invalid' }])
   })
 })
