@@ -346,7 +346,17 @@ export class ControllerInstance {
       try {
         switch (entry.kind) {
           case 'effect':
-            entry.dispose = standaloneEffect(entry.factory)
+            // Skip effects that are already live. An effect registered DURING
+            // this resume (e.g. from an onResume handler) was activated
+            // immediately by `ctx.effect` while state is 'active'; the forward
+            // loop then reaches its freshly-pushed node. Re-activating would
+            // overwrite the live `dispose` ref without calling it — the effect
+            // would run twice per change and one copy would survive dispose().
+            // Only re-activate effects that `suspend()` cleared (dispose null).
+            // (T2.2)
+            if (entry.dispose === null) {
+              entry.dispose = standaloneEffect(entry.factory)
+            }
             break
           case 'subscription-cache':
             // Re-acquire the entry, restart `refetchInterval`, and re-check

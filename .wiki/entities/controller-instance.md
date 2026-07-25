@@ -10,7 +10,7 @@ edges:
   - { type: uses, target: ctx.md }
   - { type: uses, target: ../flows/construction-rollback.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -62,6 +62,8 @@ type LifecycleEntry =
 | any non-disposed | disposed | `dispose()` | reverse-iterate: dispatch by entry kind |
 
 `dispose` is idempotent — re-entries return early.
+
+**Resume re-activation guard (T2.2).** `resume()` sets `state = 'active'` before the forward loop, so an effect registered *during* resume (e.g. from an `onResume` handler calling `ctx.effect`) is activated immediately by `ctx.effect` (its `dispose` is non-null). The loop then reaches that freshly-pushed node — the `effect` case re-activates **only when `entry.dispose === null`** (i.e. only effects that `suspend()` cleared), so it never overwrites a live `dispose` ref. Without the guard the effect ran twice per change and one copy survived `dispose()`. Pinned by `regressions.test.ts` R-L2.2 (and B9 covers the symmetric `onSuspend`-registered case).
 
 ## Path naming
 

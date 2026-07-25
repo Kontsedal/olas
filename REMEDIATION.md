@@ -165,7 +165,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Docs:** `.wiki/flows/query-subscription.md`; add a pitfall page
   `.wiki/pitfalls/suspended-effects-lose-deps.md` describing the empty-dependency-set trap.
 
-### [ ] T2.2 — **[CRITICAL]** entries registered during `resume()` are double-activated; orphaned effect survives dispose
+### [x] T2.2 — **[CRITICAL]** entries registered during `resume()` are double-activated; orphaned effect survives dispose
 - **File:** `packages/core/src/controller/instance.ts:341-376` (resume loop), `:349`
   (re-activation), `:407-412` (existing guard for the suspended state)
 - **Problem:** `resume()` iterates `entries.forward()`; a node pushed during traversal

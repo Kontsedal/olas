@@ -857,3 +857,46 @@ describe('regression: key change while suspended survives resume (R-L2.1)', () =
     root.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-L2.2 (T2.2) — an effect registered during resume() (e.g. from an onResume
+// handler) is created live by ctx.effect, then the resume forward-loop reaches
+// the freshly-pushed node and re-activates it — overwriting the live dispose
+// ref without calling it. Result: the effect runs twice per change and one
+// copy survives root.dispose(). (Requires a trailing lifecycle entry so the
+// forward loop continues past the onResume entry to the new node.)
+// ---------------------------------------------------------------------------
+describe('regression: effect registered during resume activates exactly once (R-L2.2)', () => {
+  test('onResume-registered effect runs once per change and stops on dispose', async () => {
+    const { signal } = await import('../src/signals')
+    const tick = signal(0)
+    let runs = 0
+    const def = defineController((ctx) => {
+      ctx.onResume(() => {
+        ctx.effect(() => {
+          tick.value // track
+          runs += 1
+        })
+      })
+      // Trailing entry so the resume forward-loop continues past the onResume
+      // entry and reaches the effect it just pushed — where the bug fires.
+      ctx.effect(() => {})
+      return {}
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(runs).toBe(0) // onResume hasn't fired yet
+
+    root.suspend()
+    root.resume() // onResume fires → ctx.effect registered + runs exactly once
+    expect(runs).toBe(1)
+
+    tick.set(1) // one dependency change → exactly one run
+    expect(runs).toBe(2)
+
+    root.dispose()
+    const afterDispose = runs
+    tick.set(2) // disposed → no orphaned copy still running
+    expect(runs).toBe(afterDispose)
+    root.dispose() // idempotent
+  })
+})
