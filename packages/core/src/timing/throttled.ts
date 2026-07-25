@@ -1,4 +1,5 @@
 import { effect, signal } from '../signals'
+import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
 import type { TimingSignal } from './debounced'
 
@@ -32,6 +33,11 @@ export function throttled<T>(
 ): TimingSignal<T> {
   const leading = options?.leading ?? true
   const trailing = options?.trailing ?? true
+  if (!leading && !trailing) {
+    throw new Error(
+      '[olas] throttled: at least one of `leading` or `trailing` must be true (both false never emits).',
+    )
+  }
   const out = signal<T>(source.peek())
   let lastEmit = Number.NEGATIVE_INFINITY
   let trailingTimer: ReturnType<typeof setTimeout> | null = null
@@ -48,7 +54,7 @@ export function throttled<T>(
     }
   }
 
-  const dispose = effect(() => {
+  const disposeEffect = effect(() => {
     const value = source.value
     if (initial) {
       initial = false
@@ -56,25 +62,23 @@ export function throttled<T>(
     }
     const t = now()
     const elapsed = t - lastEmit
-    if (elapsed >= ms) {
-      if (leading) {
-        out.set(value)
-        lastEmit = t
-        hasPending = false
-      } else {
-        trailingValue = value
-        hasPending = true
-        if (trailingTimer == null) trailingTimer = setTimeout(fireTrailing, ms)
-      }
-      // Drop any stale trailing-pending; the leading emit consumed the value.
-      if (leading && trailingTimer != null) {
+    if (elapsed >= ms && leading) {
+      out.set(value)
+      lastEmit = t
+      hasPending = false
+      // The leading emit consumed the value — drop any stale trailing-pending.
+      if (trailingTimer != null) {
         clearTimeout(trailingTimer)
         trailingTimer = null
       }
-    } else {
+    } else if (trailing) {
+      // Coalesce into the trailing edge. With `trailing: false` we schedule
+      // nothing and never set `hasPending`, so a later `flush()` can't emit a
+      // value the option said should never fire. (T2.7)
       trailingValue = value
       hasPending = true
-      if (trailingTimer == null) trailingTimer = setTimeout(fireTrailing, ms - elapsed)
+      const delay = elapsed >= ms ? ms : ms - elapsed
+      if (trailingTimer == null) trailingTimer = setTimeout(fireTrailing, delay)
     }
   })
 
@@ -97,18 +101,22 @@ export function throttled<T>(
     }
   }
 
-  const sig = options?.signal
-  if (sig) {
-    const stop = () => {
-      cancel()
-      dispose()
-    }
-    if (sig.aborted) stop()
-    else sig.addEventListener('abort', stop, { once: true })
+  const dispose = () => {
+    cancel()
+    disposeEffect()
   }
 
-  const handle = out as unknown as TimingSignal<T>
-  Object.defineProperty(handle, 'cancel', { value: cancel, enumerable: false })
-  Object.defineProperty(handle, 'flush', { value: flush, enumerable: false })
+  const sig = options?.signal
+  if (sig) {
+    if (sig.aborted) dispose()
+    else sig.addEventListener('abort', dispose, { once: true })
+  }
+
+  // Read-only projection + control surface; the old cast leaked `out.set`. (T2.7)
+  const handle = Object.assign(Object.create(readOnly(out)), {
+    cancel,
+    flush,
+    dispose,
+  }) as TimingSignal<T>
   return handle
 }

@@ -1,4 +1,5 @@
 import { effect, signal } from '../signals'
+import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
 
 /**
@@ -17,6 +18,13 @@ import type { ReadSignal } from '../signals/types'
 export type TimingSignal<T> = ReadSignal<T> & {
   cancel(): void
   flush(): void
+  /**
+   * Tear down the internal effect (drop the subscription to `source`) and
+   * clear any pending timer. Idempotent. Call this when the timing signal
+   * has no `options.signal` tying its lifecycle to an AbortController —
+   * otherwise the effect keeps `source` subscribed forever.
+   */
+  dispose(): void
 }
 
 /**
@@ -40,6 +48,11 @@ export function debounced<T>(
 ): TimingSignal<T> {
   const leading = options?.leading ?? false
   const trailing = options?.trailing ?? true
+  if (!leading && !trailing) {
+    throw new Error(
+      '[olas] debounced: at least one of `leading` or `trailing` must be true (both false never emits).',
+    )
+  }
   const out = signal<T>(source.peek())
   let timer: ReturnType<typeof setTimeout> | null = null
   let pendingValue: T = source.peek()
@@ -56,14 +69,13 @@ export function debounced<T>(
     }
   }
 
-  const dispose = effect(() => {
+  const disposeEffect = effect(() => {
     const value = source.value
     if (initial) {
       initial = false
       return
     }
     pendingValue = value
-    hasPending = true
     if (timer != null) clearTimeout(timer)
     if (leading && !inCooldown) {
       // Leading edge — emit now, start a cooldown timer that, if untouched
@@ -73,6 +85,10 @@ export function debounced<T>(
       inCooldown = true
       timer = setTimeout(fireTrailing, ms)
     } else {
+      // Pending only matters if a trailing emit can actually happen. With
+      // `trailing: false` the timer just resets the cooldown and must NOT
+      // leave a value for a later `flush()` to emit. (T2.7)
+      hasPending = trailing
       timer = setTimeout(fireTrailing, ms)
     }
   })
@@ -97,21 +113,23 @@ export function debounced<T>(
     inCooldown = false
   }
 
-  const sig = options?.signal
-  if (sig) {
-    const stop = () => {
-      cancel()
-      dispose()
-    }
-    if (sig.aborted) stop()
-    else sig.addEventListener('abort', stop, { once: true })
+  const dispose = () => {
+    cancel()
+    disposeEffect()
   }
 
-  // Attach control methods to the read-signal handle so call sites get one
-  // value. The cast is safe — `signal()` returns a Signal which already
-  // implements ReadSignal; we're just widening to add control surface.
-  const handle = out as unknown as TimingSignal<T>
-  Object.defineProperty(handle, 'cancel', { value: cancel, enumerable: false })
-  Object.defineProperty(handle, 'flush', { value: flush, enumerable: false })
+  const sig = options?.signal
+  if (sig) {
+    if (sig.aborted) dispose()
+    else sig.addEventListener('abort', dispose, { once: true })
+  }
+
+  // Expose a read-only projection of `out` plus the control surface. The old
+  // `out as TimingSignal` cast leaked `out.set` to callers. (T2.7)
+  const handle = Object.assign(Object.create(readOnly(out)), {
+    cancel,
+    flush,
+    dispose,
+  }) as TimingSignal<T>
   return handle
 }

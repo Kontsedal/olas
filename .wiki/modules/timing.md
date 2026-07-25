@@ -10,19 +10,29 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/timing.test.ts }
   - { type: uses, target: signals.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: high
 ---
 
 # `timing/`
 
-`debounced(source, ms)` and `throttled(source, ms)` — return `ReadSignal<T>` that mirrors `source` with the corresponding timing. Spec §9, §20.1.
+`debounced(source, ms, options?)` and `throttled(source, ms, options?)` — return a `TimingSignal<T>` (a `ReadSignal<T>` plus `cancel()` / `flush()` / `dispose()`) that mirrors `source` with the corresponding timing. Spec §9, §20.1.
 
 ## Lifecycle
 
-**These functions do NOT take `ctx`.** They allocate an internal `effect` that subscribes to `source` for the lifetime of the program. The "lifecycle" inherits from the source.
+**These functions do NOT take `ctx`.** They allocate an internal `effect` that subscribes to `source`. That subscription lives until torn down one of two ways (T2.7):
 
-In practice: invoke them inside a controller closure so the closure (and the captured derived signal) is reachable only while the controller is alive. After dispose, no one holds a reference, garbage collection eventually reclaims the effect.
+- Pass `options.signal` (an `AbortSignal`) — on abort the effect disposes, the pending timer clears, and the `source` subscription drops. Tie it to `ctx.onDispose` via an `AbortController` for controller-scoped lifetime.
+- Call `handle.dispose()` — idempotent; same teardown, manual.
+
+Without either, the effect keeps `source` subscribed for the process lifetime (GC can't reclaim it while `source` is alive). The returned handle is a **read-only** projection of the internal signal (via `readOnly()`) plus the control methods — `set()` is NOT exposed (the old `out as TimingSignal` cast leaked it).
+
+## Options matrix (`leading` / `trailing`)
+
+- Defaults: `debounced` = `{ leading: false, trailing: true }`; `throttled` = `{ leading: true, trailing: true }`.
+- `leading: true` emits on the first change of a quiet window; `trailing: true` emits the coalesced latest value when the window settles. `{ leading: true, trailing: false }` = "leading edge only"; the reverse = "trailing edge only".
+- `{ leading: false, trailing: false }` never emits and **throws** at construction.
+- With `trailing: false`, no trailing timer is scheduled and nothing is left pending, so `flush()` emits nothing (it previously leaked a value the option said should never fire). Pinned by the `timing.test.ts` options matrix (T2.7).
 
 ## Throttled semantics
 
