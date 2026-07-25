@@ -8,14 +8,14 @@ Written 2026-07-25; updated after completing Phase 5 (T5.1–T5.3).
 ## TL;DR
 
 - Working on branch **`remediation`** (off `main`). All work is committed.
-- **Phases 0–5 DONE** — 34 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9,
-  T4.1–T4.7, T5.1–T5.3). Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce),
+- **Phases 0–5 DONE + T6.1 DONE** — 35 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9,
+  T4.1–T4.7, T5.1–T5.3, T6.1). Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce),
   T4.7 disabled+suspense (could-not-implement-cleanly → BACKLOG).
-- Pipeline is **green**: `pnpm test` → 708/708, typecheck clean, biome lint clean,
+- Pipeline is **green**: `pnpm test` → 725/725, typecheck clean, biome lint clean,
   `pnpm wiki:lint` 0 errors.
-- **Next task: T6.1** (Phase 6 — satellite packages, starting with `@kontsedal/olas-persist`).
-  The full task list + "decisions made" live in `REMEDIATION.md`; the checkboxes there are
-  the source of truth.
+- **Next task: T6.2** (Phase 6 — `@kontsedal/olas-mutation-queue`). This is the **heaviest
+  task in the plan** — net-new multi-tab concurrency infra. See "Next up" below; the full
+  task list lives in `REMEDIATION.md` (source of truth).
 
 ## Read this first (resume order)
 
@@ -107,16 +107,33 @@ must be green, then add a `## [date] ingest | REMEDIATION.md phase N` entry to `
 | 7 — delivery/docs/release | T7.1–T7.3 | ⬜ |
 | 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ |
 
-**Next up — T6.1** (`packages/persist/src/index.ts`): **persist — IDB adapter acks before
-commit; error routing is dead.** Sub-items (REMEDIATION lines ~636-652): (a) `runRequest`
-resolves on `req.onsuccess` → resolve `set`/`delete` on `tx.oncomplete`, reject on
-`onabort`/`onerror` (quota errors surface at COMMIT); (b) adapter swallows errors + resolves
-→ reject instead so `usePersisted`'s `onError` fires; (c) `flushWrite` mislabels a storage
-quota error as op `'serialize'` → split encode (`'serialize'`) vs storage.set (`'write'`);
-(d) ready-gate races (writes before load resolve get dropped/clobbered by `applyLoaded`;
-cross-tab `onChange` never checks `ready`); (e) no `onversionchange` handler; (f) **zero
-tests for `version`/`migrate`/`throttleMs`/`onError`** — write them. SPEC/persist README +
-`.wiki/modules/persist.md`.
+**Next up — T6.2** (`packages/mutation-queue/src/plugin.ts`, 622 lines): **mutation-queue —
+fix the three disqualifiers, demote the "durable" claims.** The heaviest task in the plan —
+it adds net-new multi-tab concurrency infra, so give it fresh context. Sub-items (REMEDIATION
+lines ~654-684):
+- **Replay only at init** (`:508-514`) — add an `online` event listener (reuse the
+  focus-online util or `window.addEventListener('online')`) that triggers `replayAll`; expose
+  `api.replayNow()`. In-session failures must retry on reconnect, not only on reload.
+- **No multi-tab coordination** — wrap `replayAll` in a Web Locks request
+  (`navigator.locks.request('olas-mq:'+keyPrefix, …)`); fall back to a timestamped
+  localStorage lease (TTL ~30s, re-checked before each entry) when Web Locks is absent. Two
+  tabs must never replay the same entry concurrently.
+- **No cache reconciliation after replay** (`:350` raw `mutate`) — add an `onReplaySettle(entry,
+  result, api)` option with `api.invalidate(query, key)` via the registered-query lookup;
+  document that without it UIs stay stale.
+- `seq` priming race (`:473-475` vs `:530`) — prime `seq` before enabling enqueue (or
+  namespace `${Date.now()}:${counter}` — `Date.now` is allowed in package code).
+- `activeKeys` cleared on `'cancelled'` settle (`:549-555`) contradicts the contract
+  (`:153-156`) — honor it; test cancel + re-enqueue doesn't double-write.
+- **Untested options** — `dedupeBy`, `ttlMs`, `backoffMs`, `onReplayAttempt`, `migrate`,
+  `maxEntryBytes`, `waitForOnline`, seq ordering: a test each (grep confirms zero today).
+- `void writeEntry(entry)` fire-and-forget (`:544`) — after T6.1's commit-ack, await the
+  write before reporting enqueued (or document the loss window).
+- **README/description demotion:** "best-effort persist + reload replay", NOT "durable",
+  until all of the above ship. Cross-mutation causal ordering stays a documented limitation
+  → BACKLOG entry.
+Docs: mutation-queue README + `.wiki/modules/` (there may be no page yet — check
+`.wiki/index.md`; add one if missing). Then T6.3–T6.7 finish Phase 6 → phase gate + log ingest.
 
 **Phase 6 notes (satellite packages — leaving core):**
 - Phase 6 = T6.1–T6.7, one package each: persist (T6.1), mutation-queue (T6.2), devtools
