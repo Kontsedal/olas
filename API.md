@@ -45,6 +45,8 @@ If a behavior isn't covered here and you can't find it in SPEC.md, that's a docs
 - [@kontsedal/olas-cross-tab](#olascrosstab)
 - [@kontsedal/olas-entities](#olasentities)
 - [@kontsedal/olas-realtime](#olasrealtime)
+- [@kontsedal/olas-mutation-queue](#olasmutationqueue)
+- [@kontsedal/olas-router](#olasrouter)
 
 The sub-path packages each have their own typed surfaces; their full reference lives in the package README (see [the per-package sections](#olascrosstab) at the bottom of this file).
 
@@ -347,6 +349,44 @@ const board = defineController((ctx) => {
     },
   }
 })
+```
+
+### `ctx.session<Props, Api>(def, props, options?): readonly [api, dispose]`
+
+A short-lived child sub-tree that is **not** part of the suspend/resume cascade (sessions are ephemeral, not pause-able). Returns a `[api, dispose]` tuple so the api shape is exactly the controller's return type. Disposed automatically if the parent disposes first. Use for modal forms, inline-edit sessions, wizards, command palettes (SPEC §11.1).
+
+```ts
+const [editor, close] = ctx.session(cardEditor, { cardId })
+```
+
+### `ctx.collection<Item, K, ...>(options): Collection<K, Api>`
+
+Reconcile a reactive `source: ReadSignal<Item[]>` into a keyed set of child controllers: new keys construct a child, removed keys dispose theirs, unchanged keys are left alone (`propsOf` is **not** re-applied). Two forms — **homogeneous** (`{ source, keyOf, controller, propsOf }`, one def for every item) and **heterogeneous** (`{ source, keyOf, factory }`, where `factory(item)` picks the controller + props per item, rebuilding on a type-discriminant change).
+
+```ts
+type Collection<K, Api> = {
+  readonly items: ReadSignal<ReadonlyArray<{ readonly key: K; readonly api: Api }>>
+  readonly size: ReadSignal<number>
+  get(key: K): Api | undefined
+  has(key: K): boolean
+  suspendItem(key: K): void   // pause a row's effects without disposing it
+  resumeItem(key: K): void
+}
+```
+
+A child factory that throws is routed to `root.onError` (`kind: 'construction'`) and skipped — the collection shows one fewer entry; the diff loop doesn't re-throw. A `suspendItem`'d row is NOT auto-resumed by a whole-tree `suspend()`/`resume()` cascade (e.g. KeepAlive) — perfect for virtualized lists. SPEC §11.1.
+
+### `ctx.lazyChild<Props, Api>(loader, props, options?): LazyChild<Api>`
+
+Code-split child controller. `loader: () => Promise<ControllerDef<Props, Api>>` is invoked on `load()` (idempotent); the child is constructed once the module resolves. SPEC §16.5.
+
+```ts
+type LazyChild<Api> = {
+  readonly status: ReadSignal<'idle' | 'loading' | 'ready' | 'error'>
+  readonly api: ReadSignal<Api | undefined>   // defined once status === 'ready'
+  readonly error: ReadSignal<unknown | undefined>
+  load(): void
+}
 ```
 
 ### `ctx.field<T>(initial, validators?): Field<T>`
@@ -1263,13 +1303,21 @@ usePersisted(ctx, 'draft', draft, { crossTab: true })
 ### Type: `PersistOptions<T>`
 
 ```ts
+type PersistErrorOp = 'load' | 'deserialize' | 'serialize' | 'write' | 'migrate' | 'remoteChange'
+
 type PersistOptions<T> = {
   storage?: StorageAdapter        // default: localStorageAdapter
   serialize?: (value: T) => string
   deserialize?: (raw: string) => T
-  crossTab?: boolean              // default: false — wire window 'storage' event
+  crossTab?: boolean              // default: false — wire the adapter's onChange
+  version?: number                // enable the {v,d} envelope + forward migration
+  migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
+  throttleMs?: number             // debounce writes (flushed on dispose). Default 0
+  onError?: (err: unknown, op: PersistErrorOp, key: string) => void // else swallowed
 }
 ```
+
+`version` + `migrate` wrap writes in a `{"v":N,"d":<serialized>}` envelope and forward-migrate a stale/legacy payload on load. Every fallible op routes through `onError` (storage `get`/`set`, encode/decode, migrate throws, cross-tab corruption) — without it, errors are swallowed. A user write that lands before an async load settles wins over the stored value (and is flushed); a racing cross-tab change is buffered until ready.
 
 ### Type: `PersistableSource<T>`
 
@@ -1297,14 +1345,21 @@ type Persisted = { ready: ReadSignal<boolean> }
 type StorageAdapter = {
   get(key: string): string | null | Promise<string | null>
   set(key: string, value: string): void | Promise<void>
-  remove(key: string): void | Promise<void>
-  subscribe?(key: string, handler: (raw: string | null) => void): () => void
+  delete(key: string): void | Promise<void>
+  // optional change notifications (localStorage 'storage' event; IDB via BroadcastChannel)
+  onChange?(handler: (key: string, value: string | null) => void): () => void
+  // optional key enumeration (mutation-queue replay, clearPersisted)
+  keys?(): Iterable<string> | Promise<Iterable<string>>
 }
 ```
 
 ### `localStorageAdapter: StorageAdapter`
 
-The default. Returns `null` from `get` if `localStorage` is undefined (SSR-safe).
+The default. Returns `null` from `get` if `localStorage` is undefined (SSR-safe). Sync `get`/`set`/`delete`; `onChange` listens to the `storage` event (fires for writes in OTHER tabs).
+
+### `indexedDbAdapter(options?): StorageAdapter`
+
+Async IndexedDB-backed adapter (single key/value object store). `options?: { databaseName?, storeName?, channelName?, indexedDB?, broadcastChannel? }`. IDB has no native change event, so `onChange` is layered via `BroadcastChannel`. Writes resolve on the transaction's **commit** (not the request's `onsuccess`), so quota / commit failures reject and reach `onError('write')`. SSR-safe (no `IDBFactory` → every op no-ops). Pick it over `localStorage` for larger payloads or where async storage is acceptable.
 
 ---
 
@@ -1406,7 +1461,7 @@ const root = createRoot(app, {
 })
 ```
 
-Surface lives in [`packages/cross-tab/README.md`](packages/cross-tab/README.md). Key points: each query must declare a stable `queryId` (`defineQuery({ queryId: 'users.byId', ... })`), `source: 'fetch'` payloads are skipped (only `setData` and remote-origin events sync), `'infinite'` queries are not synced in v1 (see `BACKLOG.md`).
+Surface lives in [`packages/cross-tab/README.md`](packages/cross-tab/README.md). Key points: each query must declare a stable `queryId` (`defineQuery({ queryId: 'users.byId', ... })`); per-query opt-in is `crossTab?: boolean | 'data'` (the dead `'infinite'`/`'both'` values were removed in favor of honest behavior — infinite payloads can't be applied by a peer; see `BACKLOG.md`); `source: 'fetch'` payloads are skipped (only `setData` and remote-origin events sync), and the `shouldBroadcast` filter applies on **receive** as well as send. Conflict model is **last-delivery-wins per tab with no arbitration** — simultaneous writes in two tabs can diverge; use server-refetch (`invalidate`) for authoritative re-convergence.
 
 ---
 
@@ -1441,12 +1496,77 @@ Full surface (`defineEntity`, `entitiesPlugin`, `entities.signal/get/upsert/upda
 
 # @kontsedal/olas-realtime
 
-Two composables over a consumer-supplied `RealtimeService` on `ctx.deps.realtime`:
+Composables over a consumer-supplied `RealtimeService` on `ctx.deps.realtime`:
 
 - `useRealtimePatcher<TEvent>(ctx, channel, handlers)` — subscribe to a realtime channel and dispatch per-event-type handlers (typed by the `event.type` discriminant). Apply `query.setData(...)` from inside each handler.
-- `useLiveStream<TEvent>(ctx, channel, { capacity, flushMs })` — capped tail buffer + coalesced writes for high-rate streams (logs, metrics, presence).
+- `useLiveStream<TEvent>(ctx, channel, { capacity, flushMs })` — capped tail buffer + coalesced writes for high-rate streams (logs, metrics, presence). **`pause()` tears down the subscription — events arriving during a pause are LOST** (only already-buffered events survive); recover a gap with `onReconnect` + query `invalidate`.
+- `useRealtimeConnection(ctx): ReadSignal<ConnectionState>` where `ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'`. Backed by the optional `RealtimeService.onConnectionChange?`. With a reporter it starts optimistically `'connected'` and tracks changes; **without one it reports `'unknown'`** (the hook can't observe state — it doesn't lie `'connected'`).
+- `onReconnect(ctx, fn)` — run `fn` on a transition back to `'connected'` (not on the initial value). The canonical "invalidate queries that missed updates during the disconnect" trigger.
 
 Full surface lives in [`packages/realtime/README.md`](packages/realtime/README.md). The package ships no transport — wire your own `RealtimeService` (WebSocket / SSE / Pusher / Ably / Supabase Realtime / …) on `ctx.deps`.
+
+---
+
+<a id="olasmutationqueue"></a>
+
+# @kontsedal/olas-mutation-queue
+
+**Best-effort** persistent, replay-safe queue for `defineMutation({ persist: true })` runs — replays a mutation across a reload OR network reconnect instead of dropping it. A `QueryClientPlugin`.
+
+```ts
+import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
+import { localStorageAdapter } from '@kontsedal/olas-persist'
+
+const queue = mutationQueuePlugin({ adapter: localStorageAdapter, keyPrefix: 'my-app/mutations/v1' })
+const root = createRoot(app, { deps, plugins: [queue] })
+// queue.replayNow() — manually re-drive pending entries
+```
+
+### `mutationQueuePlugin(options): QueryClientPlugin & { replayNow(): Promise<void> }`
+
+```ts
+type MutationQueueOptions = {
+  adapter: StorageAdapter          // durable store (MUST implement keys())
+  keyPrefix: string                // required namespace, e.g. '<app>/mutations/v1'
+  maxAttempts?: number             // total replay attempts across loads. Default 5
+  ttlMs?: number                   // drop entries older than this. Default Infinity
+  backoffMs?: number               // exponential cross-load backoff base. Default 0
+  maxBackoffMs?: number            // backoff cap. Default 60_000
+  maxEntryBytes?: number           // soft per-entry size warning. Default 64 * 1024
+  dedupeBy?: (mutationId: string, variables: unknown) => string | undefined
+  migrate?: (raw: unknown, fromVersion: number) => QueueEntry | null
+  onReplayError?: (err: unknown, entry: QueueEntry) => void       // gave up (exhausted / TTL / unknown id)
+  onReplayAttempt?: (err: unknown, entry: QueueEntry) => void     // non-terminal failure (will retry)
+  onReplaySettle?: (entry: QueueEntry, result: unknown, api: ReplaySettleApi) => void // reconcile cache
+  onWarn?: (message: string, cause?: unknown) => void
+}
+
+type ReplaySettleApi = { invalidate(query: Query<any, any>, keyArgs?: readonly unknown[]): void }
+```
+
+Replays on init, on the `online` event (reconnect), and on `replayNow()` — coordinated cross-tab via the Web Locks API (best-effort `localStorage`-lease fallback), so two tabs don't double-POST. `onReplaySettle` fires after a successful replay so you can `invalidate` affected queries (without it, subscribers stay stale). **Best-effort, not "durable":** at-least-once-until-success with the server's `idempotencyKey` as the authoritative gate; the enqueue write is fire-and-forget, and causal ordering is guaranteed only within a `mutationId`. Full contract + limits: [package README](packages/mutation-queue/README.md).
+
+<a id="olasrouter"></a>
+
+# @kontsedal/olas-router
+
+Bridge TanStack Router / React Router v6 route state into scope-injectable signals.
+
+### `createRouterAdapter(initial?: RouteState): RouterAdapter`
+
+```ts
+type RouteState = {
+  params?: Record<string, string | undefined>   // string|undefined matches optional segments
+  search?: Record<string, unknown>
+  pathname?: string
+}
+type RouterAdapter = {
+  scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]>   // → createRoot({ scopes })
+  Bridge: (props: { params; search?; pathname?; children? }) => ReactElement | null
+}
+```
+
+Pass `adapter.scopes` to `createRoot({ ..., scopes: adapter.scopes })`, mount `<adapter.Bridge params={…} search={…} pathname={…}>` inside `<OlasProvider>`, and read route state in controllers via `ctx.inject(RouteParamsScope)` / `RouteSearchScope` / `RoutePathnameScope`. On the **server**, seed with `createRouterAdapter(initial)` — the Bridge only pushes in a client-only `useLayoutEffect`, so without seeding the route signals are empty for the whole server render. First client render is likewise empty until the effect runs — guard route-dependent queries with `enabled: () => params.value.id !== undefined`. Scopes resolve to: `RouteParamsScope` → `Record<string,string|undefined>`, `RouteSearchScope` → `Record<string,unknown>`, `RoutePathnameScope` → `string`. Full surface: [package README](packages/router/README.md).
 
 ---
 

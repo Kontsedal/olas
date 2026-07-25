@@ -7,10 +7,14 @@ import { createTestController } from '../src/testing'
 
 const emptyDeps = {}
 
+// Generic microtask drain. Use this for "X did NOT happen after a settling
+// pause" assertions; for positive "wait until X is true" assertions prefer
+// `await vi.waitFor(() => expect(...))` (resilient to microtask-depth changes),
+// per the repo convention documented in `regressions.test.ts`. The loop
+// replaces a fixed triple `Promise.resolve()` that was fragile when a settle
+// needed more hops.
 const flush = async () => {
-  await Promise.resolve()
-  await Promise.resolve()
-  await Promise.resolve()
+  for (let i = 0; i < 10; i++) await Promise.resolve()
 }
 
 const deferred = <T>() => {

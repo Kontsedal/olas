@@ -55,7 +55,7 @@ The practical wins:
 - **Logic without renderers.** A controller is a function. Tests pass in fake `deps`, call methods, and assert against signals. No `render(<App />)`, no Testing Library, no fake timers chasing effect flushes.
 - **Explicit lifetimes.** Every field, query, mutation, and child controller dies with its parent. No "what owns this subscription?" mystery.
 - **Shared queries by default.** Two controllers subscribing to the same query share one fetch and one cache entry. The same primitive scales from "one widget" to "every screen on the dashboard."
-- **Framework-agnostic core.** `@kontsedal/olas-core` never imports React. The React adapter is ~230 lines on top of `useSyncExternalStore`. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
+- **Framework-agnostic core.** `@kontsedal/olas-core` never imports React. The React adapter is a thin layer on top of `useSyncExternalStore`. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
 
 ---
 
@@ -472,7 +472,7 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | [`@kontsedal/olas-cross-tab`](packages/cross-tab) | `BroadcastChannel`-backed cross-tab cache sync as a `QueryClientPlugin`. |
 | [`@kontsedal/olas-entities`](packages/entities) | `defineEntity` + auto-walk + reverse-index backprop for normalized entities across queries. |
 | [`@kontsedal/olas-realtime`](packages/realtime) | `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService`. |
-| [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Durable, replay-safe mutation queue. Persists `defineMutation({ persist: true })` runs to a `StorageAdapter`; replays pending entries on `init` after reload / crash. |
+| [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Best-effort, replay-safe mutation queue. Persists `defineMutation({ persist: true })` runs to a `StorageAdapter`; replays pending entries on reload / crash / reconnect (Web-Locks-coordinated cross-tab). |
 | [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Works with TanStack Router or React Router v6. |
 
 Outstanding work — additional storage adapters, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).

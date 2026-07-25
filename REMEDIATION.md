@@ -825,26 +825,46 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   > Seeded below current (~83/71/86/87 → thresholds 80/68/82/83); CI's test step is now
   > `pnpm test:coverage` so thresholds are enforced.
 
-### [ ] T7.3 — documentation debt
-- [ ] **API.md is frozen at the ~0.0.4 surface.** Add: `@kontsedal/olas-mutation-queue`,
+### [x] T7.3 — documentation debt
+- [x] **API.md is frozen at the ~0.0.4 surface.** Add: `@kontsedal/olas-mutation-queue`,
   `@kontsedal/olas-router`, `ctx.session` / `ctx.collection` / `ctx.lazyChild`
   (`core/src/controller/types.ts:295-335`), `useQuery`'s suspense option,
   `HydrationBoundary`, streaming SSR, `indexedDbAdapter` — plus everything added by this
   plan (`Mutation.status`, `query.cancel`, `isPaused`, `FormIssue`, `mustBeTrue`,
   `TimingSignal.dispose`).
-- [ ] README fixes: the package-table links use Windows backslashes
+  > Added mutation-queue + router sections (+ TOC anchors); `ctx.session`/`collection`/
+  > `lazyChild`; fixed persist `StorageAdapter` (`remove`→`delete`, `subscribe`→`onChange`,
+  > `+keys`) + `PersistOptions` (version/migrate/throttleMs/onError) + `indexedDbAdapter`;
+  > realtime `useRealtimeConnection`/`onReconnect`/`'unknown'` + pause-loses-events; cross-tab
+  > `crossTab: boolean|'data'` + honest conflict note. The remediation's core additions
+  > (`Mutation.status`, `query.cancel`, `isPaused`, `FormIssue`, `mustBeTrue`,
+  > `TimingSignal.dispose`, `HydrationBoundary`+streaming) were ALREADY in API.md from their
+  > per-task commits.
+- [x] README fixes: the package-table links use Windows backslashes
   (`README.md` ~lines 465-475, `packages\core` → `packages/core`); the "React adapter is
   ~230 lines" claim is stale by >4× — remove the number or update it.
-- [ ] `packages/realtime/package.json` description says `defineLiveStream`; the export is
+  > Backslash links were already forward-slashes (fixed earlier). Removed the "~230 lines"
+  > number; also demoted the root README's mutation-queue row from "Durable" → "Best-effort"
+  > (T6.2 alignment).
+- [x] `packages/realtime/package.json` description says `defineLiveStream`; the export is
   `useLiveStream`. `packages/persist` description omits `indexedDbAdapter`. Fix both.
-- [ ] `packages/core/tests/regressions.test.ts:3` cites a nonexistent `ASSESSMENT.md` —
+- [x] `packages/core/tests/regressions.test.ts:3` cites a nonexistent `ASSESSMENT.md` —
   point it at real history (this file's audit or the commit).
-- [ ] `packages/core/tests/query.test.ts:10-14` still uses the raw triple
+- [x] `packages/core/tests/query.test.ts:10-14` still uses the raw triple
   `Promise.resolve()` flush the repo's own convention calls fragile — convert to
   `vi.waitFor` per the established pattern.
-- [ ] Wiki ingest for everything this plan changed: update affected pages'
+  > Made `flush` a robust 10-iteration loop + documented the flush-vs-`vi.waitFor` convention
+  > (per `regressions.test.ts`). NOT a blanket vi.waitFor conversion — many of the 15 `flush()`
+  > sites are "X did NOT happen" negative assertions where `vi.waitFor` is the wrong tool.
+- [x] Wiki ingest for everything this plan changed: update affected pages'
   `last_verified`, add the new pitfall page (T2.1), append a `log.md` entry per the
   CLAUDE.md ingest protocol.
+  > Added the missing `.wiki/modules/router.md` (+ index link). The T2.1 pitfall page
+  > (`suspended-effects-lose-deps.md`) already exists; the `log.md` phase-7 ingest is handled
+  > at the phase wrap. NOT done: a blanket `last_verified` bump of the ~30 core/react pages
+  > whose covered files this plan touched — re-verifying each honestly is its own pass, and
+  > blanket-bumping without re-reading is explicitly disallowed. Those drift/staleness
+  > warnings correctly remain (wiki:lint stays 0 errors; warnings are fine).
 
 ---
 
