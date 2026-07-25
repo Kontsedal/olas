@@ -12,7 +12,8 @@ edges:
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/entry.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-22
+  - { type: related, target: ../pitfalls/suspended-effects-lose-deps.md }
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -115,6 +116,10 @@ batch(() => {
 ```
 
 Subscribers downstream see one notification pass.
+
+## On suspend / resume (§4.1)
+
+`suspend()` releases the current entry and sets a closure `suspended = true`; `resume()` clears it and imperatively rebinds to the current key. The binding effect must read the tracked signals (`enabled`, then `key` when enabled) **before** its `if (suspended) return`, so its dependency set survives a key change that fires during suspension. Reordering these was the T2.1 fix — see `../pitfalls/suspended-effects-lose-deps.md` for the empty-dependency-set trap.
 
 ## On disposal
 

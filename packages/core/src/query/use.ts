@@ -143,8 +143,19 @@ export function createUse<Args extends unknown[], T, U = T>(
   let suspended = false
 
   const effectDispose = effect(() => {
-    if (suspended) return
+    // Read tracked signals (enabled, then key when enabled) BEFORE the
+    // `suspended` early-return, so the effect keeps its dependency set while
+    // suspended. Otherwise a key/enabled change during suspension re-runs the
+    // effect, it reads nothing, its deps go empty, and it stays inert forever
+    // — resume() then only rebinds to the key as of suspend time, silently
+    // dropping every later change (T2.1). Key is read only when enabled,
+    // preserving the `enabled`-guards-`key` pattern (the key thunk may deref
+    // state that only exists once enabled).
     const isEnabled = enabledFn ? enabledFn() : true
+    const args = isEnabled ? ((keyFn ? keyFn() : ([] as unknown as Args)) as Args) : undefined
+
+    if (suspended) return
+
     if (!isEnabled) {
       untracked(() => {
         if (currentEntry) {
@@ -156,10 +167,8 @@ export function createUse<Args extends unknown[], T, U = T>(
       return
     }
 
-    const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
-
     untracked(() => {
-      const entry = client.bindEntry<Args, T>(query, args)
+      const entry = client.bindEntry<Args, T>(query, args as Args)
       if (currentEntry === entry) return
       if (currentEntry) currentEntry.release()
       entry.acquire()
@@ -365,8 +374,15 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
   let suspended = false
 
   const effectDispose = effect(() => {
-    if (suspended) return
+    // See the regular-query variant above: read enabled + key (when enabled)
+    // BEFORE the `suspended` early-return so the effect keeps its deps through
+    // suspension; otherwise a key change during suspend empties them and the
+    // subscription goes inert after resume (T2.1).
     const isEnabled = enabledFn ? enabledFn() : true
+    const args = isEnabled ? ((keyFn ? keyFn() : ([] as unknown as Args)) as Args) : undefined
+
+    if (suspended) return
+
     if (!isEnabled) {
       untracked(() => {
         if (currentEntry) {
@@ -378,10 +394,8 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
       return
     }
 
-    const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
-
     untracked(() => {
-      const entry = client.bindInfiniteEntry<Args, TPage, TItem>(query, args)
+      const entry = client.bindInfiniteEntry<Args, TPage, TItem>(query, args as Args)
       if (currentEntry === entry) return
       if (currentEntry) currentEntry.release()
       entry.acquire()

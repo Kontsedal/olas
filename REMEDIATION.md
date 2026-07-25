@@ -143,7 +143,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 
 ## Phase 2 — core lifecycle criticals (`packages/core/src/controller/`, `query/use.ts`)
 
-### [ ] T2.1 — **[CRITICAL]** key change while suspended permanently bricks the subscription
+### [x] T2.1 — **[CRITICAL]** key change while suspended permanently bricks the subscription
 - **Files:** `packages/core/src/query/use.ts:145-146` (regular), `use.ts:367-368` (infinite)
 - **Problem:** the binding effect starts with `if (suspended) return` where `suspended` is
   a plain closure boolean. If a key/enabled signal changes while suspended, the effect
