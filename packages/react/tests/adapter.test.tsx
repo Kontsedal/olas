@@ -2,7 +2,7 @@
 
 import { createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { StrictMode, useEffect } from 'react'
+import { StrictMode, useEffect, useLayoutEffect } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { OlasProvider, use, useController, useField, useMutation, useQuery, useRoot } from '../src'
 
@@ -288,5 +288,38 @@ describe('use(signal, { select, isEqual }) (R4.4)', () => {
     act(() => src.set({ tags: ['x', 'z'] }))
     expect(renders).toBeGreaterThan(before)
     expect(screen.getByTestId('tags').textContent).toBe('x,z')
+  })
+})
+
+describe('useSyncExternalStore consistency (R4.5)', () => {
+  test('a field write between render and subscription is reflected (no stale snapshot)', () => {
+    const def = defineController((ctx) => ({ name: ctx.field<string>('initial') }))
+    const root = createRoot(def, { deps: {} })
+
+    function Reader() {
+      const { value } = useField(root.name)
+      return <span data-testid="v">{value}</span>
+    }
+    // Rendered AFTER Reader; its layout effect writes the field during commit —
+    // after Reader rendered its snapshot but before uSES's subscription settles.
+    // The old version-counter getSnapshot didn't bump (Reader wasn't subscribed
+    // yet), so uSES's consistency re-check passed vacuously and Reader showed
+    // the stale value. The computed snapshot reflects real store state (T4.5).
+    function Writer() {
+      useLayoutEffect(() => {
+        root.name.set('written')
+      }, [])
+      return null
+    }
+
+    render(
+      <OlasProvider root={root}>
+        <Reader />
+        <Writer />
+      </OlasProvider>,
+    )
+
+    expect(screen.getByTestId('v').textContent).toBe('written')
+    root.dispose()
   })
 })

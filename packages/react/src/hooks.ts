@@ -1,10 +1,11 @@
-import type {
-  AsyncState,
-  AsyncStatus,
-  Field,
-  FieldTransform,
-  Mutation,
-  ReadSignal,
+import {
+  type AsyncState,
+  type AsyncStatus,
+  computed,
+  type Field,
+  type FieldTransform,
+  type Mutation,
+  type ReadSignal,
 } from '@kontsedal/olas-core'
 import { type ChangeEvent, useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
 
@@ -157,62 +158,53 @@ export function useQuery<T>(
   hasPendingMutations: boolean
   refetch: () => Promise<T>
 } {
-  const versionRef = useRef(0)
-
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const bump = () => {
-        versionRef.current++
-        onChange()
-      }
-      const unsubs = [
-        subscribeOnChange(subscription.data, bump),
-        subscribeOnChange(subscription.error, bump),
-        subscribeOnChange(subscription.status, bump),
-        subscribeOnChange(subscription.isLoading, bump),
-        subscribeOnChange(subscription.isFetching, bump),
-        subscribeOnChange(subscription.isStale, bump),
-        subscribeOnChange(subscription.lastUpdatedAt, bump),
-        subscribeOnChange(subscription.hasPendingMutations, bump),
-      ]
-      return () => {
-        for (const u of unsubs) u()
-      }
-    },
+  // A memoized `computed` snapshot: reading each signal's `.value` inside makes
+  // the computed re-evaluate (and mint a NEW object) exactly when any of them
+  // changes, and return the SAME object when nothing did. `getSnapshot` returns
+  // that object, so uSES's mount-consistency re-check compares real store state
+  // — unlike the old version counter, which only bumped inside `subscribe` and
+  // so missed writes landing between render and subscription (T4.5).
+  const snapshot = useMemo(
+    () =>
+      computed(() => ({
+        data: subscription.data.value,
+        error: subscription.error.value,
+        status: subscription.status.value,
+        isLoading: subscription.isLoading.value,
+        isFetching: subscription.isFetching.value,
+        isStale: subscription.isStale.value,
+        lastUpdatedAt: subscription.lastUpdatedAt.value,
+        hasPendingMutations: subscription.hasPendingMutations.value,
+      })),
     [subscription],
   )
-  const getSnapshot = useCallback(() => versionRef.current, [])
-  useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const subscribe = useCallback(
+    (onChange: () => void) => snapshot.subscribeChanges(onChange),
+    [snapshot],
+  )
+  const getSnapshot = useCallback(() => snapshot.value, [snapshot])
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   if (options?.suspense === true) {
-    const status = subscription.status.peek()
-    const data = subscription.data.peek()
     // Throw to the ErrorBoundary ONLY when there's no data to show. A
     // background-refetch failure keeps the last-good `data` (Entry.applyFailure
     // preserves it) but sets `status: 'error'` — throwing then would nuke a
     // rendered subtree to the ErrorBoundary on a transient focus/interval blip.
     // TanStack's suspense throws only when data is absent; the error stays
     // observable via a non-suspense `useQuery`'s `error`/`status` (T4.3).
-    if (status === 'error' && data === undefined) {
+    if (snap.status === 'error' && snap.data === undefined) {
       throw subscription.error.peek()
     }
     // First-load suspend: only when we genuinely have no data yet. After
     // a successful settle, refetches keep `data` defined and the hook
     // returns normally (matches TanStack Query's `suspense` semantics).
-    if (data === undefined && (status === 'pending' || status === 'idle')) {
+    if (snap.data === undefined && (snap.status === 'pending' || snap.status === 'idle')) {
       throw subscription.promise()
     }
   }
 
   return {
-    data: subscription.data.peek(),
-    error: subscription.error.peek(),
-    status: subscription.status.peek(),
-    isLoading: subscription.isLoading.peek(),
-    isFetching: subscription.isFetching.peek(),
-    isStale: subscription.isStale.peek(),
-    lastUpdatedAt: subscription.lastUpdatedAt.peek(),
-    hasPendingMutations: subscription.hasPendingMutations.peek(),
+    ...snap,
     refetch: subscription.refetch,
   }
 }
@@ -266,38 +258,29 @@ export function useField<T>(field: Field<T>): {
    */
   setErrors: (errors: ReadonlyArray<string>) => void
 } {
-  const versionRef = useRef(0)
-
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const bump = () => {
-        versionRef.current++
-        onChange()
-      }
-      const unsubs = [
-        subscribeOnChange(field, bump),
-        subscribeOnChange(field.errors, bump),
-        subscribeOnChange(field.isValid, bump),
-        subscribeOnChange(field.isDirty, bump),
-        subscribeOnChange(field.touched, bump),
-        subscribeOnChange(field.isValidating, bump),
-      ]
-      return () => {
-        for (const u of unsubs) u()
-      }
-    },
+  // Memoized `computed` snapshot — see `useQuery` for why this replaces the
+  // old version counter (T4.5). `field.value` reads `value$.value` (tracked).
+  const snapshot = useMemo(
+    () =>
+      computed(() => ({
+        value: field.value,
+        errors: field.errors.value,
+        isValid: field.isValid.value,
+        isDirty: field.isDirty.value,
+        touched: field.touched.value,
+        isValidating: field.isValidating.value,
+      })),
     [field],
   )
-  const getSnapshot = useCallback(() => versionRef.current, [])
-  useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const subscribe = useCallback(
+    (onChange: () => void) => snapshot.subscribeChanges(onChange),
+    [snapshot],
+  )
+  const getSnapshot = useCallback(() => snapshot.value, [snapshot])
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   return {
-    value: field.peek(),
-    errors: field.errors.peek(),
-    isValid: field.isValid.peek(),
-    isDirty: field.isDirty.peek(),
-    touched: field.touched.peek(),
-    isValidating: field.isValidating.peek(),
+    ...snap,
     set: (next: T) => field.set(next),
     reset: () => field.reset(),
     markTouched: () => field.markTouched(),
@@ -365,27 +348,23 @@ export function useFieldInput<T>(
   'aria-invalid': boolean | undefined
   'aria-errormessage': string | undefined
 } {
-  const versionRef = useRef(0)
   const transform = options?.transform
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const bump = () => {
-        versionRef.current++
-        onChange()
-      }
-      const unsubs = [
-        subscribeOnChange(field, bump),
-        subscribeOnChange(field.errors, bump),
-        subscribeOnChange(field.touched, bump),
-      ]
-      return () => {
-        for (const u of unsubs) u()
-      }
-    },
+  // Memoized `computed` snapshot — see `useQuery` (T4.5).
+  const snapshot = useMemo(
+    () =>
+      computed(() => ({
+        value: field.value,
+        errors: field.errors.value,
+        touched: field.touched.value,
+      })),
     [field],
   )
-  const getSnapshot = useCallback(() => versionRef.current, [])
-  useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const subscribe = useCallback(
+    (onChange: () => void) => snapshot.subscribeChanges(onChange),
+    [snapshot],
+  )
+  const getSnapshot = useCallback(() => snapshot.value, [snapshot])
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   // Build the change/blur handlers once per field/transform — useMemo over
   // [field, transform] so each remount of the same field doesn't churn
@@ -404,18 +383,16 @@ export function useFieldInput<T>(
     return { onChangeHandler, onBlurHandler }
   }, [field, transform])
 
-  const value = field.peek()
-  const formatted = transform === undefined ? (value as unknown as string) : transform.format(value)
-  const errors = field.errors.peek()
-  const touched = field.touched.peek()
-  const showError = touched && errors.length > 0
+  const formatted =
+    transform === undefined ? (snap.value as unknown as string) : transform.format(snap.value)
+  const showError = snap.touched && snap.errors.length > 0
   return {
     value: formatted,
     onChange: handlers.onChangeHandler,
     onBlur: handlers.onBlurHandler,
     name: options?.name,
     'aria-invalid': showError ? true : undefined,
-    'aria-errormessage': showError ? errors[0] : undefined,
+    'aria-errormessage': showError ? snap.errors[0] : undefined,
   }
 }
 
@@ -455,31 +432,27 @@ export function useMutation<V, R>(
   mutateAsync: (vars: V) => Promise<R>
   reset: () => void
 } {
-  const versionRef = useRef(0)
   const cbRef = useRef(callbacks)
   cbRef.current = callbacks
 
-  const subscribe = useCallback(
-    (onChange: () => void) => {
-      const bump = () => {
-        versionRef.current++
-        onChange()
-      }
-      const unsubs = [
-        subscribeOnChange(mutation.data, bump),
-        subscribeOnChange(mutation.error, bump),
-        subscribeOnChange(mutation.isPending, bump),
-        subscribeOnChange(mutation.status, bump),
-        subscribeOnChange(mutation.lastVariables, bump),
-      ]
-      return () => {
-        for (const u of unsubs) u()
-      }
-    },
+  // Memoized `computed` snapshot — see `useQuery` (T4.5).
+  const snapshot = useMemo(
+    () =>
+      computed(() => ({
+        data: mutation.data.value,
+        error: mutation.error.value,
+        isPending: mutation.isPending.value,
+        status: mutation.status.value,
+        lastVariables: mutation.lastVariables.value,
+      })),
     [mutation],
   )
-  const getSnapshot = useCallback(() => versionRef.current, [])
-  useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
+  const subscribe = useCallback(
+    (onChange: () => void) => snapshot.subscribeChanges(onChange),
+    [snapshot],
+  )
+  const getSnapshot = useCallback(() => snapshot.value, [snapshot])
+  const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
   const mutate = useCallback(
     (vars: V): Promise<R> => {
@@ -502,16 +475,14 @@ export function useMutation<V, R>(
   // Derive from the core `status` signal, NOT from `data` — a `void` mutation
   // resolves `undefined`, so the old `data !== undefined` heuristic left
   // `isSuccess` false forever and `isIdle` true (T4.2).
-  const status = mutation.status.peek()
-
   return {
-    data: mutation.data.peek(),
-    error: mutation.error.peek(),
-    isPending: mutation.isPending.peek(),
-    lastVariables: mutation.lastVariables.peek(),
-    isIdle: status === 'idle',
-    isSuccess: status === 'success',
-    isError: status === 'error',
+    data: snap.data,
+    error: snap.error,
+    isPending: snap.isPending,
+    lastVariables: snap.lastVariables,
+    isIdle: snap.status === 'idle',
+    isSuccess: snap.status === 'success',
+    isError: snap.status === 'error',
     mutate,
     mutateAsync: mutate,
     reset: () => mutation.reset(),
