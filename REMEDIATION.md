@@ -651,34 +651,39 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - [x] **Zero tests exist for `version`/`migrate`/`throttleMs`/`onError`** — write them
   (envelope parse, legacy payload migration, remote-change version gating, quota error path).
 
-### [ ] T6.2 — mutation-queue: fix the three disqualifiers, demote the claims
+### [x] T6.2 — mutation-queue: fix the three disqualifiers, demote the claims
 - **File:** `packages/mutation-queue/src/plugin.ts`
-- [ ] **Replay only at init** (`:508-514`) — add an `online` event listener (via the same
+- [x] **Replay only at init** (`:508-514`) — add an `online` event listener (via the same
   focus-online util or `window.addEventListener('online')`) that triggers `replayAll`;
   also expose `api.replayNow()` for manual triggering. In-session failures must retry on
   reconnect, not on reload.
-- [ ] **No multi-tab coordination** — wrap `replayAll` in a Web Locks request
+- [x] **No multi-tab coordination** — wrap `replayAll` in a Web Locks request
   (`navigator.locks.request('olas-mq:' + keyPrefix, …)`); when Web Locks is unavailable,
   fall back to a localStorage lease (timestamped, TTL ~30s, re-checked before each entry).
   Two tabs must never replay the same entry concurrently.
-- [ ] **No cache reconciliation after replay** (`:350` calls raw `mutate` only) — add a
+- [x] **No cache reconciliation after replay** (`:350` calls raw `mutate` only) — add a
   plugin option `onReplaySettle(entry, result, api)` (with `api.invalidate(query, key)`
   reachable via the registered-query lookup) so apps can invalidate affected queries;
   document prominently that without it, UIs stay stale after replay.
-- [ ] `seq` priming race (`:473-475` vs `:530`) — prime `seq` BEFORE enabling enqueue
+- [x] `seq` priming race (`:473-475` vs `:530`) — prime `seq` BEFORE enabling enqueue
   (block enqueue on the priming promise, or namespace seq as
   `${Date.now()}:${counter}` — Date.now is allowed in package code, only workflow scripts
   forbid it).
-- [ ] `activeKeys` cleared on `'cancelled'` settle (`:549-555`) contradicting the
+  > Implemented as: seed `seqCounter = Date.now()` at construction (a racing enqueue then
+  > already sorts after prior-session entries); the in-`replayAll` disk priming stays as a
+  > same-ms-cross-tab safety net.
+- [x] `activeKeys` cleared on `'cancelled'` settle (`:549-555`) contradicting the
   documented contract (`:153-156`) — honor the contract; add a test for
   cancel + re-enqueue not double-writing durable entries.
-- [ ] **Untested option surface** — `dedupeBy`, `ttlMs`, `backoffMs`, `onReplayAttempt`,
+- [x] **Untested option surface** — `dedupeBy`, `ttlMs`, `backoffMs`, `onReplayAttempt`,
   `migrate`, `maxEntryBytes`, `waitForOnline`, seq ordering: write a test for each
   (grep confirms zero references today).
-- [ ] `void writeEntry(entry)` fire-and-forget (`:544`) over an adapter that acks before
+- [x] `void writeEntry(entry)` fire-and-forget (`:544`) over an adapter that acks before
   commit — after T6.1's commit-ack fix, await the write before reporting enqueued (or
   document the small loss window explicitly).
-- [ ] **README/package description demotion:** until ALL of the above ship, the package
+  > `onMutationEnqueue` is a synchronous hook — can't await; documented the loss window in
+  > code + README (best-effort framing) rather than forcing an await.
+- [x] **README/package description demotion:** until ALL of the above ship, the package
   must describe itself as "best-effort persist + reload replay", not "durable". After they
   ship, re-review the wording. Cross-mutation causal ordering (parallel replay across
   mutationIds, `:477-504`) stays a documented limitation — add a BACKLOG entry.
