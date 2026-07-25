@@ -24,6 +24,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/realtime.md](modules/realtime.md) — `@kontsedal/olas-realtime`: `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService`
 - [modules/cross-tab.md](modules/cross-tab.md) — `@kontsedal/olas-cross-tab`: `BroadcastChannel`-backed cross-tab in-memory query cache sync
 - [modules/mutation-queue.md](modules/mutation-queue.md) — `@kontsedal/olas-mutation-queue`: best-effort persistent replay queue for `persist:true` mutations (reload + reconnect + cross-tab-coordinated)
+- [modules/router.md](modules/router.md) — `@kontsedal/olas-router`: `createRouterAdapter` bridging TanStack Router / React Router v6 into `RouteParams`/`Search`/`Pathname` scopes
 - [modules/entities.md](modules/entities.md) — `@kontsedal/olas-entities`: `defineEntity` + auto-walk + reverse-index backprop over `QueryClientPlugin`
 - [modules/react.md](modules/react.md) — `@kontsedal/olas-react`: provider + `useSyncExternalStore`-backed hooks
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`

@@ -1,7 +1,9 @@
 /**
- * Regression tests covering the bugs / drifts fixed in the deep-assessment
- * pass — see `ASSESSMENT.md` at the repo root. Each test pins one specific
- * behavior so future refactors that re-introduce the original bug fail loudly.
+ * Regression tests covering the bugs / drifts fixed in the repo's
+ * correctness-audit passes (recorded in the per-package `CHANGELOG.md` and git
+ * history; the `R-XN` tags below match the audit's task ids). Each test pins
+ * one specific behavior so future refactors that re-introduce the original bug
+ * fail loudly.
  */
 import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
