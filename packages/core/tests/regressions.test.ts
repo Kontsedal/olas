@@ -795,3 +795,65 @@ describe('regression: hydration does not steal data across colliding-key queries
     client.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-L2.1 (T2.1) — a key/enabled change while suspended must not brick the
+// subscription. The binding effect used to `if (suspended) return` BEFORE
+// reading any signal, so a re-run triggered by a key change during suspension
+// read nothing, emptied its dependency set, and went inert — every later key
+// change (after resume) was silently ignored.
+// ---------------------------------------------------------------------------
+describe('regression: key change while suspended survives resume (R-L2.1)', () => {
+  test('regular query: a key changed after resume is honored', async () => {
+    const { signal } = await import('../src/signals')
+    const fetched: string[] = []
+    const q = defineQuery({
+      key: (id: string) => ['item', id] as const,
+      fetcher: async (_ctx, id: string) => {
+        fetched.push(id)
+        return id.toUpperCase()
+      },
+    })
+    const id = signal('a')
+    const def = defineController((ctx) => ({ item: ctx.use(q, () => [id.value] as const) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(fetched).toContain('a'))
+
+    root.suspend()
+    id.set('b') // key change WHILE suspended — used to empty the effect's deps
+    root.resume() // resume() imperatively rebinds once → 'b'
+    await vi.waitFor(() => expect(fetched).toContain('b'))
+
+    id.set('c') // key change AFTER resume — the effect must still re-run
+    await vi.waitFor(() => expect(fetched).toContain('c'))
+    root.dispose()
+  })
+
+  test('infinite query: a key changed after resume rebinds + fetches', async () => {
+    const { signal } = await import('../src/signals')
+    let fetchCount = 0
+    type Page = { items: number[]; next: number | null }
+    const q = defineInfiniteQuery<[string], number, Page>({
+      key: (id: string) => ['feed', id] as const,
+      fetcher: async ({ pageParam }) => {
+        fetchCount += 1
+        return { items: [pageParam], next: null }
+      },
+      initialPageParam: 0,
+      getNextPageParam: (p) => p.next,
+    })
+    const id = signal('a')
+    const def = defineController((ctx) => ({ feed: ctx.use(q, () => [id.value] as const) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(fetchCount).toBe(1))
+
+    root.suspend()
+    id.set('b')
+    root.resume()
+    await vi.waitFor(() => expect(fetchCount).toBe(2)) // resume rebinds to 'b'
+
+    id.set('c') // post-resume change → new entry → fetch
+    await vi.waitFor(() => expect(fetchCount).toBe(3))
+    root.dispose()
+  })
+})

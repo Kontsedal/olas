@@ -63,6 +63,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/literal-type-narrowing.md](pitfalls/literal-type-narrowing.md) — `ctx.field('')` infers `Field<''>`
 - [pitfalls/preact-signals-overload-return.md](pitfalls/preact-signals-overload-return.md) — `ReturnType<typeof signal<T>>` is wrong
 - [pitfalls/fieldarray-factory-uses-initial.md](pitfalls/fieldarray-factory-uses-initial.md) — `add(x)` only works if factory uses it
+- [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert
 
 ## Candidates (not authoritative)
 
