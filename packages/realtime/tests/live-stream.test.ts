@@ -1,10 +1,12 @@
 import { createRoot, defineController, effect } from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
+  type ConnectionState,
   type RealtimeHandler,
   type RealtimeService,
   type RealtimeSubscription,
   useLiveStream,
+  useRealtimeConnection,
 } from '../src'
 
 declare module '@kontsedal/olas-core' {
@@ -230,5 +232,38 @@ describe('useLiveStream', () => {
 
       root.dispose()
     })
+  })
+})
+
+describe('useRealtimeConnection (T6.7)', () => {
+  test("reports 'unknown' when the transport can't report connection state", () => {
+    const realtime = fakeRealtime() // no onConnectionChange
+    const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
+    const root = createRoot(def, { deps: { realtime } })
+    // Old behavior lied with 'connected'; a transport with no
+    // onConnectionChange genuinely can't know → 'unknown'.
+    expect(root.conn.value).toBe('unknown')
+    root.dispose()
+  })
+
+  test('starts optimistic and tracks changes when the transport reports them', () => {
+    // Holder object (not a bare `let`) so TS doesn't narrow the
+    // closure-assigned handler to `null` at the call site.
+    const conn: { handler: ((s: ConnectionState) => void) | null } = { handler: null }
+    const realtime: RealtimeService = {
+      ...fakeRealtime(),
+      onConnectionChange(handler) {
+        conn.handler = handler
+        return () => {
+          conn.handler = null
+        }
+      },
+    }
+    const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
+    const root = createRoot(def, { deps: { realtime } })
+    expect(root.conn.value).toBe('connected') // optimistic initial (has a reporter)
+    conn.handler?.('offline')
+    expect(root.conn.value).toBe('offline')
+    root.dispose()
   })
 })

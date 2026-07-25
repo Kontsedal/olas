@@ -35,12 +35,15 @@ export type RealtimeService = {
    * `useRealtimeConnection(ctx)` returns a live signal of the state;
    * otherwise it returns a constant `'connected'` signal.
    *
-   * Three canonical states:
+   * Four states:
    * - `'connected'`: subscriptions actively receive events.
    * - `'reconnecting'`: transport is mid-recovery; subscriptions may
    *   miss events during the gap.
    * - `'offline'`: no connection; subscriptions are paused at the
    *   transport.
+   * - `'unknown'`: only reported by `useRealtimeConnection` when the
+   *   transport doesn't implement `onConnectionChange` — the hook can't
+   *   observe state, so it says so rather than claiming `'connected'`.
    *
    * Returns an unsubscribe function. Many transports emit a synchronous
    * "current state" callback on subscribe — that's fine; the hook reads
@@ -49,7 +52,7 @@ export type RealtimeService = {
   onConnectionChange?(handler: (state: ConnectionState) => void): () => void
 }
 
-export type ConnectionState = 'connected' | 'reconnecting' | 'offline'
+export type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'
 
 /** Slice of `ctx.deps` needed by `useRealtimeConnection`. */
 
@@ -135,9 +138,13 @@ export type LiveStreamOptions<TEvent = unknown> = {
 
 /**
  * Live-streaming buffer over a single realtime channel. Pause/resume
- * controls the subscription (not the buffer — buffered events are preserved
- * across a pause). `clear()` empties the buffer without touching the
- * subscription. SPEC §16.5 tail-buffer pattern.
+ * controls the subscription (not the buffer — already-buffered events are
+ * preserved across a pause). **Events that arrive DURING a pause are lost:**
+ * `pause()` tears down the underlying subscription, so nothing is received
+ * (let alone buffered) until `resume()`. To recover a gap, pair with
+ * `onReconnect(...)` + a query `invalidate` (refetch authoritative state)
+ * rather than relying on the buffer. `clear()` empties the buffer without
+ * touching the subscription. SPEC §16.5 tail-buffer pattern.
  */
 export type LiveStream<TEvent> = {
   events: ReadSignal<readonly TEvent[]>
@@ -164,7 +171,9 @@ const DEFAULT_FLUSH_MS = 16
  * - `capacity` caps memory; oldest entries drop when exceeded.
  * - `flushMs` coalesces N events into one signal write — prevents thrashing
  *   under 1000-events/sec bursts. `flushMs <= 0` flushes synchronously.
- * - `pause()` stops the subscription; the buffer is preserved across pause.
+ * - `pause()` tears down the subscription; already-buffered events survive,
+ *   but events arriving DURING the pause are LOST (not received). Recover a
+ *   gap with `onReconnect(...)` + query `invalidate`, not the buffer.
  * - `clear()` resets the buffer (and any unflushed pending events) without
  *   touching the subscription.
  */
@@ -289,11 +298,14 @@ export function useLiveStream<TEvent>(
 }
 
 /**
- * Reactive connection-state signal — `'connected' | 'reconnecting' | 'offline'`.
+ * Reactive connection-state signal — `'connected' | 'reconnecting' | 'offline' | 'unknown'`.
  *
  * Backed by `RealtimeService.onConnectionChange?(...)`. If the consumer's
  * transport doesn't implement that method, the returned signal stays at
- * `'connected'` for the lifetime of the controller (best-effort default).
+ * `'unknown'` for the lifetime of the controller — the hook has no way to
+ * observe connection state, so it reports that honestly rather than lying
+ * with `'connected'` (T6.7). With a reporter, it starts optimistically at
+ * `'connected'` until the first change corrects it.
  *
  * Useful for "stale-during-disconnect" UIs and as a refetch trigger when
  * the connection comes back up:
@@ -308,7 +320,11 @@ export function useLiveStream<TEvent>(
  * ```
  */
 export function useRealtimeConnection(ctx: Ctx<RealtimeDeps>): ReadSignal<ConnectionState> {
-  const state$ = signal<ConnectionState>('connected')
+  // A transport WITHOUT `onConnectionChange` can't report status — start at
+  // `'unknown'` instead of claiming `'connected'` (T6.7). With a reporter,
+  // start optimistically at `'connected'` until the first change corrects it.
+  const canReport = ctx.deps.realtime.onConnectionChange !== undefined
+  const state$ = signal<ConnectionState>(canReport ? 'connected' : 'unknown')
   ctx.effect(() => {
     const onChange = ctx.deps.realtime.onConnectionChange
     if (onChange === undefined) return undefined
