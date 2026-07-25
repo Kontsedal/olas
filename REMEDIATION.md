@@ -728,21 +728,24 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   arbitration; simultaneous writes in two tabs can diverge permanently. Recommend
   server-refetch (invalidate) for authoritative sync.
 
-### [ ] T6.5 — zod: abort-race unhandled rejection + dual-copy hazard
+### [x] T6.5 — zod: abort-race unhandled rejection + dual-copy hazard
 - **File:** `packages/zod/src/index.ts`
-- [ ] `zodValidatorAsync`'s `abortPromise` (`:34-39`) rejects after `safeParseAsync`
+- [x] `zodValidatorAsync`'s `abortPromise` (`:34-39`) rejects after `safeParseAsync`
   already won → unhandled rejection + listener never removed. Attach a no-op `.catch`
   to the loser and remove the abort listener in a `finally`.
-- [ ] All introspection is `instanceof`-based (`:93-135, 260-271`) — a duplicated zod copy
+- [x] All introspection is `instanceof`-based (`:93-135, 260-271`) — a duplicated zod copy
   silently degrades nested objects to flat Fields. Add a dev-time warning: if a schema
   fails every `instanceof` check but has a `def`/`_def` marker, warn "duplicate zod copies
   detected — formFromZod cannot introspect this schema".
-- [ ] Fix the stale "stable across 3.x and 4.x" comment (`:94-96`) — peer is `^4.0.0`;
+- [x] Fix the stale "stable across 3.x and 4.x" comment (`:94-96`) — peer is `^4.0.0`;
   the comment is drift.
-- [ ] `defaultInitial` gaps: `.transform()` (ZodPipe) should introspect the INPUT schema;
+- [x] `defaultInitial` gaps: `.transform()` (ZodPipe) should introspect the INPUT schema;
   `ZodDate` currently yields `null` into a `Date`-typed field — use `undefined` and widen
   the field type, or document. Add cases for coerce/unions falling back to `undefined`
   explicitly (tests).
+  > `ZodPipe` → `defaultInitial(def.in)` (INPUT default); `ZodDate` → `undefined` (documented
+  > type/value note: field TYPE still reflects `z.infer`); union → `undefined` (fallthrough),
+  > tested. `coerce.string()` stays `''` (still an instanceof `ZodString`).
 
 ### [ ] T6.6 — router: SSR hole + first-paint emptiness
 - **File:** `packages/router/src/adapter.tsx:80-91, 94, 104-112`
