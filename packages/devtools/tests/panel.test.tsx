@@ -5,6 +5,10 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 import { DevtoolsPanel } from '../src/DevtoolsPanel'
 
+const raf = () =>
+  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+const wait = (ms: number) => act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+
 afterEach(() => {
   cleanup()
 })
@@ -148,6 +152,34 @@ describe('<DevtoolsPanel>', () => {
 
     act(() => root.resume())
     expect(panel.textContent).toContain('active')
+
+    root.dispose()
+  })
+
+  test('the filter input is debounced before it filters the view — T6.3', async () => {
+    const q = defineQuery({ key: () => [], fetcher: async () => 'x' })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: {} })
+
+    render(<DevtoolsPanel root={root} defaultTab="cache" />)
+    await act(async () => {
+      await root.x.refetch()
+    })
+    await raf()
+    expect(screen.getByRole('tabpanel').textContent).toContain('fetch-success')
+
+    // Type a non-matching filter. WITHOUT the debounce this filters instantly
+    // (JSON.stringify per entry per keystroke); WITH it, the view still shows
+    // the entry until the debounce window elapses.
+    act(() => {
+      fireEvent.change(screen.getByPlaceholderText(/Filter cache/i), {
+        target: { value: 'zzz-no-match' },
+      })
+    })
+    expect(screen.getByRole('tabpanel').textContent).toContain('fetch-success')
+
+    await wait(200) // past the debounce
+    expect(screen.getByRole('tabpanel').textContent).toContain('No matches')
 
     root.dispose()
   })

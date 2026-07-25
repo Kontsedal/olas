@@ -146,6 +146,44 @@ describe('DevtoolsStore.handle', () => {
     expect(store.tree$.peek().children).toHaveLength(1)
   })
 
+  test('concurrent runs of the same mutation each get a duration (FIFO pairing) — T6.3', () => {
+    // Two overlapping runs of the SAME path+name. The old code keyed
+    // mutationStarts by path#name with a single value, so the second `run`
+    // OVERWROTE the first's start time and one duration was lost. A FIFO queue
+    // of start times pairs each settle with the oldest pending start.
+    let t = 0
+    const store = new DevtoolsStore({ now: () => t })
+    const path = ['root', 'save']
+    t = 100
+    store.handle({ type: 'mutation:run', path, vars: 1 })
+    t = 110
+    store.handle({ type: 'mutation:run', path, vars: 2 })
+    t = 150
+    store.handle({ type: 'mutation:success', path, result: 'a' })
+    t = 200
+    store.handle({ type: 'mutation:success', path, result: 'b' })
+    const durations = store.mutations$
+      .peek()
+      .filter((e) => e.kind === 'success')
+      .map((e) => (e as { durationMs?: number }).durationMs)
+    expect(durations).toEqual([50, 90]) // 150-100, 200-110 — neither lost
+  })
+
+  test('prunes disposed subtrees beyond maxDisposedNodes; active nodes survive — T6.3', () => {
+    const store = new DevtoolsStore({ maxDisposedNodes: 2, now: fixedNow })
+    store.handle({ type: 'controller:constructed', path: ['root'], props: undefined })
+    for (let i = 0; i < 5; i++) {
+      store.handle({ type: 'controller:constructed', path: ['root', `item[${i}]`], props: undefined })
+      store.handle({ type: 'controller:disposed', path: ['root', `item[${i}]`] })
+    }
+    const rootNode = store.tree$.peek().children[0]
+    expect(rootNode?.state).toBe('active') // active root never pruned
+    const disposed = rootNode?.children.filter((c) => c.state === 'disposed') ?? []
+    expect(disposed.length).toBeLessThanOrEqual(2) // oldest disposed subtrees dropped
+    // The two most-recent survive.
+    expect(disposed.map((c) => c.path[1])).toEqual(['item[3]', 'item[4]'])
+  })
+
   test('attach() subscribes to a root.__debug bus', () => {
     let captured: ((ev: DebugEvent) => void) | undefined
     const fakeRoot = {
