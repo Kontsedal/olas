@@ -900,3 +900,48 @@ describe('regression: effect registered during resume activates exactly once (R-
     root.dispose() // idempotent
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-L2.3 (T2.3) — the ctx.collection reconcile effect must not track signals
+// read by user code (keyOf / item factory / child construct). Before the fix
+// the whole reconcile body ran in the tracked effect scope, so an item factory
+// that read one unrelated signal made every write to it re-reconcile the whole
+// collection.
+// ---------------------------------------------------------------------------
+describe('regression: collection reconcile ignores item-factory signal reads (R-L2.3)', () => {
+  test('writing an unrelated signal read by an item factory does not re-reconcile', async () => {
+    const { signal } = await import('../src/signals')
+    const unrelated = signal(0)
+    let keyOfCalls = 0
+    const item = defineController((_ctx, props: { id: string }) => {
+      unrelated.value // item factory reads an UNRELATED signal
+      return { id: props.id }
+    })
+    const source = signal<ReadonlyArray<{ id: string }>>([{ id: 'a' }, { id: 'b' }])
+    const def = defineController((ctx) => ({
+      c: ctx.collection({
+        source,
+        keyOf: (i) => {
+          keyOfCalls += 1
+          return i.id
+        },
+        controller: item,
+        propsOf: (i) => ({ id: i.id }),
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    const keyOfAfterInit = keyOfCalls
+    expect(root.c.size.value).toBe(2)
+
+    // Write the unrelated signal the item factory read. Pre-fix the reconcile
+    // effect tracked it (factory ran in the tracked scope) → a spurious
+    // re-reconcile that re-invokes keyOf. Post-fix: no reconcile.
+    unrelated.set(1)
+    expect(keyOfCalls).toBe(keyOfAfterInit)
+
+    // Sanity: the source signal still drives reconcile.
+    source.set([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
+    expect(root.c.size.value).toBe(3)
+    root.dispose()
+  })
+})

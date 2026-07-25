@@ -17,7 +17,7 @@ edges:
   - { type: uses, target: ../entities/ctx.md }
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: uses, target: ../flows/construction-rollback.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -83,7 +83,7 @@ type Ctx<TDeps = AmbientDeps> = {
 ### Dynamic children: `session` / `collection` / `lazyChild` (SPEC §11.1, §16.5)
 
 - **`ctx.session(def, props)`** — ephemeral child returning `[api, dispose]`. Same wiring as `ctx.attach` minus the suspend / resume handle: lifetime is `dispose()` OR parent disposal, whichever comes first. For modals, inline edit sessions, wizards.
-- **`ctx.collection(options)`** — keyed set of child controllers driven by a reactive `source` signal. New keys construct, removed keys dispose, unchanged keys are left alone (`propsOf` is **not** re-applied). Two forms: `controller` + `propsOf` for homogeneous items, or `factory: (item) => { controller, props }` for heterogeneous / type-discriminated items (a key whose factory result picks a different controller is rebuilt). The diff loop registers as an `effect` lifecycle entry, so it pauses on `suspend()` and re-runs on `resume()`, reconciling against the current source. Construction throws route to `onError` with `kind: 'construction'` and the bad item is skipped — `items.value` shows one fewer entry. Child controllers are added/removed from the parent's `entries[]` so they participate in suspend / resume / dispose cascade.
+- **`ctx.collection(options)`** — keyed set of child controllers driven by a reactive `source` signal. New keys construct, removed keys dispose, unchanged keys are left alone (`propsOf` is **not** re-applied). Two forms: `controller` + `propsOf` for homogeneous items, or `factory: (item) => { controller, props }` for heterogeneous / type-discriminated items (a key whose factory result picks a different controller is rebuilt). The diff loop registers as an `effect` lifecycle entry, so it pauses on `suspend()` and re-runs on `resume()`, reconciling against the current source. Construction throws route to `onError` with `kind: 'construction'` and the bad item is skipped — `items.value` shows one fewer entry. Child controllers are added/removed from the parent's `entries[]` so they participate in suspend / resume / dispose cascade. The reconcile body reads only `source.value` in the tracked scope; `keyOf`, the item factory, and child construct/dispose all run `untracked(...)` (mirroring `ctx.use`), so a child factory that reads an unrelated signal can't force the whole collection to re-reconcile on every write to it (T2.3).
 - **`ctx.lazyChild(loader, props)`** — code-split child. `status: 'idle' → 'loading' → ('ready' | 'error')`, plus `api: ReadSignal<Api | undefined>` and `error: ReadSignal<unknown | undefined>`. `load()` is idempotent (returns the same promise on repeat calls). Loader or controller-construction throws flip status to `'error'` and route through `onError(kind: 'construction')`. If the parent disposes while a load is in flight, the eventual settle is dropped on the floor (the construction is skipped). Parent dispose cascades into the loaded child via the normal `kind: 'child'` entry.
 
 Tests in `packages/core/tests/dynamic-children.test.ts` exercise all three.
