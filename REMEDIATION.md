@@ -471,7 +471,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   root; (d) `def` change disposes old and creates new.
 - **Docs:** fix the docstring example; API.md HydrationBoundary section (add it — see T6.4).
 
-### [ ] T4.2 — **[MAJOR]** `useMutation().isSuccess` never true for `void` mutations
+### [x] T4.2 — **[MAJOR]** `useMutation().isSuccess` never true for `void` mutations
 - **Files:** `packages/react/src/hooks.ts:481-495`;
   `packages/core/src/query/mutation.ts:150-192` (no status signal)
 - **Problem (confirmed by inspection):** `isSuccess` derives from

@@ -4,7 +4,7 @@ import { createRoot, defineController, defineQuery, signal } from '@kontsedal/ol
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode, useEffect } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { OlasProvider, use, useController, useField, useQuery, useRoot } from '../src'
+import { OlasProvider, use, useController, useField, useMutation, useQuery, useRoot } from '../src'
 
 afterEach(() => {
   cleanup()
@@ -217,6 +217,34 @@ describe('useField <input> round-trip', () => {
       fireEvent.blur(input)
     })
     expect(screen.getByTestId('touched').textContent).toBe('yes')
+
+    root.dispose()
+  })
+})
+
+describe('useMutation status (R4.2)', () => {
+  test('a void mutation reports isSuccess after it resolves', async () => {
+    const def = defineController((ctx) => ({ save: ctx.mutation({ mutate: async () => {} }) }))
+    const root = createRoot(def, { deps: {} })
+
+    function View() {
+      const m = useMutation(root.save)
+      return <span data-testid="s">{m.isSuccess ? 'success' : m.isIdle ? 'idle' : 'other'}</span>
+    }
+
+    render(
+      <OlasProvider root={root}>
+        <View />
+      </OlasProvider>,
+    )
+    expect(screen.getByTestId('s').textContent).toBe('idle')
+
+    // A void mutation resolves `undefined`; only `status` changes. The hook must
+    // subscribe to it and re-render with isSuccess=true (was stuck on 'idle').
+    await act(async () => {
+      await root.save.run()
+    })
+    expect(screen.getByTestId('s').textContent).toBe('success')
 
     root.dispose()
   })

@@ -577,11 +577,14 @@ type Mutation<V, R> = {
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
   isPending: ReadSignal<boolean>
+  status: ReadSignal<'idle' | 'pending' | 'success' | 'error'>
   lastVariables: ReadSignal<V | undefined>
   reset(): void
   dispose(): void
 }
 ```
+
+**`status`** is the outcome of the latest run — `'idle'` before any run (and after `reset()`), `'pending'` in flight, `'success'`, `'error'`. It is what React's `useMutation` derives `isIdle` / `isSuccess` / `isError` from, so a **`void` mutation** (which resolves `undefined`) still reports `status: 'success'` rather than looking stuck at idle. Distinct from `isPending`, which stays true while *any* run is in flight (parallel mode). A superseded `latest-wins` run does **not** flip `status` to `'error'` — the superseder owns the terminal status.
 
 ### 6.1 Concurrency modes
 
@@ -2307,6 +2310,7 @@ type Mutation<V, R> = {
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
   isPending: ReadSignal<boolean>
+  status: ReadSignal<'idle' | 'pending' | 'success' | 'error'> // outcome of the latest run
   lastVariables: ReadSignal<V | undefined>
   reset(): void
   dispose(): void // idempotent; aborts in-flight; also called when controller disposes
