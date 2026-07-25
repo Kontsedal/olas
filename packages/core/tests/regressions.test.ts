@@ -1230,3 +1230,49 @@ describe('regression: out-of-order optimistic rollback returns to baseline (R-Q3
     entry.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-Q3.2 (T3.2) — refetchInterval must JOIN an in-flight fetch, not abort it.
+// When fetch duration > interval, every tick previously called startFetch(),
+// which aborts the current request and starts a new one → livelock: 0
+// completions, data forever undefined, one aborted request per interval.
+// ---------------------------------------------------------------------------
+describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
+  test('a fetch slower than the interval still completes and sets data', async () => {
+    vi.useFakeTimers()
+    let starts = 0
+    let completions = 0
+    const q = defineQuery({
+      key: () => ['k'],
+      fetcher: ({ signal }) => {
+        starts += 1
+        return new Promise<number>((resolve, reject) => {
+          const t = setTimeout(() => {
+            completions += 1
+            resolve(completions)
+          }, 2500) // slower than the 1000ms interval
+          signal.addEventListener('abort', () => {
+            clearTimeout(t)
+            reject(new DOMException('aborted', 'AbortError'))
+          })
+        })
+      },
+      refetchInterval: 1000,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    await vi.advanceTimersByTimeAsync(10_000)
+
+    // With the bug: every 1s tick aborts the 2.5s fetch → 0 completions, data
+    // undefined, ~10 aborted starts. With the join: the fetch runs to
+    // completion and ticks during a fetch are no-ops.
+    expect(completions).toBeGreaterThanOrEqual(1)
+    expect(root.x.data.value).not.toBeUndefined()
+    // Did not hammer: far fewer starts than the ~10 ticks that elapsed.
+    expect(starts).toBeLessThan(10)
+
+    root.dispose()
+    vi.useRealTimers()
+  })
+})
