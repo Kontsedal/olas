@@ -405,3 +405,15 @@ session.
 
 `pnpm wiki:lint` → 45 pages scanned · 0 error · 0 warning.
 `pnpm test` → 621/621 pass across 55 files.
+
+## [2026-07-25 11:15] ingest | REMEDIATION.md phases 0–1
+
+Deep-audit remediation (see `REMEDIATION.md`), phases 0 (infra) and 1 (query criticals).
+
+- **T0.1** — `scripts/wiki-lint.ts` was blind on a CRLF (Windows) checkout: LF-only frontmatter regex + backslash path comparisons made every page read as frontmatter-less. Fixed both; the linter now surfaces real staleness/drift (previously masked). Note: bootstrap pages are broadly stale (>60d) — resolved per-phase as their covered code is re-verified, not by a blanket bump.
+- **T1.1** — `Entry.setData` / `InfiniteEntry.setData` gained a `track` option. Plugin/remote canonical writes (`applyRemoteSetData`, `setEntryData`) no longer push optimistic snapshots or wedge `hasPendingMutations`. Updated `entities/entry.md`, SPEC §6.4/§13.2. Pinned by `regressions.test.ts` R-Q1.1.
+- **T1.2** — SSR hydration namespaced by query identity (`__id = queryId ?? auto`) not key-hash, killing cross-query data theft. Updated `flows/ssr.md`, SPEC §15. Pinned by R-Q1.2.
+
+### Gates
+
+`pnpm typecheck` clean; `pnpm lint` (biome, LF) clean; `pnpm test` → 626/626 across 55 files.
