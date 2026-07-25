@@ -246,6 +246,8 @@ Most controllers have two states: **active** and **disposed**. Construction happ
 
 **Memory.** Disposal is always recursive and synchronous. After dispose, all signals owned by the controller are dropped; subscribers receive a final `disposed` notification and unsubscribe.
 
+**After dispose, `ctx` is dead.** Calling any `ctx.*` factory (`ctx.effect`, `ctx.use`, `ctx.child`, `ctx.session`, `ctx.collection`, `ctx.mutation`, `ctx.form`, `ctx.onDispose`, …) after the owning controller has been disposed **throws** `[olas] ctx.<name>() called after the controller was disposed`. A captured `ctx` used past its owner's lifetime is a programming error; silently pushing into a torn-down lifecycle list would leak a live child or subscription. (Reads — `ctx.deps`, `ctx.inject` — do not throw.)
+
 **For "user navigated away, might come back."** Dispose. The query client's `gcTime` retains shared data for ~5 min by default; re-construction finds it warm and skips the network. This is the right tool for route caches, closed tabs, hidden panels you might re-open.
 
 ### 4.1 Advanced — suspend & resume

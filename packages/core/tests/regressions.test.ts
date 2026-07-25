@@ -945,3 +945,72 @@ describe('regression: collection reconcile ignores item-factory signal reads (R-
     root.dispose()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-L2.4 (T2.4) — every ctx.* factory must throw when called after the owning
+// controller is disposed. Before the fix only ctx.effect guarded (and it
+// silently no-op'd); the rest pushed into a cleared lifecycle list — live
+// children/subscriptions that never got torn down.
+// ---------------------------------------------------------------------------
+describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
+  test('every entry-creating ctx.* method throws after dispose', async () => {
+    const { signal } = await import('../src/signals')
+    let captured: any
+    let capturedEmitter: any
+    const childDef = defineController(() => ({}))
+    const q = defineQuery({ key: () => ['k'] as const, fetcher: async () => 1 })
+    const def = defineController((ctx) => {
+      captured = ctx
+      capturedEmitter = ctx.emitter<number>()
+      return {}
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    root.dispose()
+
+    const throws = (fn: () => void) => expect(fn).toThrow(/disposed/)
+    throws(() => captured.effect(() => {}))
+    throws(() => captured.cache(async () => 1))
+    throws(() => captured.use(q))
+    throws(() => captured.mutation({ mutate: async () => 1 }))
+    throws(() => captured.emitter())
+    throws(() => captured.field(''))
+    throws(() => captured.form({}))
+    throws(() => captured.fieldArray(() => ({})))
+    throws(() => captured.on(capturedEmitter, () => {}))
+    throws(() => captured.child(childDef, {}))
+    throws(() => captured.attach(childDef, {}))
+    throws(() => captured.session(childDef, {}))
+    throws(() =>
+      captured.collection({
+        source: signal([]),
+        keyOf: (x: unknown) => x,
+        controller: childDef,
+        propsOf: () => ({}),
+      }),
+    )
+    throws(() => captured.lazyChild(async () => childDef, {}))
+    throws(() => captured.onDispose(() => {}))
+    throws(() => captured.onSuspend(() => {}))
+    throws(() => captured.onResume(() => {}))
+    root.dispose()
+  })
+
+  test('ctx.session after dispose does not construct a child (no leak)', async () => {
+    let captured: any
+    let constructed = 0
+    const childDef = defineController(() => {
+      constructed += 1
+      return {}
+    })
+    const def = defineController((ctx) => {
+      captured = ctx
+      return {}
+    })
+    const root = createRoot(def, { deps: emptyDeps })
+    root.dispose()
+    expect(constructed).toBe(0)
+    expect(() => captured.session(childDef, {})).toThrow(/disposed/)
+    expect(constructed).toBe(0) // the child must NOT be constructed
+    root.dispose()
+  })
+})

@@ -4,12 +4,12 @@ description: The lifecycle-bound primitive factory passed to every controller fa
 type: entity
 covers:
   - packages/core/src/controller/types.ts:90-166
-  - packages/core/src/controller/instance.ts:257-587
+  - packages/core/src/controller/instance.ts:390-1130
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: high
 ---
 
@@ -41,7 +41,7 @@ type Ctx<TDeps = AmbientDeps> = {
 }
 ```
 
-The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:257`). Each method has the same general shape:
+The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:390`). Each method has the same general shape:
 
 1. Create the primitive.
 2. Push a `LifecycleEntry` onto `self.entries`.
@@ -54,6 +54,8 @@ The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:257`). 
 Spec §3.4: **any time during the controller's active lifetime, not only the initial factory run**. Dynamically-created primitives integrate into the same `entries` list and dispose with the controller. This lets you e.g. spin up a field inside an effect that responds to schema changes — see the dynamicFormController example in spec §3.4.
 
 Individual primitives also expose `.dispose()` — idempotent, safe to call early. The owning controller will call it again on its own dispose; both calls are no-ops after the first.
+
+**After dispose, every `ctx.*` factory throws** `[olas] ctx.<name>() called after the controller was disposed` (guarded by `assertLive` in `buildCtx`). A captured `ctx` reused past its owner's lifetime is a programming error; without the guard the factory would push into a cleared lifecycle list and leak a live child / subscription / effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
 
 ## `ctx.deps` — DI surface
 
