@@ -71,20 +71,20 @@ The fix lives in `subscribeOnChange` (`hooks.ts:11-21`): wrap the handler with a
 
 ## `useQuery` / `useField` — multi-signal batching
 
-A naive `useQuery` would call `useSyncExternalStore` eight times (once per signal in `AsyncState<T>`). That works but means 8 re-render triggers when several signals change in a `batch()`.
+A naive `useQuery` would call `useSyncExternalStore` once per signal in `AsyncState<T>`. That works but means N re-render triggers when several signals change in a `batch()`, and the version-counter shortcut it originally used defeated uSES's tear detection (see below).
 
-The pattern (`hooks.ts:46-95` for `useQuery`, `hooks.ts:101-149` for `useField`):
+The pattern (`hooks.ts`, shared by `useQuery` / `useField` / `useFieldInput` / `useMutation`):
 
-1. One `useRef<number>` counter per hook instance — bumped whenever ANY subscribed signal fires.
-2. One `useSyncExternalStore` subscribe that fans out into N inner `subscribeOnChange` calls. Each fires `versionRef.current++; onChange()`.
-3. `getSnapshot()` returns `versionRef.current` — a number. Identical across renders when nothing changed; bumped exactly once per actual change cycle (preact batches synchronous writes).
-4. After the hook returns, read each signal via `.peek()` (untracked) to build the plain-values object.
+1. A memoized core `computed(() => ({ …read every relevant signal's `.value`… }))`, keyed on the subscription target via `useMemo`. Reading each `.value` inside makes the computed re-evaluate — and mint a NEW plain-values object — exactly when any dep changes, and return the SAME object reference when nothing did.
+2. `subscribe(onChange)` = `snapshot.subscribeChanges(onChange)` — one subscription on the computed.
+3. `getSnapshot()` = `snapshot.value` — a referentially-stable object that reflects real store state.
+4. `const snap = useSyncExternalStore(...)`; the hook returns `snap`'s fields plus the action closures.
 
-The returned methods (`set`, `reset`, `markTouched`, `revalidate` on `useField`; `refetch` on `useQuery`) are passed through with closures so destructuring `const { set } = useField(field)` works without `.bind(field)` on the caller side.
+The returned methods (`set`, `reset`, `markTouched`, `revalidate` on `useField`; `refetch` on `useQuery`; `mutate`/`reset` on `useMutation`) are passed through with closures so destructuring works without `.bind(...)` on the caller side.
 
-## Why a counter and not the snapshot object?
+## Why a computed snapshot, not a version counter?
 
-`getSnapshot` must return a referentially stable value when nothing changed (React uses `Object.is`). Returning a fresh `{ data, error, ... }` object each render would cause infinite re-renders. The counter avoids the trap: it only changes when a real subscription fired, so React's bail-out works.
+An earlier version used `getSnapshot = () => versionRef.current`, a number bumped only inside the `subscribe` callback. It's referentially stable, but it **defeats uSES's mount-consistency check**: a write landing between render and subscription doesn't bump the counter (the hook isn't subscribed yet), so uSES's re-check compares the same stale number, passes vacuously, and the component shows stale `.peek()`ed values until the next write — initial-mount tearing is undetectable for the same reason (T4.5). The computed's `.value` changes identity exactly when a dep changes, so `getSnapshot` reflects the actual store and the consistency check works. Pinned by `adapter.test.tsx` (R4.5).
 
 ## `<OlasProvider>` and StrictMode
 

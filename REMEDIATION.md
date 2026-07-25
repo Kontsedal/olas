@@ -506,7 +506,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Test:** signal holding an array; render with `select` for index 0, re-render with index
   1 → assert new slice. Add a basic `isEqual` test too — the option currently has zero coverage.
 
-### [ ] T4.5 — **[MAJOR]** version-counter snapshots defeat `useSyncExternalStore` consistency
+### [x] T4.5 — **[MAJOR]** version-counter snapshots defeat `useSyncExternalStore` consistency
 - **File:** `packages/react/src/hooks.ts:147-172` (useQuery), `:249-272` (useField),
   `:348-368` (useFieldInput), `:438-461` (useMutation)
 - **Problem:** `getSnapshot = () => versionRef.current` where the version bumps only
