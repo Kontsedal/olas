@@ -68,4 +68,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 
 ## Candidates (not authoritative)
 
-None yet. New inferences with low evidence go into `candidates/<type>/`.
+Speculative / unbuilt — excluded from authoritative queries. New low-evidence inferences go into `candidates/<type>/`.
+
+- [candidates/backlog.md](candidates/backlog.md) — staging backlog of substantial forward-looking **proposals** (rich design candidates); complements the terse repo-root `BACKLOG.md`
+- [candidates/decisions/devtools-overhaul.md](candidates/decisions/devtools-overhaul.md) — proposed devtools overhaul (causal-timeline debugger); rescued from the transient remediation plan
