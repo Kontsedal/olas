@@ -756,7 +756,7 @@ const form = ctx.form({
 form.value        // ReadSignal<UserProfile>
 form.errors       // ReadSignal<FormErrors<...>>  — same shape as value, leaves are string[] | undefined
 form.isValid      // ReadSignal<boolean>  — all leaves valid
-form.isDirty      // ReadSignal<boolean>  — any leaf dirty
+form.isDirty      // ReadSignal<boolean>  — any leaf dirty, or a FieldArray structurally changed (§8.5)
 form.touched      // ReadSignal<boolean>  — any leaf touched
 form.isValidating // ReadSignal<boolean>
 
@@ -823,7 +823,7 @@ const form = ctx.form({
 
 Semantics:
 
-- `initial()` runs in a tracking scope; when its tracked signals change, the form re-applies the new initial values **only if the form is not dirty**. Once the user touches anything, auto-sync stops to avoid clobbering edits.
+- `initial()` runs in a tracking scope; when its tracked signals change, the form re-applies the new initial values **only if the form is not dirty**. Once the user touches anything — editing a field **or** a `FieldArray` add/remove/move (§8.5) — auto-sync stops to avoid clobbering edits.
 - `form.reset()` always re-reads `initial()` to get the latest baseline.
 - Setting `initial` to a fixed object (not a function) is also accepted — equivalent to a one-shot constructor initial.
 
@@ -859,6 +859,8 @@ order.value.value
 ```
 
 The factory passed to `fieldArray` runs once per `add()` / `insert()` to construct a fresh sub-form (or sub-field). Each item is owned by the array; removing it disposes the underlying form.
+
+**Structural dirtiness.** `add`, `insert`, `remove`, `move`, and `clear` mark the array **dirty** — `isDirty` is `true` after any of them, not only after a per-item edit. This is what makes the reactive-`initial` guard (§8.4) safe: once the user adds or removes a row, the default `resetOnInitialChange: 'when-clean'` stops re-seating, so a background refetch of `initial: () => queryData` can't silently delete the rows the user just added. `reset()` — and an `initial`-driven re-seat — clears the structural dirt back to the clean baseline.
 
 For arrays of simple fields (no sub-form), the factory returns a single field:
 

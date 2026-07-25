@@ -1634,3 +1634,60 @@ describe('regression: query minor batch (R-Q3.9)', () => {
     warn.mockRestore()
   })
 })
+
+// ---------------------------------------------------------------------------
+// R-F5.1 (T5.1) — structural FieldArray edits (add/remove/move/clear) must mark
+// the array dirty. Otherwise a reactive `initial: () => queryData` + the default
+// `resetOnInitialChange: 'when-clean'` re-seats the array on a background refetch
+// and silently deletes rows the user just added.
+// ---------------------------------------------------------------------------
+describe('regression: structural FieldArray edits mark isDirty (R-F5.1)', () => {
+  test('add / remove / move flip isDirty; reset clears it', () => {
+    const def = defineController((ctx) => ({
+      arr: ctx.fieldArray((initial) => ctx.field<string>((initial as string) ?? ''), {
+        initial: ['a', 'b', 'c'],
+      }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.arr.isDirty.value).toBe(false) // construction is not dirty
+
+    root.arr.remove(0)
+    expect(root.arr.isDirty.value).toBe(true) // structural remove
+    root.arr.reset()
+    expect(root.arr.isDirty.value).toBe(false) // reset clears structural dirt
+
+    root.arr.move(0, 2)
+    expect(root.arr.isDirty.value).toBe(true) // structural move
+    root.arr.reset()
+    expect(root.arr.isDirty.value).toBe(false)
+
+    root.arr.add('d')
+    expect(root.arr.isDirty.value).toBe(true) // structural add
+    root.dispose()
+  })
+
+  test('a user-added row survives a background initial change (the critical bug)', async () => {
+    const { signal } = await import('../src/signals')
+    const seed = signal<string[]>(['a', 'b'])
+    const def = defineController((ctx) => ({
+      form: ctx.form(
+        { tags: ctx.fieldArray((initial) => ctx.field<string>((initial as string) ?? '')) },
+        { initial: () => ({ tags: seed.value }) },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(root.form.fields.tags.size.value).toBe(2)
+
+    // User adds a row → the form is now structurally dirty.
+    root.form.fields.tags.add('c')
+    expect(root.form.fields.tags.size.value).toBe(3)
+    expect(root.form.isDirty.value).toBe(true)
+
+    // Background refetch changes the reactive initial. `when-clean` must REFUSE
+    // to re-seat (form is dirty) — the user's row must survive.
+    seed.set(['x', 'y'])
+    expect(root.form.fields.tags.size.value).toBe(3)
+    expect(root.form.fields.tags.at(2)?.value).toBe('c')
+    root.dispose()
+  })
+})

@@ -651,6 +651,14 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   readonly isValidating: ReadSignal<boolean>
 
   private readonly items$: Signal<I[]>
+  /**
+   * Structural dirtiness — flipped by `add`/`insert`/`remove`/`move`/`clear`.
+   * Item-level `isDirty` alone misses these, so a reactive `initial` + the
+   * default `resetOnInitialChange: 'when-clean'` would re-seat the array on a
+   * background refetch and delete rows the user just added (T5.1). Reset by
+   * `reset()` and by an initial-driven re-anchor (`replaceInitialItems`).
+   */
+  private readonly structurallyDirty$: Signal<boolean> = signal(false)
   private readonly topLevelErrors$: Signal<string[]> = signal([])
   readonly topLevelErrors: ReadSignal<string[]> = this.topLevelErrors$
   private readonly topLevelValidating$: Signal<boolean> = signal(false)
@@ -705,6 +713,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       }),
     )
     this.isDirty = computed(() => {
+      if (this.structurallyDirty$.value) return true // add/remove/move/clear
       for (const item of this.items$.value) {
         if ((item as { isDirty: ReadSignal<boolean> }).isDirty.value) return true
       }
@@ -745,6 +754,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     if (this.disposed) return
     const item = this.itemFactory(initial)
     this.items$.set([...this.items$.peek(), item])
+    this.structurallyDirty$.set(true)
   }
 
   insert(index: number, initial?: ItemInitial<I>): void {
@@ -753,6 +763,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     const next = [...this.items$.peek()]
     next.splice(index, 0, item)
     this.items$.set(next)
+    this.structurallyDirty$.set(true)
   }
 
   remove(index: number): void {
@@ -763,6 +774,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       ;(removed as { dispose?: () => void }).dispose?.()
     }
     this.items$.set(next)
+    this.structurallyDirty$.set(true)
   }
 
   move(from: number, to: number): void {
@@ -771,6 +783,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     const [item] = next.splice(from, 1)
     if (item) next.splice(to, 0, item)
     this.items$.set(next)
+    this.structurallyDirty$.set(true)
   }
 
   clear(): void {
@@ -779,6 +792,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       ;(item as { dispose?: () => void }).dispose?.()
     }
     this.items$.set([])
+    this.structurallyDirty$.set(true)
   }
 
   /**
@@ -789,6 +803,10 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
    */
   replaceInitialItems(items: ReadonlyArray<ItemInitial<I>>): void {
     this.initialItems = [...items]
+    // The array was just re-seated from `initial` (reactive-initial re-apply or
+    // `resetWithInitial`) — this is the new clean baseline, so the clear()/add()
+    // that drove it must not leave the array structurally dirty (T5.1).
+    this.structurallyDirty$.set(false)
   }
 
   reset(): void {
@@ -799,6 +817,9 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
         this.add(ini)
       }
       this.topLevelErrors$.set([])
+      // clear()/add() above flipped structural dirt; reset() lands on the
+      // clean initial baseline (T5.1).
+      this.structurallyDirty$.set(false)
     })
   }
 

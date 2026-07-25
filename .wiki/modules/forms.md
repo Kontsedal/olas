@@ -110,7 +110,10 @@ See `../pitfalls/fieldarray-factory-uses-initial.md`.
 
 `remove(i)` calls `.dispose()` on the removed item (Field/Form/FieldArray all implement it). `clear()` disposes all items.
 
+**Structural dirtiness (T5.1).** `FieldArray.isDirty` is `structurallyDirty$ || anyItemDirty` — the `structurallyDirty$` signal is flipped by `add`/`insert`/`remove`/`move`/`clear` and cleared by `reset()` and `replaceInitialItems()` (the initial re-anchor). Item-level dirtiness alone missed add/remove/move, so a reactive `initial: () => queryData` + the default `resetOnInitialChange: 'when-clean'` (`FormImpl` construction guard, `form.ts:99-124`) re-seated the array on a background refetch and deleted rows the user had just added. Construction seeds items directly (not via `add()`), so a fresh array is clean. Pinned by `regressions.test.ts` (R-F5.1).
+
 ## What's NOT implemented yet
 
 - `form.fieldAt('a.b.c')` path-typed lookup — spec §20.7 says this is "deferred to post-v1". Use `form.fields.a.fields.b.fields.c` chained access.
-- Reactive `initial` thunk that re-applies when the underlying signal changes — partial: function form is invoked once at construction and once on `reset()`, but isn't reactive between resets. Spec §8.4 describes the full behavior.
+
+Reactive `initial` **is** implemented (this page's prior "not reactive between resets" note was bootstrap-era drift): a `initial: () => …` thunk runs in a tracking scope and re-applies when its tracked signals change, gated by `resetOnInitialChange` (`'when-clean'` default / `'always'` / `'never'`). The `'when-clean'` guard consults `isDirty` — which now includes structural FieldArray edits (above). Spec §8.4, §8.5.
