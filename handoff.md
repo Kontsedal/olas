@@ -8,11 +8,11 @@ Written 2026-07-25 after completing Phases 0–4.
 ## TL;DR
 
 - Working on branch **`remediation`** (off `main`). All work is committed.
-- **Phases 0–4 are DONE** — 30 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9, T4.1–T4.7).
-  Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce), T4.7 disabled+suspense
-  (could-not-implement-cleanly → BACKLOG).
-- Pipeline is **green**: `pnpm test` → 689/689, typecheck clean, biome lint clean.
-- **Next task: T5.1** (Phase 5 — forms). The full task list + "decisions
+- **Phases 0–4 DONE + T5.1 DONE** — 31 tasks (T0.1–T0.4, T1.1–T1.2, T2.1–T2.8, T3.1–T3.9,
+  T4.1–T4.7, T5.1). Two `[?]` items along the way: T2.8 pathKey (could-not-reproduce),
+  T4.7 disabled+suspense (could-not-implement-cleanly → BACKLOG).
+- Pipeline is **green**: `pnpm test` → 691/691, typecheck clean, biome lint clean.
+- **Next task: T5.2** (Phase 5 — forms, mid-phase). The full task list + "decisions
   made" live in `REMEDIATION.md`; the checkboxes there are the source of truth.
 
 ## Read this first (resume order)
@@ -100,29 +100,33 @@ must be green, then add a `## [date] ingest | REMEDIATION.md phase N` entry to `
 | 2 — lifecycle criticals+majors | T2.1–T2.8 | ✅ done (T2.8 pathKey = `[?]`) |
 | 3 — query majors | T3.1–T3.9 | ✅ done |
 | 4 — React adapter | T4.1–T4.7 | ✅ done (T4.7 disabled+suspense = `[?]`) |
-| 5 — forms | T5.1–T5.3 | ⬜ **next** |
+| 5 — forms | T5.1–T5.3 | 🔶 in progress (T5.1 ✅; T5.2, T5.3 next) |
 | 6 — satellites | T6.1–T6.7 | ⬜ |
 | 7 — delivery/docs/release | T7.1–T7.3 | ⬜ |
 | 8 — devtools overhaul | T8.1–T8.10 (8A–8D) | ⬜ |
 
-**Next up — T5.1** (`packages/core/src/forms/form.ts`): **[CRITICAL]** structural
-`FieldArray` edits (`add`/`remove`/`move`) are invisible to `isDirty`, so with a reactive
-`initial: () => queryData` + the default `resetOnInitialChange: 'when-clean'`, a background
-refetch silently deletes rows the user just added — the worst user-facing bug in the audit.
-Fix (decision made in REMEDIATION.md): a `structurallyDirty` signal on `FieldArray`, set by
-`add`/`remove`/`move`/`clear`, reset by `reset()` + initial-driven re-seat; `isDirty =
-structurallyDirty || anyItemDirty`. SPEC §8; `.wiki/modules/forms.md`.
+**Next up — T5.2** (`packages/core/src/forms/form.ts` + `validators.ts`): **[MAJOR]**
+cross-field validation can't target fields; Standard Schema issues lose their `path`. A
+form-level validator returns one `string | null`, so "passwords must match" can't land on
+the confirm field; a whole-form Zod schema collapses to one anonymous top-level string.
+Fix (decision made in REMEDIATION.md): extend the form-level validator return to
+`string | null | FormIssue[]` (`FormIssue = { path: (string|number)[]; message: string }`);
+non-empty-path issues route into a NEW per-field `formErrors` signal (a third channel beside
+validator + server errors), merged into the field's visible `errors`, cleared on the next
+form-level run; empty-path issues → `topLevelErrors`. Rewrite the Standard Schema wrapper
+(`validators.ts:16-30`) to return ALL issues as `FormIssue[]`. Existing plumbing to reuse:
+`form.setErrors(pathMap)` + `resolvePath` (`form.ts:416-426`). SPEC §8 validators; API.md;
+`.wiki/modules/forms.md` + `zod.md`. Then **T5.3** — forms minor batch (validateOn tests,
+`required(false)` passes, `isValid` during `isValidating`, reset-batch, thrown-validator
+message in prod). That completes Phase 5 → run the phase gate + `.wiki/log.md` ingest.
 
 **Phase 5 notes (forms — `packages/core/src/forms/`, back to core):**
 - Core tests (node env, NOT jsdom) in `packages/core/tests/` — forms tests in
-  `form*.test.ts`, `field*.test.ts`. Regressions still go in `regressions.test.ts`
-  (`R-Q`/`R-L` tag style; use `R-F5.x` for phase 5).
+  `form*.test.ts`, `field*.test.ts`. Regressions go in `regressions.test.ts` (`R-F5.x` tag).
 - `Field<T>.value` returns `T`; `Form.value` / `FieldArray.value` are `ReadSignal<...>`
   (pitfall `field-value-shape.md`). Form traversal branches on this.
-- T5.2 extends the form-level validator return type to `string | null | FormIssue[]` (adds
-  a `formErrors` per-field channel) and rewrites the Standard Schema wrapper to keep all
-  issues + paths. T5.3 is a minor batch (validateOn tests, `required(false)`, etc.).
 - `__DEV__` IS available in core (unlike react) — use it for dev-only warnings.
+- T5.1 added `FieldArray.structurallyDirty$` (isDirty = structural || anyItemDirty).
 
 **Phase 4 recap (just completed):** new public surface — `Mutation.status` (core), which
 `useMutation`'s `isSuccess`/`isIdle`/`isError` derive from. Full details in `.wiki/log.md`
