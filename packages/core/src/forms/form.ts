@@ -627,7 +627,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         // form errors); the real error still reaches `onValidatorError` (T5.3).
         syncIssues.push({
           path: [],
-          message: __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
+          message: __DEV__
+            ? err instanceof Error
+              ? err.message
+              : String(err)
+            : 'Validation failed',
         })
       }
     }
@@ -1055,7 +1059,11 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
         // form errors); the real error still reaches `onValidatorError` (T5.3).
         syncIssues.push({
           path: [],
-          message: __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
+          message: __DEV__
+            ? err instanceof Error
+              ? err.message
+              : String(err)
+            : 'Validation failed',
         })
       }
     }

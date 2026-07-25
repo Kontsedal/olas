@@ -450,7 +450,9 @@ class FieldImpl<T> implements Field<T> {
         } catch {
           // The reporter must not propagate.
         }
-        syncErrors.push(__DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed')
+        syncErrors.push(
+          __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
+        )
       }
     }
 

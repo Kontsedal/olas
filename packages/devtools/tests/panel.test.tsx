@@ -5,8 +5,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 import { DevtoolsPanel } from '../src/DevtoolsPanel'
 
-const raf = () =>
-  act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+const raf = () => act(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
 const wait = (ms: number) => act(() => new Promise<void>((resolve) => setTimeout(resolve, ms)))
 
 afterEach(() => {

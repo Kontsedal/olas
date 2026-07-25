@@ -513,7 +513,11 @@ describe('usePersisted — onError routing', () => {
     const ops: string[] = []
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: store, crossTab: true, onError: (_e, op) => ops.push(op) })
+      usePersisted(ctx, 'k', s, {
+        storage: store,
+        crossTab: true,
+        onError: (_e, op) => ops.push(op),
+      })
       return { s }
     })
     const root = createRoot(def, { deps: emptyDeps })

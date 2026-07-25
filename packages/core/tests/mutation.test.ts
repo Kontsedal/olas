@@ -481,8 +481,7 @@ describe('ctx.mutation — status signal (T4.2)', () => {
     const dB = deferred<string>()
     const def = defineController((ctx) => ({
       m: ctx.mutation({
-        mutate: async (v: 'a' | 'b') =>
-          v === 'b' ? dB.promise : new Promise<string>(() => {}), // 'a' hangs until aborted
+        mutate: async (v: 'a' | 'b') => (v === 'b' ? dB.promise : new Promise<string>(() => {})), // 'a' hangs until aborted
         concurrency: 'latest-wins',
       }),
     }))

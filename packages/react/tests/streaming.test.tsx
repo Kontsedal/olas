@@ -249,9 +249,9 @@ describe('installStreamingIntake (client side)', () => {
     const uninstall = installStreamingIntake(root)
     uninstall() // teardown → re-installs a bootstrap-style queue
 
-    const intake = (globalThis as unknown as Record<string, { push: (b: unknown) => void; q: unknown[] }>)[
-      STREAMING_GLOBAL
-    ]
+    const intake = (
+      globalThis as unknown as Record<string, { push: (b: unknown) => void; q: unknown[] }>
+    )[STREAMING_GLOBAL]
     if (intake === undefined) throw new Error('intake missing')
     intake.push([{ queryId: 'streaming-late', key: [], data: ['late'], lastUpdatedAt: 3000 }])
     // Was the bug: `push: () => {}` dropped it → q stayed empty.

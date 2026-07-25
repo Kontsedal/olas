@@ -1,9 +1,8 @@
 // @vitest-environment jsdom
 
-import { render } from '@testing-library/react'
+import { cleanup, render } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, test } from 'vitest'
-import { cleanup } from '@testing-library/react'
 import { JsonView } from '../src/JsonView'
 
 afterEach(() => cleanup())

@@ -210,7 +210,9 @@ describe('useQuery({ suspense: true })', () => {
       }
       render(
         <OlasProvider root={root}>
-          <ErrorBoundary fallback={(err) => <span data-testid="err">{(err as Error).message}</span>}>
+          <ErrorBoundary
+            fallback={(err) => <span data-testid="err">{(err as Error).message}</span>}
+          >
             <Suspense fallback={<span data-testid="fallback">loading</span>}>
               <View />
             </Suspense>
