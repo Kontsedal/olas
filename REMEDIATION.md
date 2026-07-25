@@ -312,7 +312,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Repro test:** fake timers; fetch resolving in 2500ms, `refetchInterval: 1000`; advance
   10s; assert ≥1 completion and data set.
 
-### [ ] T3.3 — **[MAJOR]** infinite query status wedges at `'pending'`
+### [x] T3.3 — **[MAJOR]** infinite query status wedges at `'pending'`
 - **Files:** `packages/core/src/query/infinite.ts:281-284` (fetchNextPage supersedes
   background refetch), `:294-304` (next-page success doesn't restore status), `:396-408`
   (superseded finally resets direction flags only)
