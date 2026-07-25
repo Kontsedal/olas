@@ -184,7 +184,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   also covers effects re-registered by re-running effects).
 - **Docs:** `.wiki/entities/controller-instance.md`.
 
-### [ ] T2.3 — **[MAJOR]** `ctx.collection` reconcile effect tracks user-code signal reads
+### [x] T2.3 — **[MAJOR]** `ctx.collection` reconcile effect tracks user-code signal reads
 - **File:** `packages/core/src/controller/instance.ts:815-899` (`reconcile`), compare the
   correct pattern at `packages/core/src/query/use.ts:161` (`untracked` around binding)
 - **Problem:** `keyOf`, `propsOf`, `factory`, child `construct`, and child `dispose` all

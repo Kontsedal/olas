@@ -24,7 +24,7 @@ import { createMutation, type Mutation, type MutationSpec } from '../query/mutat
 import type { LocalCache, Query } from '../query/types'
 import { createInfiniteUse, createUse } from '../query/use'
 import type { Scope } from '../scope'
-import { computed, signal, effect as standaloneEffect } from '../signals'
+import { computed, signal, untracked, effect as standaloneEffect } from '../signals'
 import { getFactory, getName } from './define'
 import type {
   Collection,
@@ -823,68 +823,75 @@ export class ControllerInstance {
         }
 
         const reconcile = (): void => {
+          // Only `source` is a tracked dependency — everything else (keyOf, the
+          // item factory, child construct/dispose) runs untracked so a child
+          // factory reading an unrelated signal can't force the whole
+          // collection to re-reconcile on every write to it (T2.3). Mirrors the
+          // untracked bind in ctx.use.
           const source = options.source.value
-          const itemByKey = new Map<K, Item>()
-          for (const item of source) {
-            const key = options.keyOf(item)
-            if (itemByKey.has(key)) {
-              if (__DEV__) {
-                // eslint-disable-next-line no-console
-                console.warn(
-                  `[olas] ctx.collection: duplicate key ${String(key)} in source — only the` +
-                    ' first occurrence is kept. This is usually a bug in `keyOf(item)`;' +
-                    ' return a unique identifier per item.',
-                )
+          untracked(() => {
+            const itemByKey = new Map<K, Item>()
+            for (const item of source) {
+              const key = options.keyOf(item)
+              if (itemByKey.has(key)) {
+                if (__DEV__) {
+                  // eslint-disable-next-line no-console
+                  console.warn(
+                    `[olas] ctx.collection: duplicate key ${String(key)} in source — only the` +
+                      ' first occurrence is kept. This is usually a bug in `keyOf(item)`;' +
+                      ' return a unique identifier per item.',
+                  )
+                }
+                continue
               }
-              continue
+              itemByKey.set(key, item)
             }
-            itemByKey.set(key, item)
-          }
 
-          // Drop removed keys.
-          for (const key of [...childMap.keys()]) {
-            if (!itemByKey.has(key)) removeKey(key)
-          }
+            // Drop removed keys.
+            for (const key of [...childMap.keys()]) {
+              if (!itemByKey.has(key)) removeKey(key)
+            }
 
-          // Add new keys + rebuild factory-form type changes.
-          for (const [key, item] of itemByKey) {
-            const existing = childMap.get(key)
-            if (existing !== undefined) {
-              if (isFactoryForm) {
-                const result = (options as CollectionFactoryOptions<Item, K, R>).factory(
-                  item,
-                ) as CollectionFactoryResult
-                if ((result.controller as unknown) !== existing.def) {
-                  removeKey(key)
-                  const built = buildChild(item)
-                  if (built !== null) {
-                    const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
-                    const node = self.entries.push(entry)
-                    childMap.set(key, { ...built, node })
+            // Add new keys + rebuild factory-form type changes.
+            for (const [key, item] of itemByKey) {
+              const existing = childMap.get(key)
+              if (existing !== undefined) {
+                if (isFactoryForm) {
+                  const result = (options as CollectionFactoryOptions<Item, K, R>).factory(
+                    item,
+                  ) as CollectionFactoryResult
+                  if ((result.controller as unknown) !== existing.def) {
+                    removeKey(key)
+                    const built = buildChild(item)
+                    if (built !== null) {
+                      const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
+                      const node = self.entries.push(entry)
+                      childMap.set(key, { ...built, node })
+                    }
                   }
                 }
+                continue
               }
-              continue
+              const built = buildChild(item)
+              if (built !== null) {
+                const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
+                const node = self.entries.push(entry)
+                childMap.set(key, { ...built, node })
+              }
             }
-            const built = buildChild(item)
-            if (built !== null) {
-              const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
-              const node = self.entries.push(entry)
-              childMap.set(key, { ...built, node })
-            }
-          }
 
-          // Project to items signal in source order, deduped, skipping failures.
-          const next: Array<{ key: K; api: Api }> = []
-          const seen = new Set<K>()
-          for (const item of source) {
-            const key = options.keyOf(item)
-            if (seen.has(key)) continue
-            seen.add(key)
-            const info = childMap.get(key)
-            if (info !== undefined) next.push({ key, api: info.api })
-          }
-          items$.set(next)
+            // Project to items signal in source order, deduped, skipping failures.
+            const next: Array<{ key: K; api: Api }> = []
+            const seen = new Set<K>()
+            for (const item of source) {
+              const key = options.keyOf(item)
+              if (seen.has(key)) continue
+              seen.add(key)
+              const info = childMap.get(key)
+              if (info !== undefined) next.push({ key, api: info.api })
+            }
+            items$.set(next)
+          })
         }
 
         // Register the diff loop as an 'effect' entry so it pauses on suspend
