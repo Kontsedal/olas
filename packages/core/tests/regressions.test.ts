@@ -1550,4 +1550,43 @@ describe('regression: query minor batch (R-Q3.9)', () => {
     await expect(pA).resolves.toBe(42)
     root.dispose()
   })
+
+  test('default retry delay is exponential backoff when retry > 0 and no retryDelay', async () => {
+    vi.useFakeTimers()
+    let attempts = 0
+    const entry = new Entry<number>({
+      fetcher: () => async () => {
+        attempts += 1
+        throw new Error('fail')
+      },
+      retry: 3, // no retryDelay → should be exponential min(1000 * 2**attempt, 30_000)
+    })
+    entry.refetch().catch(() => {})
+    await vi.advanceTimersByTimeAsync(0)
+    expect(attempts).toBe(1)
+    await vi.advanceTimersByTimeAsync(1000) // 1st retry after 1000ms
+    expect(attempts).toBe(2)
+    // 2nd retry is at +2000ms (a constant-1000 default would already have fired).
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(attempts).toBe(2)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(attempts).toBe(3)
+    entry.dispose()
+    vi.useRealTimers()
+  })
+
+  test('dispose mid-fetch resets isFetching so waitForIdle cannot hang', async () => {
+    const d = deferred<number>()
+    const entry = new Entry<number>({
+      fetcher: () => (signal) =>
+        new Promise<number>((resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+          d.promise.then(resolve, reject)
+        }),
+    })
+    entry.startFetch().catch(() => {})
+    expect(entry.isFetching.peek()).toBe(true)
+    entry.dispose()
+    expect(entry.isFetching.peek()).toBe(false)
+  })
 })

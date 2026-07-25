@@ -156,7 +156,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     | undefined
   private readonly staleTime: number
   private readonly retry: RetryPolicy
-  private readonly retryDelay: RetryDelay
+  private readonly retryDelay: RetryDelay | undefined
   private readonly networkMode: NetworkMode
   private readonly structuralShareEnabled: boolean
   private reconnectUnsub: (() => void) | null = null
@@ -194,7 +194,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.itemsOf = opts.itemsOf
     this.staleTime = opts.staleTime ?? 0
     this.retry = opts.retry ?? 0
-    this.retryDelay = opts.retryDelay ?? 1000
+    this.retryDelay = opts.retryDelay
     this.networkMode = opts.networkMode ?? 'online'
     this.structuralShareEnabled = opts.structuralShare ?? true
     this.onSuccessData = opts.onSuccessData
@@ -303,7 +303,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
               throw err
             }
             const delay =
-              typeof this.retryDelay === 'function' ? this.retryDelay(attempt) : this.retryDelay
+              this.computeRetryDelay(attempt)
             await abortableSleep(delay, signal)
             attempt += 1
           }
@@ -482,7 +482,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             throw err
           }
           const delay =
-            typeof this.retryDelay === 'function' ? this.retryDelay(attempt) : this.retryDelay
+            this.computeRetryDelay(attempt)
           await abortableSleep(delay, signal)
           attempt += 1
         }
@@ -682,6 +682,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     return Date.now() - last >= this.staleTime
   }
 
+  private computeRetryDelay(attempt: number): number {
+    const d = this.retryDelay
+    // Exponential backoff default when retries are on but no retryDelay given
+    // (mirrors Entry.computeDelay — T3.9).
+    if (d === undefined) return Math.min(1000 * 2 ** attempt, 30_000)
+    return typeof d === 'function' ? d(attempt) : d
+  }
+
   private isOffline(): boolean {
     return typeof navigator !== 'undefined' && navigator.onLine === false
   }
@@ -753,6 +761,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     }
     this.currentAbort?.abort()
     this.currentAbort = null
+    // A disposed entry is idle — reset the in-flight flags so `waitForIdle`
+    // can't hang on a fetch racing dispose (T3.9). Mirrors `Entry.dispose`.
+    batch(() => {
+      this.isFetching.set(false)
+      this.isLoading.set(false)
+      this.isFetchingNextPage.set(false)
+      this.isFetchingPreviousPage.set(false)
+    })
     if (this.reconnectUnsub !== null) {
       this.reconnectUnsub()
       this.reconnectUnsub = null
