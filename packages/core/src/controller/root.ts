@@ -66,6 +66,8 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     throw err
   }
 
+  // Non-object apis get wrapped so root controls have somewhere to live.
+  let target = api
   if (typeof api !== 'object' || api === null) {
     // Allow primitive APIs in principle but root controls must live somewhere.
     // Wrap in a holder. The declared `Root<Api>` type intersection lies in
@@ -81,11 +83,22 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
           "can be attached. Prefer returning an object from a root controller's factory.",
       )
     }
-    const holder = { value: api } as unknown as Api
-    return attachRootControls(holder, instance, devtools, queryClient)
+    target = { value: api } as unknown as Api
   }
 
-  return attachRootControls(api, instance, devtools, queryClient)
+  // attachRootControls throws on a root-controls NAME CONFLICT (the api defines
+  // `dispose`/`suspend`/...) — AFTER the tree is fully constructed. Tear down
+  // the live instance + queryClient (effects, focus/online listeners, plugin
+  // transports) before rethrowing so the conflict doesn't leak the whole tree.
+  // The construct-throw path above rolls back via queryClient.dispose(); this
+  // is the symmetric guard for the post-construction failure. (T2.5)
+  try {
+    return attachRootControls(target, instance, devtools, queryClient)
+  } catch (err) {
+    instance.dispose()
+    queryClient.dispose()
+    throw err
+  }
 }
 
 function attachRootControls<Api>(
