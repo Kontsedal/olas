@@ -60,7 +60,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   (broken covers paths, stale `last_verified`, orphans). That is part of this task.
 - **Acceptance:** `pnpm wiki:lint` reports 0 "no frontmatter" warnings on Windows.
 
-### [ ] T0.2 — examples' tests never run in CI
+### [x] T0.2 — examples' tests never run in CI
 - **Files:** root `vitest.config.ts` (include list, ~line 24), `.github/workflows/ci.yml`
 - **Problem:** 9 test files under `examples/*/tests/` are excluded from root `pnpm test`;
   README advertises tested examples that nothing executes.
