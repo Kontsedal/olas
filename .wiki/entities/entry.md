@@ -20,7 +20,9 @@ The per-cache-slot state machine. One `Entry<T>` per unique key. Used by `LocalC
 
 ## Public signals (the AsyncState surface)
 
-`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`.
+`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`, `isPaused`.
+
+`isPaused` is `true` while a fetch is parked waiting for reconnect — the `online`-mode offline-defer path (`scheduleDeferredFetch` sets it; `startFetch`'s batch clears it) and the `offlineFirst` park path (a `fetch`-`TypeError` while `navigator.onLine === false` → reset to a settled status, then `scheduleDeferredFetch`). `always` mode never parks. Spec §5.5, T3.5. Pinned by `query-focus-online.test.ts` (R-Q3.5).
 
 ## Race protection
 

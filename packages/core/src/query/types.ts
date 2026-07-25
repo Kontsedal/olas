@@ -4,7 +4,7 @@ import type { ReadSignal } from '../signals/types'
 export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
 
 /**
- * The eight reactive signals + three actions a subscriber sees for any async
+ * The nine reactive signals + three actions a subscriber sees for any async
  * resource (`LocalCache<T>` or a `Query` subscription). Spec §20.4.
  *
  * - `data` / `error` / `status` — current outcome.
@@ -13,6 +13,7 @@ export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
  * - `isStale` — true when `staleTime` has elapsed since `lastUpdatedAt`.
  * - `lastUpdatedAt` — epoch ms of last success.
  * - `hasPendingMutations` — at least one mutation has a snapshot on this entry.
+ * - `isPaused` — a fetch is parked waiting for network reconnect.
  *
  * Actions:
  * - `refetch()` — force a fetch; resolves with the result.
@@ -28,6 +29,15 @@ export type AsyncState<T> = {
   isStale: ReadSignal<boolean>
   lastUpdatedAt: ReadSignal<number | undefined>
   hasPendingMutations: ReadSignal<boolean>
+  /**
+   * True while a fetch is parked waiting for network reconnect — either an
+   * `online`-mode fetch deferred because `navigator.onLine` was `false`, or an
+   * `offlineFirst` fetch that hit a network error while offline and is waiting
+   * to retry on reconnect. Distinct from `isFetching` (nothing is in flight
+   * while parked) and from `status` (stays `idle` / last-success, never
+   * flips to `error` for the parked attempt). Spec §5.5.
+   */
+  isPaused: ReadSignal<boolean>
 
   refetch: () => Promise<T>
   reset: () => void
@@ -130,14 +140,17 @@ export type FetchCtx = {
  * - `online` (default) — pause fetches while `navigator.onLine` is `false`;
  *   automatically resume when reconnect fires (via `subscribeReconnect`).
  *   Inflight fetches are NOT aborted on offline; a `bindEntry` / `acquire`
- *   that lands while offline simply defers the initial fetch.
+ *   that lands while offline simply defers the initial fetch. The deferred
+ *   entry reports `isPaused: true` until reconnect.
  * - `always` — never gate on connectivity; fetcher runs whenever requested.
  *   Useful for queries against `localhost` / IPC / a service worker that
  *   doesn't surface through `navigator.onLine`.
  * - `offlineFirst` — start the fetch regardless; if it rejects with a
- *   network-y error and we're currently offline, leave the entry in `idle`
- *   and resume on reconnect rather than bubbling the error. Matches
- *   TanStack's `offlineFirst` policy for app-shell-first PWAs.
+ *   network-shaped error (a `fetch` `TypeError`; `AbortError` excluded) while
+ *   `navigator.onLine` is `false`, park the entry (`isPaused: true`, status
+ *   stays `idle` / last-success) and retry on reconnect rather than surfacing
+ *   the error. Matches TanStack's `offlineFirst` policy for app-shell-first
+ *   PWAs.
  */
 export type NetworkMode = 'online' | 'always' | 'offlineFirst'
 

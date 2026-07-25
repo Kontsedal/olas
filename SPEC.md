@@ -374,6 +374,7 @@ type QuerySubscription<T> = {
   isStale: Signal<boolean>
   lastUpdatedAt: Signal<number | undefined>
   hasPendingMutations: Signal<boolean> // ≥ 1 optimistic write applied via setData, not yet settled
+  isPaused: Signal<boolean>            // a fetch is parked waiting for network reconnect
 
   refetch: () => Promise<T>
   reset: () => void                   // clear error+status, keep data; no fetch
@@ -430,6 +431,14 @@ Every fetcher receives an `AbortSignal` as its last argument. The cache aborts a
 Fetchers are responsible for passing the signal to their I/O (`fetch(url, { signal })`, axios cancel tokens, etc.). If a fetcher ignores it, the cache will simply discard the eventual result.
 
 **Explicit cancellation.** `query.cancel(...keyArgs)` (and `subscription.cancel()` for the bound entry) aborts the in-flight fetch on demand: it supersedes the request so its result can never land, restores a settled status (`'success'` if data exists, else `'idle'`), and leaves `data` untouched. `query.cancelAll()` cancels every keyed entry of the query. The canonical use is the optimistic-write recipe (§6.4): cancel outgoing refetches *before* an optimistic `setData`, so a slower in-flight response can't land and clobber the optimistic value. Complementarily, on a **successful** fetch any live optimistic snapshots are rebased onto the fresh result, so a later rollback restores server truth rather than resurrecting pre-fetch data.
+
+**Network mode & `isPaused`.** A query's `networkMode` (spec'd on `QuerySpec`) controls how fetches interact with `navigator.onLine`:
+
+- `online` (default) — a fetch requested while offline is **deferred**, not run; it resumes automatically on the next reconnect. The entry reports `isPaused: true` while deferred.
+- `always` — never gate on connectivity; the fetcher runs whenever requested (localhost / IPC / service-worker sources that don't surface through `navigator.onLine`).
+- `offlineFirst` — start the fetch regardless. If it rejects with a network-shaped error (a `fetch` `TypeError`; `AbortError` excluded) **while offline**, park the entry (`isPaused: true`) and retry on reconnect instead of surfacing the error; the `status` stays `idle` / last-success. Otherwise the error surfaces normally.
+
+`isPaused` (on `AsyncState`, §5.3) is the observable signal for both parked paths — `false` whenever a fetch is actually in flight or settled. Use it to render a "waiting for network" affordance distinct from a spinner (`isFetching`) or an error (`status === 'error'`).
 
 ### 5.6 Race conditions
 

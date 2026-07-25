@@ -259,3 +259,69 @@ describe('root-wide defaults', () => {
     root.dispose()
   })
 })
+
+// R-Q3.5 (T3.5) — networkMode: 'offlineFirst' must actually park a network
+// failure that happens while offline (not surface it), resume on reconnect, and
+// expose the parked state via the new `isPaused` signal. The online-mode
+// offline-defer path also sets `isPaused`. Real timers: this is event- and
+// promise-driven, no timers involved.
+describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
+  const setOnline = (v: boolean): void => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => v })
+  }
+  afterEach(() => setOnline(true))
+
+  test('parks a network failure while offline; resumes to success on reconnect', async () => {
+    setOnline(false)
+    let attempt = 0
+    const q = defineQuery({
+      key: () => ['of'],
+      networkMode: 'offlineFirst',
+      fetcher: async () => {
+        attempt += 1
+        if (attempt === 1) throw new TypeError('Failed to fetch')
+        return 42
+      },
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    // The initial fetch throws a network error while offline → parked, not errored.
+    await vi.waitFor(() => expect(root.x.isPaused.value).toBe(true))
+    expect(root.x.status.value).toBe('idle')
+    expect(root.x.error.value).toBeUndefined()
+    expect(root.x.isFetching.value).toBe(false)
+
+    // Reconnect → retry → success; isPaused clears.
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(root.x.data.value).toBe(42))
+    expect(root.x.status.value).toBe('success')
+    expect(root.x.isPaused.value).toBe(false)
+
+    root.dispose()
+  })
+
+  test('online mode: an offline-deferred fetch sets isPaused, cleared on reconnect', async () => {
+    setOnline(false)
+    let count = 0
+    const q = defineQuery({
+      key: () => ['on-defer'],
+      fetcher: async () => ++count, // networkMode defaults to 'online'
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    // Deferred while offline: the fetcher never ran, entry parked at idle.
+    await vi.waitFor(() => expect(root.x.isPaused.value).toBe(true))
+    expect(root.x.status.value).toBe('idle')
+    expect(count).toBe(0)
+
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(root.x.data.value).toBe(1))
+    expect(root.x.isPaused.value).toBe(false)
+
+    root.dispose()
+  })
+})

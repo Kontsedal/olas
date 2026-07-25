@@ -27,6 +27,7 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
   readonly isStale: ReadSignal<boolean>
   readonly lastUpdatedAt: ReadSignal<number | undefined>
   readonly hasPendingMutations: ReadSignal<boolean>
+  readonly isPaused: ReadSignal<boolean>
 
   constructor(
     private readonly keepPreviousData: boolean,
@@ -66,6 +67,7 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     this.hasPendingMutations = computed(
       () => this.current$.value?.entry.hasPendingMutations.value ?? false,
     )
+    this.isPaused = computed(() => this.current$.value?.entry.isPaused.value ?? false)
   }
 
   attach(entry: ClientEntry<T>): void {
@@ -260,6 +262,7 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   readonly isStale: ReadSignal<boolean>
   readonly lastUpdatedAt: ReadSignal<number | undefined>
   readonly hasPendingMutations: ReadSignal<boolean>
+  readonly isPaused: ReadSignal<boolean>
   readonly hasNextPage: ReadSignal<boolean>
   readonly hasPreviousPage: ReadSignal<boolean>
   readonly isFetchingNextPage: ReadSignal<boolean>
@@ -301,6 +304,7 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     this.hasPendingMutations = computed(
       () => this.current$.value?.entry.hasPendingMutations.value ?? false,
     )
+    this.isPaused = computed(() => this.current$.value?.entry.isPaused.value ?? false)
     this.hasNextPage = computed(() => this.current$.value?.entry.hasNextPage.value ?? false)
     this.hasPreviousPage = computed(() => this.current$.value?.entry.hasPreviousPage.value ?? false)
     this.isFetchingNextPage = computed(

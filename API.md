@@ -484,6 +484,7 @@ type AsyncState<T> = {
   isStale: ReadSignal<boolean>
   lastUpdatedAt: ReadSignal<number | undefined>
   hasPendingMutations: ReadSignal<boolean>
+  isPaused: ReadSignal<boolean>           // a fetch is parked waiting for network reconnect
 
   refetch: () => Promise<T>
   reset: () => void
@@ -492,7 +493,9 @@ type AsyncState<T> = {
 }
 ```
 
-Subscribers can read any of the 8 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` / `Query`; a `ctx.cache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
+Subscribers can read any of the 9 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` / `Query`; a `ctx.cache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
+
+**`isPaused`** is `true` while a fetch is deferred waiting for connectivity — either an `online`-mode fetch that hit `navigator.onLine === false`, or an `offlineFirst` fetch that got a network error (`fetch`'s `TypeError`) while offline. It resumes automatically on the next `online` event. Nothing is in flight while paused (`isFetching` is `false`) and `status` stays `idle` / last-success rather than flipping to `error`.
 
 ### Type: `UseOptions<Args>`
 
