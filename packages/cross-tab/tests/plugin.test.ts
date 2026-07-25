@@ -526,4 +526,57 @@ describe('crossTabPlugin', () => {
     root1.dispose()
     root2.dispose()
   })
+
+  test('12. crossTab: "infinite" / "both" dev-warns (removed values, degrade to data) (T6.4)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // The type no longer allows these; a JS / cast caller still gets a warn.
+      defineQuery({
+        queryId: 'xtab-test/legacy-infinite',
+        crossTab: 'infinite' as never,
+        key: (id: string) => ['user', id],
+        fetcher: async (_ctx, id: string) => ({ id, name: 'x' }),
+      })
+      expect(warn.mock.calls.some((c) => /crossTab.*no longer supported/i.test(String(c[0])))).toBe(
+        true,
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('13. receive-side filter — inbound writes for locally non-opted queries are ignored (T6.4)', async () => {
+    // A locally NON-opted query (crossTab: false). A peer posts a setData for
+    // it anyway; the receiving tab must ignore it (symmetry with the send-side
+    // gate), not blindly apply it.
+    const q = makeUsersQuery('xtab-test/recv', { crossTab: false })
+    const factory = busChannelFactory()
+    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1' as string]) }))
+    const tab = createRoot(def, {
+      deps: {},
+      plugins: [crossTabPlugin({ channelName: 'recv-chan', channelFactory: factory })],
+    })
+    await settle()
+
+    // Craft a peer message on the same bus (distinct sourceId so it isn't
+    // dropped as an own-echo).
+    const peer = factory('recv-chan')
+    peer.postMessage({
+      v: PROTOCOL_VERSION,
+      type: 'setData',
+      sourceId: 'peer-abc',
+      msgId: 1,
+      queryId: 'xtab-test/recv',
+      keyArgs: ['user', '1'],
+      data: { id: '1', name: 'FromPeer' },
+    } satisfies Message)
+    await settle()
+
+    type Sub = { user: { data: { peek(): { name: string } | undefined } } }
+    // crossTab:false locally → the inbound write is dropped; the entry keeps
+    // its fetched value.
+    expect((tab as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
+
+    tab.dispose()
+  })
 })

@@ -15,7 +15,7 @@ edges:
   - { type: uses, target: query.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: persist.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-25
 confidence: medium
 ---
 
@@ -72,12 +72,14 @@ type Message =
 
 In addition, `onSetData` skips events with `source: 'fetch'`. `SetDataEvent` carries `source: 'set' | 'fetch' | 'remote'` so layered plugins can distinguish explicit `setData` calls from fetcher-result writes. Cross-tab broadcasts only `source: 'set'` — every tab runs its own fetcher and rebroadcasting fetch results would be N-tab quadratic noise that doesn't change anyone's cache. See `packages/cross-tab/src/plugin.ts:161-165` (the `if (event.source === 'fetch') return` gate inside `onSetData`) and the regression test at `tests/plugin.test.ts` (`'11a. fetch-success writes are NOT broadcast'`).
 
-## Per-query opt-in via `queryId`
+## Per-query opt-in — applied on send AND receive (T6.4)
 
-The `QueryClient` fires plugin events for every query that has a `queryId` set, regardless of `crossTab`. The cross-tab plugin checks `crossTab === true` on the spec via the `lookupRegisteredQuery(queryId)` helper before broadcasting. Two consequences:
+The `QueryClient` fires plugin events for every query that has a `queryId` set, regardless of `crossTab`. `shouldBroadcast(queryId)` (`plugin.ts`) resolves the opt-in via `lookupRegisteredQuery(queryId).__spec.crossTab` and returns `'data' | false`. It gates **both** the send side (`onSetData`/`onInvalidate`) and — new in T6.4 — the **receive** side (the channel `listener`): a tab drops inbound `setData`/`invalidate` for a query it wouldn't itself broadcast, so an opt-in mismatch across deploys can't push writes into unmarked/unregistered queries. Consequences:
 
-- A query without a `queryId` is invisible to the plugin (`emitSetData` in core skips firing). `crossTab: true` without a `queryId` warns once (dev only) at `defineQuery` time.
-- A query with `queryId` but `crossTab: false` (or undefined) is also skipped — useful for staging changes before flipping on the gate.
+- A query without a `queryId` is invisible to the plugin. `crossTab: true` without a `queryId` warns once (dev only) at `defineQuery` time.
+- `queryId` set but `crossTab: false`/undefined → skipped on both send and receive.
+
+**`crossTab` values (T6.4).** The spec type is `boolean | 'data'` (`true` ≡ `'data'`). The `'infinite'` / `'both'` values were **removed** — core's `applyRemoteSetData` / `applyRemoteInvalidate` early-return for infinite (non-`'query'`) defs, so those broadcasts were channel noise no peer could apply. `registerQueryId` (`define.ts`) dev-warns if a JS/cast caller still passes them; `shouldBroadcast` maps them to `'data'`, and infinite `kind` is dropped by the send gate regardless. Infinite cross-tab is a `BACKLOG.md` item.
 
 ## Apply semantics — entries must already exist
 
@@ -104,9 +106,12 @@ Layering them on the same logical state is supported but redundant. Persist alre
 
 In real life each tab is its own process with its own `defineQuery` invocation, so `Query.__clients` only contains the local client. In a single-process test, two `createRoot(...)` calls share one `defineQuery` value, and `Query.setData(...)` writes to BOTH clients synchronously — masking the cross-tab path. The test harness in `packages/cross-tab/tests/plugin.test.ts` mints separate `defineQuery({ queryId: '...' })` values per "tab" so each tab has its own `__clients` set. The registry's "last write wins" semantics mean the most-recent definition is the routing target — fine because every tab's `applyRemoteSetData` only applies if the LOCAL `QueryClient` has an entry for the key, and each tab's local entries are bound against its own query value.
 
+## Conflict model — last-delivery-wins, no arbitration
+
+No consensus / clocks: each tab applies inbound writes in delivery order, last-wins **per tab**. Two tabs writing the same entry concurrently can settle on different values and **stay diverged permanently** — nothing reconciles on its own. The fix is a server refetch (`query.invalidate(...)`, which also broadcasts) so all tabs re-converge on server truth. Documented honestly in the package README (T6.4).
+
 ## Limitations (v1)
 
-- **No infinite queries.** `defineInfiniteQuery` writes fire plugin events with `kind: 'infinite'` for forward compatibility, but the cross-tab plugin filters them out — page-array payloads are too heavy to be a safe default.
+- **No infinite queries.** `defineInfiniteQuery` writes fire plugin events with `kind: 'infinite'`, but the plugin drops them on **both** send and receive — peers can't apply page arrays (core early-returns). The `crossTab: 'infinite'`/'both'` option values were removed (T6.4); see the opt-in section.
 - **No structural diffs.** Every `setData` broadcasts the full post-update value. Fine for `BroadcastChannel` (in-memory); known cost for very large entries.
-- **Optimistic writes cross tabs.** All `setData` events broadcast regardless of cause, so optimistic state (and rollback) is visible cross-tab. Mitigate by skipping cross-tab for optimistic-heavy queries (set `crossTab: false`, or use a `LocalCache` instead of a `Query`).
-- **Pending-mutation arbitration is local.** Concurrent optimistic mutations on the same entry in two tabs follow last-write-wins on both sides; the mutation's settle/rollback path then re-syncs the truth.
+- **Optimistic writes cross tabs.** All `setData` events broadcast regardless of cause, so optimistic state (and rollback) is visible cross-tab. Mitigate by skipping cross-tab for optimistic-heavy queries (`crossTab: false`).

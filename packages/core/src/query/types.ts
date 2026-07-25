@@ -193,11 +193,13 @@ export type QuerySpec<Args extends unknown[], T> = {
    * No effect without a `queryId` and without a plugin installed. SPEC §13.2.
    *
    * - `true` (legacy) — equivalent to `'data'`.
-   * - `'data'` — propagate explicit `setData`/`invalidate` writes only.
-   * - `'infinite'` — only relevant for infinite queries (page arrays).
-   * - `'both'` — propagate both data and infinite traffic.
+   * - `'data'` — propagate explicit `setData`/`invalidate` writes.
+   *
+   * The `'infinite'` / `'both'` values were removed (T6.4): peers can't apply
+   * infinite-query page arrays cross-tab, so those broadcasts were channel
+   * noise. Infinite cross-tab is tracked in `BACKLOG.md`.
    */
-  crossTab?: boolean | 'data' | 'infinite' | 'both'
+  crossTab?: boolean | 'data'
 }
 
 /**

@@ -141,6 +141,11 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
         onWarn('[olas/cross-tab] malformed setData message')
         return
       }
+      // Receive-side symmetry (T6.4): ignore inbound writes for queries this
+      // tab wouldn't itself broadcast (unregistered / not opted in). Without
+      // this, a peer could push writes into queries the local build never
+      // marked `crossTab`.
+      if (shouldBroadcast(msg.queryId) === false) return
       api?.applyRemoteSetData(msg.queryId, msg.keyArgs, msg.data)
       return
     }
@@ -149,6 +154,7 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
         onWarn('[olas/cross-tab] malformed invalidate message')
         return
       }
+      if (shouldBroadcast(msg.queryId) === false) return
       api?.applyRemoteInvalidate(msg.queryId, msg.keyArgs)
       return
     }
@@ -214,13 +220,11 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
       // fetched the same data themselves. We only echo explicit `setData`
       // calls (mutations, optimistic patches, entity backprop) cross-tab.
       if (event.source === 'fetch') return
-      // Infinite queries are opt-in: page arrays are heavy enough that
-      // silent cross-tab sync of every mutation can saturate the channel.
-      // `crossTab: 'infinite'` or `'both'` on the spec lifts the gate.
-      const mode = shouldBroadcast(event.queryId)
-      if (mode === false) return
-      if (event.kind === 'infinite' && mode !== 'infinite' && mode !== 'both') return
-      if (event.kind === 'data' && mode === 'infinite') return
+      if (shouldBroadcast(event.queryId) === false) return
+      // Infinite queries never sync cross-tab: peers can't apply page-array
+      // payloads (core's `applyRemoteSetData` early-returns for infinite defs),
+      // so broadcasting them is pure channel noise (T6.4).
+      if (event.kind === 'infinite') return
 
       send({
         v: PROTOCOL_VERSION,
@@ -235,10 +239,8 @@ export function crossTabPlugin(options: CrossTabOptions): QueryClientPlugin {
 
     onInvalidate(event: InvalidateEvent) {
       if (event.isRemote) return
-      const mode = shouldBroadcast(event.queryId)
-      if (mode === false) return
-      if (event.kind === 'infinite' && mode !== 'infinite' && mode !== 'both') return
-      if (event.kind === 'data' && mode === 'infinite') return
+      if (shouldBroadcast(event.queryId) === false) return
+      if (event.kind === 'infinite') return // infinite never syncs cross-tab (T6.4)
 
       send({
         v: PROTOCOL_VERSION,
@@ -279,18 +281,20 @@ function defaultWarn(message: string, cause?: unknown): void {
 }
 
 /**
- * Per-query gate. `crossTab: true` (or `'data' | 'infinite' | 'both'`) is a
- * static opt-in on the spec; the QueryClient doesn't filter on it (its
- * events fire for every query with a `queryId`), so the plugin checks here.
+ * Per-query opt-in gate — applied on BOTH send and receive (T6.4), so a tab
+ * only broadcasts, and only accepts, writes for queries it opted in. The
+ * QueryClient's events fire for every query with a `queryId`, so the filter
+ * lives here. Returns `'data'` when opted in, else `false`.
  *
- * Returns the requested mode (`'data' | 'infinite' | 'both'`) or `false` if
- * not opted in. Legacy `crossTab: true` maps to `'data'` (current behavior).
+ * `crossTab: true` maps to `'data'`. The removed `'infinite'`/'both'` values
+ * also map to `'data'` — a JS / cast caller may still pass them (core
+ * dev-warns at define time), but infinite queries never sync (see the send
+ * gate); regular writes on such a query still propagate.
  */
-function shouldBroadcast(queryId: string): 'data' | 'infinite' | 'both' | false {
+function shouldBroadcast(queryId: string): 'data' | false {
   const registered = lookupRegisteredQuery(queryId)
   if (!registered) return false
   const flag = (registered.__spec as { crossTab?: boolean | 'data' | 'infinite' | 'both' }).crossTab
-  if (flag === true) return 'data'
-  if (flag === 'data' || flag === 'infinite' || flag === 'both') return flag
+  if (flag === true || flag === 'data' || flag === 'infinite' || flag === 'both') return 'data'
   return false
 }
