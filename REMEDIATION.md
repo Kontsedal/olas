@@ -496,7 +496,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
 - **Test:** first load succeeds → refetch fails → component keeps rendering data, boundary
   NOT hit (existing suspense test covers only the initial-error path).
 
-### [ ] T4.4 — **[MAJOR]** `use(signal, { select })` returns stale slice when selector changes
+### [x] T4.4 — **[MAJOR]** `use(signal, { select })` returns stale slice when selector changes
 - **File:** `packages/react/src/hooks.ts:72-86`
 - **Problem:** snapshot cache invalidates only on `!Object.is(last.raw, raw)`. When
   `select` changes (e.g. `s => s.items[props.index]` with a new index) but the raw signal

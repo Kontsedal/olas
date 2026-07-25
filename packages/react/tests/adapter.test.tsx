@@ -249,3 +249,44 @@ describe('useMutation status (R4.2)', () => {
     root.dispose()
   })
 })
+
+describe('use(signal, { select, isEqual }) (R4.4)', () => {
+  test('a changed selector re-derives even when the raw value is unchanged', () => {
+    const arr = signal(['a', 'b', 'c'])
+    function View({ index }: { index: number }) {
+      const item = use(arr, { select: (a) => a[index] })
+      return <span data-testid="item">{item}</span>
+    }
+    const { rerender } = render(<View index={0} />)
+    expect(screen.getByTestId('item').textContent).toBe('a')
+    // Same raw array, new selector (index 1) → must show 'b', not stale 'a'.
+    rerender(<View index={1} />)
+    expect(screen.getByTestId('item').textContent).toBe('b')
+  })
+
+  test('isEqual suppresses a re-render when the slice is equal by the comparator', () => {
+    const src = signal<{ tags: string[] }>({ tags: ['x', 'y'] })
+    let renders = 0
+    function View() {
+      const tags = use(src, {
+        select: (s) => s.tags,
+        isEqual: (a, b) => a.length === b.length && a.every((t, i) => t === b[i]),
+      })
+      renders++
+      return <span data-testid="tags">{tags.join(',')}</span>
+    }
+    render(<View />)
+    expect(screen.getByTestId('tags').textContent).toBe('x,y')
+    const before = renders
+
+    // New object, same tag contents → isEqual true → no re-render.
+    act(() => src.set({ tags: ['x', 'y'] }))
+    expect(renders).toBe(before)
+    expect(screen.getByTestId('tags').textContent).toBe('x,y')
+
+    // Different tags → re-render.
+    act(() => src.set({ tags: ['x', 'z'] }))
+    expect(renders).toBeGreaterThan(before)
+    expect(screen.getByTestId('tags').textContent).toBe('x,z')
+  })
+})
