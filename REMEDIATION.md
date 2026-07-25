@@ -68,7 +68,7 @@ pnpm vitest run -t "R-Q1"                                 # by test-name substri
   alias setup permits), or add a CI step `pnpm --filter './examples/*' test`.
 - **Acceptance:** CI log shows the example tests executing.
 
-### [ ] T0.3 — root `build` script is Unix-only
+### [x] T0.3 — root `build` script is Unix-only
 - **File:** root `package.json`
 - **Problem:** `NODE_ENV=production pnpm …` fails on Windows (the maintainer's own OS).
 - **Fix:** use `cross-env` (add as root devDependency) — `cross-env NODE_ENV=production …`.

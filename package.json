@@ -9,7 +9,7 @@
     "node": ">=18"
   },
   "scripts": {
-    "build": "NODE_ENV=production pnpm -r --filter \"./packages/*\" build",
+    "build": "cross-env NODE_ENV=production pnpm -r --filter \"./packages/*\" build",
     "build:dev": "pnpm -r --filter \"./packages/*\" build",
     "typecheck": "pnpm -r --filter \"./packages/*\" --filter \"./examples/*\" typecheck",
     "test": "vitest run --passWithNoTests",
@@ -26,6 +26,7 @@
     "@changesets/cli": "^2.31.0",
     "@types/node": "^25.9.0",
     "@vitest/coverage-v8": "4.1.6",
+    "cross-env": "^10.1.0",
     "tsdown": "^0.22.0",
     "tsx": "^4.22.2",
     "typescript": "^6.0.3",
