@@ -42,7 +42,7 @@ If you'd rather host the panel yourself (e.g., fixed sidebar in a layout), impor
 | **Tree** | Live controller tree. Each node shows its path segment and lifecycle state (active / suspended / disposed). |
 | **Cache** | Chronological log of `cache:fetch-start` / `fetch-success` / `fetch-error` / `invalidated` / `gc` events. |
 | **Mutations** | Chronological log of `mutation:run` / `success` / `error` / `rollback` events. |
-| **Fields** | Field-level validation outcomes (when emitted — see below). |
+| **Fields** | Field-level validation outcomes. **Inert today** — the runtime doesn't emit `field:validated` yet (see [What's emitted](#whats-emitted-by-the-runtime)); the tab fills in once it does, or when you feed events via `store.handle(...)`. |
 
 The **Clear** button empties the three event logs (the tree is live state, not a log, and is preserved).
 
@@ -80,6 +80,12 @@ class DevtoolsStore {
 }
 ```
 
+| Export | When to reach for it |
+|---|---|
+| `<DevtoolsLauncher root>` | The one-liner. Floating launcher button + a draggable, resizable panel window; position / size / open state persist to `localStorage`. |
+| `<DevtoolsPanel root>` | The panel alone — embed it in your own chrome (a fixed sidebar, a split pane). |
+| `DevtoolsStore` | The lower-level store behind the panel. `attach(root)` to subscribe, `handle(event)` to feed events, read `tree$` / `cache$` / `mutations$` / `fields$` — build your own UI on top. |
+
 ## Important: the panel sees only post-mount events
 
 The panel subscribes to `root.__debug` on mount. Events that fired before mount (e.g. the root controller's `controller:constructed`) are NOT in the tree. Mount the panel as early as possible if you want the full picture. The cache / mutation / field logs are bounded by `maxEntries` (default 100) anyway, and the controller tree drops the oldest fully-disposed subtrees beyond `maxDisposedNodes` (default 200, a `DevtoolsStore` option) so a long, churny session stays bounded.
@@ -99,4 +105,4 @@ Spec §20.9 lists the full `DebugEvent` union. Today the runtime emits:
 ## Further reading
 
 - [`.wiki/modules/devtools.md`](../../.wiki/modules/devtools.md) — internal mechanics.
-- Spec §13 (Devtools), §20.9 (`DebugEvent`).
+- [SPEC §14](../../SPEC.md#14-devtools) (Devtools), [§20.9](../../SPEC.md#209-errors--devtools) (`DebugEvent`).

@@ -2,9 +2,7 @@
 
 Router-agnostic bridge for `@kontsedal/olas-core`. Exposes route params / search / pathname as `Scope`-resolved `ReadSignal`s so any controller can `ctx.inject(RouteParamsScope)` and react to URL changes — without controllers ever importing your router.
 
-Works with any client-side React router. TanStack Router and React Router v6 are the wire-ups documented below; the same pattern works for `@reach/router`, your own custom router, or anything that hands you `params` / `search` / `pathname` per render.
-
-**Next.js / RSC is intentionally not supported.** The framework owns navigation and data fetching from outside the React tree; the Olas philosophy is "controllers live above your render tree," which conflicts. See `BACKLOG.md` for the long form.
+Works with any **client-side** React router. TanStack Router and React Router v6 are the wire-ups documented below; the same pattern works for `@reach/router`, your own custom router, or anything that hands you `params` / `search` / `pathname` per render. (Next.js / RSC is out of scope by design — see [Scope](#scope-client-side-routers-only) at the bottom.)
 
 ## Install
 
@@ -183,8 +181,12 @@ const userRoute = createRoute({
 
 `prefetch(...)` populates the cache before `<adapter.Bridge>` mounts. By the time `ctx.use(userQuery, ...)` fires, the entry is already there and `data.value` is non-null on first read.
 
+## Scope: client-side routers only
+
+Next.js / RSC is intentionally not supported. The framework owns navigation and data fetching from *outside* the React tree, which conflicts with the Olas model — controllers live above your render tree. See [`../../BACKLOG.md`](../../BACKLOG.md) for the long-form reasoning.
+
 ## Further reading
 
 - [`../../RECIPES.md`](../../RECIPES.md) — Router recipes section (TanStack, React Router v6, prefetch).
-- [`../../SPEC.md`](../../SPEC.md) §16.5 — "Routing is a service in deps" (the broader design rationale).
+- [SPEC §16.5](../../SPEC.md#165-canonical-patterns) — "Routing is a service in deps" (the broader design rationale).
 - [`../core/README.md`](../core/README.md) — `defineScope` and `ctx.inject` mechanics.

@@ -4,6 +4,8 @@ The core of Olas — UI-framework-agnostic. Signals, controllers, queries, mutat
 
 This package is the only place that touches `@preact/signals-core` (peer dep). Everything else is plain TypeScript.
 
+Because it never imports a renderer, your controllers stay plain functions — construct one, drive it, and assert on its signals with no DOM, no jsdom, no Testing Library. The same controllers can back React today and Vue / Svelte / vanilla DOM tomorrow through a thin adapter.
+
 ## Install
 
 ```bash
@@ -44,6 +46,18 @@ const root = createRoot(counter, { deps: {} })
 root.increment()
 console.log(root.count.value)    // 1
 root.dispose()
+```
+
+…and the whole test, no renderer required:
+
+```ts
+import { createTestController } from '@kontsedal/olas-core/testing'
+
+test('counter increments', () => {
+  const ctrl = createTestController(counter, { deps: {}, props: undefined })
+  ctrl.increment()
+  expect(ctrl.count.peek()).toBe(1)
+})
 ```
 
 ## Sub-paths

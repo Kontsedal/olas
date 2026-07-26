@@ -1,6 +1,6 @@
 # @kontsedal/olas-zod
 
-Zod ↔ Olas forms adapter. Two helpers — `zodValidator` (single field) and `formFromZod` (whole form, inferred from schema).
+Zod ↔ Olas forms adapter. Point a single `Field` at a schema with `zodValidator` (or `zodValidatorAsync` for async refinements), or infer a whole `Form` from a `z.object(...)` with `formFromZod` — either way the schema is the one source of truth for both *shape* and *validation*.
 
 Olas core stays Zod-free. This package has a peer dep on `zod ^4`.
 
@@ -70,14 +70,21 @@ function formFromZod<S extends z.ZodObject<z.ZodRawShape>>(
 
 `zodValidator` runs `schema.safeParse(value)` and reports the first `ZodIssue`'s `message`. `zodValidatorAsync` awaits `.safeParseAsync(...)` for schemas with async `.refine` / `.transform`.
 
-Root-level `.refine(...)` rules on `z.object(...)` are **not** auto-promoted to a form-level validator today. Wire one manually with `ctx.form(fields, { validators: [zodValidator(schema)] })`, or assert on `form.isValid` for leaf-level rules. Tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
+| Export | What |
+|---|---|
+| `zodValidator(schema)` | A `Validator<T>` for a single `Field`. Reports the first issue's message. |
+| `zodValidatorAsync(schema)` | Async variant — awaits `safeParseAsync`, for schemas with async `.refine` / `.transform`. |
+| `formFromZod(ctx, schema, options?)` | Walks a `z.object(...)` into a matching `Form` / `Field` / `FieldArray` tree with validators auto-attached. |
 
-## Limitation
+## Limitations
 
-Array-level `.min(N)` rules from the outer Zod schema are *not* promoted to a `FieldArray`-level validator today — leaf and nested-object rules walk correctly. Workaround: write a manual `FieldArrayValidator` for that case, or assert on `form.isValid` (driven by leaf rules). Tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
+Leaf and nested-object rules walk correctly in every case. Two outer-schema rules aren't auto-promoted yet (both tracked in [`../../BACKLOG.md`](../../BACKLOG.md)):
+
+- **Root-level `.refine(...)` on `z.object(...)`** → no form-level validator. Wire one manually with `ctx.form(fields, { validators: [zodValidator(schema)] })`, or assert on `form.isValid`.
+- **Array-level `.min(N)`** → no `FieldArray`-level validator. Write a manual `FieldArrayValidator`, or assert on `form.isValid`.
 
 ## Further reading
 
 - [`../../API.md`](../../API.md#olaszod) — full reference.
 - [`../../.wiki/modules/zod.md`](../../.wiki/modules/zod.md)
-- SPEC §8.7 (Zod integration), §20.7 (form types).
+- [SPEC §8.7](../../SPEC.md#87-zod-integration-kontsedalolas-zod) (Zod integration), [§20.7](../../SPEC.md#207-fields-forms--validators) (form types).

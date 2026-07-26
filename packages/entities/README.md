@@ -1,8 +1,8 @@
 # @kontsedal/olas-entities
 
-Entity-normalization plugin for Olas. Solves the cross-query update problem in [SPEC §18.1](../../SPEC.md): when the same `Post` / `User` lives in many independent queries, calling `entities.update(Post, id, patch)` patches every query holding that id in a single batched write.
+**The same `Post` shows up in your feed query, your profile query, and a search result — then someone likes it.** Now three cache entries disagree and you're patching them by hand. `@kontsedal/olas-entities` collapses that to one call: `entities.update(Post, id, { likes })` patches *every* query holding that id in a single batched write, and each subscriber re-renders once.
 
-Built on the [`QueryClientPlugin`](../../SPEC.md) surface (SPEC §13.2). Observes every cache write (fetch + setData + remote), walks the data via per-entity `idOf` predicates, and maintains a normalized store plus a reverse index of `(entity-id → queries-holding-it)`.
+It's an entity-normalization plugin built on the [`QueryClientPlugin`](../../SPEC.md) surface (SPEC §13.2): it observes every cache write (fetch + setData + remote), walks the data via per-entity `idOf` predicates, and maintains a normalized store plus a reverse index of `(entity-id → queries-holding-it)`. Your queries never know it's there — the full worked problem it replaces is SPEC §18.1.
 
 ## Install
 
@@ -10,7 +10,7 @@ Built on the [`QueryClientPlugin`](../../SPEC.md) surface (SPEC §13.2). Observe
 pnpm add @kontsedal/olas-entities @kontsedal/olas-core @preact/signals-core
 ```
 
-## 60-second example
+## 30-second example
 
 ```ts
 import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
@@ -144,5 +144,6 @@ Tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
 ## Further reading
 
 - [`../../.wiki/modules/entities.md`](../../.wiki/modules/entities.md)
-- [SPEC §18.1](../../SPEC.md) — the worked example this package replaces.
-- [SPEC §13.2](../../SPEC.md) — `QueryClientPlugin` contract.
+- [SPEC §18.1](../../SPEC.md#181-entity-normalization) — the worked example this package replaces.
+- [SPEC §13.2](../../SPEC.md#132-cross-tab-in-memory-cache-sync) — the `SetDataEvent` cache-write surface it observes.
+- [SPEC §20.8](../../SPEC.md#208-root--options) — the `QueryClientPlugin` type.

@@ -16,7 +16,21 @@ export const counter = defineController(() => {
 })
 ```
 
-That's a controller. It's a function that returns an object. Components subscribe to it, call methods on it, and never own its lifetime.
+That's a controller: a function that returns an object. Components subscribe to it, call its methods, and never own its lifetime.
+
+Because it's *just a function*, here's the entire test — no renderer, no jsdom, no Testing Library:
+
+```ts
+import { createTestController } from '@kontsedal/olas-core/testing'
+
+test('counter increments', () => {
+  const ctrl = createTestController(counter, { deps: {}, props: undefined })
+  ctrl.increment()
+  expect(ctrl.count.peek()).toBe(1)
+})
+```
+
+Scale that controller up — shared queries, optimistic mutations with rollback, whole forms — and the test *still* never boots a DOM. That's the pitch in one line: **your app's logic becomes plain TypeScript you can read top to bottom and test like any other function.**
 
 ---
 
@@ -49,6 +63,25 @@ Most apps end up in one of three places:
 3. **Hooks at the top of pages.** Hides ownership. Two pages mounting the same hook re-fetch instead of sharing. Lifecycle is "whatever React does."
 
 Olas takes a different shape. There's a **controller tree** that mirrors your app's *features* (not your component tree). Each controller owns its slice — its signals, its queries, its mutations — and is disposed explicitly when the feature unmounts. Components are read-only renderers that subscribe to controllers via small adapter hooks.
+
+```mermaid
+graph LR
+  subgraph CT["Component tree - thin renderers"]
+    direction TB
+    App --> ProfilePage
+    App --> Toolbar
+  end
+  subgraph OT["Controller tree - owns state and logic"]
+    direction TB
+    root --> userProfile
+    root --> session
+    userProfile --> data["queries / mutations / forms"]
+  end
+  ProfilePage -.->|"use()"| userProfile
+  Toolbar -.->|"use()"| session
+```
+
+Two trees, one arrow between them: components reach *into* the controller tree to read a signal, and that's the entire coupling. The logic doesn't know a component exists.
 
 The practical wins:
 
@@ -236,6 +269,16 @@ function UserCard() {
 ```
 
 **Two controllers subscribing to the same `userQuery` with the same id share one fetch and one cache entry.** When the last subscriber disposes, the entry is collected after `gcTime` (5 min default).
+
+```mermaid
+graph TD
+  P["ProfilePage controller<br/>uses userQuery('u1')"] --> E
+  S["Sidebar controller<br/>uses userQuery('u1')"] --> E
+  E["one cache entry for key u1"] --> F["one fetch in flight"]
+  E --> G["gc'd after the last<br/>subscriber leaves + gcTime"]
+```
+
+You never wire this up — subscribing *is* the sharing. The same primitive scales from one widget to every screen on a dashboard.
 
 ### 5. Writes with mutations
 

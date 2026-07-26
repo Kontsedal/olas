@@ -92,7 +92,7 @@ Two fields on the spec gate cross-tab behavior:
 - **`queryId: string`** — required. Stable name routed across tabs. Don't auto-derive from `fetcher.name` (fragile under minification) or argument hashing.
 - **`crossTab: true | 'data'`** — flips the per-query gate (`true` ≡ `'data'`). Without it, the plugin doesn't broadcast (so module-internal queries don't leak). The gate is applied on **both** send and receive: a tab ignores inbound writes for queries its own build didn't opt in, so an opt-in mismatch across deploys can't push writes into unmarked queries.
 
-Setting `crossTab: true` without a `queryId` logs a one-time `console.warn` (dev only) and disables sync for that query. The old `'infinite'` / `'both'` values were removed (see the conflict/limitations sections).
+Setting `crossTab: true` without a `queryId` logs a one-time `console.warn` (dev only) and disables sync for that query.
 
 ## SSR
 
@@ -107,15 +107,15 @@ These two layers solve different problems:
 
 You can combine them on the same logical entity, but it's redundant — `@kontsedal/olas-persist`'s cross-tab sync already covers the durable copy.
 
-## Conflict model — last-delivery-wins, no arbitration
+## Conflict model — last-delivery-wins
 
-Cross-tab sync is a **broadcast, not a consensus protocol.** There is no arbitration, no vector clocks, no server round-trip: each tab applies inbound writes in the order its channel delivers them, and the last delivery wins **for that tab**. Two tabs that write the same entry concurrently can therefore settle on **different** values and **stay diverged permanently** — nothing reconciles them on its own.
+Cross-tab sync is a broadcast, not a consensus protocol — think of it as "every tab refetched, but for free," not as a source of truth. There's no arbitration, no vector clocks, no server round-trip: each tab applies inbound writes in delivery order, and the last delivery wins for that tab. So two tabs that write the *same* entry concurrently can settle on different values until something reconciles them.
 
-The fix is a server refetch: after a write that matters, `query.invalidate(...)` (which also broadcasts) so every tab refetches authoritative server truth and re-converges. Treat cross-tab sync as a latency optimization over "every tab refetches", not as a source of truth. (The mutation `onError` / `onSuccess` → invalidate pattern gives you this for free.)
+That something is a server refetch, and it's a one-liner: after a write that matters, call `query.invalidate(...)` (it broadcasts too), and every tab pulls authoritative server truth and re-converges. The mutation `onError` / `onSuccess` → invalidate pattern gives you this for free.
 
 ## Limitations (v1)
 
-- **No infinite queries.** `defineInfiniteQuery` syncs are intentionally skipped — peers can't apply page-array payloads (core's remote-apply paths early-return for infinite defs), so broadcasting them is pure channel noise. Plugin events still fire with `kind: 'infinite'`; this plugin drops them on both send and receive. The `crossTab: 'infinite'` / `'both'` option values were **removed** (a JS/cast caller that still passes them gets a dev-warn and is treated as `'data'`); infinite cross-tab is tracked in `BACKLOG.md`.
+- **No infinite queries.** `defineInfiniteQuery` syncs are intentionally skipped — peers can't apply page-array payloads (core's remote-apply paths early-return for infinite defs), so broadcasting them is pure channel noise. Plugin events still fire with `kind: 'infinite'`; this plugin drops them on both send and receive. Infinite cross-tab is tracked in `BACKLOG.md`.
 - **No structural diffs.** Every `setData` broadcasts the full post-update value. For chunky cache entries this is fine because `BroadcastChannel` is in-memory; for very large arrays it's a known cost.
 - **No pending-mutation arbitration.** If two tabs run optimistic mutations on the same entry concurrently, the last `setData` to arrive wins on both sides. Your mutation `onError` / `onSuccess` then re-syncs from the server, which restores convergence at the cost of a temporary divergence.
 - **Optimistic writes cross tabs.** `setData` events fire regardless of cause, so optimistic state (and any rollback) is visible cross-tab. If you need optimistic UI to stay local, gate the write yourself.
@@ -123,6 +123,6 @@ The fix is a server refetch: after a write that matters, `query.invalidate(...)`
 ## Further reading
 
 - [`../../.wiki/modules/cross-tab.md`](../../.wiki/modules/cross-tab.md)
-- SPEC §13.2 — Cross-tab in-memory cache sync.
-- SPEC §5.2 — Query definition (`queryId`, `crossTab`).
-- SPEC §20.8 — `RootOptions.plugins`.
+- [SPEC §13.2](../../SPEC.md#132-cross-tab-in-memory-cache-sync) — Cross-tab in-memory cache sync.
+- [SPEC §5.2](../../SPEC.md#52-query-definition) — Query definition (`queryId`, `crossTab`).
+- [SPEC §20.8](../../SPEC.md#208-root--options) — `RootOptions.plugins`.

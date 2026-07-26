@@ -34,8 +34,10 @@ type FeedEvent =
 const feed = defineController((ctx) => {
   // Dispatch realtime events to type-keyed handlers.
   useRealtimePatcher<FeedEvent>(ctx, 'feed', {
-    'like-added': (ev) => topStories.setData(ev.postId, /* patch */),
-    'comment-added': (ev) => comments.setData(ev.postId, /* patch */),
+    'like-added': (ev) =>
+      topStories.setData(ev.postId, (post) => post && { ...post, likes: post.likes + 1 }),
+    'comment-added': (ev) =>
+      comments.setData(ev.postId, (list = []) => [...list, { text: ev.text }]),
   })
 
   // Or buffer a live tail with backpressure.
@@ -108,4 +110,4 @@ Most transports already match this shape (Pusher, Ably, Supabase, raw WebSocket 
 ## Further reading
 
 - [`../../.wiki/modules/realtime.md`](../../.wiki/modules/realtime.md)
-- SPEC §16.5 (real-time → cache patches; tail-buffer pattern).
+- [SPEC §16.5](../../SPEC.md#165-canonical-patterns) (real-time → cache patches; tail-buffer pattern).

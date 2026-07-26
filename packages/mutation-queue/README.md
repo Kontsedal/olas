@@ -1,10 +1,10 @@
 # @kontsedal/olas-mutation-queue
 
-**Best-effort** persistent, replay-safe queue for `@kontsedal/olas-core` mutations. When a `defineMutation({ persist: true })` run is in flight and the user reloads (or the browser crashes), the queue replays the run on the next page load — or on **network reconnect** in the same session — instead of silently dropping it. SPEC §13.3.
+**Your user taps "Place order," the POST is in flight, and the tab reloads.** Without a durable queue, that mutation is gone. `@kontsedal/olas-mutation-queue` writes every `defineMutation({ persist: true })` run to storage the moment it fires, then replays it on the next page load — or on **network reconnect** in the same session — instead of silently dropping it.
 
-> **"Best-effort", not "durable."** The queue gives **at-least-once-until-success** delivery with these honest limits: the enqueue write is fire-and-forget (a sync plugin hook can't await storage, so a crash in the sub-millisecond window before the write commits loses that one entry); cross-tab replay coordination uses Web Locks where available and falls back to a best-effort `localStorage` lease; and causal ordering is guaranteed only *within* a `mutationId`, not across different ones. Pair it with server-side idempotency (`idempotencyKey`) — that's the authoritative gate.
+It's the offline-first complement to optimistic UI: the optimistic write lives in the cache (`@kontsedal/olas-core`, optionally persisted via `@kontsedal/olas-persist`); the *server-side* write that backs it survives the reload via this queue.
 
-This is the offline-first complement to optimistic UI: the optimistic write lives in the cache (`@kontsedal/olas-core` + optionally `@kontsedal/olas-persist`), and the *server-side* write that backs it survives the reload via this queue.
+Delivery is **at-least-once-until-success** — pair it with a server-side idempotency key and you get an exactly-once *effect*. The honest limits behind "best-effort" (what a mid-crash or a second open tab can and can't guarantee) are spelled out in [Caveats](#caveats-v1); none of them will surprise you if you've built a retry queue before.
 
 ## Install
 
@@ -14,7 +14,7 @@ pnpm add @kontsedal/olas-mutation-queue @kontsedal/olas-core @kontsedal/olas-per
 
 `@kontsedal/olas-persist` is a peer dependency — it provides the `StorageAdapter` interface the queue writes to. The two adapters shipped there (`localStorageAdapter`, `indexedDbAdapter`) both work; pick by payload size.
 
-## 60-second example
+## 30-second example
 
 ```ts
 import { createRoot, defineController, defineMutation } from '@kontsedal/olas-core'
@@ -61,7 +61,7 @@ root.create.run({ sku: 'A-1' })
 // → on reload before success: entry replayed on next `init`
 ```
 
-That's the whole moving picture. The plugin is a [`QueryClientPlugin`](../../SPEC.md): it observes the mutation runner's `onMutationEnqueue` / `onMutationSettle` events, persists each pending entry under `<keyPrefix>/<mutationId>/<runId>`, and replays survivors on `init`.
+That's the whole moving picture. The plugin is a [`QueryClientPlugin`](../../SPEC.md#208-root--options): it observes the mutation runner's `onMutationEnqueue` / `onMutationSettle` events, persists each pending entry under `<keyPrefix>/<mutationId>/<runId>`, and replays survivors on `init`.
 
 ## API
 
@@ -166,7 +166,7 @@ Use both together when optimistic state must outlive a reload AND the server-sid
 
 ## Further reading
 
-- [SPEC §13.3](../../SPEC.md) — `MutationEnqueueEvent` / `MutationSettleEvent` contract.
-- [SPEC §13.2](../../SPEC.md) — `QueryClientPlugin` lifecycle.
+- [SPEC §20.8](../../SPEC.md#208-root--options) — the `QueryClientPlugin` type this plugin implements.
+- [SPEC §13.2](../../SPEC.md#132-cross-tab-in-memory-cache-sync) — the plugin event surface (`SetDataEvent`, `QueryClientPluginApi`).
 - [`../../RECIPES.md`](../../RECIPES.md) — Persisted mutations recipe.
 - [`../persist/README.md`](../persist/README.md) — `localStorageAdapter` / `indexedDbAdapter`.

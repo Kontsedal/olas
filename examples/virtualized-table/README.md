@@ -1,12 +1,9 @@
-# Virtualized Table — 50,000 rows
+# Example — virtualized-table (React)
 
-A React example that demonstrates the SPEC §11.1 **"rows are data"** pattern:
-items live in a `Map<id, Signal<Item>>` owned by a single list-level
-controller, not as one controller per row.
-
-```bash
-pnpm -F @kontsedal/olas-example-virtualized-table dev
-```
+A 50,000-row table that stays smooth because **rows are data, not controllers**
+(SPEC §11.1): every item lives in a `Map<id, Signal<Issue>>` owned by a single
+list-level controller, so editing one row re-renders one row — and scrolling
+allocates zero controllers.
 
 ## What this example proves
 
@@ -38,3 +35,32 @@ If a row needed row-scoped logic worth a controller (e.g. an inline editor),
 the right move is `ctx.attach(rowEditorController, ...)` on demand and
 dispose on commit/cancel. The kanban example demonstrates that with
 `inlineTitleEditor`.
+
+## Files
+
+- `src/controllers/table.ts` — `tableController`: the `Map<id, Signal<Issue>>`, the ordered-id signal, the title filter, `selection`, and the per-row `parallel` mutation. The whole app's behavior; no DOM imports.
+- `src/api.ts` — fake backend: `generateIssues(n)` plus a per-row update that randomly rejects (to exercise rollback), and the `Issue` / `Status` types.
+- `src/View/Table.tsx` — `@tanstack/react-virtual` over the ordered ids; mounts ~30 rows at a time.
+- `src/View/Row.tsx` — one row. Calls `api.table.rowSignal(id)` + `use(...)` to subscribe to its own signal and nothing else.
+- `src/View/App.tsx` — toolbar, bulk-action buttons, and the per-row render counters that prove fine-grained reactivity.
+- `src/View/useApi.ts` — typed `useRoot` accessor for the table api.
+- `src/app.ts` — composes the root controller.
+- `src/main.tsx` — bootstrap: `createRoot` + `<OlasProvider>` + render.
+
+## Run it
+
+```bash
+pnpm install
+pnpm --filter @kontsedal/olas-example-virtualized-table dev        # vite dev server
+pnpm --filter @kontsedal/olas-example-virtualized-table build      # vite build → dist/
+pnpm --filter @kontsedal/olas-example-virtualized-table typecheck  # tsc --noEmit
+```
+
+Open the printed local URL, scroll hard, and watch the per-row render counters stay still.
+
+## Read order
+
+1. `src/controllers/table.ts` — the "rows are data" controller, top to bottom. This is the point of the example.
+2. `src/View/Row.tsx` — how a single row subscribes to just its own signal.
+3. `src/View/Table.tsx` — the virtualizer wiring over the ordered ids.
+4. `src/View/App.tsx` + `src/main.tsx` — toolbar, bulk actions, and bootstrap.

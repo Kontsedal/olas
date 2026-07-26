@@ -131,6 +131,10 @@ extend the tokens. Already deliberately kept kanban-local for now to
 avoid premature abstraction — see the `cryptic-questing-twilight.md`
 plan for the rationale.
 
+### [idea] virtualized-table example lacks a controller test
+
+The other three examples (kanban, reader-ssr, stock-ticker) each ship a `tests/` suite driving their controller via `createTestController` with no DOM. `examples/virtualized-table` has none — yet the root README's examples section implies every example is covered ("Every business-logic surface in these examples is covered by a controller test"). Either add a `tests/controller.test.ts` for `tableController` (row upsert, per-row optimistic edit + `onError` rollback, `selection` range + bulk-apply, title filter) — a natural fit since it's the "rows are data" showcase — or soften the README claim. Adding the test is the better close: the controller is pure and already DOM-free.
+
 ## Tooling / DX
 
 ### [idea] Local `pnpm lint` fails on Windows (CRLF vs biome `lineEnding: "lf"`)
