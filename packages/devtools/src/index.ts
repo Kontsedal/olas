@@ -10,4 +10,5 @@ export {
   insertNode,
   type MutationEntry,
   setNodeState,
+  type TimelineEvent,
 } from './store'

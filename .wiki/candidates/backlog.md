@@ -4,7 +4,7 @@ description: "Staging backlog of substantial, forward-looking proposals (rich de
 type: overview
 edges:
   - { type: related, target: decisions/devtools-overhaul.md }
-last_verified: 2026-07-25
+last_verified: 2026-07-28
 confidence: candidate
 ---
 
@@ -25,7 +25,7 @@ out of `candidates/` and delete its `BACKLOG.md` line per the BACKLOG protocol.
 
 ## Flagship
 
-### [candidate] Devtools overhaul — causal-timeline debugger
+### [candidate] Devtools overhaul — causal-timeline debugger *(partially landed 2026-07-28)*
 
 The big one. Turn the polling JSON panel into an event-driven, virtualized debugger that
 answers "why did this change?" (causal timelines with cause-chains + structural diffs),
@@ -35,11 +35,20 @@ export/import session traces. Olas is uniquely positioned here because one dev-e
 (`root.__debug`) already spans signals → controllers → cache → mutations → forms →
 plugins, a correlation no single-slice competitor (Redux/TanStack/MobX devtools) can do.
 
+**Shipped (2026-07-28):** **T8.1** event backbone (`seq`/`t`/`causeId` on every event,
+`cache:set-data` + `snapshot:*`, ambient-cause threading, event-driven inspector — poll
+killed) and **T8.4** the causal timeline (cause-chains + structural before/after diffs).
+See `modules/devtools.md`, `modules/devtools-panel.md`,
+`flows/devtools-causal-timeline.md`. **Remaining:** T8.2 (virtualize + ring buffer), T8.3
+(omnibox), T8.5 (subscription/effect tracing), T8.6 (live actions), T8.7 (env sim + forms
+inspector), T8.8 (plugin lanes), T8.9 (session traces), T8.10 (UX pass) — plus the T8.1
+leftovers (`cache:subscribe/unsubscribe`, `effect:run`, `form:field-change`, `scope:*`,
+`plugin:event`).
+
 → **Full design: [`decisions/devtools-overhaul.md`](decisions/devtools-overhaul.md)**
-(sub-phases 8A foundation → 8B causal timeline → 8C live actions → 8D polish, ten tasks).
-Rescued from the transient remediation plan so it survives that file's deletion. The
-devtools *bugs* were already fixed (remediation T6.3, see `modules/devtools-panel.md`);
-this is purely additive.
+(sub-phases 8A foundation → 8B causal timeline → 8C live actions → 8D polish, ten tasks;
+T8.1 + T8.4 marked ✅ there). The devtools *bugs* were already fixed (remediation T6.3,
+see `modules/devtools-panel.md`); this is additive.
 
 ## Other proposals worth a design doc (spotlighted from `BACKLOG.md`)
 

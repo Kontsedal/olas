@@ -46,6 +46,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [flows/ssr.md](flows/ssr.md) — `waitForIdle → dehydrate` (server) → `hydrate` (client)
 - [flows/construction-rollback.md](flows/construction-rollback.md) — factory throws → partial state torn down
 - [flows/use-root.md](flows/use-root.md) — `createRoot` → `<OlasProvider>` → `useRoot()` → `use(signal)` → DOM
+- [flows/devtools-causal-timeline.md](flows/devtools-causal-timeline.md) — one mutation → one `causeId` → a cause-chain + before/after diff in the panel
 
 ## Decisions
 
@@ -66,6 +67,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/preact-signals-overload-return.md](pitfalls/preact-signals-overload-return.md) — `ReturnType<typeof signal<T>>` is wrong
 - [pitfalls/fieldarray-factory-uses-initial.md](pitfalls/fieldarray-factory-uses-initial.md) — `add(x)` only works if factory uses it
 - [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert
+- [pitfalls/raf-unbound-illegal-invocation.md](pitfalls/raf-unbound-illegal-invocation.md) — native `requestAnimationFrame` assigned unbound throws "Illegal invocation" in real browsers (jsdom hides it)
 
 ## Candidates (not authoritative)
 

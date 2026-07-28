@@ -1,4 +1,4 @@
-import type { DevtoolsEmitter } from '../devtools'
+import { __runWithCause, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { batch, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
@@ -227,21 +227,26 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     return this.spec.persist === true && this.lifecycle !== undefined
   }
 
-  private emit(event: { type: 'mutation:run'; vars: unknown }): void
-  private emit(event: { type: 'mutation:success'; result: unknown }): void
-  private emit(event: { type: 'mutation:error'; error: unknown }): void
-  private emit(event: { type: 'mutation:rollback' }): void
+  private emit(event: { type: 'mutation:run'; vars: unknown }, causeId?: string): void
+  private emit(event: { type: 'mutation:success'; result: unknown }, causeId?: string): void
+  private emit(event: { type: 'mutation:error'; error: unknown }, causeId?: string): void
+  private emit(event: { type: 'mutation:rollback' }, causeId?: string): void
   private emit(
     event:
       | { type: 'mutation:run'; vars: unknown }
       | { type: 'mutation:success'; result: unknown }
       | { type: 'mutation:error'; error: unknown }
       | { type: 'mutation:rollback' },
+    causeId?: string,
   ): void {
     if (!__DEV__) return
     if (this.devtools === undefined) return
     const out: Record<string, unknown> = { ...event, path: this.controllerPath }
     if (this.spec.name !== undefined) out.name = this.spec.name
+    // `causeId` (the run id) correlates this event with the run's optimistic
+    // writes / snapshot events / settle in the devtools timeline. Empty string
+    // means "no run id" (non-persistable in a prod build) — omit it.
+    if (causeId !== undefined && causeId !== '') out.causeId = causeId
     this.devtools.emit(out as Parameters<DevtoolsEmitter['emit']>[0])
   }
 
@@ -301,10 +306,19 @@ class MutationImpl<V, R> implements Mutation<V, R> {
 
   private async executeRun(vars: V): Promise<R> {
     const abort = new AbortController()
+    // One id per run, generated up front so it can wrap `onMutate` (below) as
+    // the devtools ambient cause AND serve as the persistable run id. Skipped
+    // (empty) only in a production build of a non-persistable mutation, where
+    // nothing consumes it. `crypto.randomUUID`-backed — see `makeRunId`.
+    const runId = this.isPersistable || __DEV__ ? makeRunId() : ''
+    const mutationId = this.spec.mutationId
     let snapshot: Snapshot | undefined
     try {
-      const raw = this.spec.onMutate?.(vars) ?? undefined
-      snapshot = raw === undefined ? undefined : this.wrapSnapshot(raw)
+      // Run `onMutate` under this run's cause so the optimistic `setData` it
+      // calls — and the `snapshot:push` / `cache:set-data` those trigger —
+      // inherit `runId` as their `causeId` in the devtools timeline.
+      const raw = __runWithCause(runId, () => this.spec.onMutate?.(vars)) ?? undefined
+      snapshot = raw === undefined ? undefined : this.wrapSnapshot(raw, runId)
     } catch (err) {
       // onMutate threw — the optimistic setup failed, so running `mutate`
       // against a half-applied state is unsafe. Abort the whole run: surface
@@ -313,7 +327,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       // exists yet, so nothing to roll back; `mutate` is never called. T3.9.
       this.error.set(err)
       this.status.set('error')
-      if (__DEV__) this.emit({ type: 'mutation:error', error: err })
+      if (__DEV__) this.emit({ type: 'mutation:error', error: err }, runId)
       this.safeCall(() => this.spec.onError?.(err, vars, undefined), 'mutation')
       this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
       throw err
@@ -328,14 +342,13 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       this.lastVariables.set(vars)
     })
 
-    if (__DEV__) this.emit({ type: 'mutation:run', vars })
+    if (__DEV__) this.emit({ type: 'mutation:run', vars }, runId)
 
     // Persistable mutations emit an enqueue event BEFORE the user's `mutate`
     // runs. If the page reloads mid-mutation, the queue plugin replays from
-    // this entry. `runId` is unique per `executeRun` invocation; retries
-    // within `runWithRetry` reuse it via `attempt` bumps inside that loop.
-    const runId = this.isPersistable ? makeRunId() : ''
-    const mutationId = this.spec.mutationId
+    // this entry. `runId` / `mutationId` are captured at the top of
+    // `executeRun`; retries within `runWithRetry` reuse `runId` via `attempt`
+    // bumps inside that loop.
     if (this.isPersistable && mutationId !== undefined) {
       try {
         this.lifecycle?.emitEnqueue({ mutationId, runId, variables: vars, attempt: 0 })
@@ -361,7 +374,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         this.error.set(undefined)
         this.status.set('success')
       })
-      if (__DEV__) this.emit({ type: 'mutation:success', result })
+      if (__DEV__) this.emit({ type: 'mutation:success', result }, runId)
       this.safeCall(() => this.spec.onSuccess?.(result, vars), 'mutation')
       // Commit the optimistic snapshot so `hasPendingMutations` clears on the
       // affected entry. Symmetric to the auto-rollback in the error path.
@@ -383,7 +396,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       }
       this.error.set(err)
       this.status.set('error')
-      if (__DEV__) this.emit({ type: 'mutation:error', error: err })
+      if (__DEV__) this.emit({ type: 'mutation:error', error: err }, runId)
       this.safeCall(() => this.spec.onError?.(err, vars, snapshot), 'mutation')
       // Auto-rollback after the user's onError. The wrapped snapshot is
       // single-consume, so an `onError` that already called `snapshot.rollback()`
@@ -423,19 +436,22 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   // once. The mutation auto-finalizes on success and auto-rolls-back on
   // error; user code may also call rollback() from onError. Whichever
   // happens first wins; subsequent calls (including the auto-call) no-op.
-  private wrapSnapshot(raw: Snapshot): Snapshot {
+  private wrapSnapshot(raw: Snapshot, causeId: string): Snapshot {
     let consumed = false
     return {
       rollback: () => {
         if (consumed) return
         consumed = true
-        raw.rollback()
-        if (__DEV__) this.emit({ type: 'mutation:rollback' })
+        // Run the rollback under the run's cause so the `snapshot:rollback` and
+        // re-broadcast `cache:set-data` it triggers inherit this run's
+        // `causeId` in the devtools timeline (see `__runWithCause`).
+        __runWithCause(causeId, () => raw.rollback())
+        if (__DEV__) this.emit({ type: 'mutation:rollback' }, causeId)
       },
       finalize: () => {
         if (consumed) return
         consumed = true
-        raw.finalize()
+        __runWithCause(causeId, () => raw.finalize())
       },
     }
   }

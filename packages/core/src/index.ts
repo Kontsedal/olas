@@ -19,7 +19,7 @@ export type {
 } from './controller'
 export { createRoot, defineController } from './controller'
 // Errors & devtools
-export type { DebugBus, DebugCacheEntry, DebugEvent } from './devtools'
+export type { DebugBus, DebugCacheEntry, DebugEvent, DebugEventMeta } from './devtools'
 
 // Emitter
 export type { Emitter, EmitterErrorReporter } from './emitter'

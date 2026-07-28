@@ -177,4 +177,133 @@ describe('runtime devtools events', () => {
 
     expect(events.some((e) => e.type === 'cache:gc')).toBe(true)
   })
+
+  // -------------------------------------------------------------------------
+  // Correlation backbone (T8.1): seq / t / causeId + cache:set-data + snapshot:*
+  // -------------------------------------------------------------------------
+
+  test('every event carries a monotonic seq and a numeric timestamp', async () => {
+    const events: DebugEvent[] = []
+    const q = defineQuery({ key: () => ['k'], fetcher: async () => 1 })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: {} })
+    root.__debug.subscribe((ev) => events.push(ev))
+
+    await root.x.refetch()
+
+    expect(events.length).toBeGreaterThan(0)
+    for (const e of events) {
+      expect(typeof e.seq).toBe('number')
+      expect(typeof e.t).toBe('number')
+    }
+    const seqs = events.map((e) => e.seq as number)
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b)) // increasing in delivery order
+    root.dispose()
+  })
+
+  test('a fetch shares one causeId across fetch-start, fetch-success and its set-data', async () => {
+    const events: DebugEvent[] = []
+    const q = defineQuery({
+      key: (id: string) => [id],
+      fetcher: async (_ctx, id) => `data-${id}`,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q, () => ['1']) }))
+    const root = createRoot(def, { deps: {} })
+    root.__debug.subscribe((ev) => events.push(ev))
+
+    await root.x.refetch()
+
+    const success = events.find((e) => e.type === 'cache:fetch-success')
+    const cause = success?.causeId
+    expect(cause).toBeDefined()
+    expect(events.some((e) => e.type === 'cache:fetch-start' && e.causeId === cause)).toBe(true)
+    const write = events.find((e) => e.type === 'cache:set-data' && e.causeId === cause)
+    expect(write).toMatchObject({ source: 'fetch', data: 'data-1' })
+    root.dispose()
+  })
+
+  test('an optimistic mutation groups run, set-data, snapshot push/rollback, rollback and error under one causeId', async () => {
+    const events: DebugEvent[] = []
+    const q = defineQuery({
+      key: (id: string) => [id],
+      fetcher: async (_ctx, id) => `server-${id}`,
+    })
+    const def = defineController((ctx) => ({
+      cur: ctx.use(q, () => ['1']),
+      save: ctx.mutation({
+        name: 'save',
+        mutate: async () => {
+          throw new Error('boom')
+        },
+        onMutate: () => q.setData('1', () => 'optimistic'),
+        retry: 0,
+      }),
+    }))
+    const root = createRoot(def, { deps: {}, onError: () => {} })
+    await root.cur.firstValue()
+    root.__debug.subscribe((ev) => events.push(ev))
+
+    await root.save.run(undefined as void).catch(() => undefined)
+
+    const run = events.find((e) => e.type === 'mutation:run')
+    const cause = run?.causeId
+    expect(cause).toBeDefined()
+    const kindsForCause = events.filter((e) => e.causeId === cause).map((e) => e.type)
+    // The whole optimistic-apply → rollback chain shares the run's causeId.
+    expect(kindsForCause).toContain('mutation:run')
+    expect(kindsForCause).toContain('snapshot:push')
+    expect(kindsForCause).toContain('cache:set-data')
+    expect(kindsForCause).toContain('snapshot:rollback')
+    expect(kindsForCause).toContain('mutation:rollback')
+    expect(kindsForCause).toContain('mutation:error')
+    // The first set-data under this cause is the optimistic write (source 'mutate').
+    const optimistic = events.find((e) => e.type === 'cache:set-data' && e.causeId === cause)
+    expect(optimistic).toMatchObject({ source: 'mutate', data: 'optimistic' })
+    root.dispose()
+  })
+
+  test('a successful mutation emits snapshot:finalize under the run causeId', async () => {
+    const events: DebugEvent[] = []
+    const q = defineQuery({
+      key: (id: string) => [id],
+      fetcher: async (_ctx, id) => `server-${id}`,
+    })
+    const def = defineController((ctx) => ({
+      cur: ctx.use(q, () => ['1']),
+      save: ctx.mutation({
+        mutate: async () => 'ok',
+        onMutate: () => q.setData('1', () => 'optimistic'),
+      }),
+    }))
+    const root = createRoot(def, { deps: {} })
+    await root.cur.firstValue()
+    root.__debug.subscribe((ev) => events.push(ev))
+
+    await root.save.run(undefined as void)
+
+    const run = events.find((e) => e.type === 'mutation:run')
+    const cause = run?.causeId
+    const kindsForCause = events.filter((e) => e.causeId === cause).map((e) => e.type)
+    expect(kindsForCause).toContain('snapshot:push')
+    expect(kindsForCause).toContain('snapshot:finalize')
+    expect(kindsForCause).toContain('mutation:success')
+    expect(kindsForCause).not.toContain('snapshot:rollback')
+    root.dispose()
+  })
+
+  test('a bare query.setData is source:set with no causeId', async () => {
+    const events: DebugEvent[] = []
+    const q = defineQuery({ key: (id: string) => [id], fetcher: async (_ctx, id) => id })
+    const def = defineController((ctx) => ({ x: ctx.use(q, () => ['1']) }))
+    const root = createRoot(def, { deps: {} })
+    await root.x.firstValue()
+    root.__debug.subscribe((ev) => events.push(ev))
+
+    q.setData('1', () => 'manual')
+
+    const write = events.find((e) => e.type === 'cache:set-data')
+    expect(write).toMatchObject({ source: 'set', data: 'manual' })
+    expect(write?.causeId).toBeUndefined()
+    root.dispose()
+  })
 })

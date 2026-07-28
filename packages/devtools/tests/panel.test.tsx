@@ -26,7 +26,7 @@ describe('<DevtoolsPanel>', () => {
     )
     const root = createRoot(def, { deps: {} })
 
-    render(<DevtoolsPanel root={root} />)
+    render(<DevtoolsPanel root={root} defaultTab="tree" />)
     // The root (path = ['root']) is already in the tree.
     expect(screen.getByRole('tabpanel').textContent).toContain('root')
 
@@ -103,8 +103,8 @@ describe('<DevtoolsPanel>', () => {
     const root = createRoot(def, { deps: {} })
 
     render(<DevtoolsPanel root={root} />)
-    // start on tree tab
-    expect(screen.getByRole('tab', { name: 'Tree' }).getAttribute('aria-selected')).toBe('true')
+    // Timeline is the default tab (the headline view).
+    expect(screen.getByRole('tab', { name: 'Timeline' }).getAttribute('aria-selected')).toBe('true')
 
     act(() => {
       fireEvent.click(screen.getByRole('tab', { name: 'Mutations' }))
@@ -139,7 +139,7 @@ describe('<DevtoolsPanel>', () => {
     }))
     const root = createRoot(def, { deps: {} })
 
-    render(<DevtoolsPanel root={root} />)
+    render(<DevtoolsPanel root={root} defaultTab="tree" />)
     act(() => {
       root.addLeaf()
     })
@@ -189,6 +189,99 @@ describe('<DevtoolsPanel>', () => {
 
     render(<DevtoolsPanel root={root} defaultTab="fields" />)
     expect(screen.getByRole('tab', { name: 'Fields' }).getAttribute('aria-selected')).toBe('true')
+
+    root.dispose()
+  })
+
+  test('timeline groups a failing mutation + its optimistic write + rollback as one cause-chain', async () => {
+    const q = defineQuery({
+      key: (id: string) => [id],
+      fetcher: async (_c, id) => `server-${id}`,
+    })
+    const def = defineController((ctx) => ({
+      cur: ctx.use(q, () => ['1']),
+      save: ctx.mutation({
+        name: 'save',
+        mutate: async () => {
+          throw new Error('boom')
+        },
+        onMutate: () => q.setData('1', () => 'optimistic'),
+        retry: 0,
+      }),
+    }))
+    const root = createRoot(def, { deps: {}, onError: () => {} })
+    await act(async () => {
+      await root.cur.firstValue()
+    })
+
+    render(<DevtoolsPanel root={root} />) // Timeline is the default tab
+
+    await act(async () => {
+      await root.save.run(undefined as void).catch(() => undefined)
+    })
+    await raf()
+
+    const panel = screen.getByRole('tabpanel')
+    // The whole chain groups under one header titled by the mutation name.
+    expect(panel.textContent).toContain('save')
+    // Optimistic write + its rollback are visible in the chain.
+    expect(panel.textContent).toContain('set-data')
+    expect(panel.textContent).toContain('rollback')
+
+    root.dispose()
+  })
+
+  test('a cache:set-data row expands to a structural before/after diff', async () => {
+    const q = defineQuery({
+      key: (id: string) => [id],
+      fetcher: async (_c, _id) => ({ name: 'Ada', age: 36 }),
+    })
+    const def = defineController((ctx) => ({
+      cur: ctx.use(q, () => ['1']),
+      bump: ctx.mutation({
+        name: 'bump',
+        mutate: async () => 'ok',
+        onMutate: () =>
+          q.setData('1', (p) => ({ ...(p as { name: string; age: number }), age: 37 })),
+      }),
+    }))
+    const root = createRoot(def, { deps: {} })
+    await act(async () => {
+      await root.cur.firstValue()
+    })
+
+    render(<DevtoolsPanel root={root} />)
+    await act(async () => {
+      await root.bump.run(undefined as void)
+    })
+    await raf()
+
+    // Expand the optimistic set-data row.
+    act(() => {
+      fireEvent.click(screen.getAllByText('set-data')[0]!)
+    })
+    const panel = screen.getByRole('tabpanel')
+    expect(panel.textContent).toContain('age') // changed key
+    expect(panel.textContent).toContain('37') // new value
+    expect(panel.textContent).toContain('unchanged') // name collapsed as unchanged
+
+    root.dispose()
+  })
+
+  test('the cache inspector updates from events (no poll)', async () => {
+    const q = defineQuery({ key: (id: string) => [id], fetcher: async (_c, id) => `data-${id}` })
+    const def = defineController((ctx) => ({ x: ctx.use(q, () => ['u1']) }))
+    const root = createRoot(def, { deps: {} })
+
+    render(<DevtoolsPanel root={root} defaultTab="inspector" />)
+    await act(async () => {
+      await root.x.refetch()
+    })
+    await raf()
+
+    const panel = screen.getByRole('tabpanel')
+    expect(panel.textContent).toContain('u1') // query key shown
+    expect(panel.textContent).toContain('success') // event-driven status update
 
     root.dispose()
   })

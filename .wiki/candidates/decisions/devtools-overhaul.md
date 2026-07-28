@@ -6,19 +6,41 @@ edges:
   - { type: related, target: ../../modules/devtools-panel.md }
   - { type: related, target: ../../modules/devtools.md }
   - { type: related, target: ../backlog.md }
-last_verified: 2026-07-25
+  - { type: related, target: ../../flows/devtools-causal-timeline.md }
+last_verified: 2026-07-28
 confidence: candidate
 ---
 
 # Devtools overhaul — proposed design (candidate, unbuilt)
 
-> **Status: candidate / proposal.** This is a *future* design, not a description of
-> what the code does today. It was authored as "Phase 8" of the 2026-07 remediation
-> plan (`REMEDIATION.md`, a transient file that gets deleted when the remediation
-> lands) and is preserved here so the vision isn't lost. Nothing below is implemented.
-> The remediation's **T6.3** already fixed the outright devtools *bugs* (false
-> `[Circular]`, unbounded tree, per-keystroke re-stringify, run→success pairing) — see
-> `modules/devtools-panel.md`. This overhaul is purely additive on top of that.
+> **Status: partially landed (2026-07-28).** **T8.1** (event backbone) and **T8.4**
+> (causal timeline) have shipped — the tasks marked ✅ below are implemented; the rest
+> are still proposals. See `modules/devtools.md`, `modules/devtools-panel.md`, and
+> `flows/devtools-causal-timeline.md`, plus the [Landed](#landed-2026-07-28) note. The
+> remainder of 8A (T8.2 virtualize, T8.3 omnibox) and all of 8B (except T8.4) / 8C / 8D
+> remain a *future* design. This page stays in `candidates/` until all of 8A lands (its
+> promotion criterion, below). The remediation's **T6.3** already fixed the outright
+> devtools *bugs* (false `[Circular]`, unbounded tree, per-keystroke re-stringify,
+> run→success pairing) — see `modules/devtools-panel.md`. This overhaul is additive on top.
+
+## Landed (2026-07-28)
+
+**T8.1 — event backbone (partial: no poll-kill-via-synthetic-event; done via store seed).**
+`DebugEvent` gained optional `seq` / `t` / `causeId`; `cache:set-data` (source + data) and
+`snapshot:push`/`rollback`/`finalize`; a dev-only ambient cause (`__runWithCause`) threads a
+mutation's `runId` into the writes it triggers, and fetches share a `fetchId`. The 800ms
+inspector poll is gone — the store seeds `cacheState$` from `queryEntries()` on attach and
+refreshes on cache events (rather than emitting a synthetic `cache:snapshot` per entry; same
+observable result, less coupling). Not done from T8.1: `cache:subscribe/unsubscribe` wiring,
+`effect:run`, `form:field-change`, `scope:*`, and the generic `plugin:event` envelope.
+
+**T8.4 — causal timeline.** The panel's default tab groups events by `causeId` into
+collapsible cause-chains and renders a structural before/after diff (`diff.ts`, written in
+the devtools package — core internals not imported) on each `cache:set-data`. The acceptance
+scenario (a failing latest-wins/optimistic mutation shown as one apply→rollback group) is
+covered by `packages/devtools/tests/panel.test.tsx`.
+
+Everything below that is NOT ticked ✅ remains a proposal.
 
 ## Why
 
@@ -47,7 +69,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
 
 ## 8A — foundation: event-driven, virtualized, correlated (no new features yet)
 
-- **T8.1 — kill the 800ms poll; make the store fully event-driven.** Extend the
+- ✅ **T8.1 — kill the 800ms poll; make the store fully event-driven.** *(Landed 2026-07-28 — see the Landed note above for what shipped vs. deferred.)* Extend the
   `DebugEvent` union so the cache narrates itself, `__DEV__`-gated and zero-cost when the
   bus has no subscribers. New events: `cache:fetch-start`, `cache:fetch-settle`
   (success/error/aborted + duration), `cache:set-data` (with `source:
@@ -80,7 +102,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
 
 ## 8B — the killer feature: causal timeline ("why did this change?")
 
-- **T8.4 — unified timeline with cause-chains.** A time-ordered stream of ALL events
+- ✅ **T8.4 — unified timeline with cause-chains.** *(Landed 2026-07-28.)* A time-ordered stream of ALL events
   (from T8.1), filterable by kind/controller/query, pausable (record button), relative
   timestamps. Events sharing a `causeId` render as one collapsible group, e.g.
   `updateName.run(42)` ▸ `snapshot:push users/['1']` ▸ `cache:set-data (mutate)` ▸

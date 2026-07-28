@@ -468,6 +468,149 @@ export const DEVTOOLS_CSS = `
   margin-top: 2px;
 }
 
+/* ---- timeline -------------------------------------------------------- */
+.olas-devtools-timeline { padding: 6px 8px 12px; }
+
+.olas-devtools-tl-group {
+  border: 1px solid var(--olas-border-soft);
+  border-left: 3px solid var(--olas-muted);
+  border-radius: 8px;
+  margin: 6px 0;
+  overflow: hidden;
+  background: var(--olas-bg);
+}
+.olas-devtools-tl-group-error    { border-left-color: var(--olas-error); }
+.olas-devtools-tl-group-rollback { border-left-color: var(--olas-warn); }
+.olas-devtools-tl-group-ok       { border-left-color: var(--olas-success); }
+.olas-devtools-tl-group-active   { border-left-color: var(--olas-accent); }
+
+.olas-devtools-tl-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--olas-soft);
+  border: 0;
+  border-bottom: 1px solid var(--olas-border-soft);
+  cursor: pointer;
+  font: inherit;
+  color: var(--olas-fg);
+  text-align: left;
+}
+.olas-devtools-tl-group-head:hover { background: var(--olas-soft-2); }
+.olas-devtools-tl-group-title {
+  flex: 1;
+  min-width: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.olas-devtools-tl-group-count {
+  min-width: 18px;
+  padding: 0 6px;
+  height: 16px;
+  border-radius: 999px;
+  background: color-mix(in oklch, var(--olas-fg) 8%, transparent);
+  color: var(--olas-muted);
+  font-size: 10.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.olas-devtools-tl-group-body {
+  padding: 2px 0 2px 6px;
+  border-left: 1px dashed var(--olas-border);
+  margin-left: 12px;
+}
+
+.olas-devtools-tl-row {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--olas-border-soft);
+}
+.olas-devtools-tl-row:last-child { border-bottom: none; }
+.olas-devtools-tl-row-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  min-height: 30px;
+}
+.olas-devtools-row-clickable > .olas-devtools-tl-row-top { cursor: pointer; user-select: none; }
+.olas-devtools-tl-row:hover { background: var(--olas-row-alt); }
+.olas-devtools-tl-delta {
+  color: var(--olas-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  background: var(--olas-soft);
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.olas-devtools-tl-source {
+  color: var(--olas-muted);
+  font-size: 11px;
+  margin-bottom: 6px;
+}
+.olas-devtools-tl-source strong { color: var(--olas-accent); font-weight: 600; }
+
+/* ---- structural diff ------------------------------------------------- */
+.olas-devtools-diff-block { display: inline-flex; flex-direction: column; vertical-align: top; }
+.olas-devtools-diff-children {
+  display: block;
+  border-left: 1px dashed var(--olas-border);
+  margin-left: 4px;
+}
+.olas-devtools-diff-row {
+  display: block;
+  padding-left: 14px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.olas-devtools-diff-mark { font-weight: 700; margin-right: 4px; }
+.olas-devtools-diff-add,
+.olas-devtools-diff-add .olas-devtools-json-string,
+.olas-devtools-diff-add .olas-devtools-json-number,
+.olas-devtools-diff-add .olas-devtools-json-boolean { color: var(--olas-success); }
+.olas-devtools-diff-add { background: var(--olas-success-soft); border-radius: 3px; padding: 0 3px; }
+.olas-devtools-diff-remove,
+.olas-devtools-diff-remove .olas-devtools-json-string,
+.olas-devtools-diff-remove .olas-devtools-json-number,
+.olas-devtools-diff-remove .olas-devtools-json-boolean { color: var(--olas-error); }
+.olas-devtools-diff-remove {
+  background: var(--olas-error-soft);
+  border-radius: 3px;
+  padding: 0 3px;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklch, var(--olas-error) 60%, transparent);
+}
+.olas-devtools-diff-change { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.olas-devtools-diff-prev {
+  opacity: 0.7;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklch, var(--olas-error) 55%, transparent);
+}
+.olas-devtools-diff-arrow { color: var(--olas-muted); }
+.olas-devtools-diff-next {
+  background: var(--olas-success-soft);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.olas-devtools-diff-unchanged {
+  display: block;
+  padding-left: 14px;
+  color: var(--olas-muted);
+  font-style: italic;
+  font-size: 10.5px;
+}
+
 /* ---- floating window + launcher ------------------------------------- */
 .olas-devtools-launcher {
   position: fixed;

@@ -1,4 +1,4 @@
-import type { DevtoolsEmitter } from '../devtools'
+import { __currentCauseId, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
@@ -98,16 +98,43 @@ export class ClientEntry<T> {
       events:
         __DEV__ && devtools !== undefined
           ? {
-              onFetchStart: () => devtools.emit({ type: 'cache:fetch-start', queryKey }),
-              onFetchSuccess: (durationMs) =>
-                devtools.emit({ type: 'cache:fetch-success', queryKey, durationMs }),
-              onFetchError: (durationMs, error) =>
+              onFetchStart: (fetchId) =>
+                devtools.emit({ type: 'cache:fetch-start', queryKey, causeId: fetchId }),
+              onFetchSuccess: (durationMs, data, fetchId) => {
+                devtools.emit({
+                  type: 'cache:fetch-success',
+                  queryKey,
+                  durationMs,
+                  causeId: fetchId,
+                })
+                // The data write the fetch produced — correlated with the
+                // fetch via `causeId` so the timeline groups them and the
+                // cache inspector updates without polling.
+                devtools.emit({
+                  type: 'cache:set-data',
+                  queryKey,
+                  source: 'fetch',
+                  data,
+                  causeId: fetchId,
+                })
+              },
+              onFetchError: (durationMs, error, fetchId) =>
                 devtools.emit({
                   type: 'cache:fetch-error',
                   queryKey,
                   durationMs,
                   error,
+                  causeId: fetchId,
                 }),
+              // Optimistic snapshot layer events. `causeId` is read from the
+              // ambient cause (the mutation run whose `onMutate`/rollback is
+              // executing) at emit time — see `__runWithCause` in devtools.ts.
+              onSnapshotPush: () =>
+                devtools.emit({ type: 'snapshot:push', queryKey, causeId: __currentCauseId() }),
+              onSnapshotRollback: () =>
+                devtools.emit({ type: 'snapshot:rollback', queryKey, causeId: __currentCauseId() }),
+              onSnapshotFinalize: () =>
+                devtools.emit({ type: 'snapshot:finalize', queryKey, causeId: __currentCauseId() }),
             }
           : undefined,
       onSuccessData: onFetchSuccess,
@@ -525,6 +552,31 @@ export class QueryClient {
     }
   }
 
+  /**
+   * Emit a devtools `cache:set-data` event for a cache write. Independent of
+   * the plugin `emitSetData` fan-out above — devtools observes ALL writes,
+   * even for queries without a `queryId` (which plugins skip). When `source`
+   * is omitted it's derived from the ambient cause: a write inside a
+   * mutation's `onMutate`/rollback (an active `__runWithCause` frame) is
+   * `'mutate'` and inherits the run's `causeId`; a bare write is `'set'`.
+   * Fetch / remote callers pass `source` explicitly. Call sites guard with
+   * `if (__DEV__)` so production strips them.
+   */
+  private emitDevtoolsSetData(
+    queryKey: readonly unknown[],
+    data: unknown,
+    source?: 'set' | 'fetch' | 'mutate' | 'remote',
+  ): void {
+    if (this.devtools === undefined) return
+    const causeId = __currentCauseId()
+    // `source` derives from the ambient cause when not passed: a write inside a
+    // mutation's onMutate/rollback is `'mutate'`, a bare write is `'set'`. A
+    // `causeId: undefined` is dropped by `DevtoolsEmitter.stamp`, so callers
+    // needn't branch.
+    const resolved = source ?? (causeId !== undefined ? 'mutate' : 'set')
+    this.devtools.emit({ type: 'cache:set-data', queryKey, source: resolved, data, causeId })
+  }
+
   private emitInvalidate(
     query: AnyQuery | AnyInfiniteQuery,
     keyArgs: readonly unknown[],
@@ -647,6 +699,7 @@ export class QueryClient {
     try {
       entry.entry.setData(() => data as never, { track: false })
       this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
+      if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, data, 'remote')
     } finally {
       this.applyingRemote = false
     }
@@ -686,6 +739,7 @@ export class QueryClient {
         try {
           entry.entry.applyHydration(data, lastUpdatedAt)
           this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
+          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, data, 'remote')
         } finally {
           this.applyingRemote = false
         }
@@ -726,6 +780,10 @@ export class QueryClient {
       if (!entry) return
       entry.entry.setData(updater as (prev: unknown) => never, { track: false })
       this.emitSetData(internal, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
+      // A canonical (track:false) backprop write — always `'set'`, even when a
+      // mutation's ambient cause is active (it inherits the `causeId`, but its
+      // KIND is a plain set, not an optimistic mutate).
+      if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
       return
     }
     // Infinite query. The plugin's `SetDataEvent.data` for `kind: 'infinite'`
@@ -739,6 +797,8 @@ export class QueryClient {
     if (!entry) return
     entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], { track: false })
     this.emitSetData(internal, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
+    // Canonical backprop write — always `'set'` (see the regular-query branch).
+    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.pages.peek(), 'set')
   }
 
   applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void {
@@ -1080,6 +1140,7 @@ export class QueryClient {
     // not the updater function (which would be uncloneable across
     // BroadcastChannel).
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
+    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek())
     // Re-broadcast on rollback so cross-tab / entity plugins drop the failed
     // optimistic value instead of keeping it (T3.6). Guard on an actual data
     // change: a non-top chain-splice rollback (§6.4) leaves current data
@@ -1091,6 +1152,7 @@ export class QueryClient {
         const after = entry.entry.data.peek()
         if (!Object.is(before, after)) {
           this.emitSetData(entry.query, entry.keyArgs, after, 'data', 'set')
+          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, after)
         }
       },
       finalize: () => snapshot.finalize(),
@@ -1196,6 +1258,7 @@ export class QueryClient {
     const entry = this.bindInfiniteEntry(query, args)
     const snapshot = entry.entry.setData(updater)
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
+    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.pages.peek())
     // Re-broadcast on rollback so peers drop the failed optimistic pages
     // (T3.6); guard on an actual change (non-top chain-splice is a no-op).
     return {
@@ -1205,6 +1268,7 @@ export class QueryClient {
         const after = entry.entry.pages.peek()
         if (!Object.is(before, after)) {
           this.emitSetData(entry.query, entry.keyArgs, after, 'infinite', 'set')
+          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, after)
         }
       },
       finalize: () => snapshot.finalize(),

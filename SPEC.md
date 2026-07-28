@@ -1360,22 +1360,39 @@ Only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) do not 
 
 ## 14. Devtools
 
-The root exposes a `__debug` event stream:
+The root exposes a `__debug` bus — an event stream plus a live cache snapshot:
 
 ```ts
 root.__debug.subscribe((event) => {
-  // structured event, see below
+  // structured DebugEvent, see below
 })
+root.__debug.queryEntries() // DebugCacheEntry[] — current state of every cache entry
 ```
 
-Event types:
+### 14.1 Event families
 
-- `controller:constructed | suspended | resumed | disposed` — `{ path: string[], propsSnapshot }`
-- `cache:subscribed | fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryKey, controllerPath, durationMs? }`
-- `mutation:run | success | error | rollback` — `{ controllerPath, vars?, error? }`
-- `field:validated` — `{ controllerPath, fieldName, valid, errors }`
+`DebugEvent` is a discriminated union on `type`:
 
-The schema is stable enough to build tooling on, but isn't a public API guarantee — internal events may be added. `@kontsedal/olas-devtools` consumes this stream as an in-app panel.
+- `controller:constructed | suspended | resumed | disposed` — `{ path }` (`constructed` also carries `props`).
+- `cache:subscribed | fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryKey }` (`fetch-success`/`fetch-error` add `durationMs`, `fetch-error` adds `error`, `subscribed` adds `subscriberPath`).
+- `cache:set-data` — `{ queryKey, source, data }`. Emitted on every cache write; `data` is the post-write value and `source` is `'set' | 'fetch' | 'mutate' | 'remote'` (mirrors the §13.2 plugin vocabulary). This is what lets a panel show *current* data without polling.
+- `snapshot:push | rollback | finalize` — `{ queryKey }`. The optimistic-update stack (§6.4): a tracked `setData` pushes, a mutation error / supersede rolls back, a mutation success finalizes.
+- `mutation:run | success | error | rollback` — `{ path, name? }` (`run` adds `vars`, `success` `result`, `error` `error`).
+- `field:validated` — `{ path, field, valid, errors }`.
+
+### 14.2 Correlation fields (every event)
+
+Every *delivered* event also carries `seq` and `t`, and — where core can cheaply attribute one — a `causeId`:
+
+- `seq` — a monotonic, per-root sequence number stamped by the bus. The canonical sort key for a timeline (wall-clock `t` can tie under a burst, and is approximate for events replayed to a late subscriber).
+- `t` — epoch-ms timestamp.
+- `causeId` — correlates every event produced by one cause into a group. A mutation run's id flows into the optimistic `cache:set-data`, the `snapshot:*` events, the `mutation:rollback`, and the mutation's own lifecycle events; a fetch's id flows into its `cache:fetch-*` and the `cache:set-data` it writes. Absent for an un-attributable write (e.g. a bare `query.setData(...)` outside any mutation).
+
+These three are optional on the `DebugEvent` *type* (so tooling can construct events by hand), but the bus always stamps `seq`/`t` on delivery.
+
+`@kontsedal/olas-devtools` consumes this stream as an in-app panel whose headline view is a causal **Timeline**: events grouped by `causeId` into cause-chains, each `cache:set-data` expandable to a structural before/after diff — alongside controller-tree, cache-log, live cache-inspector, mutation and field views.
+
+The schema is stable enough to build tooling on, but isn't a public API guarantee — internal events may be added, and consumers `switch` on `type` and ignore unknowns. All events and the bus itself are dev-only: production builds strip every `emit(...)` call site (`__DEV__`), so no events arrive (§23).
 
 ---
 

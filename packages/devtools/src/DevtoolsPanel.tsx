@@ -1,6 +1,7 @@
-import type { DebugCacheEntry, Root } from '@kontsedal/olas-core'
+import type { DebugCacheEntry, DebugEvent, Root } from '@kontsedal/olas-core'
 import { use } from '@kontsedal/olas-react'
-import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react'
+import { type ReactElement, useEffect, useMemo, useState } from 'react'
+import { type Diff, diffValues, hasChange } from './diff'
 import { formatPath, formatTime } from './format'
 import { JsonView } from './JsonView'
 import {
@@ -9,15 +10,16 @@ import {
   DevtoolsStore,
   type FieldEntry,
   type MutationEntry,
+  type TimelineEvent,
 } from './store'
 import { DEVTOOLS_CSS } from './styles'
 
-export type DevtoolsTab = 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
+export type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
 
 export type DevtoolsPanelProps = {
   /** The root to inspect. The panel subscribes to `root.__debug` on mount. */
   root: Pick<Root<unknown>, '__debug'>
-  /** Initial tab. Default: `'tree'`. */
+  /** Initial tab. Default: `'timeline'`. */
   defaultTab?: DevtoolsTab
   /** Cap on each event log. Default: 100. */
   maxEntries?: number
@@ -26,7 +28,11 @@ export type DevtoolsPanelProps = {
    * reloading the page restores filter + tab. Default: no persistence.
    */
   urlHashKey?: string
-  /** How often (ms) to refresh the live cache inspector snapshot. Default 800. */
+  /**
+   * @deprecated Ignored. The cache inspector is now event-driven — it refreshes
+   * from `root.__debug.queryEntries()` whenever a cache event arrives, so there
+   * is no polling interval to configure. Kept for back-compat; will be removed.
+   */
   inspectorPollMs?: number
 }
 
@@ -47,7 +53,7 @@ export type DevtoolsPanelProps = {
  * Spec §13.
  */
 export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
-  const { root, defaultTab = 'tree', maxEntries, urlHashKey, inspectorPollMs = 800 } = props
+  const { root, defaultTab = 'timeline', maxEntries, urlHashKey } = props
   const store = useMemo(
     () =>
       new DevtoolsStore({
@@ -72,8 +78,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
 
   // The input stays responsive (`value={filter}`), but the expensive filtering
   // (a JSON.stringify per entry) runs against a DEBOUNCED value so typing
-  // doesn't re-filter the whole log on every keystroke on top of the 800ms
-  // inspector poll (T6.3).
+  // doesn't re-filter the whole log on every keystroke (T6.3).
   const [debouncedFilter, setDebouncedFilter] = useState(filter)
   useEffect(() => {
     const id = setTimeout(() => setDebouncedFilter(filter), 150)
@@ -86,24 +91,15 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
     writeUrlHash(urlHashKey, { tab, filters })
   }, [urlHashKey, tab, filters])
 
-  // Live cache inspector — polls `root.__debug.queryEntries()` periodically.
-  // Polling is cheap (a single peek per entry) and bounded by inspectorPollMs;
-  // only the Cache Inspector view reads this.
-  const [cacheEntries, setCacheEntries] = useState<DebugCacheEntry[]>([])
-  const rootRef = useRef(root)
-  rootRef.current = root
-  useEffect(() => {
-    if (tab !== 'inspector') return
-    const tick = () => setCacheEntries(rootRef.current.__debug.queryEntries())
-    tick()
-    const id = window.setInterval(tick, inspectorPollMs)
-    return () => window.clearInterval(id)
-  }, [tab, inspectorPollMs])
-
   const liveTree = use(store.tree$)
   const liveCache = use(store.cache$)
   const liveMutations = use(store.mutations$)
   const liveFields = use(store.fields$)
+  const liveEvents = use(store.events$)
+  // The cache inspector is event-driven: the store seeds this from
+  // `root.__debug.queryEntries()` on attach and refreshes it whenever a cache
+  // event lands — no polling interval (the old 800ms poll is gone).
+  const liveCacheState = use(store.cacheState$)
 
   // When paused, snapshot once and keep showing that frozen state.
   const [frozen, setFrozen] = useState<{
@@ -111,6 +107,8 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
     cache: CacheEntry[]
     mutations: MutationEntry[]
     fields: FieldEntry[]
+    events: TimelineEvent[]
+    cacheState: DebugCacheEntry[]
   } | null>(null)
   useEffect(() => {
     if (paused) {
@@ -119,6 +117,8 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
         cache: liveCache,
         mutations: liveMutations,
         fields: liveFields,
+        events: liveEvents,
+        cacheState: liveCacheState,
       })
     } else {
       setFrozen(null)
@@ -131,11 +131,21 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const cache = frozen?.cache ?? liveCache
   const mutations = frozen?.mutations ?? liveMutations
   const fields = frozen?.fields ?? liveFields
+  const events = frozen?.events ?? liveEvents
+  const cacheState = frozen?.cacheState ?? liveCacheState
 
   return (
     <div className="olas-devtools" data-testid="olas-devtools">
       <style>{DEVTOOLS_CSS}</style>
       <div className="olas-devtools-tabs" role="tablist">
+        <Tab
+          name="timeline"
+          current={tab}
+          setTab={setTab}
+          label="Timeline"
+          short="Time"
+          count={liveEvents.length}
+        />
         <Tab
           name="tree"
           current={tab}
@@ -158,7 +168,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
           setTab={setTab}
           label="Inspector"
           short="Insp"
-          count={cacheEntries.length}
+          count={liveCacheState.length}
         />
         <Tab
           name="mutations"
@@ -199,7 +209,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
         </button>
       </div>
 
-      {(tab === 'cache' || tab === 'inspector' || tab === 'mutations' || tab === 'fields') && (
+      {tab !== 'tree' && (
         <div className="olas-devtools-filter">
           <input
             type="search"
@@ -216,9 +226,10 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
       )}
 
       <div className="olas-devtools-body" role="tabpanel">
+        {tab === 'timeline' && <TimelineView events={events} filter={debouncedFilter} />}
         {tab === 'tree' && <TreeView tree={tree} mutations={liveMutations} />}
         {tab === 'cache' && <CacheView entries={cache} filter={debouncedFilter} />}
-        {tab === 'inspector' && <InspectorView entries={cacheEntries} filter={debouncedFilter} />}
+        {tab === 'inspector' && <InspectorView entries={cacheState} filter={debouncedFilter} />}
         {tab === 'mutations' && <MutationsView entries={mutations} filter={debouncedFilter} />}
         {tab === 'fields' && <FieldsView entries={fields} filter={debouncedFilter} />}
       </div>
@@ -477,6 +488,344 @@ function formatAge(ms: number): string {
 }
 
 // ===========================================================================
+// Timeline — unified, causally-grouped event stream (the headline view)
+// ===========================================================================
+
+type TimelineRow =
+  | { kind: 'single'; event: TimelineEvent }
+  | { kind: 'group'; causeId: string; events: TimelineEvent[] }
+
+function TimelineView({
+  events,
+  filter,
+}: {
+  events: TimelineEvent[]
+  filter: string
+}): ReactElement {
+  const filtered = useFiltered(events, filter, timelineHaystack)
+  const rows = useMemo(() => groupByCause(filtered), [filtered])
+  if (events.length === 0) {
+    return (
+      <Empty
+        title="No events yet"
+        hint="Interact with the app — mutations, fetches, cache writes and lifecycle events stream here, grouped by cause."
+      />
+    )
+  }
+  if (rows.length === 0) {
+    return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
+  }
+  // Newest activity on top; within a cause-group the chain stays chronological
+  // (top-to-bottom) so the cause → effect story reads in order.
+  return (
+    <div className="olas-devtools-timeline">
+      {[...rows]
+        .reverse()
+        .map((row) =>
+          row.kind === 'single' ? (
+            <TimelineEventRow key={row.event.id} entry={row.event} />
+          ) : (
+            <CauseGroup key={row.causeId} events={row.events} />
+          ),
+        )}
+    </div>
+  )
+}
+
+/**
+ * Fold the flat, seq-ordered event list into rows: events with a `causeId`
+ * collapse into one group positioned at the group's FIRST event; un-caused
+ * events stay standalone. The group array is filled by reference as later
+ * events arrive, so a whole mutation chain renders together.
+ */
+function groupByCause(events: readonly TimelineEvent[]): TimelineRow[] {
+  const groups = new Map<string, TimelineEvent[]>()
+  const rows: TimelineRow[] = []
+  for (const e of events) {
+    if (e.causeId === undefined) {
+      rows.push({ kind: 'single', event: e })
+      continue
+    }
+    let g = groups.get(e.causeId)
+    if (g === undefined) {
+      g = []
+      groups.set(e.causeId, g)
+      rows.push({ kind: 'group', causeId: e.causeId, events: g })
+    }
+    g.push(e)
+  }
+  return rows
+}
+
+function timelineHaystack(e: TimelineEvent): string {
+  const ev = e.event
+  const parts: string[] = [ev.type, eventTarget(ev)]
+  if (e.causeId !== undefined) parts.push(e.causeId)
+  // `cache:set-data` carries its payload in `data` (not via `eventPayload`,
+  // which returns undefined for it) — include source + data so the filter can
+  // match a write by its content or `fetch`/`mutate`/`set`/`remote` source.
+  if (ev.type === 'cache:set-data') parts.push(ev.source, safeStringify(ev.data))
+  const payload = eventPayload(ev)
+  if (payload !== undefined) parts.push(safeStringify(payload))
+  return parts.join(' ')
+}
+
+function CauseGroup({ events }: { events: TimelineEvent[] }): ReactElement {
+  const [open, setOpen] = useState(events.length <= 12)
+  const start = events[0]!.t
+  const status = groupStatus(events)
+  return (
+    <div className={`olas-devtools-tl-group olas-devtools-tl-group-${status}`}>
+      <button
+        type="button"
+        className="olas-devtools-tl-group-head"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span
+          aria-hidden="true"
+          className={`olas-devtools-chevron ${open ? 'olas-devtools-chevron-open' : ''}`}
+        >
+          ›
+        </span>
+        <span className="olas-devtools-tl-group-title">{groupHeadline(events)}</span>
+        <span className="olas-devtools-tl-group-count">{events.length}</span>
+        <span className="olas-devtools-time">{formatTime(start)}</span>
+      </button>
+      {open && (
+        <div className="olas-devtools-tl-group-body">
+          {events.map((e) => (
+            <TimelineEventRow key={e.id} entry={e} groupStart={start} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** A group's title: the mutation it represents, else its first event. */
+function groupHeadline(events: readonly TimelineEvent[]): string {
+  const run = events.find((e) => e.event.type === 'mutation:run')
+  if (run) return eventTarget(run.event)
+  const first = events[0]!.event
+  return `${badgeLabel(first.type)} · ${eventTarget(first)}`
+}
+
+/** Worst outcome seen in a group — drives the group's accent color. */
+function groupStatus(events: readonly TimelineEvent[]): 'error' | 'rollback' | 'ok' | 'active' {
+  const types = new Set(events.map((e) => e.event.type))
+  if (types.has('mutation:error') || types.has('cache:fetch-error')) return 'error'
+  if (types.has('mutation:rollback') || types.has('snapshot:rollback')) return 'rollback'
+  if (types.has('mutation:success') || types.has('cache:fetch-success')) return 'ok'
+  return 'active'
+}
+
+function TimelineEventRow({
+  entry,
+  groupStart,
+}: {
+  entry: TimelineEvent
+  groupStart?: number
+}): ReactElement {
+  const ev = entry.event
+  const [expanded, setExpanded] = useState(false)
+  const isSetData = ev.type === 'cache:set-data'
+  const payload = eventPayload(ev)
+  const hasDetail = isSetData || payload !== undefined
+  const delta = groupStart !== undefined ? entry.t - groupStart : undefined
+  return (
+    <div className={`olas-devtools-tl-row ${hasDetail ? 'olas-devtools-row-clickable' : ''}`}>
+      <div
+        className="olas-devtools-tl-row-top"
+        onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
+      >
+        <span className={`olas-devtools-kind ${timelineKindClass(ev.type)}`}>
+          {badgeLabel(ev.type)}
+        </span>
+        <span className="olas-devtools-target">{eventTarget(ev)}</span>
+        {delta !== undefined && delta > 0 && (
+          <span className="olas-devtools-tl-delta">+{delta}ms</span>
+        )}
+        <span className="olas-devtools-time">{formatTime(entry.t)}</span>
+        {hasDetail && (
+          <span
+            aria-hidden="true"
+            className={`olas-devtools-chevron ${expanded ? 'olas-devtools-chevron-open' : ''}`}
+          >
+            ›
+          </span>
+        )}
+      </div>
+      {expanded && isSetData && (
+        <div className="olas-devtools-payload olas-devtools-payload-json">
+          <SetDataDetail entry={entry} />
+        </div>
+      )}
+      {expanded && !isSetData && payload !== undefined && (
+        <div className="olas-devtools-payload olas-devtools-payload-json">
+          <JsonView value={payload} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** The expanded body of a `cache:set-data` row — a structural before/after diff. */
+function SetDataDetail({ entry }: { entry: TimelineEvent }): ReactElement {
+  const ev = entry.event as Extract<DebugEvent, { type: 'cache:set-data' }>
+  // `'prev' in entry` distinguishes "a baseline existed" (the store set `prev`,
+  // possibly to `undefined`) from "first write to this key" (store left it
+  // absent) — so a genuine `undefined → value` write renders as a diff, not as
+  // an "initial" value.
+  const hadBaseline = 'prev' in entry
+  const diff = useMemo(() => diffValues(entry.prev, ev.data), [entry.prev, ev.data])
+  return (
+    <div>
+      <div className="olas-devtools-tl-source">
+        source: <strong>{ev.source}</strong>
+      </div>
+      {hadBaseline ? (
+        <DiffView diff={diff} />
+      ) : (
+        // First write to the key — nothing to diff against; show the value.
+        <JsonView value={ev.data} />
+      )}
+    </div>
+  )
+}
+
+// ---- structural diff renderer ----
+
+function DiffView({ diff }: { diff: Diff }): ReactElement {
+  if (!hasChange(diff)) return <span className="olas-devtools-json-summary">no change</span>
+  return <DiffNode diff={diff} />
+}
+
+function DiffNode({ diff }: { diff: Diff }): ReactElement {
+  switch (diff.t) {
+    case 'same':
+      return <JsonView value={diff.value} />
+    case 'add':
+      return (
+        <span className="olas-devtools-diff-add">
+          <span className="olas-devtools-diff-mark">+</span>
+          <JsonView value={diff.value} />
+        </span>
+      )
+    case 'remove':
+      return (
+        <span className="olas-devtools-diff-remove">
+          <span className="olas-devtools-diff-mark">−</span>
+          <JsonView value={diff.value} />
+        </span>
+      )
+    case 'change':
+      return (
+        <span className="olas-devtools-diff-change">
+          <span className="olas-devtools-diff-prev">
+            <JsonView value={diff.prev} />
+          </span>
+          <span className="olas-devtools-diff-arrow" aria-hidden="true">
+            →
+          </span>
+          <span className="olas-devtools-diff-next">
+            <JsonView value={diff.next} />
+          </span>
+        </span>
+      )
+    default: {
+      // object | array — render only the changed entries, summarize the rest.
+      const changed = diff.entries.filter((e) => e.diff.t !== 'same')
+      const unchanged = diff.entries.length - changed.length
+      const [open, close] = diff.t === 'array' ? ['[', ']'] : ['{', '}']
+      return (
+        <span className="olas-devtools-diff-block">
+          <span className="olas-devtools-json-bracket">{open}</span>
+          <span className="olas-devtools-diff-children">
+            {changed.map((e) => (
+              <span key={e.key} className="olas-devtools-diff-row">
+                <span className="olas-devtools-json-key">{e.key}:</span>
+                <DiffNode diff={e.diff} />
+              </span>
+            ))}
+            {unchanged > 0 && (
+              <span className="olas-devtools-diff-unchanged">+{unchanged} unchanged</span>
+            )}
+          </span>
+          <span className="olas-devtools-json-bracket">{close}</span>
+        </span>
+      )
+    }
+  }
+}
+
+// ---- per-event display helpers ----
+
+/** A compact target string for an event: controller path / query key / field. */
+function eventTarget(ev: DebugEvent): string {
+  switch (ev.type) {
+    case 'controller:constructed':
+    case 'controller:suspended':
+    case 'controller:resumed':
+    case 'controller:disposed':
+      return formatPath(ev.path)
+    case 'mutation:run':
+    case 'mutation:success':
+    case 'mutation:error':
+    case 'mutation:rollback':
+      return ev.name !== undefined ? `${ev.name} · ${formatPath(ev.path)}` : formatPath(ev.path)
+    case 'field:validated':
+      return `${formatPath(ev.path)} · ${ev.field}`
+    default:
+      // All remaining variants (cache:* / snapshot:*) carry a queryKey.
+      return 'queryKey' in ev ? formatPath(ev.queryKey) : ''
+  }
+}
+
+/** The payload to reveal on expand, for non-`set-data` events (undefined = no detail). */
+function eventPayload(ev: DebugEvent): unknown {
+  switch (ev.type) {
+    case 'controller:constructed':
+      return ev.props
+    case 'mutation:run':
+      return ev.vars
+    case 'mutation:success':
+      return ev.result
+    case 'mutation:error':
+    case 'cache:fetch-error':
+      return ev.error
+    default:
+      return undefined
+  }
+}
+
+/** Short badge text: the part after the `family:` prefix (snapshot kept as `snap:`). */
+function badgeLabel(type: DebugEvent['type']): string {
+  if (type.startsWith('snapshot:')) return type.replace('snapshot:', 'snap:')
+  const i = type.indexOf(':')
+  return i === -1 ? type : type.slice(i + 1)
+}
+
+function timelineKindClass(type: DebugEvent['type']): string {
+  if (type === 'mutation:error' || type === 'cache:fetch-error') return 'olas-devtools-kind-error'
+  if (type === 'mutation:rollback' || type === 'snapshot:rollback') {
+    return 'olas-devtools-kind-rollback'
+  }
+  if (type === 'mutation:success' || type === 'cache:fetch-success') {
+    return 'olas-devtools-kind-success'
+  }
+  if (
+    type === 'cache:invalidated' ||
+    type === 'cache:gc' ||
+    type === 'controller:disposed' ||
+    type === 'controller:suspended'
+  ) {
+    return 'olas-devtools-kind-warn'
+  }
+  return ''
+}
+
+// ===========================================================================
 // URL-hash persistence
 // ===========================================================================
 
@@ -484,7 +833,7 @@ function readUrlHash(
   key: string | undefined,
   defaultTab: DevtoolsTab,
 ): { tab: DevtoolsTab; filters: Record<DevtoolsTab, string> } {
-  const empty = { tree: '', cache: '', inspector: '', mutations: '', fields: '' }
+  const empty = { timeline: '', tree: '', cache: '', inspector: '', mutations: '', fields: '' }
   if (key === undefined) return { tab: defaultTab, filters: empty }
   if (typeof window === 'undefined') return { tab: defaultTab, filters: empty }
   try {

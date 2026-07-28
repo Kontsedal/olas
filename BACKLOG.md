@@ -112,6 +112,38 @@ Keep this entry as a reference: future contributors will ask "why not Next?" and
 
 [from SPEC §16.5] Surgically replace one controller while preserving siblings and cache subscriptions. Significant complexity (subscription rebinding, prop reconciliation). The current recommended HMR shape (full root rebuild) sidesteps this; revisit only if rebuild ergonomics turn out to be a real friction point.
 
+## Devtools
+
+The flagship **devtools overhaul** (causal-timeline debugger) is partially landed: T8.1
+(event backbone — `seq`/`t`/`causeId`, `cache:set-data`, `snapshot:*`, ambient-cause
+threading, event-driven inspector) and T8.4 (the causal Timeline tab + structural diffs)
+shipped 2026-07-28. The remaining phases live in
+`.wiki/candidates/decisions/devtools-overhaul.md` (T8.2 virtualize + ring buffer, T8.3
+omnibox, T8.5 subscription/effect tracing, T8.6 live actions, T8.7 env sim + forms
+inspector, T8.8 plugin lanes, T8.9 session traces, T8.10 UX pass). The small T8.1
+leftovers below are terse enough to live here.
+
+### [idea] Wire `cache:subscribed` / `cache:unsubscribed`
+
+The `cache:subscribed` variant is declared in the `DebugEvent` union but never emitted —
+it needs the subscriber's controller path threaded through `ctx.use` → `ClientEntry.acquire`
+(and a matching `cache:unsubscribed` on `release` 1→0). Feeds per-entry subscriber counts
+in the inspector and "who's watching this" in the timeline. Part of overhaul T8.5.
+
+### [idea] Devtools events for infinite queries
+
+T8.1 wired `cache:fetch-*` + `snapshot:*` only for regular queries — `InfiniteEntry` has
+no `EntryEvents` hooks, so infinite fetches/optimistic writes don't appear on the timeline
+(only `setInfiniteData` emits `cache:set-data`). Add the same hook bundle to `InfiniteEntry`
+(per-direction: initial / next / prev) and wire it in `InfiniteClientEntry`.
+
+### [idea] Timeline group ordering by most-recent activity
+
+`groupByCause` positions a cause-group at its FIRST event's `seq`, so a long-running group
+whose latest event is recent still sorts low (newest-first is by group start, not last
+activity). Fine for the common single-mutation case; revisit if multi-cause interleaving
+gets confusing — order groups by their last event's `seq` instead.
+
 ## Documentation / polish
 
 ### [in-progress] Inline TSDoc on all exported types

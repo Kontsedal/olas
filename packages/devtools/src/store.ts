@@ -1,4 +1,4 @@
-import type { DebugEvent, Root } from '@kontsedal/olas-core'
+import type { DebugCacheEntry, DebugEvent, Root } from '@kontsedal/olas-core'
 import { type Signal, signal } from '@kontsedal/olas-core'
 
 /**
@@ -75,8 +75,40 @@ export type FieldEntry = {
   errors: string[]
 }
 
+/**
+ * One entry in the unified causal timeline — a normalized view over EVERY
+ * `DebugEvent`, ordered by `seq`. The panel groups these by `causeId` into
+ * collapsible cause-chains and renders a structural before/after diff for
+ * `cache:set-data`.
+ */
+export type TimelineEvent = {
+  /** Store-assigned, stable for the entry's lifetime — the React key. */
+  id: number
+  /** Emitter sequence (or a store-assigned fallback for un-stamped events). */
+  seq: number
+  /** Epoch ms. */
+  t: number
+  /** Correlates events from one cause (mutation run / fetch) into a group. */
+  causeId?: string
+  /** The raw event — the panel derives badge / target / payload from it. */
+  event: DebugEvent
+  /**
+   * For `cache:set-data` only: the entry's value *before* this write, captured
+   * at ingest so the panel renders a before/after diff without re-deriving
+   * history. Absent for the first write to a key (and all non-set-data events).
+   */
+  prev?: unknown
+}
+
 /** Defaults — exported so callers can override via `new DevtoolsStore({ maxEntries: 500 })`. */
 export const DEFAULT_MAX_ENTRIES = 100
+
+/**
+ * Cap on the unified timeline (`events$`). Higher than the per-view log cap
+ * because the timeline aggregates *every* event. Bounded rather than
+ * virtualized (windowed rendering is a later phase), so kept modest.
+ */
+export const DEFAULT_MAX_TIMELINE_ENTRIES = 500
 
 /**
  * Cap on disposed controller nodes retained in the tree. Beyond this, the
@@ -89,6 +121,8 @@ export const DEFAULT_MAX_DISPOSED_NODES = 200
 export type DevtoolsStoreOptions = {
   /** Cap on each event log (cache, mutation, field). Oldest entries drop first. */
   maxEntries?: number
+  /** Cap on the unified timeline (`events$`). Oldest entries drop first. Default 500. */
+  maxTimelineEntries?: number
   /** Cap on retained disposed controller nodes. Oldest disposed subtrees drop first. */
   maxDisposedNodes?: number
   /** Optional clock — useful for tests. Default: `() => Date.now()`. */
@@ -126,13 +160,36 @@ export class DevtoolsStore {
   readonly cache$: Signal<CacheEntry[]> = signal([])
   readonly mutations$: Signal<MutationEntry[]> = signal([])
   readonly fields$: Signal<FieldEntry[]> = signal([])
+  /** Unified causal timeline — every event, ordered by seq. Bounded. */
+  readonly events$: Signal<TimelineEvent[]> = signal([])
+  /**
+   * Live cache-entry state for the inspector. Seeded from
+   * `root.__debug.queryEntries()` on `attach()`, then refreshed (coalesced) on
+   * every cache / snapshot event — NO polling. Empty until attached.
+   */
+  readonly cacheState$: Signal<DebugCacheEntry[]> = signal([])
 
   private readonly maxEntries: number
+  private readonly maxTimelineEntries: number
   private readonly maxDisposedNodes: number
   private readonly now: () => number
   private readonly schedule: (fn: () => void) => number
   private readonly cancelSchedule: (handle: number) => void
   private nextId = 1
+  /**
+   * Store-assigned fallback sequence for events arriving without `seq` (bare
+   * `handle()` calls in tests). Real root events are pre-stamped by the emitter.
+   */
+  private timelineSeq = 0
+  /** Last-seen data per query-key hash — the baseline for the next set-data diff. */
+  private lastDataByKey = new Map<string, unknown>()
+  /** Source of the live cache snapshot, captured on `attach()`. */
+  private queryEntries: (() => DebugCacheEntry[]) | undefined
+  /**
+   * Set when a cache / snapshot event arrives; drives a coalesced
+   * `cacheState$` refresh in `flushPending` (replaces the old 800ms poll).
+   */
+  private cacheStateDirty = false
 
   /** Keyed by `path#name` → a FIFO queue of `run` start times. Overlapping
    *  runs of the same mutation each pair with their own start (shifted on
@@ -148,6 +205,7 @@ export class DevtoolsStore {
   private pendingCache: CacheEntry[] = []
   private pendingMutations: MutationEntry[] = []
   private pendingFields: FieldEntry[] = []
+  private pendingTimeline: TimelineEvent[] = []
   private flushHandle: number | null = null
 
   /**
@@ -160,6 +218,7 @@ export class DevtoolsStore {
 
   constructor(options?: DevtoolsStoreOptions) {
     this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES
+    this.maxTimelineEntries = options?.maxTimelineEntries ?? DEFAULT_MAX_TIMELINE_ENTRIES
     this.maxDisposedNodes = options?.maxDisposedNodes ?? DEFAULT_MAX_DISPOSED_NODES
     this.now = options?.now ?? (() => Date.now())
     const coalesce = options?.coalesce ?? 'sync'
@@ -172,13 +231,18 @@ export class DevtoolsStore {
       }
       this.cancelSchedule = () => {}
     } else if (coalesce === 'raf') {
+      // Wrap in arrows rather than assigning `requestAnimationFrame` directly:
+      // called as a method (`this.schedule(fn)`) an unbound native rAF runs
+      // with `this === store`, which real browsers reject with "Illegal
+      // invocation". Calling it bare here keeps the global `this`. (jsdom's rAF
+      // ignores `this`, so tests never caught this — only a real browser does.)
       this.schedule =
         typeof requestAnimationFrame === 'function'
-          ? requestAnimationFrame
+          ? (fn: () => void) => requestAnimationFrame(fn)
           : (fn: () => void) => setTimeout(fn, 0) as unknown as number
       this.cancelSchedule =
         typeof cancelAnimationFrame === 'function'
-          ? cancelAnimationFrame
+          ? (h: number) => cancelAnimationFrame(h)
           : (h: number) => clearTimeout(h as unknown as ReturnType<typeof setTimeout>)
     } else {
       this.schedule = coalesce
@@ -194,6 +258,10 @@ export class DevtoolsStore {
   /** Resume event ingestion. Buffered events from before pause are NOT replayed. */
   resume(): void {
     this.paused = false
+    // `cacheState$` is the current world, not a log — cache events during the
+    // pause were dropped before they could mark it dirty, so force it back in
+    // sync now (no-op before `attach()`).
+    this.refreshCacheState()
   }
 
   /** Whether ingestion is currently paused. */
@@ -207,11 +275,27 @@ export class DevtoolsStore {
    * on unmount.
    */
   attach(root: Pick<Root<unknown>, '__debug'>): () => void {
-    return root.__debug.subscribe((event) => this.handle(event))
+    const unsub = root.__debug.subscribe((event) => this.handle(event))
+    // Seed the live cache snapshot ONCE (no interval); it's refreshed from
+    // events thereafter — see `refreshCacheState`. This is what lets the
+    // inspector be event-driven instead of polling every 800ms.
+    this.queryEntries = () => root.__debug.queryEntries()
+    this.refreshCacheState()
+    // Seed the per-key diff baseline from current live data too, so the first
+    // post-attach write to an ALREADY-cached key diffs against its real value
+    // rather than reading as an "initial" write (the fetch that populated it
+    // happened before we subscribed).
+    for (const e of this.cacheState$.peek()) {
+      this.lastDataByKey.set(keyHash(e.key), e.data)
+    }
+    return unsub
   }
 
   /** Apply one event. Exposed for tests. */
   handle(event: DebugEvent): void {
+    // Every event lands on the unified timeline (ordered by seq), regardless of
+    // which specialized view (tree / cache / mutations / fields) it also feeds.
+    this.pushTimeline(event)
     switch (event.type) {
       case 'controller:constructed':
         this.tree$.set(insertNode(this.tree$.peek(), event.path, event.props))
@@ -261,6 +345,11 @@ export class DevtoolsStore {
         this.pushCache({ kind: 'invalidated', queryKey: event.queryKey })
         return
       case 'cache:gc':
+        // The entry is gone — drop its diff baseline so a later re-fetch of the
+        // same key renders as an initial write (not a diff against a ghost
+        // value), and so `lastDataByKey` stays bounded to live keys instead of
+        // growing one entry per distinct key ever seen.
+        this.lastDataByKey.delete(keyHash(event.queryKey))
         this.pushCache({ kind: 'gc', queryKey: event.queryKey })
         return
       case 'mutation:run': {
@@ -307,16 +396,25 @@ export class DevtoolsStore {
     }
   }
 
-  /** Clear every log. Tree state is preserved — the live tree is not a log. */
+  /**
+   * Clear every log AND the unified timeline. Tree + live cache state are
+   * preserved — they reflect the current world, not a history.
+   */
   clearLogs(): void {
     this.cache$.set([])
     this.mutations$.set([])
     this.fields$.set([])
+    this.events$.set([])
     // Drop pending coalesce buffers too — a scheduled flush after `clearLogs`
     // would otherwise revive entries the user just cleared.
     this.pendingCache = []
     this.pendingMutations = []
     this.pendingFields = []
+    this.pendingTimeline = []
+    // Reset the per-key diff baseline: after a clear, the next `cache:set-data`
+    // starts a fresh before/after history rather than diffing against a value
+    // whose originating event was just wiped.
+    this.lastDataByKey.clear()
     if (this.flushHandle !== null) {
       this.cancelSchedule(this.flushHandle)
       this.flushHandle = null
@@ -330,6 +428,46 @@ export class DevtoolsStore {
   // -----------------------------------------------------------------------
   // Internals
   // -----------------------------------------------------------------------
+
+  /**
+   * Append an event to the unified timeline and (for cache / snapshot events)
+   * mark the live cache snapshot dirty. Runs for EVERY event, before the
+   * specialized routing in `handle`.
+   */
+  private pushTimeline(event: DebugEvent): void {
+    if (this.paused) return
+    if (event.type.startsWith('cache:') || event.type.startsWith('snapshot:')) {
+      this.cacheStateDirty = true
+    }
+    const entry: TimelineEvent = {
+      id: this.nextId++,
+      // Prefer the emitter's `seq` (globally ordered); fall back to a store
+      // counter for bare `handle()` calls (tests) that arrive un-stamped.
+      seq: event.seq ?? ++this.timelineSeq,
+      t: event.t ?? this.now(),
+      event,
+    }
+    if (event.causeId !== undefined) entry.causeId = event.causeId
+    if (event.type === 'cache:set-data') {
+      const key = keyHash(event.queryKey)
+      // Capture the pre-write value for the diff, then advance the baseline.
+      if (this.lastDataByKey.has(key)) entry.prev = this.lastDataByKey.get(key)
+      this.lastDataByKey.set(key, event.data)
+    }
+    this.pendingTimeline.push(entry)
+    this.scheduleFlush()
+  }
+
+  /**
+   * Re-read the live cache snapshot from the root. Called once on `attach()`
+   * (seed) and again — coalesced via `flushPending` — whenever a cache /
+   * snapshot event arrives. No-op before `attach()` (bare-store tests).
+   */
+  private refreshCacheState(): void {
+    if (this.queryEntries === undefined) return
+    this.cacheState$.set(this.queryEntries())
+    this.cacheStateDirty = false
+  }
 
   private pushCache(entry: DistributiveOmit<CacheEntry, 'id' | 't'>): void {
     if (this.paused) return
@@ -396,6 +534,18 @@ export class DevtoolsStore {
       this.pendingFields = []
       this.fields$.set(next)
     }
+    if (this.pendingTimeline.length > 0) {
+      let next = this.events$.peek().slice()
+      for (const e of this.pendingTimeline) next.push(e)
+      if (next.length > this.maxTimelineEntries) {
+        next = next.slice(next.length - this.maxTimelineEntries)
+      }
+      this.pendingTimeline = []
+      this.events$.set(next)
+    }
+    // Coalesced inspector refresh — one snapshot read per frame no matter how
+    // many cache events landed, and only when something actually changed.
+    if (this.cacheStateDirty) this.refreshCacheState()
   }
 
   private consumeStart(path: readonly string[], name: string | undefined): number | undefined {
@@ -454,6 +604,30 @@ export class DevtoolsStore {
 
 function mutationKey(path: readonly string[], name: string | undefined): string {
   return `${path.join('>')}#${name ?? ''}`
+}
+
+/**
+ * Stable string key for a query-key array — tracks the last-seen data per entry
+ * so the timeline can diff a `cache:set-data` against the prior value.
+ * `JSON.stringify` covers the common primitive-array case; a `String` join is
+ * the fallback for keys carrying unserializable members.
+ */
+function keyHash(key: readonly unknown[]): string {
+  try {
+    // Distinguish `undefined` from `null` (both otherwise serialize to `null`)
+    // and stringify BigInt (`JSON.stringify` throws on it), so two distinct
+    // keys can't collide onto one diff-baseline slot. Tagged with a shape
+    // unlikely to occur as a real key value.
+    return JSON.stringify(key, (_k, v) => {
+      if (v === undefined) return { __olasKey: 'undefined' }
+      if (typeof v === 'bigint') return { __olasKey: 'bigint', v: v.toString() }
+      return v
+    })
+  } catch {
+    // Last resort for genuinely unserializable keys (circular refs). Type-tag
+    // each member so the join can't alias e.g. `['a','b']` and `['a|b']`.
+    return key.map((k) => `${typeof k}:${String(k)}`).join('|')
+  }
 }
 
 /**

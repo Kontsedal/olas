@@ -1,4 +1,4 @@
-import type { DebugEvent } from '@kontsedal/olas-core'
+import type { DebugCacheEntry, DebugEvent } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
 import { DevtoolsStore, insertNode, setNodeState } from '../src/store'
 
@@ -207,5 +207,239 @@ describe('DevtoolsStore.handle', () => {
     expect(store.tree$.peek().children).toHaveLength(1)
     unsubscribe()
     expect(captured).toBeUndefined()
+  })
+})
+
+describe('DevtoolsStore unified timeline', () => {
+  test('every event lands on the timeline in order', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'controller:constructed', path: ['root'], props: undefined })
+    store.handle({ type: 'cache:fetch-start', queryKey: ['u', '1'] })
+    store.handle({ type: 'mutation:run', path: ['root', 'save'], vars: 1 })
+    const events = store.events$.peek()
+    expect(events.map((e) => e.event.type)).toEqual([
+      'controller:constructed',
+      'cache:fetch-start',
+      'mutation:run',
+    ])
+    // Un-stamped events (bare handle calls) get a monotonic fallback seq.
+    expect(events.map((e) => e.seq)).toEqual([1, 2, 3])
+  })
+
+  test('prefers the emitter-supplied seq/t over the fallback', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'cache:gc', queryKey: ['a'], seq: 41, t: 5 })
+    store.handle({ type: 'cache:gc', queryKey: ['b'], seq: 42, t: 6 })
+    expect(store.events$.peek().map((e) => e.seq)).toEqual([41, 42])
+    expect(store.events$.peek().map((e) => e.t)).toEqual([5, 6])
+  })
+
+  test('cache:set-data captures the prior value as `prev` for the diff', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'fetch', data: { n: 1 } })
+    store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'mutate', data: { n: 2 } })
+    const writes = store.events$.peek().filter((e) => e.event.type === 'cache:set-data')
+    expect(writes[0]!.prev).toBeUndefined() // first write to the key
+    expect(writes[1]!.prev).toEqual({ n: 1 }) // diff baseline = prior data
+  })
+
+  test('carries causeId onto the timeline entry', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'mutation:run', path: ['root', 'save'], vars: 1, causeId: 'run-7' })
+    store.handle({ type: 'snapshot:push', queryKey: ['u', '1'], causeId: 'run-7' })
+    expect(store.events$.peek().map((e) => e.causeId)).toEqual(['run-7', 'run-7'])
+  })
+
+  test('distinct keys (undefined vs null) keep separate diff baselines', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'cache:set-data', queryKey: ['x', undefined], source: 'set', data: 1 })
+    store.handle({ type: 'cache:set-data', queryKey: ['x', null], source: 'set', data: 2 })
+    store.handle({ type: 'cache:set-data', queryKey: ['x', null], source: 'set', data: 3 })
+    const writes = store.events$.peek().filter((e) => e.event.type === 'cache:set-data')
+    // `['x', undefined]` and `['x', null]` must NOT alias onto one baseline.
+    expect('prev' in writes[0]!).toBe(false) // ['x', undefined] first write
+    expect('prev' in writes[1]!).toBe(false) // ['x', null] first write (not aliased)
+    expect(writes[2]!.prev).toBe(2) // ['x', null] second write diffs against 2
+  })
+
+  test('timeline is bounded by maxTimelineEntries — oldest drops first', () => {
+    const store = new DevtoolsStore({ maxTimelineEntries: 2, now: fixedNow })
+    for (let i = 0; i < 4; i++) store.handle({ type: 'cache:fetch-start', queryKey: [`k${i}`] })
+    const keys = store.events$
+      .peek()
+      .map((e) => (e.event as { queryKey: readonly unknown[] }).queryKey[0])
+    expect(keys).toEqual(['k2', 'k3'])
+  })
+
+  test('paused drops timeline events too', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.pause()
+    store.handle({ type: 'cache:fetch-start', queryKey: ['k'] })
+    expect(store.events$.peek()).toEqual([])
+  })
+
+  test("coalesce:'raf' invokes requestAnimationFrame with the global `this` (real-browser regression)", () => {
+    // A real browser throws "Illegal invocation" if native rAF is called as a
+    // method of some other object (`this !== window`). jsdom's rAF ignores
+    // `this`, so this must be asserted explicitly: assigning `requestAnimationFrame`
+    // unbound to `this.schedule` used to throw here in the actual panel.
+    const cbs: Array<() => void> = []
+    function strictRaf(this: unknown, cb: () => void): number {
+      if (this !== globalThis && this !== undefined) throw new TypeError('Illegal invocation')
+      cbs.push(cb)
+      return cbs.length
+    }
+    const origRaf = globalThis.requestAnimationFrame
+    const origCaf = globalThis.cancelAnimationFrame
+    globalThis.requestAnimationFrame = strictRaf as typeof requestAnimationFrame
+    globalThis.cancelAnimationFrame = (() => {}) as typeof cancelAnimationFrame
+    try {
+      const store = new DevtoolsStore({ coalesce: 'raf', now: fixedNow })
+      // With the bug this throws 'Illegal invocation' (rAF called with this=store).
+      store.handle({ type: 'cache:fetch-start', queryKey: ['k'] })
+      expect(cbs).toHaveLength(1) // a flush was actually scheduled
+      cbs[0]!() // run the rAF callback → flushPending
+      expect(store.events$.peek().map((e) => e.event.type)).toEqual(['cache:fetch-start'])
+    } finally {
+      globalThis.requestAnimationFrame = origRaf
+      globalThis.cancelAnimationFrame = origCaf
+    }
+  })
+
+  test('clearLogs clears the timeline and resets the diff baseline', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'fetch', data: { n: 1 } })
+    store.clearLogs()
+    expect(store.events$.peek()).toEqual([])
+    store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'mutate', data: { n: 2 } })
+    const write = store.events$.peek().find((e) => e.event.type === 'cache:set-data')
+    expect(write!.prev).toBeUndefined() // baseline was reset by clearLogs
+  })
+})
+
+describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
+  const entry = (over: Partial<DebugCacheEntry> = {}): DebugCacheEntry => ({
+    key: ['u', '1'],
+    status: 'success',
+    data: 1,
+    error: undefined,
+    lastUpdatedAt: 5,
+    isStale: false,
+    isFetching: false,
+    hasPendingMutations: false,
+    ...over,
+  })
+
+  test('seeds cacheState$ from queryEntries() on attach', () => {
+    const snapshot = [entry()]
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.attach({
+      __debug: {
+        subscribe: () => () => {},
+        queryEntries: () => snapshot.slice(),
+      },
+    })
+    expect(store.cacheState$.peek()).toEqual(snapshot)
+  })
+
+  test('seeds the diff baseline from queryEntries() on attach', () => {
+    let handler: ((e: DebugEvent) => void) | undefined
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.attach({
+      __debug: {
+        subscribe: (h: (e: DebugEvent) => void) => {
+          handler = h
+          return () => {}
+        },
+        queryEntries: () => [entry({ key: ['1'], data: { n: 1 } })],
+      },
+    })
+    // A write to the already-cached key diffs against the seeded value, not
+    // "initial" — the fetch that populated it happened before we subscribed.
+    handler?.({ type: 'cache:set-data', queryKey: ['1'], source: 'mutate', data: { n: 2 } })
+    const write = store.events$.peek().find((e) => e.event.type === 'cache:set-data')
+    expect(write!.prev).toEqual({ n: 1 })
+  })
+
+  test('refreshes cacheState$ on a cache event — no interval', () => {
+    let current: DebugCacheEntry[] = []
+    let handler: ((e: DebugEvent) => void) | undefined
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.attach({
+      __debug: {
+        subscribe: (h: (e: DebugEvent) => void) => {
+          handler = h
+          return () => {}
+        },
+        queryEntries: () => current.slice(),
+      },
+    })
+    expect(store.cacheState$.peek()).toEqual([])
+    current = [entry({ data: 42, lastUpdatedAt: 9 })]
+    handler?.({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'set', data: 42 })
+    expect(store.cacheState$.peek()).toEqual(current)
+  })
+
+  test('a non-cache event does not re-read the snapshot', () => {
+    let reads = 0
+    let handler: ((e: DebugEvent) => void) | undefined
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.attach({
+      __debug: {
+        subscribe: (h: (e: DebugEvent) => void) => {
+          handler = h
+          return () => {}
+        },
+        queryEntries: () => {
+          reads++
+          return []
+        },
+      },
+    })
+    expect(reads).toBe(1) // seed only
+    handler?.({ type: 'controller:suspended', path: ['root'] })
+    expect(reads).toBe(1) // controller lifecycle doesn't touch the cache snapshot
+  })
+
+  test('cache:gc evicts the diff baseline so a re-fetch reads as an initial write', () => {
+    let handler: ((e: DebugEvent) => void) | undefined
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.attach({
+      __debug: {
+        subscribe: (h: (e: DebugEvent) => void) => {
+          handler = h
+          return () => {}
+        },
+        queryEntries: () => [],
+      },
+    })
+    handler?.({ type: 'cache:set-data', queryKey: ['1'], source: 'fetch', data: { n: 1 } })
+    handler?.({ type: 'cache:gc', queryKey: ['1'] })
+    handler?.({ type: 'cache:set-data', queryKey: ['1'], source: 'fetch', data: { n: 2 } })
+    const writes = store.events$.peek().filter((e) => e.event.type === 'cache:set-data')
+    // The post-gc write has no baseline (gc evicted it) → renders as initial,
+    // not a diff against the pre-gc ghost value.
+    expect('prev' in writes[1]!).toBe(false)
+  })
+
+  test('resume() re-syncs cacheState$ after a paused cache change', () => {
+    let current: DebugCacheEntry[] = []
+    let handler: ((e: DebugEvent) => void) | undefined
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.attach({
+      __debug: {
+        subscribe: (h: (e: DebugEvent) => void) => {
+          handler = h
+          return () => {}
+        },
+        queryEntries: () => current.slice(),
+      },
+    })
+    store.pause()
+    current = [entry({ data: 99 })]
+    handler?.({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'set', data: 99 })
+    expect(store.cacheState$.peek()).toEqual([]) // dropped while paused, not refreshed
+    store.resume()
+    expect(store.cacheState$.peek()).toEqual(current) // forced back in sync on resume
   })
 })

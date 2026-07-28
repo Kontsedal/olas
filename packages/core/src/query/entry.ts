@@ -5,10 +5,29 @@ import { structuralShare } from './structural-share'
 import type { AsyncStatus, NetworkMode, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 export type EntryEvents = {
-  onFetchStart?: () => void
-  onFetchSuccess?: (durationMs: number) => void
-  onFetchError?: (durationMs: number, error: unknown) => void
+  /** A fetch began. `fetchId` correlates this with its settle + `cache:set-data`. */
+  onFetchStart?: (fetchId: string) => void
+  /**
+   * A fetch resolved. Carries the written `data` (so the client can emit a
+   * `cache:set-data` for the devtools inspector/timeline) and the `fetchId`
+   * shared with the matching `onFetchStart`.
+   */
+  onFetchSuccess?: (durationMs: number, data: unknown, fetchId: string) => void
+  onFetchError?: (durationMs: number, error: unknown, fetchId: string) => void
+  /** An optimistic snapshot layer was pushed (`setData` with tracking). */
+  onSnapshotPush?: () => void
+  /** An optimistic snapshot layer was rolled back. */
+  onSnapshotRollback?: () => void
+  /** An optimistic snapshot layer was committed. */
+  onSnapshotFinalize?: () => void
 }
+
+/**
+ * Process-wide monotonic counter behind each fetch's `causeId`. A per-`Entry`
+ * counter would collide across entries (entry A's fetch #1 vs entry B's #1),
+ * wrongly grouping unrelated fetches in the devtools timeline — so it's global.
+ */
+let globalFetchSeq = 0
 
 export type EntryOptions<T> = {
   fetcher: () => (signal: AbortSignal) => Promise<T>
@@ -94,6 +113,8 @@ export class Entry<T> {
   // callback only forwards the value through; Entry never inspects it.
   private readonly onSuccessData: ((data: unknown) => void) | undefined
   private fetchStartTime = 0
+  /** `causeId` of the in-flight fetch — shared across its start + settle events. */
+  private currentFetchCauseId = ''
   /**
    * Promises returned by `firstValue()` that haven't settled. Rejected on
    * `dispose()` so awaiters (most notably `prefetch` and `subscription.firstValue`)
@@ -167,8 +188,9 @@ export class Entry<T> {
     })
 
     this.fetchStartTime = Date.now()
+    this.currentFetchCauseId = `fetch:${++globalFetchSeq}`
     try {
-      this.events.onFetchStart?.()
+      this.events.onFetchStart?.(this.currentFetchCauseId)
     } catch {
       // devtools handlers must not break the program.
     }
@@ -304,7 +326,11 @@ export class Entry<T> {
     this.forcedStale = false // fresh data clears a prior markStale() (T3.9)
     if (this.staleTime > 0) this.scheduleStaleness()
     try {
-      this.events.onFetchSuccess?.(Date.now() - this.fetchStartTime)
+      this.events.onFetchSuccess?.(
+        Date.now() - this.fetchStartTime,
+        shared,
+        this.currentFetchCauseId,
+      )
     } catch {
       // devtools handlers must not break the program.
     }
@@ -320,7 +346,7 @@ export class Entry<T> {
       this.isFetching.set(false)
     })
     try {
-      this.events.onFetchError?.(Date.now() - this.fetchStartTime, err)
+      this.events.onFetchError?.(Date.now() - this.fetchStartTime, err, this.currentFetchCauseId)
     } catch {
       // devtools handlers must not break the program.
     }
@@ -481,6 +507,11 @@ export class Entry<T> {
     if (!record) {
       return { rollback: () => {}, finalize: () => {} }
     }
+    try {
+      this.events.onSnapshotPush?.()
+    } catch {
+      // devtools handlers must not break the program.
+    }
     const id = record.id
     return {
       rollback: () => {
@@ -507,6 +538,11 @@ export class Entry<T> {
           }
           this.hasPendingMutations.set(this.snapshots.some((s) => s.live))
         })
+        try {
+          this.events.onSnapshotRollback?.()
+        } catch {
+          // devtools handlers must not break the program.
+        }
       },
       finalize: () => {
         if (!record.live || this.disposed) return
@@ -514,6 +550,11 @@ export class Entry<T> {
         this.snapshots = this.snapshots.filter((s) => s.id !== id)
         if (!this.snapshots.some((s) => s.live)) {
           this.hasPendingMutations.set(false)
+        }
+        try {
+          this.events.onSnapshotFinalize?.()
+        } catch {
+          // devtools handlers must not break the program.
         }
       },
     }

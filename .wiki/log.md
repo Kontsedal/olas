@@ -610,3 +610,63 @@ deleted yet (Publish + all of Phase 8 are still `[ ]`).
 `pnpm build` + `pnpm typecheck` clean (all packages + examples); `pnpm exec biome
 lint .` clean (276 files); `pnpm test` → 751/751 across 57 files (coverage gate
 green); `pnpm wiki:lint` 0 errors (50 pages).
+
+---
+
+## [2026-07-28 20:45] ingest | devtools overhaul — T8.1 (event backbone) + T8.4 (causal timeline)
+
+Landed the foundation + headline of the Phase 8 devtools overhaul (was
+`candidates/decisions/devtools-overhaul.md`).
+
+**Core (T8.1).** `DebugEvent` now carries optional `seq` / `t` / `causeId`
+(distributive `Body & Meta`, so `switch` still narrows); `DevtoolsEmitter.emit`
++ replay stamp `seq`/`t` centrally. New events: `cache:set-data`
+(`source` + post-write `data`) and `snapshot:push`/`rollback`/`finalize`. A
+dev-only ambient cause (`__runWithCause` / `__currentCauseId`) threads a
+mutation's `runId` into the optimistic writes + snapshot events it triggers;
+fetches share a per-fetch `fetchId`. Wired in `entry.ts` (new `EntryEvents`
+hooks + `globalFetchSeq`), `client.ts` (`emitDevtoolsSetData` + the events
+bundle), `mutation.ts` (runId → `emit(…, causeId)` + `__runWithCause`).
+
+**Devtools (T8.4).** Store grew `events$` (unified bounded timeline) +
+`cacheState$` (event-driven inspector — the 800ms poll is gone; seeded from
+`queryEntries()` on attach + refreshed on cache events). New `diff.ts`
+(cycle-safe structural before/after). Panel: default **Timeline** tab with
+`causeId` cause-chains + per-`set-data` diff; Inspector reads `cacheState$`.
+
+**Docs.** SPEC §14 rewritten (event families + correlation fields). Updated
+`modules/devtools.md`, `modules/devtools-panel.md`; new
+`flows/devtools-causal-timeline.md`. Candidate overhaul + backlog annotated
+with what landed vs. what remains (T8.2/8.3/8.5–8.10 + `cache:subscribed`
+wiring + infinite-query devtools events).
+
+### Gates
+
+`pnpm test` → 783/783 across 58 files; `pnpm build` + `pnpm typecheck` clean
+(all packages + examples); `biome check --write` on touched files (format +
+imports) then `biome lint` clean.
+
+---
+
+## [2026-07-28 21:40] ingest | live verification of the devtools panel — found + fixed a real rAF bug
+
+Ran the kanban example end-to-end in a real browser (Playwright driving system
+Edge) to screenshot the live causal Timeline. The Timeline, cause-chain
+grouping (createCard run→success; a fetch's start→success→set-data sharing one
+causeId with +Δms deltas), and the set-data source/diff all render correctly.
+
+**Bug found (pre-existing, only reproducible in a real browser):** the panel's
+`coalesce: 'raf'` path assigned native `requestAnimationFrame` UNBOUND to
+`this.schedule`; calling `this.schedule(fn)` invoked rAF with `this === store`
+→ `TypeError: Illegal invocation`, swallowed by `DevtoolsEmitter.emit`'s empty
+catch, leaving `flushHandle` stuck at `-1`. Effect: Tree + Inspector (set
+synchronously) worked, but every coalesced signal (cache / mutations / fields /
+timeline) stayed permanently empty with no console error. jsdom's rAF ignores
+`this`, so the whole RTL suite passed. Fixed by wrapping rAF/cancelRAF in arrows
+(`store.ts`); added a regression test that installs a strict `this`-checking rAF
+under vitest; documented in `pitfalls/raf-unbound-illegal-invocation.md`.
+
+### Gates
+
+`pnpm test` → 788/788 across 58 files; `pnpm build` + `pnpm typecheck` clean
+(all packages + examples); `biome` clean.
