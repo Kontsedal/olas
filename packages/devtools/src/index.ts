@@ -9,6 +9,7 @@ export {
   type FieldEntry,
   insertNode,
   type MutationEntry,
+  setNodeDebug,
   setNodeState,
   type TimelineEvent,
 } from './store'

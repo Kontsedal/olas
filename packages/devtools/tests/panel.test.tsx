@@ -268,6 +268,27 @@ describe('<DevtoolsPanel>', () => {
     root.dispose()
   })
 
+  test('Tree shows ctx.debug variables and updates them reactively', async () => {
+    const count = signal(0)
+    const def = defineController((ctx) => {
+      ctx.debug({ count })
+      return { inc: () => count.set(count.peek() + 1) }
+    })
+    const root = createRoot(def, { deps: {} })
+
+    render(<DevtoolsPanel root={root} defaultTab="tree" />)
+    const panel = screen.getByRole('tabpanel')
+    expect(panel.textContent).toContain('count') // variable name
+    expect(panel.textContent).toContain('0') // live value
+
+    await act(async () => {
+      root.inc()
+    })
+    expect(panel.textContent).toContain('1') // updated reactively — no poll
+
+    root.dispose()
+  })
+
   test('the cache inspector updates from events (no poll)', async () => {
     const q = defineQuery({ key: (id: string) => [id], fetcher: async (_c, id) => `data-${id}` })
     const def = defineController((ctx) => ({ x: ctx.use(q, () => ['u1']) }))

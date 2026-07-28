@@ -151,15 +151,16 @@ const userProfile = defineController((ctx, id: string) => {
 
 ### 3.2 The `ctx` object
 
-`ctx` exposes every primitive a controller can construct (cache, use, mutation, emitter, field, form, fieldArray, child, attach, collection, session, lazyChild, effect, on, provide, inject), the lifecycle hooks (`onDispose`, `onSuspend`, `onResume`), and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
+`ctx` exposes every primitive a controller can construct (cache, use, mutation, emitter, field, form, fieldArray, child, attach, collection, session, lazyChild, effect, on, provide, inject), the lifecycle hooks (`onDispose`, `onSuspend`, `onResume`), the devtools helper `debug`, and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
 
-At a glance, the primitives split into four groups:
+At a glance, the primitives split into these groups:
 
 - **Reactive state & async data:** `cache`, `use`, `mutation`, `effect`.
 - **Forms & input:** `field`, `form`, `fieldArray`.
 - **Events & communication:** `emitter`, `on`, `provide`, `inject`.
 - **Tree composition:** `child`, `attach`, `collection`, `dynamicCollection`, `session`.
 - **Lifecycle & DI:** `onDispose`, `onSuspend`, `onResume`, `deps`.
+- **Devtools (dev-only):** `debug({ ... })` — expose named live values (signals, computeds, fields, …) to the devtools "Variables" view for this controller. A no-op in production; see §14.
 
 **On `ctx`'s breadth.** `ctx` is intentionally broad — it's the single source of "things bound to this controller's lifetime." That's a coherent responsibility, but the surface is large (~19 methods). Two consequences worth knowing upfront:
 
@@ -1373,7 +1374,8 @@ root.__debug.queryEntries() // DebugCacheEntry[] — current state of every cach
 
 `DebugEvent` is a discriminated union on `type`:
 
-- `controller:constructed | suspended | resumed | disposed` — `{ path }` (`constructed` also carries `props`).
+- `controller:constructed | suspended | resumed | disposed` — `{ path }` (`constructed` also carries `props`, and any variables the controller registered via `ctx.debug({...})` during construction as `debug`).
+- `controller:debug` — `{ path, values }`. A `ctx.debug({...})` call *after* construction (e.g. from an effect); carries the controller's full merged variables record (live references).
 - `cache:subscribed | fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryKey }` (`fetch-success`/`fetch-error` add `durationMs`, `fetch-error` adds `error`, `subscribed` adds `subscriberPath`).
 - `cache:set-data` — `{ queryKey, source, data }`. Emitted on every cache write; `data` is the post-write value and `source` is `'set' | 'fetch' | 'mutate' | 'remote'` (mirrors the §13.2 plugin vocabulary). This is what lets a panel show *current* data without polling.
 - `snapshot:push | rollback | finalize` — `{ queryKey }`. The optimistic-update stack (§6.4): a tracked `setData` pushes, a mutation error / supersede rolls back, a mutation success finalizes.
@@ -1390,7 +1392,7 @@ Every *delivered* event also carries `seq` and `t`, and — where core can cheap
 
 These three are optional on the `DebugEvent` *type* (so tooling can construct events by hand), but the bus always stamps `seq`/`t` on delivery.
 
-`@kontsedal/olas-devtools` consumes this stream as an in-app panel whose headline view is a causal **Timeline**: events grouped by `causeId` into cause-chains, each `cache:set-data` expandable to a structural before/after diff — alongside controller-tree, cache-log, live cache-inspector, mutation and field views.
+`@kontsedal/olas-devtools` consumes this stream as an in-app panel whose headline view is a causal **Timeline**: events grouped by `causeId` into cause-chains, each `cache:set-data` expandable to a structural before/after diff — alongside a controller-tree (each node showing its `ctx.debug` **Variables** live), cache-log, live cache-inspector, mutation and field views.
 
 The schema is stable enough to build tooling on, but isn't a public API guarantee — internal events may be added, and consumers `switch` on `type` and ignore unknowns. All events and the bus itself are dev-only: production builds strip every `emit(...)` call site (`__DEV__`), so no events arrive (§23).
 
@@ -2091,6 +2093,9 @@ type Ctx<TDeps = AmbientDeps> = {
   ): LazyChild<Api>
 
   effect(fn: () => void | (() => void)): void
+
+  // devtools — expose named live values to the "Variables" view (dev-only, §14)
+  debug(values: Record<string, unknown>): void
 
   // event subscribe with auto-cleanup
   on<T>(emitter: Emitter<T>, handler: (value: T) => void): void

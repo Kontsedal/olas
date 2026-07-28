@@ -670,3 +670,32 @@ under vitest; documented in `pitfalls/raf-unbound-illegal-invocation.md`.
 
 `pnpm test` → 788/788 across 58 files; `pnpm build` + `pnpm typecheck` clean
 (all packages + examples); `biome` clean.
+
+---
+
+## [2026-07-28 22:57] ingest | ctx.debug — controller "Variables" view
+
+New opt-in devtools primitive: `ctx.debug({ count, doubled, … })` exposes named
+live values for the panel's Tree, rendered reactively (no polling).
+
+**Core.** `Ctx.debug(values)` (`instance.ts` buildCtx) merges the record onto
+`ControllerInstance.debugValues`; dev-only (`if (!__DEV__) return`), no
+LifecycleEntry, no `assertLive`. During construction the record rides out on
+`controller:constructed` (new optional `debug` field); a post-construction call
+emits the new `controller:debug` event. `DevtoolsEmitter` tracks/replays `debug`
+per live controller. SPEC §3.2/§14/§20.2 updated.
+
+**Devtools.** `ControllerNode.debug`; `insertNode` carries it, `setNodeDebug`
+updates it; `controller:debug` kept off the timeline. `<TreeNode>` renders a
+Variables section (open by default); `<DebugVar>`/`<ReactiveValue>` duck-type
+signal-likes (`peek`+`subscribeChanges`) and `use()` them so values update live;
+non-signals show a static snapshot. Dogfooded in the kanban board controller.
+
+New wiki pitfall/entities updates + `pitfalls`/`ctx.md`/`devtools.md`/
+`devtools-panel.md`. Reactive display verified by an RTL test that flips a signal
+and asserts the panel re-renders.
+
+### Gates
+
+`pnpm test` → 797/797 across 58 files; `pnpm build` + `pnpm typecheck` clean
+(all packages + examples); `biome` clean.

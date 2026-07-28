@@ -113,7 +113,7 @@ For full history, build a `DevtoolsStore` next to `createRoot` (before any contr
 | Tab | Reads | Renders |
 |-----|-------|---------|
 | **Timeline** (default) | `store.events$` | Cause-chains: events grouped by `causeId` into collapsible `<CauseGroup>`s (accent-colored by worst outcome); un-caused events standalone. Newest-first; within a group chronological with `+Δms` from group start. Each `cache:set-data` expands to a `<DiffView>`; other payload-carrying events expand to `<JsonView>`. |
-| **Tree** | `store.tree$` | Recursive `<TreeNode>`; struck-through for `disposed`, orange for `suspended`. |
+| **Tree** | `store.tree$` | Recursive `<TreeNode>`; struck-through for `disposed`, orange for `suspended`; each node shows its `ctx.debug` **Variables** (live) + props. |
 | **Cache** | `store.cache$` | Event log `<ul>`: time · kind · `formatPath(queryKey) + details`. Red for `fetch-error`. |
 | **Inspector** | `store.cacheState$` | Live cache state (data / status / stale / fetching / optimistic tags), refreshed from `queryEntries()` on cache events — **no polling**. |
 | **Mutations** | `store.mutations$` | time · kind · `formatPath(path) + payload`. Red for `error`, orange for `rollback`. |
@@ -124,6 +124,12 @@ For full history, build a `DevtoolsStore` next to `createRoot` (before any contr
 `store.events$` is a bounded, `seq`-ordered log of EVERY event (bound = `maxTimelineEntries`, default 500 — higher than the per-view `maxEntries` because it aggregates all families). `groupByCause` folds it into rows: events sharing a `causeId` collapse into one `<CauseGroup>` positioned at the group's first event (the group array is filled by reference as later events arrive, so a whole mutation chain renders together); un-caused events stay standalone. Rows render newest-first; a group's inner events stay chronological so cause → effect reads top-down.
 
 A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.prev, event.data)` from `diff.ts` — a small, cycle-safe AND depth-bounded (`MAX_DIFF_DEPTH`, so an arbitrarily deep cache value can't overflow the stack and crash the panel) structural walker (added/removed/changed keys highlighted; wholly-unchanged subtrees collapse to a `same` node and are summarized as "+N unchanged"). `diff.ts` deliberately does NOT import core's structural-share internals. The store seeds the per-key diff baseline (`lastDataByKey`) on attach and evicts it on `cache:gc`, so a re-fetch after GC reads as an initial write, not a diff against a ghost value.
+
+## Controller variables (`ctx.debug`)
+
+A `TreeNode` whose `ControllerNode.debug` record is non-empty renders a **Variables** section (open by default) listing each `name: value` a controller registered via `ctx.debug({...})`. The store carries the debug record on the node — set from `controller:constructed`'s `debug` field (`insertNode` 4th arg) and updated by `controller:debug` (`setNodeDebug`); `controller:debug` is deliberately kept OFF the timeline (it's a state re-registration, not a causal event).
+
+Rendering is **reactive with no polling**: `<DebugVar>` duck-types a signal-like value (`peek` + `subscribeChanges` — what `use()` needs; core exports no runtime guard) and renders it through `<ReactiveValue>`, which calls `use()` so the value updates as the signal changes. Non-signals render a static `JsonView` snapshot; functions show `[fn]`. Subscriptions are lazy — only the visible, expanded nodes on the (active) Tree tab hold `use()` subscriptions, so it stays cheap. A Field (itself a `ReadSignal`) shows its value live; a whole Form/subscription/mutation isn't a top-level signal, so it renders as a static object — debug their value signals instead.
 
 ## Event-driven inspector (the poll is gone)
 

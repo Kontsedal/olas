@@ -9,7 +9,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-07-25
+last_verified: 2026-07-28
 confidence: high
 ---
 
@@ -30,6 +30,9 @@ type Ctx<TDeps = AmbientDeps> = {
   // composition
   child, attach, effect, emitter, on
 
+  // devtools (dev-only)
+  debug
+
   // scopes (Phase 10)
   provide, inject
 
@@ -48,6 +51,8 @@ The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:390`). 
 3. Return the primitive.
 
 `ctx.effect`, `ctx.on`, and the lifecycle hooks also wrap user callbacks in a `dispatchError(rootShared.onError, err, {kind, controllerPath})` shield.
+
+**`ctx.debug({...})` is the exception to that shape.** It pushes no `LifecycleEntry` and returns nothing — it merges the given live values onto `instance.debugValues` for the devtools "Variables" view (riding out on `controller:constructed`'s `debug` field during construction, or a `controller:debug` event after). It is `__DEV__`-only (a no-op in production, so it retains nothing there) and does NOT `assertLive`, so it's safe to call from an effect post-construction. See `../modules/devtools.md`.
 
 ## When is `ctx.*` callable?
 

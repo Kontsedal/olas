@@ -341,6 +341,23 @@ export type Ctx<TDeps = AmbientDeps> = {
 
   effect(fn: () => void | (() => void)): void
 
+  /**
+   * Expose a bag of named values to the devtools "Variables" view for this
+   * controller. Pass live references — signals/computeds/fields render their
+   * current value and update reactively in the panel; plain values show a
+   * snapshot. Names come from the object keys; call it more than once to merge.
+   *
+   * Dev-only: a no-op in production builds (stripped like the rest of the
+   * `__debug` bus), so it costs nothing and retains nothing there.
+   *
+   * ```ts
+   * const count = signal(0)
+   * const doubled = computed(() => count.value * 2)
+   * ctx.debug({ count, doubled })
+   * ```
+   */
+  debug(values: Record<string, unknown>): void
+
   on<T>(emitter: Emitter<T>, handler: (value: T) => void): void
 
   // scopes — typed cross-tree data (§10.3)

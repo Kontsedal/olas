@@ -59,6 +59,12 @@ Lifecycle events from `ControllerInstance` go straight through `rootShared.devto
 
 **Mutation events** (Phase 13; `causeId` T8.1). `MutationImpl` takes an optional `DevtoolsEmitter` constructor argument from `ctx.mutation` (via `instance.ts`). Each `executeRun` mints a `runId` up front (`makeRunId()`, generated when persistable OR `__DEV__`) used as BOTH the persistable run id AND the devtools `causeId`. The private `emit(event, causeId?)` (`mutation.ts:230-246`) stamps it onto `mutation:run/success/error/rollback`. `mutation:run` fires after `onMutate` succeeds and counters are bumped; `mutation:success` before user `onSuccess`; `mutation:error` before user `onError`; `mutation:rollback` via a wrapped `Snapshot` — both auto-rollback (supersede / dispose / error) AND user-driven `snapshot.rollback()` emit it, exactly once per snapshot.
 
+## `ctx.debug({...})` — controller variables
+
+`ctx.debug(record)` (`instance.ts` `buildCtx`) lets a controller expose named **live** values (signals/computeds/fields — held by reference, not snapshotted) for the devtools "Variables" view. Dev-only: `if (!__DEV__) return`, so it costs nothing and retains nothing in production. It merges across calls into `ControllerInstance.debugValues`.
+
+Timing: `ctx.debug` runs *during* the factory (state `constructing`), before `construct()` emits `controller:constructed` — so the merged record **rides out on `controller:constructed`** (a `debug?` field on that event), correctly ordered and replayed to late subscribers. A call *after* construction (state `active` — e.g. from an effect) instead emits a `controller:debug` event carrying the full merged record. `DevtoolsEmitter.recordLifecycle` stores `debug` per live controller (from either event) so replay includes it. The panel renders each value reactively via `use()` (see `devtools-panel.md`).
+
 ## Correlation backbone (`seq` / `t` / `causeId`)
 
 `seq` + `t` are stamped centrally (see `stamp` above). `causeId` groups all events from one cause into a chain in the devtools timeline:
@@ -75,7 +81,8 @@ The whole chain for a failing optimistic mutation — `mutation:run` → `snapsh
 
 | Event family | Status |
 |---|---|
-| `controller:constructed / suspended / resumed / disposed` | ✓ wired in `ControllerInstance` |
+| `controller:constructed / suspended / resumed / disposed` | ✓ wired in `ControllerInstance` (`constructed` also carries `debug` — see below) |
+| `controller:debug` | ✓ wired via `ctx.debug({...})` (post-construction updates; construction-time vars ride `controller:constructed`) |
 | `cache:fetch-start / fetch-success / fetch-error` | ✓ wired via `EntryEvents` (regular queries; carry `fetchId` as `causeId`) |
 | `cache:set-data` | ✓ wired — fetch success + `setData` / `setInfiniteData` / remote / dehydrate / `setEntryData` |
 | `cache:invalidated / gc` | ✓ wired in `QueryClient` |

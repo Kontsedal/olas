@@ -1,6 +1,6 @@
 import type { DebugCacheEntry, DebugEvent } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
-import { DevtoolsStore, insertNode, setNodeState } from '../src/store'
+import { DevtoolsStore, insertNode, setNodeDebug, setNodeState } from '../src/store'
 
 const fixedNow = () => 1000
 
@@ -207,6 +207,48 @@ describe('DevtoolsStore.handle', () => {
     expect(store.tree$.peek().children).toHaveLength(1)
     unsubscribe()
     expect(captured).toBeUndefined()
+  })
+})
+
+describe('DevtoolsStore controller variables (ctx.debug)', () => {
+  test('controller:constructed with debug populates node.debug', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({
+      type: 'controller:constructed',
+      path: ['root'],
+      props: undefined,
+      debug: { count: 3, name: 'x' },
+    })
+    expect(store.tree$.peek().children[0]?.debug).toEqual({ count: 3, name: 'x' })
+  })
+
+  test('controller:debug updates node.debug post-construction', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'controller:constructed', path: ['root'], props: undefined })
+    store.handle({ type: 'controller:debug', path: ['root'], values: { a: 1 } })
+    expect(store.tree$.peek().children[0]?.debug).toEqual({ a: 1 })
+  })
+
+  test('a re-construction without debug preserves existing variables', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'controller:constructed', path: ['root'], props: 1, debug: { a: 1 } })
+    store.handle({ type: 'controller:constructed', path: ['root'], props: 2 }) // no debug
+    expect(store.tree$.peek().children[0]?.debug).toEqual({ a: 1 })
+  })
+
+  test('controller:debug does NOT land on the timeline', () => {
+    const store = new DevtoolsStore({ now: fixedNow })
+    store.handle({ type: 'controller:constructed', path: ['root'], props: undefined })
+    store.handle({ type: 'controller:debug', path: ['root'], values: { a: 1 } })
+    expect(store.events$.peek().some((e) => e.event.type === 'controller:debug')).toBe(false)
+  })
+
+  test('setNodeDebug sets debug at a path; a missing path leaves the tree unchanged', () => {
+    const root = { path: [], state: 'active' as const, props: undefined, children: [] }
+    const t1 = insertNode(root, ['root', 'f[0]'], undefined)
+    const t2 = setNodeDebug(t1, ['root', 'f[0]'], { n: 1 })
+    expect(t2.children[0]?.children[0]?.debug).toEqual({ n: 1 })
+    expect(setNodeDebug(t1, ['root', 'nope'], { n: 1 })).toBe(t1)
   })
 })
 

@@ -1,4 +1,4 @@
-import type { DebugCacheEntry, DebugEvent, Root } from '@kontsedal/olas-core'
+import type { DebugCacheEntry, DebugEvent, ReadSignal, Root } from '@kontsedal/olas-core'
 import { use } from '@kontsedal/olas-react'
 import { type ReactElement, useEffect, useMemo, useState } from 'react'
 import { type Diff, diffValues, hasChange } from './diff'
@@ -339,6 +339,9 @@ function TreeNode({
   const propsPreview = useMemo(() => summarizeProps(node.props), [node.props])
   const [propsOpen, setPropsOpen] = useState(false)
   const canExpandProps = node.props !== undefined && node.props !== null
+  const debugKeys = node.debug ? Object.keys(node.debug) : []
+  // Variables (ctx.debug) are the point of this view — open by default.
+  const [varsOpen, setVarsOpen] = useState(true)
 
   return (
     <div className="olas-devtools-tree-node">
@@ -349,6 +352,17 @@ function TreeNode({
           <span className="olas-devtools-tree-pending" title="pending mutations on this controller">
             {pendingCount} pending
           </span>
+        )}
+        {debugKeys.length > 0 && (
+          <button
+            type="button"
+            className="olas-devtools-tree-vars-toggle"
+            aria-expanded={varsOpen}
+            onClick={() => setVarsOpen((v) => !v)}
+            title={varsOpen ? 'Hide variables' : 'Show variables'}
+          >
+            {debugKeys.length} var{debugKeys.length === 1 ? '' : 's'}
+          </button>
         )}
         {canExpandProps && (
           <button
@@ -362,6 +376,13 @@ function TreeNode({
           </button>
         )}
       </span>
+      {varsOpen && node.debug && debugKeys.length > 0 && (
+        <div className="olas-devtools-tree-vars">
+          {debugKeys.map((k) => (
+            <DebugVar key={k} name={k} value={(node.debug as Record<string, unknown>)[k]} />
+          ))}
+        </div>
+      )}
       {propsOpen && canExpandProps && (
         <div className="olas-devtools-tree-props">
           <JsonView value={node.props} />
@@ -375,6 +396,55 @@ function TreeNode({
         </div>
       )}
     </div>
+  )
+}
+
+// ---- ctx.debug variables (reactive) ----
+
+/** A signal-like value: what `use()` needs to read + subscribe reactively. */
+type SignalLike = { peek(): unknown; subscribeChanges(cb: () => void): () => void }
+
+/**
+ * Duck-type a `ReadSignal` (signal / computed / field / readOnly view) — core
+ * exports no runtime guard, and this avoids importing internals. Matches the
+ * surface `use()` actually uses (`peek` + `subscribeChanges`).
+ */
+function isSignalLike(v: unknown): v is SignalLike {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as { peek?: unknown }).peek === 'function' &&
+    typeof (v as { subscribeChanges?: unknown }).subscribeChanges === 'function'
+  )
+}
+
+/** One `ctx.debug({...})` variable row: `name: value` (reactive if a signal). */
+function DebugVar({ name, value }: { name: string; value: unknown }): ReactElement {
+  return (
+    <div className="olas-devtools-var-row">
+      <span className="olas-devtools-var-name">{name}:</span>
+      {isSignalLike(value) ? (
+        <ReactiveValue signal={value} />
+      ) : typeof value === 'function' ? (
+        <span className="olas-devtools-json-summary">
+          [fn{(value as { name?: string }).name ? ` ${(value as { name: string }).name}` : ''}]
+        </span>
+      ) : (
+        <span className="olas-devtools-var-value">
+          <JsonView value={value} />
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** Subscribes to a signal via `use()` so the rendered value updates live. */
+function ReactiveValue({ signal }: { signal: SignalLike }): ReactElement {
+  const value = use(signal as unknown as ReadSignal<unknown>)
+  return (
+    <span className="olas-devtools-var-value">
+      <JsonView value={value} />
+    </span>
   )
 }
 

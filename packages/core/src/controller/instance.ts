@@ -181,6 +181,12 @@ export class ControllerInstance {
    * stamp and re-walks. Provide is rare; reads dominate.
    */
   private injectCache: Map<symbol, { value: unknown; version: number }> | null = null
+  /**
+   * Values registered via `ctx.debug({...})` for the devtools "Variables"
+   * view. Live references (signals stay reactive in the panel). Merged across
+   * calls. Only ever populated under `__DEV__` — `ctx.debug` no-ops otherwise.
+   */
+  private debugValues: Record<string, unknown> | undefined = undefined
 
   /**
    * Pre-seed scopes from outside the factory — used by `createRoot`'s
@@ -228,6 +234,10 @@ export class ControllerInstance {
         type: 'controller:constructed',
         path: this.path,
         props: props as unknown,
+        // Variables registered via `ctx.debug({...})` during the factory ride
+        // out here (buildCtx runs before this emit), correctly ordered and
+        // replayed to late subscribers. Omitted when none were registered.
+        ...(this.debugValues !== undefined ? { debug: this.debugValues } : {}),
       })
     }
     return api
@@ -460,6 +470,25 @@ export class ControllerInstance {
           entry.dispose = standaloneEffect(wrapped)
         }
         self.entries.push(entry)
+      },
+
+      debug(values) {
+        // Dev-only: registers live references (signals stay reactive in the
+        // devtools panel) for this controller's "Variables" view. No-op in
+        // production so it costs nothing and holds nothing. Merges across calls.
+        if (!__DEV__) return
+        self.debugValues =
+          self.debugValues === undefined ? { ...values } : { ...self.debugValues, ...values }
+        // During construction the merged record rides out on
+        // `controller:constructed` (see `construct`). A call AFTER construction
+        // (e.g. from inside an effect) pushes an update event instead.
+        if (self.state === 'active') {
+          self.rootShared.devtools.emit({
+            type: 'controller:debug',
+            path: self.path,
+            values: self.debugValues,
+          })
+        }
       },
 
       cache<T>(

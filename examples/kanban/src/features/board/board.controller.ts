@@ -146,6 +146,11 @@ export const boardController = defineController(
       return allowed
     })
 
+    // Surface the board's reactive filter state in the devtools "Variables"
+    // view (dev-only; stripped in production). Values update live as you type
+    // in search or toggle filter chips.
+    ctx.debug({ searchInputRaw, isSearching, filterMatches, selectedPriorities })
+
     const togglePriority = (p: Priority): void => {
       const cur = new Set(selectedPriorities.peek())
       if (cur.has(p)) cur.delete(p)

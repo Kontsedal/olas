@@ -2,6 +2,7 @@ import { describe, expect, test } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import type { DebugEvent } from '../src/devtools'
 import { defineQuery } from '../src/query/define'
+import { signal } from '../src/signals'
 
 describe('runtime devtools events', () => {
   test('cache:fetch-start + fetch-success fire when a subscribed query resolves', async () => {
@@ -304,6 +305,71 @@ describe('runtime devtools events', () => {
     const write = events.find((e) => e.type === 'cache:set-data')
     expect(write).toMatchObject({ source: 'set', data: 'manual' })
     expect(write?.causeId).toBeUndefined()
+    root.dispose()
+  })
+
+  // -------------------------------------------------------------------------
+  // ctx.debug — controller variables
+  // -------------------------------------------------------------------------
+
+  test('ctx.debug during construction rides out on controller:constructed (with live refs)', () => {
+    const count = signal(3)
+    const def = defineController((ctx) => {
+      ctx.debug({ count })
+      return { count }
+    })
+    const root = createRoot(def, { deps: {} })
+    const events: DebugEvent[] = []
+    root.__debug.subscribe((ev) => events.push(ev)) // replay includes constructed
+
+    const constructed = events.find((e) => e.type === 'controller:constructed') as Extract<
+      DebugEvent,
+      { type: 'controller:constructed' }
+    >
+    expect(constructed.debug).toBeDefined()
+    // The live signal ref is carried (not a snapshot) — identity is preserved.
+    expect(constructed.debug?.count).toBe(count)
+    root.dispose()
+  })
+
+  test('ctx.debug merges across calls', () => {
+    const a = signal(1)
+    const b = signal(2)
+    const def = defineController((ctx) => {
+      ctx.debug({ a })
+      ctx.debug({ b })
+      return {}
+    })
+    const root = createRoot(def, { deps: {} })
+    const events: DebugEvent[] = []
+    root.__debug.subscribe((ev) => events.push(ev))
+
+    const constructed = events.find((e) => e.type === 'controller:constructed') as Extract<
+      DebugEvent,
+      { type: 'controller:constructed' }
+    >
+    expect(Object.keys(constructed.debug ?? {})).toEqual(['a', 'b'])
+    root.dispose()
+  })
+
+  test('ctx.debug after construction emits a controller:debug update event', () => {
+    const count = signal(0)
+    const def = defineController((ctx) => ({
+      // capture ctx; expose it later (post-construction)
+      expose: () => ctx.debug({ count }),
+    }))
+    const root = createRoot(def, { deps: {} })
+    const events: DebugEvent[] = []
+    root.__debug.subscribe((ev) => events.push(ev))
+
+    root.expose()
+
+    const debugEvent = events.find((e) => e.type === 'controller:debug') as Extract<
+      DebugEvent,
+      { type: 'controller:debug' }
+    >
+    expect(debugEvent).toBeDefined()
+    expect(debugEvent.values.count).toBe(count)
     root.dispose()
   })
 })

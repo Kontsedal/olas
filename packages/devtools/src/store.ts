@@ -11,6 +11,12 @@ export type ControllerNode = {
   state: 'active' | 'suspended' | 'disposed'
   props: unknown
   children: ControllerNode[]
+  /**
+   * Values registered via `ctx.debug({...})` — live references the panel
+   * renders reactively (signals show current values). Absent until the
+   * controller registers any.
+   */
+  debug?: Record<string, unknown>
 }
 
 /** One entry in the cache timeline. */
@@ -298,7 +304,10 @@ export class DevtoolsStore {
     this.pushTimeline(event)
     switch (event.type) {
       case 'controller:constructed':
-        this.tree$.set(insertNode(this.tree$.peek(), event.path, event.props))
+        this.tree$.set(insertNode(this.tree$.peek(), event.path, event.props, event.debug))
+        return
+      case 'controller:debug':
+        this.tree$.set(setNodeDebug(this.tree$.peek(), event.path, event.values))
         return
       case 'controller:suspended':
         this.tree$.set(setNodeState(this.tree$.peek(), event.path, 'suspended'))
@@ -436,6 +445,9 @@ export class DevtoolsStore {
    */
   private pushTimeline(event: DebugEvent): void {
     if (this.paused) return
+    // `controller:debug` is a state (re)registration, not a causal event — it
+    // updates the tree node's variables but doesn't belong on the timeline.
+    if (event.type === 'controller:debug') return
     if (event.type.startsWith('cache:') || event.type.startsWith('snapshot:')) {
       this.cacheStateDirty = true
     }
@@ -656,14 +668,15 @@ export function insertNode(
   root: ControllerNode,
   path: readonly string[],
   props: unknown,
+  debug?: Record<string, unknown>,
 ): ControllerNode {
   if (path.length === 0) {
     // The root controller's "constructed" event has path === ['root']
     // (one segment), not []. We never receive empty paths in practice, but
     // handle defensively.
-    return { ...root, state: 'active', props }
+    return { ...root, state: 'active', props, ...(debug !== undefined ? { debug } : {}) }
   }
-  return cloneWithUpsert(root, path, 0, props)
+  return cloneWithUpsert(root, path, 0, props, debug)
 }
 
 function cloneWithUpsert(
@@ -671,9 +684,12 @@ function cloneWithUpsert(
   path: readonly string[],
   depth: number,
   props: unknown,
+  debug: Record<string, unknown> | undefined,
 ): ControllerNode {
   if (depth === path.length) {
-    return { ...node, state: 'active', props }
+    // Update props always; set debug only when the event carried it, so a
+    // re-construction without debug preserves any existing variables.
+    return { ...node, state: 'active', props, ...(debug !== undefined ? { debug } : {}) }
   }
   const segment = path[depth] as string
   // Match by both segment AND depth: matching only by last segment aliases
@@ -692,11 +708,12 @@ function cloneWithUpsert(
       path,
       depth + 1,
       props,
+      debug,
     )
     return { ...node, children: [...node.children, newChild] }
   }
   const existing = node.children[idx]!
-  const updatedChild = cloneWithUpsert(existing, path, depth + 1, props)
+  const updatedChild = cloneWithUpsert(existing, path, depth + 1, props, debug)
   const nextChildren = node.children.slice()
   nextChildren[idx] = updatedChild
   return { ...node, children: nextChildren }
@@ -734,6 +751,44 @@ function setStateAt(
   if (idx === -1) return null
   const existing = node.children[idx]!
   const updatedChild = setStateAt(existing, path, depth + 1, state)
+  if (updatedChild === null) return null
+  const nextChildren = node.children.slice()
+  nextChildren[idx] = updatedChild
+  return { ...node, children: nextChildren }
+}
+
+/**
+ * Set the `debug` variables record on the node at `path` (a post-construction
+ * `ctx.debug(...)` update). Returns the tree unchanged if the node doesn't
+ * exist (out-of-order delivery).
+ */
+export function setNodeDebug(
+  root: ControllerNode,
+  path: readonly string[],
+  debug: Record<string, unknown>,
+): ControllerNode {
+  if (path.length === 0) {
+    return { ...root, debug }
+  }
+  return setDebugAt(root, path, 0, debug) ?? root
+}
+
+function setDebugAt(
+  node: ControllerNode,
+  path: readonly string[],
+  depth: number,
+  debug: Record<string, unknown>,
+): ControllerNode | null {
+  if (depth === path.length) {
+    return { ...node, debug }
+  }
+  const segment = path[depth] as string
+  const idx = node.children.findIndex(
+    (c) => c.path.length === depth + 1 && c.path[depth] === segment,
+  )
+  if (idx === -1) return null
+  const existing = node.children[idx]!
+  const updatedChild = setDebugAt(existing, path, depth + 1, debug)
   if (updatedChild === null) return null
   const nextChildren = node.children.slice()
   nextChildren[idx] = updatedChild

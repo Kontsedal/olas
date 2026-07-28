@@ -468,6 +468,47 @@ export const DEVTOOLS_CSS = `
   margin-top: 2px;
 }
 
+/* ---- controller variables (ctx.debug) -------------------------------- */
+.olas-devtools-tree-vars-toggle {
+  background: var(--olas-accent-soft);
+  color: var(--olas-accent);
+  border: 0;
+  border-radius: 4px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.olas-devtools-tree-vars-toggle:hover { filter: brightness(1.05); }
+.olas-devtools-tree-vars {
+  margin: 4px 0 6px 8px;
+  padding: 6px 10px;
+  background: var(--olas-soft);
+  border: 1px solid var(--olas-border-soft);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  overflow-x: auto;
+}
+.olas-devtools-var-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.olas-devtools-var-name {
+  color: var(--olas-json-key);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.olas-devtools-var-value { min-width: 0; }
+
 /* ---- timeline -------------------------------------------------------- */
 .olas-devtools-timeline { padding: 6px 8px 12px; }
 
