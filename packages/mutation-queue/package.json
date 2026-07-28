@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-mutation-queue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Olas mutation queue — durable persistence + reload-safe replay for persistable mutations.",
   "keywords": [
     "olas",

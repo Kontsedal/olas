@@ -2,10 +2,24 @@
   "$schema": "https://unpkg.com/@changesets/config@3.0.0/schema.json",
   "changelog": "@changesets/cli/changelog",
   "commit": false,
-  "fixed": [],
+  "fixed": [
+    [
+      "@kontsedal/olas-core",
+      "@kontsedal/olas-react",
+      "@kontsedal/olas-zod",
+      "@kontsedal/olas-persist",
+      "@kontsedal/olas-devtools",
+      "@kontsedal/olas-cross-tab",
+      "@kontsedal/olas-entities",
+      "@kontsedal/olas-realtime",
+      "@kontsedal/olas-mutation-queue",
+      "@kontsedal/olas-router"
+    ]
+  ],
   "linked": [],
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": []
+  "ignore": [],
+  "privatePackages": { "version": false, "tag": false }
 }

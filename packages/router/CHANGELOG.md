@@ -1,5 +1,12 @@
 # @kontsedal/olas-router
 
+## 0.2.0
+
+### Patch Changes
+
+- Updated dependencies [eb859d9]
+  - @kontsedal/olas-core@0.2.0
+
 ## 0.1.0
 
 ### Minor Changes
