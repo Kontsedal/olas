@@ -179,4 +179,8 @@ The other three examples (kanban, reader-ssr, stock-ticker) each ship a `tests/`
 
 ## Loose ends
 
+### Internal peer ranges lose their upper bound on every `changeset version`
+
+The nine sub-packages declare `peerDependencies: { "@kontsedal/olas-core": ">=0.3.0" }` (0.3.0 widened these from `workspace:^`, because below 1.0 a caret pins the minor, so a core minor fell out of range → changesets bumped the dependent major → the `fixed` lockstep group made the whole release 1.0.0). The intent was `>=0.3.0 <1.0.0`; `changeset version` rewrote it to `>=0.3.0`, dropping the clause it doesn't manage. Consequence: `olas-react@0.3.x` nominally accepts a future `olas-core@1.x`, so the range no longer fences off a breaking core. Harmless while all ten ship in lockstep at one version, and it self-resolves at 1.0 (where `^1.0.0` admits 1.1.0 and the cascade stops). Options if it starts mattering: re-add the ceiling as a post-`version` step in the release script, or move off `>=` to a caret once on 1.x.
+
 (nothing tagged yet — drop short, unclassified notes here when they don't fit above)
