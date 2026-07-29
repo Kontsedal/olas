@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-entities",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Entity-normalization plugin for Olas — extract entities from query results, subscribe per-id, patch every query holding an entity in one call.",
   "keywords": [
     "olas",
@@ -53,7 +53,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": "workspace:^"
+    "@kontsedal/olas-core": ">=0.3.0"
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^"

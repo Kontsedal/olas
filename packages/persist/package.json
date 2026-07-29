@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-persist",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Olas persistence composables — usePersisted with localStorage and IndexedDB (indexedDbAdapter) storage adapters.",
   "keywords": [
     "olas",
@@ -52,7 +52,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": "workspace:^"
+    "@kontsedal/olas-core": ">=0.3.0"
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^"

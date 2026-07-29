@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-router",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Olas router bridge — scopes + a generic Bridge component for wiring any client-side router (TanStack Router, React Router v6) into the controller tree.",
   "keywords": [
     "olas",
@@ -52,7 +52,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-core": ">=0.3.0",
     "react": ">=18"
   },
   "devDependencies": {

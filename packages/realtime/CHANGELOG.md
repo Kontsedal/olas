@@ -1,5 +1,13 @@
 # @kontsedal/olas-realtime
 
+## 0.3.0
+
+### Patch Changes
+
+- Updated dependencies [939f932]
+- Updated dependencies [bba3e5c]
+  - @kontsedal/olas-core@0.3.0
+
 ## 0.2.0
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-zod",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Olas Zod integration — zodValidator and formFromZod for end-to-end typed forms.",
   "keywords": [
     "olas",
@@ -52,7 +52,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-core": ">=0.3.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
