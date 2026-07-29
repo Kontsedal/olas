@@ -699,3 +699,44 @@ and asserts the panel re-renders.
 
 `pnpm test` → 797/797 across 58 files; `pnpm build` + `pnpm typecheck` clean
 (all packages + examples); `biome` clean.
+
+## [2026-07-29 12:50] ingest | RootOptions.defaultQueryOptions — root-wide query defaults
+
+App-wide query policy is now declarable once at `createRoot` instead of restated
+on every `defineQuery`. New `DefaultQueryOptions` type (a `Pick` off `QuerySpec`
+so it can't drift) covers `staleTime`, `gcTime`, `retry`, `retryDelay`,
+`keepPreviousData`, `networkMode`, `structuralShare`, `refetchOnWindowFocus`,
+`refetchOnReconnect`. Resolution is uniformly `spec.X ?? client.defaults.X ??
+built-in` — a per-query field always wins. SPEC §5.9 gained a "Root-wide query
+defaults" subsection.
+
+Motivation: the quiet built-ins (`staleTime: 0`, `retry: 0`) are right per query,
+but an app wanting different ones repeated them N times, and a missed one
+presents as "why is this refetching on every subscribe?" rather than an error.
+Surfaced while planning a real TanStack→Olas migration of a ~96k-LOC renderer,
+where the porting checklist's highest-risk item was exactly this restatement.
+
+Threaded at five sites: `ClientEntry` + `InfiniteClientEntry` ctors (entry
+options + `gcTime`), `createUse` + `createInfiniteUse` (`keepPreviousData` lives
+on the subscription, not the entry), and `instance.ts` `cache()` for `ctx.cache`.
+`createTestController` accepts the option too.
+
+Deliberate non-uniformities, all recorded in `entities/query-client.md`:
+`refetchInterval` is NOT defaultable (a root-wide interval would silently poll
+every query); `refetchOnWindowFocus`/`refetchOnReconnect` are no-ops for infinite
+queries (no focus/online subscription exists there); `ctx.cache` gets only
+`staleTime`/`keepPreviousData` (the only fields `LocalCacheOptions` carries).
+Flat `RootOptions.refetchOn*` kept as shorthand; `defaultQueryOptions` wins.
+
+Test-design lesson worth keeping: two `createTestController` calls build two
+roots and therefore two caches, so a "re-subscribe hits the cache" assertion
+passes vacuously. gcTime/dedup behavior must be exercised inside ONE root via
+`ctx.session`. Two of the new tests initially passed for that wrong reason and
+were rewritten (staleTime now proven via the staleness timer + a focus-refetch
+gate; gcTime via session open/close plus a long-gcTime control).
+
+### Gates
+
+`pnpm test` → 813/813 across 59 files (16 new in
+`packages/core/tests/query-default-options.test.ts`); `pnpm typecheck` +
+`pnpm build` clean across all packages and examples; `biome check` clean.

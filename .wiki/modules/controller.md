@@ -17,7 +17,7 @@ edges:
   - { type: uses, target: ../entities/ctx.md }
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: uses, target: ../flows/construction-rollback.md }
-last_verified: 2026-07-25
+last_verified: 2026-07-29
 confidence: high
 ---
 
@@ -35,7 +35,7 @@ Implements the controller container: `defineController`, `createRoot`, the `Ctx`
 - **`root.ts`** — `createRoot` / `createRootWithProps`. Wraps the root `ControllerInstance` with `dispose / suspend / resume / dehydrate / waitForIdle / __debug` non-enumerable methods on the returned api (see `attachRootControls` in `root.ts:71-157`).
 - **`index.ts`** — public re-exports.
 
-`testing.ts` (root of `core/src/`) lives at `@kontsedal/olas-core/testing` — exports `createTestController(def, { deps, props })`, equivalent to `createRootWithProps` but more ergonomic for tests.
+`testing.ts` (root of `core/src/`) lives at `@kontsedal/olas-core/testing` — exports `createTestController(def, { deps, props, onError?, defaultQueryOptions? })`, equivalent to `createRootWithProps` but more ergonomic for tests. Each call builds its **own** root and therefore its own query cache — two calls never share an entry, so cache-lifetime behavior (gcTime, dedup) must be tested inside one root via `ctx.session` / `ctx.attach`.
 
 ## Ctx surface (Phase 0–12)
 

@@ -496,7 +496,17 @@ export class ControllerInstance {
         options?: LocalCacheOptions<T>,
       ): LocalCache<T> {
         assertLive('cache')
-        const cache = createLocalCache<T>(fetcher, options)
+        // Root-wide defaults apply to `ctx.cache` too — a root that declares
+        // `staleTime: 5min` shouldn't have controller-local caches silently
+        // fall back to 0. Only the fields `LocalCacheOptions` actually carries
+        // are merged; `retry`/`gcTime`/`networkMode` aren't part of its
+        // surface, so there is nothing to default them into.
+        const rootDefaults = self.rootShared.queryClient.defaults
+        const cache = createLocalCache<T>(fetcher, {
+          ...options,
+          staleTime: options?.staleTime ?? rootDefaults.staleTime,
+          keepPreviousData: options?.keepPreviousData ?? rootDefaults.keepPreviousData,
+        })
         self.entries.push({ kind: 'cleanup', dispose: () => cache.dispose() })
         return cache
       },

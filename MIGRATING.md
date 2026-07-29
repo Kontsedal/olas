@@ -30,7 +30,8 @@ Why: in TanStack, the "subscriber" is a component; component lifetime drives sub
 | `useIsFetching`                           | Subscribe to `subscription.isFetching` directly via `use()`           |
 | Optimistic update with rollback           | `mutation.onMutate` returns the `Snapshot` from `query.setData(...)`; `onError` calls `snapshot.rollback()` |
 | `keepPreviousData: true`                  | `keepPreviousData: true` on the `defineQuery` spec (per-query, not per-subscriber) |
-| `staleTime` / `gcTime`                    | Same names — declared per query in `defineQuery`                       |
+| `staleTime` / `gcTime`                    | Same names — per query in `defineQuery`, or app-wide via `createRoot(…, { defaultQueryOptions })` |
+| `defaultOptions: { queries: {...} }`      | `createRoot(def, { deps, defaultQueryOptions: {...} })`                |
 | `refetchOnWindowFocus`                    | Per-query option in `defineQuery` (off by default)                    |
 | `useQueries` for parallel queries         | Multiple `ctx.use(...)` calls in the same controller                  |
 | `useSuspenseQuery`                        | Not a built-in concept; use `subscription.firstValue()` then render   |
@@ -54,6 +55,7 @@ The Olas root owns its own QueryClient (one per root). Two roots have isolated c
 
 ### Patterns that don't translate one-to-one
 
+- **The default values differ, not just the API.** TanStack defaults to `retry: 3` and `refetchOnWindowFocus: true`; Olas defaults to `retry: 0`, `refetchOnWindowFocus: false`, `staleTime: 0`. Porting a `QueryClient` config means restating your policy in `createRoot(…, { defaultQueryOptions })` — otherwise queries silently stop retrying and (with `staleTime: 0`) refetch on every subscribe. This is a behavior change that produces no type error, so do it first.
 - **TanStack `useQuery` returns the same `data | undefined` and you handle both.** Olas `ctx.use(q)` returns an `AsyncState<T>` with eight signals (`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`) plus `refetch` / `reset` / `firstValue`. In React, `useQuery(subscription)` bundles them into one render trigger.
 - **Suspense.** TanStack has `useSuspenseQuery`. Olas doesn't ship a Suspense integration — use `subscription.firstValue()` to await first data, or render `isLoading ? <Spinner /> : <View />`.
 - **DevTools.** TanStack devtools is mature; Olas ships `@kontsedal/olas-devtools` — `<DevtoolsLauncher root={root} />` gives you a floating panel with controller-tree, cache timeline, and mutation log. No separate browser extension (yet — tracked in `BACKLOG.md`).

@@ -14,7 +14,15 @@ import {
   type QueryClientPluginApi,
   type SetDataEvent,
 } from './plugin'
-import type { DehydratedState, Query, QuerySpec, RetryDelay, RetryPolicy, Snapshot } from './types'
+import type {
+  DefaultQueryOptions,
+  DehydratedState,
+  Query,
+  QuerySpec,
+  RetryDelay,
+  RetryPolicy,
+  Snapshot,
+} from './types'
 
 const DEFAULT_GC_TIME = 5 * 60_000
 
@@ -78,7 +86,8 @@ export class ClientEntry<T> {
     this.query = query
     this.callArgs = callArgs
     this.keyArgs = keyArgs
-    this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
+    const defaults = client.defaults
+    this.gcTime = spec.gcTime ?? defaults.gcTime ?? DEFAULT_GC_TIME
     this.refetchInterval = spec.refetchInterval
     this.refetchOnWindowFocus = spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus
     this.refetchOnReconnect = spec.refetchOnReconnect ?? client.refetchOnReconnect
@@ -88,11 +97,11 @@ export class ClientEntry<T> {
     const queryKey = this.keyArgs
     this.entry = new Entry<T>({
       fetcher: () => (signal) => fetcherFn({ signal, deps }, ...(callArgs as never[])),
-      staleTime: spec.staleTime,
-      retry: spec.retry as RetryPolicy | undefined,
-      retryDelay: spec.retryDelay as RetryDelay | undefined,
-      networkMode: spec.networkMode,
-      structuralShare: spec.structuralShare,
+      staleTime: spec.staleTime ?? defaults.staleTime,
+      retry: (spec.retry ?? defaults.retry) as RetryPolicy | undefined,
+      retryDelay: (spec.retryDelay ?? defaults.retryDelay) as RetryDelay | undefined,
+      networkMode: spec.networkMode ?? defaults.networkMode,
+      structuralShare: spec.structuralShare ?? defaults.structuralShare,
       initialData: hydrated?.data,
       initialUpdatedAt: hydrated?.lastUpdatedAt,
       events:
@@ -298,7 +307,11 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     this.query = query
     this.callArgs = callArgs
     this.keyArgs = keyArgs
-    this.gcTime = spec.gcTime ?? DEFAULT_GC_TIME
+    // `refetchOnWindowFocus` / `refetchOnReconnect` are intentionally absent:
+    // infinite entries install no focus/online subscription, so honoring a
+    // root default here would be dead config. See `DefaultQueryOptions`.
+    const defaults = client.defaults
+    this.gcTime = spec.gcTime ?? defaults.gcTime ?? DEFAULT_GC_TIME
     this.refetchInterval = spec.refetchInterval
     const fetcherFn = spec.fetcher
     const deps = client.deps as import('../controller/types').AmbientDeps
@@ -309,11 +322,11 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       getNextPageParam: spec.getNextPageParam,
       getPreviousPageParam: spec.getPreviousPageParam,
       itemsOf: spec.itemsOf,
-      staleTime: spec.staleTime,
-      retry: spec.retry as RetryPolicy | undefined,
-      retryDelay: spec.retryDelay as RetryDelay | undefined,
-      networkMode: spec.networkMode,
-      structuralShare: spec.structuralShare,
+      staleTime: spec.staleTime ?? defaults.staleTime,
+      retry: (spec.retry ?? defaults.retry) as RetryPolicy | undefined,
+      retryDelay: (spec.retryDelay ?? defaults.retryDelay) as RetryDelay | undefined,
+      networkMode: spec.networkMode ?? defaults.networkMode,
+      structuralShare: spec.structuralShare ?? defaults.structuralShare,
       // Fire SetDataEvent { kind: 'infinite', source: 'fetch' } whenever a
       // fetch settles successfully. Plugins (e.g. entity normalization) use
       // this to walk the pages and update their normalized stores. Mirrors
@@ -439,6 +452,14 @@ export class QueryClient {
   readonly refetchOnReconnect: boolean
 
   /**
+   * Root-wide query defaults from `RootOptions.defaultQueryOptions`. Read by
+   * `ClientEntry` / `InfiniteClientEntry` / `createUse` / `ctx.cache` when a
+   * spec omits the field. Always an object (never `undefined`) so call sites
+   * are a plain `spec.X ?? this.defaults.X ?? <built-in>`. Spec §5.9.
+   */
+  readonly defaults: DefaultQueryOptions
+
+  /**
    * Installed plugins. Fired on every `setData` / `invalidate` / `gc` so
    * cross-tab / persistence-like layers can observe and react. SPEC §13.2.
    */
@@ -458,13 +479,18 @@ export class QueryClient {
     deps?: Record<string, unknown>
     refetchOnWindowFocus?: boolean
     refetchOnReconnect?: boolean
+    defaultQueryOptions?: DefaultQueryOptions
     plugins?: QueryClientPlugin[]
   }) {
     this.onError = opts?.onError
     this.devtools = opts?.devtools
     this.deps = opts?.deps ?? {}
-    this.refetchOnWindowFocus = opts?.refetchOnWindowFocus ?? false
-    this.refetchOnReconnect = opts?.refetchOnReconnect ?? false
+    this.defaults = opts?.defaultQueryOptions ?? {}
+    // The flat `refetchOn*` options are the older spelling; the dedicated
+    // `defaultQueryOptions` slot wins when both are set.
+    this.refetchOnWindowFocus =
+      this.defaults.refetchOnWindowFocus ?? opts?.refetchOnWindowFocus ?? false
+    this.refetchOnReconnect = this.defaults.refetchOnReconnect ?? opts?.refetchOnReconnect ?? false
     this.plugins = opts?.plugins ?? []
     if (opts?.hydrate) this.hydrate(opts.hydrate)
     const api = this.makePluginApi()

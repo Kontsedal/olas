@@ -18,6 +18,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/cache.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/query-default-options.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/infinite.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
@@ -25,7 +26,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-29
 confidence: high
 ---
 
@@ -37,7 +38,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 
 | File | Owns |
 |------|------|
-| `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QuerySpec`, `QuerySubscription`, `UseOptions`, `DehydratedState`, `RetryPolicy`, `RetryDelay` |
+| `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QuerySpec`, `DefaultQueryOptions`, `QuerySubscription`, `UseOptions`, `DehydratedState`, `RetryPolicy`, `RetryDelay` |
 | `entry.ts` | `Entry<T>` — race-protected state machine for one cache key. Retry loop. Snapshot stack. Staleness timer. |
 | `local.ts` | `LocalCache<T>` wrapper + `createLocalCache(fetcher, options)`. Backs `ctx.cache`. |
 | `keys.ts` | `stableHash(args)` — deterministic JSON-based hashing. Sorted object keys. Handles `Date` and `undefined`. Throws on functions / symbols. |

@@ -25,11 +25,18 @@ export function createTestController<
     deps: TDeps
     props: Props
     onError?: RootOptions<TDeps>['onError']
+    /**
+     * Root-wide query defaults, same shape as `createRoot`'s. Exposed here so
+     * a controller whose behavior depends on them (staleTime-driven refetch,
+     * retry counts) can be tested without hand-rolling a root wrapper.
+     */
+    defaultQueryOptions?: RootOptions<TDeps>['defaultQueryOptions']
   },
 ): Root<Api> {
   return createRootWithProps<Props, Api, TDeps>(def, options.props, {
     deps: options.deps,
     onError: options.onError,
+    defaultQueryOptions: options.defaultQueryOptions,
   })
 }
 

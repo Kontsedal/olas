@@ -203,6 +203,40 @@ export type QuerySpec<Args extends unknown[], T> = {
 }
 
 /**
+ * Root-wide defaults for query behavior, passed as
+ * `createRoot(def, { defaultQueryOptions })`. Every field mirrors the
+ * same-named field on `QuerySpec` — resolution is
+ * `spec.X ?? defaultQueryOptions.X ?? <built-in default>`, so a per-query
+ * spec always wins. Spec §5.9.
+ *
+ * Derived via `Pick` rather than re-declared so the types can't drift from
+ * `QuerySpec`. None of the picked fields reference `Args`/`T`, which is why
+ * instantiating with `never[]` / `unknown` is safe here.
+ *
+ * Deliberately NOT defaultable:
+ * - `refetchInterval` — a root-wide interval would silently start polling
+ *   every query in the app. Opt in per query.
+ * - `key` / `fetcher` / `queryId` / `crossTab` — per-query identity and
+ *   behavior; meaningless as an app-wide default.
+ *
+ * `refetchOnWindowFocus` / `refetchOnReconnect` apply to regular queries
+ * only — infinite queries have no focus/reconnect subscription (see
+ * `InfiniteClientEntry`), so setting them here is a no-op for those.
+ */
+export type DefaultQueryOptions = Pick<
+  QuerySpec<never[], unknown>,
+  | 'staleTime'
+  | 'gcTime'
+  | 'refetchOnWindowFocus'
+  | 'refetchOnReconnect'
+  | 'keepPreviousData'
+  | 'retry'
+  | 'retryDelay'
+  | 'networkMode'
+  | 'structuralShare'
+>
+
+/**
  * A module-scoped shared query handle. Bind a subscriber via
  * `ctx.use(query, () => [...args])`. The same `Query` value can be used by
  * many controllers across many roots — each root has its own cache.

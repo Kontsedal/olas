@@ -10,11 +10,12 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query-focus-online.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/query-default-options.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
   - { type: uses, target: entry.md }
   - { type: uses, target: ../decisions/per-root-query-client.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-05-22
+last_verified: 2026-07-29
 confidence: high
 ---
 
@@ -31,6 +32,26 @@ infiniteMaps: Map<AnyInfiniteQuery, Map<keyHash, InfiniteClientEntry>>
 
 Why two? Regular and infinite queries differ enough (single `data` vs array of `pages`, `fetchNextPage` mechanic) that a unified entry would be more confusing than two parallel paths. They share the AsyncState shape via `Entry`/`InfiniteEntry`'s common signals.
 
+## Root-wide query defaults
+
+`client.defaults: DefaultQueryOptions` holds `RootOptions.defaultQueryOptions` (always an object, never `undefined`, so call sites stay a flat `??` chain). Spec §5.9.
+
+Every consumer resolves the same way — **`spec.X ?? client.defaults.X ?? built-in`**, so an explicit per-query field always wins:
+
+| Field | Resolved in |
+|---|---|
+| `staleTime`, `retry`, `retryDelay`, `networkMode`, `structuralShare` | `ClientEntry` ctor → `Entry` options (`client.ts:89-104`); `InfiniteClientEntry` ctor → `InfiniteEntry` (`client.ts:313-329`) |
+| `gcTime` | `ClientEntry` / `InfiniteClientEntry` fields (`client.ts:90`, `client.ts:314`) |
+| `keepPreviousData` | `createUse` / `createInfiniteUse` (`use.ts:149`, `use.ts:396`) — it lives on the subscription, not the entry |
+| `refetchOnWindowFocus`, `refetchOnReconnect` | folded into `client.refetchOnWindowFocus` / `client.refetchOnReconnect` at construction; see above |
+| `staleTime`, `keepPreviousData` (for `ctx.cache`) | `instance.ts` `cache()` merges them into `LocalCacheOptions` before `createLocalCache` |
+
+Two asymmetries worth knowing:
+
+- **`refetchInterval` is not defaultable** — a root-wide interval would silently poll every query in the app.
+- **`refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries.** `InfiniteClientEntry` installs no focus/online subscription at all, so those fields aren't threaded there (comment at the ctor records this).
+- **`ctx.cache` only gets `staleTime` / `keepPreviousData`**, because those are the only fields `LocalCacheOptions` carries — `retry` / `gcTime` / `networkMode` aren't part of its surface.
+
 ## ClientEntry vs Entry
 
 `Entry<T>` is the state machine. `ClientEntry<T>` wraps it and adds the **per-root** stuff:
@@ -38,7 +59,7 @@ Why two? Regular and infinite queries differ enough (single `data` vs array of `
 - `subscriberCount` — incremented by `acquire()`, decremented by `release()`.
 - `gcTimer` — started on `release()` when count hits zero; cleared on `acquire()`. Fires `client.dropEntry(this)`.
 - `intervalTimer` — every `refetchInterval` ms while subscribers exist, runs `entry.startFetch()` **unless a fetch is already in flight** (`isFetching.peek()`) — the tick joins the running fetch rather than aborting it, so a fetch slower than the interval can't livelock (T3.2). Also skipped while `document.visibilityState === 'hidden'`.
-- `unsubFocus` / `unsubOnline` — `window` focus and `online` subscriptions, installed on the 0→1 acquire transition when the resolved flag is `true`. Resolution: `spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus ?? false` (and same for reconnect) — per-query spec wins, root-wide default fills in, otherwise off. Cleared on release-to-zero and on dispose. The handler skips refetch if `entry.isStaleNow()` is false, so a freshly-fetched query within `staleTime` ignores the focus event. The window/document listeners themselves live in `query/focus-online.ts` as a lazy single-listener pubsub, shared across all clients and SSR-safe.
+- `unsubFocus` / `unsubOnline` — `window` focus and `online` subscriptions, installed on the 0→1 acquire transition when the resolved flag is `true`. Resolution: `spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus ?? false` (and same for reconnect) — per-query spec wins, root-wide default fills in, otherwise off. `client.refetchOnWindowFocus` itself resolves at construction as `defaultQueryOptions.refetchOnWindowFocus ?? opts.refetchOnWindowFocus ?? false` (`client.ts:488-493`) — the dedicated `defaultQueryOptions` slot beats the older flat shorthand. Cleared on release-to-zero and on dispose. The handler skips refetch if `entry.isStaleNow()` is false, so a freshly-fetched query within `staleTime` ignores the focus event. The window/document listeners themselves live in `query/focus-online.ts` as a lazy single-listener pubsub, shared across all clients and SSR-safe.
 - `callArgs` and `keyArgs` — separately stored. `callArgs` is fed to the fetcher. `keyArgs = spec.key(...callArgs)` is hashed for identity. See `../pitfalls/callargs-vs-keyargs.md`.
 
 ## Cross-root query operation

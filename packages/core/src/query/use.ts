@@ -146,7 +146,7 @@ export function createUse<Args extends unknown[], T, U = T>(
 } {
   const internal = query as unknown as QueryInternal<Args, T>
   const spec = internal.__spec
-  const keepPreviousData = spec.keepPreviousData ?? false
+  const keepPreviousData = spec.keepPreviousData ?? client.defaults.keepPreviousData ?? false
 
   const keyFn = typeof keyOrOptions === 'function' ? keyOrOptions : keyOrOptions?.key
   const enabledFn =
@@ -393,7 +393,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
   resume: () => void
 } {
   const spec = (query as unknown as InfiniteQueryInternal<Args, TPage, TItem>).__spec
-  const keepPreviousData = spec.keepPreviousData ?? false
+  const keepPreviousData = spec.keepPreviousData ?? client.defaults.keepPreviousData ?? false
   const keyFn = typeof keyOrOptions === 'function' ? keyOrOptions : keyOrOptions?.key
   const enabledFn =
     typeof keyOrOptions === 'object' && keyOrOptions !== null ? keyOrOptions.enabled : undefined

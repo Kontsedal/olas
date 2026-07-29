@@ -97,6 +97,7 @@ export { lookupRegisteredMutation, lookupRegisteredQuery } from './query/plugin'
 export type {
   AsyncState,
   AsyncStatus,
+  DefaultQueryOptions,
   DehydratedEntry,
   DehydratedState,
   LocalCache,

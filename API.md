@@ -254,13 +254,46 @@ type RootOptions<TDeps> = {
   hydrate?: DehydratedState
   refetchOnWindowFocus?: boolean
   refetchOnReconnect?: boolean
+  defaultQueryOptions?: DefaultQueryOptions
+  plugins?: QueryClientPlugin[]
+  scopes?: ReadonlyArray<readonly [Scope<unknown>, unknown]>
 }
 ```
 
 - `deps` — required object; available everywhere as `ctx.deps`. Use it for api clients, routers, services, the current time.
 - `onError` — sink for *uncaught* errors from effects, mutations, caches, emitter handlers, construction. Throws inside `onError` are swallowed.
 - `hydrate` — replay a `DehydratedState` produced on the server.
-- `refetchOnWindowFocus` / `refetchOnReconnect` — root-wide defaults; per-query specs can override either way.
+- `refetchOnWindowFocus` / `refetchOnReconnect` — root-wide defaults; per-query specs can override either way. Shorthand for the same-named `defaultQueryOptions` fields, which win if both are set.
+- `defaultQueryOptions` — root-wide query defaults; see below.
+- `plugins` — `QueryClientPlugin`s (cross-tab sync, entity normalization, mutation queue).
+- `scopes` — pre-seed scopes before the root factory runs.
+
+### Type: `DefaultQueryOptions`
+
+```ts
+type DefaultQueryOptions = Pick<
+  QuerySpec<never[], unknown>,
+  | 'staleTime' | 'gcTime' | 'refetchOnWindowFocus' | 'refetchOnReconnect'
+  | 'keepPreviousData' | 'retry' | 'retryDelay' | 'networkMode' | 'structuralShare'
+>
+```
+
+Defaults for every query under a root, so app-wide policy is declared once instead of restated on all N `defineQuery` calls. Resolution is always **`spec.X ?? defaultQueryOptions.X ?? built-in`** — an explicit per-query field always wins.
+
+```ts
+const root = createRoot(app, {
+  deps,
+  defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 },
+})
+```
+
+**When to use:** whenever your app's desired policy differs from the built-ins (`staleTime: 0`, `retry: 0`, `gcTime: 5min`). Without it, a single missed `staleTime` presents as "why does this refetch on every subscribe?" rather than as an error.
+
+Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (the latter for `staleTime` / `keepPreviousData` — the only overlapping fields on `LocalCacheOptions`).
+
+**Not defaultable:** `refetchInterval` — a root-wide interval would start polling every query in the app; opt in per query. Also note `refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries, which install no focus/reconnect subscription.
+
+**See also:** SPEC §5.9. `createTestController` accepts the same option, so controllers whose behavior depends on it are testable in isolation.
 
 ### Type: `Root<Api>`
 
@@ -1122,9 +1155,11 @@ type Api = CtrlApi<typeof myController>
 
 Test-only helpers. Importing from a non-test file is a smell — the `/testing` sub-path makes it grep-able.
 
-### `createTestController<Props, Api, TDeps>(def, { deps, props, onError? }): Root<Api>`
+### `createTestController<Props, Api, TDeps>(def, { deps, props, onError?, defaultQueryOptions? }): Root<Api>`
 
 Construct an isolated root wrapping a single controller. Returns the controller's API plus the standard `Root` lifecycle controls. Equivalent to a hand-rolled "wrap in a root" boilerplate.
+
+`defaultQueryOptions` mirrors `RootOptions` so staleTime/retry-dependent behavior is testable without hand-rolling a root. Note each call builds its **own** root — and therefore its own cache — so two `createTestController` calls never share an entry; test cache-lifetime behavior (gcTime, dedup) inside a single root via `ctx.session` / `ctx.attach`.
 
 ```ts
 import { createTestController } from '@kontsedal/olas-core/testing'

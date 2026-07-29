@@ -407,6 +407,9 @@ const root = createRoot(appController, {
     api: realApiClient,
     router: realRouter,
   },
+  // App-wide query policy, declared once. A per-query `defineQuery` field
+  // always overrides it. Built-ins are staleTime: 0, retry: 0.
+  defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 },
 })
 ```
 

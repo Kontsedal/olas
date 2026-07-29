@@ -506,6 +506,25 @@ We deliberately don't bundle Immer — users who want it import it themselves, o
 
 The defaults are deliberately quieter than TanStack — surprise refetches are a common source of bugs.
 
+#### Root-wide query defaults
+
+`RootOptions.defaultQueryOptions` sets defaults for every query under a root. Resolution is always **`spec.X ?? defaultQueryOptions.X ?? built-in`** — a per-query spec field wins, so a root default can never silently override an explicit decision.
+
+```ts
+createRoot(app, { deps, defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 } })
+```
+
+Why this exists: the built-in defaults (`staleTime: 0`, `retry: 0`) are the right *quiet* choice for a single query, but an app that wants different ones had to restate them on all N `defineQuery` calls. Forgetting one doesn't error — it presents as "why is this refetching on every subscribe?", which is a bad failure mode for a value with no local justification.
+
+Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (for the fields `LocalCacheOptions` carries — `staleTime`, `keepPreviousData`).
+
+Two deliberate exclusions:
+
+- **`refetchInterval` is not defaultable.** A root-wide interval would start background polling for every query in the app, which is never what someone means by "defaults". Opt in per query.
+- **`refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries**, which install no focus/reconnect subscription. They resolve for regular queries only.
+
+The pre-existing flat `RootOptions.refetchOnWindowFocus` / `refetchOnReconnect` remain as shorthand; when both are set, the `defaultQueryOptions` entry wins.
+
 ### 5.10 Picking the right cache flavor
 
 | Use case | Primitive |
@@ -2557,9 +2576,17 @@ type RootOptions<TDeps> = {
   refetchOnWindowFocus?: boolean
   /** Default for queries that don't set `refetchOnReconnect` on their spec (§5.9). */
   refetchOnReconnect?: boolean
+  /** Root-wide query defaults; per-query spec fields override (§5.9). */
+  defaultQueryOptions?: DefaultQueryOptions
   /** Query-client plugins — cross-tab sync, server-push patches, etc. (§13.2). */
   plugins?: QueryClientPlugin[]
 }
+
+type DefaultQueryOptions = Pick<
+  QuerySpec<never[], unknown>,
+  | 'staleTime' | 'gcTime' | 'refetchOnWindowFocus' | 'refetchOnReconnect'
+  | 'keepPreviousData' | 'retry' | 'retryDelay' | 'networkMode' | 'structuralShare'
+>   // refetchInterval is deliberately excluded — see §5.9
 
 type QueryClientPlugin = {
   /** Called once after the QueryClient is constructed. */
