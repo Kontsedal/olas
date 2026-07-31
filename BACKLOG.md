@@ -186,3 +186,12 @@ The nine sub-packages declare `peerDependencies: { "@kontsedal/olas-core": ">=0.
 **The version-cascade half of this is fixed** — it was never really about the range. Widening to `>=0.3.0` at 0.3.0 aimed at the wrong half of the condition: `shouldBumpMajor` short-circuits on `!onlyUpdatePeerDependentsWhenOutOfRange`, which defaults to **false**, so the range was never consulted at all and *any* non-patch core bump majored all nine peer-dependents, which the `fixed` group then propagated back to core. 0.4.0 sets `___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH.onlyUpdatePeerDependentsWhenOutOfRange: true` in `.changeset/config.json`, which makes the range load-bearing (verified: `changeset status` computes minor, `changeset version` produces 0.4.0 across all ten and leaves the peer ranges untouched). Keep the flag in mind when upgrading `@changesets/cli` — the name advertises that it can change in a patch.
 
 (nothing tagged yet — drop short, unclassified notes here when they don't fit above)
+
+### CI releases cannot complete without two repo-settings changes
+
+The 0.4.0 release had to be finished by hand twice, for reasons the workflow cannot fix from inside:
+
+1. **`GitHub Actions is not permitted to create or approve pull requests`** — the changesets action built and pushed `changeset-release/main` but could not open the Version Packages PR (run 30610698827). Fix: Settings → Actions → General → Workflow permissions → allow Actions to create PRs. Until then, every release needs a manual `gh pr create --head changeset-release/main`.
+2. **No `NPM_TOKEN` repo secret exists** (`gh secret list` is empty), so the publish step dies with `ENEEDAUTH` on all ten packages (run 30610849873). 0.3.0 and 0.4.0 were both published from a locally-authenticated machine (`npm whoami` → kontsedal) via `pnpm release`. Fix: mint an npm automation token and `gh secret set NPM_TOKEN`.
+
+Neither blocks releasing — the local path works — but the release.yml pipeline is decorative until both are done.
