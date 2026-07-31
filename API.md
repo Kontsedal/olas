@@ -701,7 +701,7 @@ type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
 ```ts
 type Mutation<V, R> = {
   run(vars: V): Promise<R>
-  reset(): void
+  reset(): void   // aborts in-flight runs, then clears back to 'idle'
   readonly isPending: ReadSignal<boolean>
   readonly status: ReadSignal<'idle' | 'pending' | 'success' | 'error'>
   readonly error: ReadSignal<unknown | undefined>
@@ -712,6 +712,10 @@ type Mutation<V, R> = {
 ```
 
 `status` is the latest run's outcome; React's `useMutation` derives `isIdle` / `isSuccess` / `isError` from it, so a `void` mutation still reports `isSuccess` after it resolves (it isn't stuck on `isIdle`).
+
+`reset()` **cancels**: it aborts every in-flight run (awaiters reject with an `AbortError` — use `isAbortError`) and rejects queued `serial` runs so nobody hangs, then clears `data` / `error` / `lastVariables` and returns `status` to `'idle'` with `isPending` false. SPEC §6.2 lists it among the abort triggers.
+
+**Gotcha when porting from react-query:** rq's `reset()` detaches the observer and lets the in-flight request finish. Olas aborts it. A mechanical `reset()` → `reset()` port silently changes whether the write lands.
 
 ### Type: `Snapshot`
 

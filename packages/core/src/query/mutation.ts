@@ -158,7 +158,24 @@ export type Mutation<V, R> = {
    */
   status: ReadSignal<AsyncStatus>
   lastVariables: ReadSignal<V | undefined>
-  /** Clear `data` / `error` / `lastVariables` / `status` without aborting in-flight runs. */
+  /**
+   * Wipe the mutation back to `'idle'` — and cancel whatever it was doing.
+   * In-flight runs are aborted (their awaiters reject with an `AbortError`;
+   * use `isAbortError(err)` to tell those from real failures) and queued
+   * `serial` runs are rejected rather than silently dropped, so no caller of
+   * `run(...)` is left hanging. Then `data` / `error` / `lastVariables` clear,
+   * `status` goes `'idle'`, and `isPending` drops. Spec §6.2 lists `reset()`
+   * among the abort triggers.
+   *
+   * The cancellation is the point: "reset" here means the UI is walking away
+   * from this operation (form closed, dialog dismissed), so letting the write
+   * land afterwards would be worse than dropping it.
+   *
+   * **Porting from react-query:** its `reset()` only detaches the observer
+   * and lets an in-flight request finish. This one aborts it. Do not map an
+   * rq `reset()` call onto this one without re-reading the surrounding code —
+   * a request you expected to complete will not.
+   */
   reset(): void
   /** Abort in-flight runs and tear down. Idempotent. Called by the parent controller's dispose. */
   dispose(): void

@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../flows/mutation-concurrency.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-07-25
+last_verified: 2026-07-31
 confidence: high
 ---
 
@@ -84,4 +84,6 @@ Notes:
 
 Aborts every inflight handle. Drains the serial queue with `AbortError`. Sets `disposed: true`. Idempotent.
 
-`reset()` is similar but doesn't mark disposed — it aborts inflight, drains the queue, and clears `data`/`error`/`lastVariables`/`isPending` and sets `status` back to `'idle'`. The mutation remains usable.
+`reset()` is similar but doesn't mark disposed — it aborts inflight, drains the queue, and clears `data`/`error`/`lastVariables`/`isPending` and sets `status` back to `'idle'`. The mutation remains usable. `mutation.ts:488-508`; spec §6.2 lists it among the abort triggers; pinned by `mutation.test.ts:54` and regression B2.
+
+**The abort is a migration hazard.** react-query's `reset()` detaches the observer and lets the in-flight request finish; ours cancels it. Same name, same signature, no type error on a port. The public TSDoc claimed "without aborting in-flight runs" from 612720b until 2026-07-31 — long enough for at least one consumer to ship a code comment asserting the wrong thing. `mutation.ts:151-169` now carries the warning, as do `../../API.md` (Mutations) and `../../MIGRATING.md`.

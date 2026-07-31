@@ -740,3 +740,34 @@ gate; gcTime via session open/close plus a long-gcTime control).
 `pnpm test` → 813/813 across 59 files (16 new in
 `packages/core/tests/query-default-options.test.ts`); `pnpm typecheck` +
 `pnpm build` clean across all packages and examples; `biome check` clean.
+
+## [2026-07-31 09:05] ingest | Mutation.reset() TSDoc claimed the opposite of its behavior
+
+Docs-only correction. `Mutation.reset()`'s one-line TSDoc read "Clear `data` /
+`error` / `lastVariables` / `status` **without aborting in-flight runs**". The
+implementation has aborted in-flight runs since the file's first commit
+(`mutation.ts:488-508`), SPEC §6.2 lists `reset()` among the abort triggers, and
+two tests pin it (`mutation.test.ts:54`; regression B2 for the queued-`serial`
+rejection). The false sentence entered in 612720b — a docs-only sweep — and had
+never been true. This wiki page (`entities/mutation.md:87`) has described the real
+behavior the whole time; the lie lived only in the shipped `.d.ts`, which is
+exactly where consumers read it (editor hover).
+
+Worth keeping: the reason it survived ten weeks and three releases is that it is
+*plausible*.
+react-query's `reset()` really does detach the observer and let the in-flight
+request finish, so anyone porting from rq reads the wrong line and finds it
+confirming what they already believed. One consumer shipped a backwards code
+comment off it. Correction therefore carries an explicit "do not map an rq
+`reset()` onto this" warning in three places — the TSDoc, `API.md`'s Mutations
+section, and `MIGRATING.md`'s "patterns that don't translate one-to-one" list —
+rather than just deleting the wrong clause.
+
+Generalizable lesson for docs-only sweeps: a sweep that rewrites doc comments
+without re-reading the bodies below them can invert a contract, and nothing in
+CI catches it. Typecheck, tests, lint and `verify:dist` are all blind to prose.
+
+### Gates
+
+No code changed. `pnpm test` → 813/813 across 59 files (unchanged);
+`pnpm typecheck` + `pnpm lint` clean.
