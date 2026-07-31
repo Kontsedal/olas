@@ -179,8 +179,10 @@ The other three examples (kanban, reader-ssr, stock-ticker) each ship a `tests/`
 
 ## Loose ends
 
-### Internal peer ranges lose their upper bound on every `changeset version`
+### Internal peer ranges have no upper bound
 
-The nine sub-packages declare `peerDependencies: { "@kontsedal/olas-core": ">=0.3.0" }` (0.3.0 widened these from `workspace:^`, because below 1.0 a caret pins the minor, so a core minor fell out of range → changesets bumped the dependent major → the `fixed` lockstep group made the whole release 1.0.0). The intent was `>=0.3.0 <1.0.0`; `changeset version` rewrote it to `>=0.3.0`, dropping the clause it doesn't manage. Consequence: `olas-react@0.3.x` nominally accepts a future `olas-core@1.x`, so the range no longer fences off a breaking core. Harmless while all ten ship in lockstep at one version, and it self-resolves at 1.0 (where `^1.0.0` admits 1.1.0 and the cascade stops). Options if it starts mattering: re-add the ceiling as a post-`version` step in the release script, or move off `>=` to a caret once on 1.x.
+The nine sub-packages declare `peerDependencies: { "@kontsedal/olas-core": ">=0.3.0" }`. The intent at 0.3.0 was `>=0.3.0 <1.0.0`; `changeset version` rewrote it to `>=0.3.0`, dropping the clause it doesn't manage. Consequence: `olas-react@0.4.x` nominally accepts a future `olas-core@1.x`, so the range doesn't fence off a breaking core. Cosmetic while all ten ship in lockstep at one version, and it self-resolves at 1.0 (a caret admits 1.1.0). Options if it starts mattering: re-add the ceiling as a post-`version` step in the release script, or move to a caret once on 1.x.
+
+**The version-cascade half of this is fixed** — it was never really about the range. Widening to `>=0.3.0` at 0.3.0 aimed at the wrong half of the condition: `shouldBumpMajor` short-circuits on `!onlyUpdatePeerDependentsWhenOutOfRange`, which defaults to **false**, so the range was never consulted at all and *any* non-patch core bump majored all nine peer-dependents, which the `fixed` group then propagated back to core. 0.4.0 sets `___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH.onlyUpdatePeerDependentsWhenOutOfRange: true` in `.changeset/config.json`, which makes the range load-bearing (verified: `changeset status` computes minor, `changeset version` produces 0.4.0 across all ten and leaves the peer ranges untouched). Keep the flag in mind when upgrading `@changesets/cli` — the name advertises that it can change in a patch.
 
 (nothing tagged yet — drop short, unclassified notes here when they don't fit above)

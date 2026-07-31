@@ -874,3 +874,43 @@ instantiations sees it.
 R-Q3.2); `pnpm build` + `pnpm typecheck` + `biome check` clean;
 `pnpm verify:dist` green on all ten packages; `pnpm --filter "./examples/*"
 test` green.
+
+## [2026-07-31 10:40] ingest | the lockstep group was about to release 1.0.0, not 0.4.0
+
+Caught by review before push. With two changesets pending (one patch, one minor
+on `@kontsedal/olas-core`), `changeset status` reported **all ten packages at
+major**. Root cause is in `@changesets/assemble-release-plan`'s `shouldBumpMajor`
+(dist ~330-346): the peer-dependent major check is
+
+```
+depType === 'peerDependencies' && nextRelease.type !== 'none' && type !== 'patch'
+  && (!onlyUpdatePeerDependentsWhenOutOfRange || !semverSatisfies(next, versionRange))
+```
+
+and `onlyUpdatePeerDependentsWhenOutOfRange` defaults to **false**, so
+`!false` short-circuits the whole range test. Any non-patch core bump majors all
+nine peer-dependents regardless of what their ranges say, and the `fixed` group
+then propagates that major back onto core. Nothing about the ranges could have
+prevented it.
+
+That matters because 0.3.0 had already "fixed" this — by widening the nine
+`peerDependencies` from `workspace:^` to `>=0.3.0`, reasoning that a caret below
+1.0 pins the minor so a core minor left the range. Correct diagnosis of one half
+of an `||`, wrong half: the range was never consulted. The fix went unverified
+because 0.3.0 shipped no minor after it, so the first real test of it is now.
+`BACKLOG.md`'s entry has been rewritten to say so and to keep only the residue
+(the missing `<1.0.0` ceiling, cosmetic under lockstep).
+
+Fix is one config key —
+`___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH.onlyUpdatePeerDependentsWhenOutOfRange: true`
+in `.changeset/config.json` — which makes the ranges load-bearing. Verified both
+ways: `changeset status` now reports minor for all ten, and a throwaway
+`changeset version` produced 0.4.0 across the board with every peer range left
+at `>=0.3.0` (0.4.0 satisfies it, so nothing needed rewriting).
+
+Two things to carry forward. The option name advertises that it can change in a
+patch, so pin attention on it when bumping `@changesets/cli`. And the general
+shape: a release config can be wrong for a whole release cycle without any test
+noticing, because nothing in `install → typecheck → lint → test → build` reads
+it — the only detector is running `changeset status` before a release, which is
+worth doing on any PR that adds a non-patch changeset.
