@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-realtime",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Olas realtime composables — useRealtimePatcher, useLiveStream, and useRealtimeConnection over a pluggable RealtimeService.",
   "keywords": [
     "olas",
