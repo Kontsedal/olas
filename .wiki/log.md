@@ -771,3 +771,105 @@ CI catches it. Typecheck, tests, lint and `verify:dist` are all blind to prose.
 
 No code changed. `pnpm test` → 813/813 across 59 files (unchanged);
 `pnpm typecheck` + `pnpm lint` clean.
+
+## [2026-07-31 09:20] ingest | refetchInterval accepts (data) => number, resolved per tick
+
+`QuerySpec.refetchInterval` and `InfiniteQuerySpec.refetchInterval` are now
+`RefetchInterval<T> = number | ((data: T | undefined) => number)` (new exported
+type in `query/types.ts`, next to `RetryPolicy` / `RetryDelay`). SPEC §5.9 gained
+a "`refetchInterval` — fixed or data-driven" subsection carrying the contract.
+
+Motivation is one shape: poll fast while there's work, slowly when idle. With
+only a number you pick between a wasteful cadence at rest and a sluggish one
+under load, or you run a second timer alongside the query and race it.
+
+Implementation: both interval timers (`ClientEntry`, `InfiniteClientEntry`)
+went from `setInterval` to a self-rescheduling `setTimeout` chain, because a
+fixed-period timer can't re-ask for its period. Two subtleties, both now pinned
+by tests:
+
+- **The re-arm happens first**, before the hidden-tab and in-flight guards and
+  before `startFetch()`. Ordering it after the guards was the tempting reading
+  and it breaks two things at once: the cadence would stretch to
+  settle-plus-gap on any slow fetch, and — worse — the first skipped tick would
+  end polling for the life of the entry. Verified by inverting the order
+  locally: three tests go red.
+- **`ClientEntry<T>` must not hold the raw `RefetchInterval<T>`.** A
+  `(data: T | undefined) => number` member puts `T` in a contravariant position,
+  which makes the class invariant and breaks every `ClientEntry<unknown>`
+  boundary in `client.ts` (the maps, `dropEntry`) — four typecheck errors far
+  from the edit. Fixed by storing a `() => number | null` closure instead, which
+  keeps `T` internal. Same treatment on the infinite entry for symmetry.
+
+Defensive contract: a resolved gap that isn't a positive finite number stops the
+chain and `__DEV__`-warns rather than scheduling `setTimeout(…, 0)` — a
+fetch-per-macrotask loop presents as a hung tab, not as a config error. The tick
+that discovers the bad value still runs its own fetch (the re-arm precedes it);
+only subsequent ticks are cancelled.
+
+Because the rule is written against the *resolved gap* rather than against the
+thunk, it also binds a numeric literal — and that is a real behavior change on
+the number form, disclosed in the changeset: `refetchInterval: 0` used to mean
+"fetch every macrotask" (`setInterval` clamps 0 to about one tick) and now warns
+once and never arms. Pinned by its own test so nobody restores the hot loop by
+"fixing" the guard.
+
+A **throwing** thunk routes to that same path, with a warning that distinguishes
+it. This one was nearly shipped as a known gap: the first draft guarded the
+return value but not the call, and it went into `BACKLOG.md` as future work.
+That was the wrong call and it's worth remembering why — the resolution runs
+*before* the re-arm inside the timer callback, so an unguarded throw skips the
+re-arm and ends polling for that entry permanently, surfacing only as an
+uncaught error in a timer with no `dispatchError` route and no entry-level
+record. That is the identical failure class the re-arm-first ordering exists to
+prevent (an unguarded call in a self-rescheduling chain = a permanently dead
+subsystem, silently). Guarding it is four lines; deferring it would have shipped
+a silent-death path in a brand-new API. Generalizable: in a self-rescheduling
+chain, every expression evaluated before the re-arm is load-bearing and must be
+total. Applied literally on review — the data read had been sitting in argument
+position (`resolveRefetchInterval(interval, this.entry.data.peek())`), i.e.
+outside the try it was supposed to be protected by. `entry.data` is a `computed`
+on infinite entries and a computed can throw, so the read now goes in as a thunk
+and is evaluated inside the guard. Unreachable today; the point is that "total
+before the re-arm" is a property of the whole expression, not just the
+user-supplied part.
+
+Two wording corrections from the same review, both about precision rather than
+behavior. "The next subscriber re-arms it" was wrong in five places (both
+warning strings, the JSDoc, §5.9, the changeset): re-arm happens on the entry's
+0→1 transition, so a subscriber joining an entry that still has others changes
+nothing. The warning strings are the user's recovery instruction, so they now
+say it explicitly. And the JSDoc/spec now record that the first resolution is
+synchronous at acquire with `data === undefined`, and that a misconfigured entry
+re-warns once per 0→1 cycle (a StrictMode double-mount prints two).
+
+Deliberately unchanged: `DefaultQueryOptions` still excludes `refetchInterval`,
+`UseOptions` still has no interval (the timer is per **entry**, so per-subscriber
+intervals would need a "whose interval wins" rule), and `ctx.cache` /
+`LocalCache` gains nothing here. All three are now stated in §5.9 rather than
+inferable.
+
+Coverage gap closed while here: the hidden-tab skip had **zero** tests since it
+shipped. Two now exist (number + function form) in `query-focus-online.test.ts`,
+the only jsdom query test file. Also swept SPEC §20.4's two spec listings, which
+had drifted well past `refetchInterval` (missing entirely on `InfiniteQuerySpec`
+despite the field being implemented and tested): `QuerySpec.fetcher` still
+showed the pre-`FetchCtx` `(...args, signal)` signature, both listings were
+missing `networkMode` / `structuralShare`, `InfiniteQuerySpec` was missing
+`keepPreviousData`, and both showed `crossTab?: boolean` rather than
+`boolean | 'data'`. `FetchCtx` / `InfiniteFetchCtx` are now written out there
+instead of being inlined wrong.
+
+Type-level note for the changelog: `QuerySpec<Args, T>` is now **invariant** in
+`T`, because the thunk puts `T` in a function-parameter position. `defineQuery`
+infers `T` from the fetcher so the normal path is unaffected; only code that
+annotates `QuerySpec` explicitly and relies on assignability between two
+instantiations sees it.
+
+### Gates
+
+`pnpm test` → 823/823 across 59 files (10 new: 6 in `query.test.ts`, 2 in
+`query-focus-online.test.ts`, 1 in `infinite.test.ts`, 1 regression pin under
+R-Q3.2); `pnpm build` + `pnpm typecheck` + `biome check` clean;
+`pnpm verify:dist` green on all ten packages; `pnpm --filter "./examples/*"
+test` green.

@@ -444,6 +444,26 @@ describe('refetchInterval', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
+  // The subscriber has to come and go inside ONE root — a second root would be
+  // a second client and a second cache, and a "no more ticks" assertion would
+  // pass for the wrong reason. `ctx.session` gives an open/close handle on the
+  // same entry (same trick as `query-default-options.test.ts`).
+  function openCloseRoot(q: ReturnType<typeof defineQuery<[], number>>) {
+    const sub = defineController((ctx) => ({ x: ctx.use(q) }))
+    return defineController((ctx) => {
+      let handle: readonly [{ x: unknown }, () => void] | null = null
+      return {
+        open: () => {
+          handle = ctx.session(sub, undefined)
+        },
+        close: () => {
+          handle?.[1]()
+          handle = null
+        },
+      }
+    })
+  }
+
   test('refetches periodically while subscribed', async () => {
     let count = 0
     const q = defineQuery({
@@ -460,6 +480,210 @@ describe('refetchInterval', () => {
     expect(count).toBe(2)
     await vi.advanceTimersByTimeAsync(1000)
     expect(count).toBe(3)
+    root.dispose()
+  })
+
+  test('function form: the gap adapts to the entry own data', async () => {
+    // The canonical use — poll fast while there's work, slowly when idle.
+    const script: string[][] = [[], ['task'], [], []]
+    let count = 0
+    const q = defineQuery({
+      key: () => ['rfi-adaptive'],
+      fetcher: async () => script[count++] ?? [],
+      refetchInterval: (tasks) => (tasks !== undefined && tasks.length > 0 ? 500 : 3000),
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1) // → []
+
+    // Empty → the slow gap.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(count).toBe(2) // → ['task']
+
+    // The gap for THIS tick was resolved at the previous one, when data was
+    // still `[]` — so it's still slow. The switch shows up in the next gap.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(count).toBe(3) // → []
+
+    // Resolved while data was ['task'] → fast.
+    await vi.advanceTimersByTimeAsync(500)
+    expect(count).toBe(4)
+
+    // Back to `[]`, so back to the slow gap: nothing at +500, a tick at +3000.
+    await vi.advanceTimersByTimeAsync(500)
+    expect(count).toBe(4)
+    await vi.advanceTimersByTimeAsync(2500)
+    expect(count).toBe(5)
+
+    root.dispose()
+  })
+
+  test('function form: undefined before the first fetch resolves, latest data after', async () => {
+    const seen: Array<number | undefined> = []
+    let count = 0
+    const q = defineQuery({
+      key: () => ['rfi-arg'],
+      fetcher: async () => ++count,
+      refetchInterval: (data) => {
+        seen.push(data)
+        return 1000
+      },
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    // Armed by the first subscriber — the initial fetch is in flight, so there
+    // is no data to hand the thunk yet.
+    expect(root.x.data.value).toBeUndefined()
+    expect(seen).toEqual([undefined])
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(seen).toEqual([undefined, 1])
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(seen).toEqual([undefined, 1, 2])
+
+    root.dispose()
+  })
+
+  test('function form: a gap that is not a positive finite number stops the chain', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      for (const bad of [0, Number.NaN, -1000, Number.POSITIVE_INFINITY]) {
+        warn.mockClear()
+        let count = 0
+        const q = defineQuery({
+          key: () => ['rfi-bad', bad],
+          fetcher: async () => ++count,
+          // Sane for the first gap, nonsense afterwards — the shape a real bug
+          // takes (a thunk that divides by an empty list, say).
+          refetchInterval: (data) => (data === undefined ? 1000 : bad),
+        })
+        const def = defineController((ctx) => ({ x: ctx.use(q) }))
+        const root = createRoot(def, { deps: emptyDeps })
+        await vi.advanceTimersByTimeAsync(0)
+        expect(count).toBe(1)
+
+        // The tick that discovers the bad value still does its fetch — the
+        // re-arm runs first, and only the NEXT tick is cancelled.
+        await vi.advanceTimersByTimeAsync(1000)
+        expect(count).toBe(2)
+        expect(warn).toHaveBeenCalledTimes(1)
+        expect(String(warn.mock.calls[0]?.[0])).toContain('refetchInterval')
+
+        // Chain stopped: no hot loop, no further ticks.
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(count).toBe(2)
+        expect(warn).toHaveBeenCalledTimes(1)
+        root.dispose()
+      }
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('number form: a literal 0 never arms and warns once', async () => {
+    // Behavior change from the `setInterval` era, and the reason the
+    // positive-finite rule is written against the resolved gap rather than
+    // against the thunk: `setInterval(fn, 0)` clamped to ~1 tick and fetched
+    // every macrotask. Now it doesn't arm at all.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      let count = 0
+      const q = defineQuery({
+        key: () => ['rfi-zero'],
+        fetcher: async () => ++count,
+        refetchInterval: 0,
+      })
+      const def = defineController((ctx) => ({ x: ctx.use(q) }))
+      const root = createRoot(def, { deps: emptyDeps })
+
+      // Warned at acquire, when the chain tried to arm.
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.[0])).toContain('resolved to 0')
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(count).toBe(1) // the initial subscribe fetch, not a tick
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(count).toBe(1)
+      expect(warn).toHaveBeenCalledTimes(1)
+
+      root.dispose()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('function form: a thunk that throws stops the chain like a bad gap', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      let count = 0
+      const q = defineQuery({
+        key: () => ['rfi-throw'],
+        fetcher: async () => ++count,
+        // Survives the first evaluation, throws on the second — the shape a
+        // real bug takes (a thunk that reads through data it assumed present).
+        refetchInterval: (data) => {
+          if (data !== undefined) throw new Error('bad thunk')
+          return 1000
+        },
+      })
+      const def = defineController((ctx) => ({ x: ctx.use(q) }))
+      const root = createRoot(def, { deps: emptyDeps })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(count).toBe(1)
+
+      // Identical handling to an invalid return: the discovering tick still
+      // does its fetch, then the chain stops with one warning. The throw is
+      // caught, not left to escape the timer callback — vitest would fail the
+      // run on an unhandled error, so a green test is also that assertion.
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(count).toBe(2)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.[0])).toContain('threw')
+      expect(warn.mock.calls[0]?.[1]).toBeInstanceOf(Error)
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(count).toBe(2)
+      expect(warn).toHaveBeenCalledTimes(1)
+      root.dispose()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('the last release clears the pending tick; a new subscriber re-arms', async () => {
+    let count = 0
+    const q = defineQuery({
+      key: () => [],
+      // Long staleTime + gcTime so the entry survives the gap and a re-subscribe
+      // can't refetch for staleness reasons — only the interval moves `count`.
+      fetcher: async () => ++count,
+      staleTime: 60_000,
+      gcTime: 60_000,
+      refetchInterval: 1000,
+    })
+    const root = createRoot(openCloseRoot(q), { deps: emptyDeps })
+
+    root.open()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(2)
+
+    root.close()
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(count).toBe(2)
+
+    root.open()
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(3)
+
     root.dispose()
   })
 })

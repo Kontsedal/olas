@@ -500,11 +500,38 @@ We deliberately don't bundle Immer — users who want it import it themselves, o
 ### 5.9 Refetch triggers
 
 - `staleTime` — on subscribe / access, refetch if older than this.
-- `refetchInterval` — periodic background refetch while subscribed (paused while suspended).
+- `refetchInterval` — periodic background refetch while subscribed (paused while suspended). Two forms, see below.
 - `refetchOnWindowFocus` — **off by default.** Opt-in per query or root-wide.
 - `refetchOnReconnect` — **off by default.** Same.
 
 The defaults are deliberately quieter than TanStack — surprise refetches are a common source of bugs.
+
+#### `refetchInterval` — fixed or data-driven
+
+```ts
+type RefetchInterval<T> = number | ((data: T | undefined) => number)
+```
+
+A number is a fixed gap in ms. A function is resolved **once per scheduling decision** — on every tick, for the *next* gap — and receives the entry's latest data:
+
+```ts
+// Poll fast while a job is running, back off when the queue is idle.
+refetchInterval: (jobs) => (jobs?.some((j) => j.state === 'running') ? 1_000 : 30_000)
+```
+
+That "poll fast while there's work, slowly when idle" shape is the case the function form exists for. Expressing it with a fixed number forces a choice between a wasteful cadence at rest and a sluggish one under load; expressing it outside the query means a second timer racing the first.
+
+The contract:
+
+- **The gap for tick N+1 is resolved at tick N**, before that tick's fetch starts — so a change in data shows up in the gap *after* the fetch that produced it. The timer is a self-rescheduling chain, not a settle-chained delay: a fetch slower than the gap doesn't stretch the cadence, and a tick that lands while a fetch is already in flight is skipped (it joins the running fetch rather than aborting it).
+- **The gap must be a positive finite number, in either form.** `0`, `NaN`, negative and `Infinity` stop the timer for that entry (dev builds warn) rather than degenerating into a fetch-per-macrotask loop. This is a rule about the *resolved gap*, so it binds a literal `refetchInterval: 0` exactly as it binds a thunk returning `0`. Once stopped, the timer restarts only on the entry's next **0→1 subscriber transition** — a subscriber joining an entry that still has others does not re-arm it.
+- **A thunk must not throw.** A throw is handled like a bad gap — the chain stops with a dev warning that names the throw and carries the error. It is caught rather than left to escape because the resolution happens *before* the re-arm inside the timer callback: unguarded, one throw would end polling for that entry permanently with nothing but an uncaught error in a timer to show for it.
+- **The first resolution is synchronous, at acquire.** The 0→1 subscriber arms the chain before the initial fetch can settle, so a thunk's first call receives `undefined` — or hydrated/cached data when the entry already holds some. It must handle that argument.
+- **The thunk is not reactive.** Reading a signal inside it yields that tick's value and registers no dependency; changing that signal reschedules nothing. Drive the decision off the `data` argument.
+- **The data is read without subscribing**, so resolving a gap never marks the entry as accessed or perturbs staleness.
+- **It is per entry, not per subscriber.** The timer belongs to the shared cache entry, so ten controllers subscribed to one key share one interval. This is why `UseOptions` (§20.4) carries no `refetchInterval`: per-subscriber intervals would need a "whose interval wins" rule, and every answer to that question surprises somebody. It's also why the field isn't defaultable (below).
+- For infinite queries the argument is the entry's **pages array** (`TPage[] | undefined`) — what the entry stores. A tick re-fetches every loaded page (§5.11).
+- **`ctx.cache` (`LocalCache`, §5.1 / §5.10) has no interval of any kind** and does not gain one from this. A controller-local cache that wants polling should use `ctx.effect` + a timer, or graduate to `defineQuery`.
 
 #### Root-wide query defaults
 
@@ -520,7 +547,7 @@ Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (for the fields
 
 Two deliberate exclusions:
 
-- **`refetchInterval` is not defaultable.** A root-wide interval would start background polling for every query in the app, which is never what someone means by "defaults". Opt in per query.
+- **`refetchInterval` is not defaultable.** A root-wide interval would start background polling for every query in the app, which is never what someone means by "defaults". Opt in per query, in either form.
 - **`refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries**, which install no focus/reconnect subscription. They resolve for regular queries only.
 
 The pre-existing flat `RootOptions.refetchOnWindowFocus` / `refetchOnReconnect` remain as shorthand; when both are set, the `defaultQueryOptions` entry wins.
@@ -2270,20 +2297,25 @@ type Query<Args extends unknown[], T> = {
 
 type RetryPolicy = number | ((attempt: number, error: unknown) => boolean)
 type RetryDelay = number | ((attempt: number) => number)
+type RefetchInterval<T> = number | ((data: T | undefined) => number) // see §5.9
+
+type FetchCtx = { signal: AbortSignal; deps: AmbientDeps }
 
 type QuerySpec<Args extends unknown[], T> = {
   key: (...args: Args) => unknown[]
-  fetcher: (...args: [...Args, signal: AbortSignal]) => Promise<T>
+  fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>
   staleTime?: number
   gcTime?: number
-  refetchInterval?: number
+  refetchInterval?: RefetchInterval<T>
   refetchOnWindowFocus?: boolean
   refetchOnReconnect?: boolean
   keepPreviousData?: boolean // default false; see §5.2
   retry?: RetryPolicy        // default 0 (no retry)
   retryDelay?: RetryDelay    // default 1000
+  networkMode?: NetworkMode  // default 'online'; see §5.5
+  structuralShare?: boolean  // default true; see §5.6
   queryId?: string           // stable identifier for cross-tab sync (§13.2)
-  crossTab?: boolean         // opt into cross-tab cache sync (§13.2)
+  crossTab?: boolean | 'data' // opt into cross-tab cache sync (§13.2)
 }
 
 function defineQuery<Args extends unknown[], T>(
@@ -2302,20 +2334,27 @@ type UseOptions<Args extends readonly unknown[]> = {
 // Infinite / paginated queries
 type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> = {
   key: (...args: Args) => unknown[]
-  fetcher: (
-    pageCtx: { pageParam: PageParam; signal: AbortSignal },
-    ...args: Args
-  ) => Promise<TPage>
+  fetcher: (ctx: InfiniteFetchCtx<PageParam>, ...args: Args) => Promise<TPage>
   initialPageParam: PageParam
   getNextPageParam: (lastPage: TPage, allPages: TPage[]) => PageParam | null
   getPreviousPageParam?: (firstPage: TPage, allPages: TPage[]) => PageParam | null
   itemsOf?: (page: TPage) => TItem[] // for the .flat selector
   staleTime?: number
   gcTime?: number
+  refetchInterval?: RefetchInterval<TPage[]> // thunk receives the pages array; §5.9
+  keepPreviousData?: boolean // default false; see §5.2
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  networkMode?: NetworkMode  // default 'online'; see §5.5
+  structuralShare?: boolean  // default true; applies to the head-page refresh
   queryId?: string           // accepted on infinite queries; cross-tab plugin ignores them — see §13.2
-  crossTab?: boolean         // accepted on infinite queries; cross-tab plugin filters them out — see §13.2
+  crossTab?: boolean | 'data' // accepted on infinite queries; cross-tab plugin filters them out — see §13.2
+}
+
+type InfiniteFetchCtx<PageParam> = {
+  pageParam: PageParam
+  signal: AbortSignal
+  deps: AmbientDeps
 }
 
 type InfiniteQuery<Args extends unknown[], TPage, TItem> = {

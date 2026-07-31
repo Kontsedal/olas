@@ -117,6 +117,51 @@ export type RetryPolicy = number | ((attempt: number, error: unknown) => boolean
 export type RetryDelay = number | ((attempt: number) => number)
 
 /**
+ * Periodic background refetch while an entry has subscribers. A number is a
+ * fixed gap in ms. A function is resolved **once per scheduling decision** —
+ * on every tick, for the *next* gap — and receives the entry's latest data
+ * through a non-subscribing read:
+ *
+ * ```ts
+ * // Poll fast while there's work in flight, slowly when idle.
+ * refetchInterval: (jobs) => (jobs?.some((j) => j.state === 'running') ? 1_000 : 30_000)
+ * ```
+ *
+ * The contract:
+ *
+ * - **The gap must be a positive finite number — in both forms.** `0` / `NaN` /
+ *   negative / `Infinity` stops the timer for that entry instead of scheduling
+ *   a hot loop; dev builds warn. This covers a literal (`refetchInterval: 0`
+ *   never arms, where it used to mean "fetch every macrotask") as well as a
+ *   thunk's return. Once stopped, the timer restarts only on the entry's next
+ *   **0→1 subscriber transition** — a subscriber joining an entry that still
+ *   has others does not re-arm it.
+ * - **A thunk must not throw.** A throw is treated exactly like a bad return —
+ *   the chain stops, with a dev warning naming the throw (and carrying the
+ *   error) so it can't die silently. Keep the thunk to a pure arithmetic
+ *   decision over `data`; do the risky part elsewhere.
+ * - **The first resolution is synchronous, at acquire.** The 0→1 subscriber
+ *   arms the chain before the initial fetch can settle, so the thunk's first
+ *   call receives `undefined` (or hydrated/cached data if the entry already
+ *   has some). Handle that argument rather than assuming a loaded entry.
+ * - **Not reactive.** Reading a signal inside the thunk gives its current
+ *   value for that tick and registers no dependency — changing it later
+ *   reschedules nothing. Drive the decision off the `data` argument.
+ * - **Per entry, not per subscriber.** The timer belongs to the shared cache
+ *   entry, so ten controllers on one key share one interval. That's why
+ *   `UseOptions` has no `refetchInterval`: per-subscriber intervals need a
+ *   "whose interval wins" rule and every answer to that surprises somebody.
+ *   Same reason it stays out of `DefaultQueryOptions` (§5.9) — a root-wide
+ *   interval polls the entire app.
+ * - `ctx.cache` (`LocalCache`) has no interval of any kind. This is a
+ *   `defineQuery` / `defineInfiniteQuery` feature only.
+ *
+ * For infinite queries `T` is the pages array (`TPage[]`) — whatever the entry
+ * stores, `undefined` until the first page lands. Spec §5.9.
+ */
+export type RefetchInterval<T> = number | ((data: T | undefined) => number)
+
+/**
  * Per-fetch context: the `AbortSignal` to honor + the root's `deps`. Passed
  * as the first argument to every `QuerySpec.fetcher` invocation so module-
  * level queries can reach their dependencies without resorting to globals.
@@ -159,7 +204,11 @@ export type QuerySpec<Args extends unknown[], T> = {
   fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>
   staleTime?: number
   gcTime?: number
-  refetchInterval?: number
+  /**
+   * Fixed gap in ms, or a thunk over the entry's latest data resolved once per
+   * tick — see `RefetchInterval` for the contract. Spec §5.9.
+   */
+  refetchInterval?: RefetchInterval<T>
   refetchOnWindowFocus?: boolean
   refetchOnReconnect?: boolean
   keepPreviousData?: boolean

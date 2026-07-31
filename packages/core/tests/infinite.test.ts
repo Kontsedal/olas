@@ -158,6 +158,39 @@ describe('infinite query: refetchInterval', () => {
     expect(count).toBe(3)
     root.dispose()
   })
+
+  test('function form resolves against the pages array', async () => {
+    const seen: Array<string[] | undefined> = []
+    let count = 0
+    const q = defineInfiniteQuery({
+      key: () => ['rfi-infinite-fn'],
+      fetcher: async () => `page${++count}`,
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      // Poll hard until the list exists, then back off.
+      refetchInterval: (pages) => {
+        seen.push(pages)
+        return pages === undefined ? 250 : 1000
+      },
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    await vi.advanceTimersByTimeAsync(250)
+    expect(count).toBe(2)
+    // The thunk gets the entry's pages, not a flattened value or a single page.
+    expect(seen).toEqual([undefined, ['page1']])
+
+    // Gap widened to 1000 at that tick, so +250 is quiet and +750 fires.
+    await vi.advanceTimersByTimeAsync(250)
+    expect(count).toBe(2)
+    await vi.advanceTimersByTimeAsync(750)
+    expect(count).toBe(3)
+
+    root.dispose()
+  })
 })
 
 describe('infinite query: keepPreviousData', () => {

@@ -105,6 +105,7 @@ export type {
   Query,
   QuerySpec,
   QuerySubscription,
+  RefetchInterval,
   RetryDelay,
   RetryPolicy,
   Snapshot,

@@ -7,6 +7,7 @@ import type {
   AsyncState,
   AsyncStatus,
   NetworkMode,
+  RefetchInterval,
   RetryDelay,
   RetryPolicy,
   Snapshot,
@@ -41,7 +42,13 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
   itemsOf?: (page: TPage) => TItem[]
   staleTime?: number
   gcTime?: number
-  refetchInterval?: number
+  /**
+   * Fixed gap in ms, or a thunk resolved once per tick over the entry's
+   * latest **pages array** (`undefined` until the first page lands) — see
+   * `RefetchInterval` for the contract. A tick re-fetches every loaded page
+   * (see "Refetch semantics", spec §5.11), so pick gaps accordingly.
+   */
+  refetchInterval?: RefetchInterval<TPage[]>
   keepPreviousData?: boolean
   retry?: RetryPolicy
   retryDelay?: RetryDelay

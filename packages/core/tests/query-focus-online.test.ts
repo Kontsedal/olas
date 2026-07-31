@@ -358,3 +358,76 @@ describe('focus double-fire coalesces to one refetch (R-Q3.9)', () => {
     root.dispose()
   })
 })
+
+// The hidden-tab gate on `refetchInterval` shipped untested — nothing in the
+// suite ever set `visibilityState` to `'hidden'`. It lives here because these
+// are the only jsdom-environment query tests. The second assertion in each case
+// is the load-bearing one: the timer is a self-rescheduling `setTimeout` chain,
+// so a skipped tick that forgot to re-arm would end polling permanently.
+describe('refetchInterval — hidden tab', () => {
+  const setVisibility = (state: 'visible' | 'hidden') => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state })
+  }
+
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => {
+    vi.useRealTimers()
+    setVisibility('visible')
+  })
+
+  test('number form: hidden ticks are skipped, and the chain survives them', async () => {
+    let count = 0
+    const q = defineQuery({
+      key: () => ['rfi-hidden'],
+      fetcher: async () => ++count,
+      refetchInterval: 1000,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+
+    setVisibility('hidden')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(1)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(1)
+
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(2)
+
+    root.dispose()
+  })
+
+  test('function form: a hidden tick still re-resolves the next gap', async () => {
+    const seen: Array<number | undefined> = []
+    let count = 0
+    const q = defineQuery({
+      key: () => ['rfi-hidden-fn'],
+      fetcher: async () => ++count,
+      refetchInterval: (data) => {
+        seen.push(data)
+        return 1000
+      },
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(count).toBe(1)
+    expect(seen).toEqual([undefined])
+
+    setVisibility('hidden')
+    await vi.advanceTimersByTimeAsync(2000)
+    // No fetches while hidden, but the thunk ran on both ticks — the chain is
+    // alive and still asking for the next gap.
+    expect(count).toBe(1)
+    expect(seen).toEqual([undefined, 1, 1])
+
+    setVisibility('visible')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(count).toBe(2)
+
+    root.dispose()
+  })
+})

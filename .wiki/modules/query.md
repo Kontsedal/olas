@@ -19,6 +19,8 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/cache.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query-default-options.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/query-focus-online.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/regressions.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/infinite.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
@@ -26,7 +28,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-07-29
+last_verified: 2026-07-31
 confidence: high
 ---
 
@@ -38,11 +40,11 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 
 | File | Owns |
 |------|------|
-| `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QuerySpec`, `DefaultQueryOptions`, `QuerySubscription`, `UseOptions`, `DehydratedState`, `RetryPolicy`, `RetryDelay` |
+| `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QuerySpec`, `DefaultQueryOptions`, `QuerySubscription`, `UseOptions`, `DehydratedState`, `RetryPolicy`, `RetryDelay`, `RefetchInterval`, `NetworkMode`, `FetchCtx` |
 | `entry.ts` | `Entry<T>` — race-protected state machine for one cache key. Retry loop. Snapshot stack. Staleness timer. |
 | `local.ts` | `LocalCache<T>` wrapper + `createLocalCache(fetcher, options)`. Backs `ctx.cache`. |
 | `keys.ts` | `stableHash(args)` — deterministic JSON-based hashing. Sorted object keys. Handles `Date` and `undefined`. Throws on functions / symbols. |
-| `client.ts` | `QueryClient`, `ClientEntry<T>`, `InfiniteClientEntry`. Per-root entry registry, gcTime, refetchInterval, `mutationsInflight$`, dehydrate/hydrate/waitForIdle. |
+| `client.ts` | `QueryClient`, `ClientEntry<T>`, `InfiniteClientEntry`. Per-root entry registry, gcTime, the refetch-interval chain (`resolveRefetchInterval` + `armIntervalTick`, `client.ts:30-82`), `mutationsInflight$`, dehydrate/hydrate/waitForIdle. |
 | `define.ts` | `defineQuery`, `defineInfiniteQuery`. Module-scoped values branded `__olas`. Carry a `__clients: Set<QueryClient>` for multi-root operation. |
 | `use.ts` | `createUse` and `createInfiniteUse`. Build a `SubscriptionImpl` that swaps entries reactively on key change. |
 | `mutation.ts` | `MutationImpl` — three concurrency modes, abort-race, snapshot rollback. |
@@ -87,7 +89,7 @@ A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it re
 
 ## SSR
 
-`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'` (`client.ts:809-822`). Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map (`client.ts:746-768`); the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry` (`client.ts:894-895`). The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data (`client.ts:927-928`) — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md`. For phase-2 streaming SSR, the same flow is driven row-by-row via `QueryClient.applyDehydratedEntry` (`client.ts:645-672`), which buffers into `hydratedData` if the entry isn't bound yet, or applies directly via `applyRemoteSetData` if it is.
+`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'` (`client.ts:1035-1050`). Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map (`client.ts:972-996`); the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry` (`client.ts:1121-1123`). The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data (`client.ts:1155-1157`) — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md`. For phase-2 streaming SSR, the same flow is driven row-by-row via `QueryClient.applyDehydratedEntry` (`client.ts:863-892`), which buffers into `hydratedData` if the entry isn't bound yet, or applies directly via `applyRemoteSetData` if it is.
 
 ## Plugin slot
 

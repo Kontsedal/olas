@@ -1280,6 +1280,47 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
     root.dispose()
     vi.useRealTimers()
   })
+
+  // The interval is a self-rescheduling `setTimeout` chain (so the function
+  // form of `refetchInterval` can re-resolve the gap per tick), which adds two
+  // failure modes `setInterval` couldn't have. Both are invisible to the test
+  // above — a chain that dies after the first slow fetch still satisfies
+  // "completions >= 1" and "starts < 10".
+  test('a tick skipped by the in-flight guard neither kills the chain nor stretches the cadence', async () => {
+    vi.useFakeTimers()
+    let starts = 0
+    const q = defineQuery({
+      key: () => ['k'],
+      fetcher: ({ signal }) => {
+        starts += 1
+        return new Promise<number>((resolve, reject) => {
+          const t = setTimeout(() => resolve(starts), 2500) // slower than the 1000ms interval
+          signal.addEventListener('abort', () => {
+            clearTimeout(t)
+            reject(new DOMException('aborted', 'AbortError'))
+          })
+        })
+      },
+      refetchInterval: 1000,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    // t=0 starts fetch #1. Ticks at 1000 and 2000 are skipped (in flight); #1
+    // settles at 2500. The tick at exactly 3000 must fire: at 3000 because the
+    // re-arm happens at tick time, not after the fetch settles (a settle-based
+    // chain would land at 3500), and at all because a skipped tick must still
+    // have re-armed before returning.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(starts).toBe(2)
+
+    // And it keeps going: #2 settles at 5500, the tick at 6000 fires.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(starts).toBe(3)
+
+    root.dispose()
+    vi.useRealTimers()
+  })
 })
 
 // ---------------------------------------------------------------------------

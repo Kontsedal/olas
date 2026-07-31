@@ -19,12 +19,67 @@ import type {
   DehydratedState,
   Query,
   QuerySpec,
+  RefetchInterval,
   RetryDelay,
   RetryPolicy,
   Snapshot,
 } from './types'
 
 const DEFAULT_GC_TIME = 5 * 60_000
+
+/**
+ * Resolve the gap before the next interval tick. The function form is called
+ * fresh on every scheduling decision with the entry's latest data — see
+ * `RefetchInterval`.
+ *
+ * `readData` is a thunk rather than a value so the read happens *inside* the
+ * try: `entry.data` is a signal on regular entries but a `computed` on infinite
+ * ones, and a computed can throw. Everything evaluated before the chain re-arms
+ * has to be total, or the throw ends polling for the entry permanently.
+ * (Unreachable today — neither `data` implementation can throw — but the
+ * argument-position read was the one expression left outside the guard.) The
+ * read is a `peek()`, so resolution never becomes a reactive dependency.
+ *
+ * Returns `null` for anything that isn't a positive finite number — and for a
+ * thunk that throws — which stops the chain. The alternative on a `0` / `NaN`
+ * value is scheduling `setTimeout(fn, 0)`: a fetch-per-macrotask hot loop that
+ * presents as a hung tab, not as a config error. Both failure modes stop the
+ * chain loudly instead, with a warning that says which one happened. The
+ * warning fires once per stop, and a misconfigured entry re-warns on each
+ * 0→1 acquire (a StrictMode double-mount shows two) — dev-only and benign.
+ */
+function resolveRefetchInterval<T>(
+  spec: RefetchInterval<T>,
+  readData: () => T | undefined,
+): number | null {
+  let ms: unknown
+  if (typeof spec === 'function') {
+    try {
+      ms = spec(readData())
+    } catch (err) {
+      if (__DEV__) {
+        console.warn(
+          '[olas] refetchInterval thunk threw — it must return a positive finite number. ' +
+            'Refetch polling for this cache entry has stopped; it restarts only when the ' +
+            'entry loses every subscriber and gains a new one.',
+          err,
+        )
+      }
+      return null
+    }
+  } else {
+    ms = spec
+  }
+  if (typeof ms === 'number' && Number.isFinite(ms) && ms > 0) return ms
+  if (__DEV__) {
+    console.warn(
+      `[olas] refetchInterval resolved to ${String(ms)} — expected a positive finite number. ` +
+        'Refetch polling for this cache entry has stopped; it restarts only when the entry ' +
+        'loses every subscriber and gains a new one.',
+    )
+  }
+  return null
+}
 
 type AnyQuery = Query<any, any> & {
   readonly __spec: QuerySpec<any, any>
@@ -57,11 +112,21 @@ export class ClientEntry<T> {
   readonly query: AnyQuery
   private subscriberCount = 0
   private gcTimer: ReturnType<typeof setTimeout> | null = null
-  private intervalTimer: ReturnType<typeof setInterval> | null = null
+  private intervalTimer: ReturnType<typeof setTimeout> | null = null
   private unsubFocus: (() => void) | null = null
   private unsubOnline: (() => void) | null = null
   private gcTime: number
-  private refetchInterval: number | undefined
+  /**
+   * Resolves the gap before the next interval tick — `null` to stop the
+   * chain, `undefined` when the query declared no `refetchInterval` at all.
+   *
+   * Held as a closure rather than as the raw `RefetchInterval<T>` spec field
+   * on purpose: a `(data: T | undefined) => number` member puts `T` in a
+   * contravariant position and makes `ClientEntry<T>` invariant, which breaks
+   * every `ClientEntry<unknown>` boundary in this file (the entry maps,
+   * `dropEntry`). The closure keeps `T` internal.
+   */
+  private nextIntervalMs: (() => number | null) | undefined
   private refetchOnWindowFocus: boolean
   private refetchOnReconnect: boolean
 
@@ -88,7 +153,11 @@ export class ClientEntry<T> {
     this.keyArgs = keyArgs
     const defaults = client.defaults
     this.gcTime = spec.gcTime ?? defaults.gcTime ?? DEFAULT_GC_TIME
-    this.refetchInterval = spec.refetchInterval
+    const interval = spec.refetchInterval
+    this.nextIntervalMs =
+      interval === undefined
+        ? undefined
+        : () => resolveRefetchInterval(interval, () => this.entry.data.peek())
     this.refetchOnWindowFocus = spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus
     this.refetchOnReconnect = spec.refetchOnReconnect ?? client.refetchOnReconnect
     const fetcherFn = spec.fetcher
@@ -157,7 +226,7 @@ export class ClientEntry<T> {
       this.gcTimer = null
     }
     if (this.subscriberCount === 1) {
-      if (this.refetchInterval != null) this.startIntervalTimer()
+      if (this.nextIntervalMs !== undefined) this.startIntervalTimer()
       if (this.refetchOnWindowFocus) {
         this.unsubFocus = subscribeWindowFocus(() => this.triggerEventRefetch())
       }
@@ -188,9 +257,31 @@ export class ClientEntry<T> {
   }
 
   startIntervalTimer(): void {
-    if (this.refetchInterval == null) return
+    if (this.nextIntervalMs === undefined) return
     if (this.intervalTimer != null) return
-    this.intervalTimer = setInterval(() => {
+    this.armIntervalTick()
+  }
+
+  /**
+   * One link of the refetch chain. A self-rescheduling `setTimeout` rather
+   * than `setInterval` because the gap is re-resolved before every tick —
+   * that's what lets `refetchInterval` be a function of the entry's data
+   * (`RefetchInterval`, spec §5.9). For the number form the two are
+   * equivalent.
+   */
+  private armIntervalTick(): void {
+    const ms = this.nextIntervalMs?.()
+    if (ms == null) {
+      this.intervalTimer = null
+      return
+    }
+    this.intervalTimer = setTimeout(() => {
+      // Re-arm BEFORE the guards and the fetch, so the cadence stays a
+      // metronome: gap N+1 is measured from this tick, not from whenever the
+      // fetch it kicks off happens to settle. `setInterval` behaved that way
+      // and the tests pin it — a fetch slower than the interval must not
+      // stretch the schedule.
+      this.armIntervalTick()
       // Skip when the tab is hidden — refetching while in background wastes
       // battery and network. `refetchOnWindowFocus` (when enabled) will
       // catch the entry up on visibility return; pure-interval users without
@@ -208,12 +299,12 @@ export class ClientEntry<T> {
       this.entry.startFetch().catch(() => {
         /* error already captured on entry */
       })
-    }, this.refetchInterval)
+    }, ms)
   }
 
   stopIntervalTimer(): void {
     if (this.intervalTimer != null) {
-      clearInterval(this.intervalTimer)
+      clearTimeout(this.intervalTimer)
       this.intervalTimer = null
     }
   }
@@ -285,9 +376,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   readonly query: AnyInfiniteQuery
   private subscriberCount = 0
   private gcTimer: ReturnType<typeof setTimeout> | null = null
-  private intervalTimer: ReturnType<typeof setInterval> | null = null
+  private intervalTimer: ReturnType<typeof setTimeout> | null = null
   private gcTime: number
-  private refetchInterval: number | undefined
+  /** See `ClientEntry.nextIntervalMs` — same closure, same variance reason. */
+  private nextIntervalMs: (() => number | null) | undefined
 
   constructor(
     client: QueryClient,
@@ -312,7 +404,11 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     // root default here would be dead config. See `DefaultQueryOptions`.
     const defaults = client.defaults
     this.gcTime = spec.gcTime ?? defaults.gcTime ?? DEFAULT_GC_TIME
-    this.refetchInterval = spec.refetchInterval
+    const interval = spec.refetchInterval
+    this.nextIntervalMs =
+      interval === undefined
+        ? undefined
+        : () => resolveRefetchInterval(interval, () => this.entry.data.peek())
     const fetcherFn = spec.fetcher
     const deps = client.deps as import('../controller/types').AmbientDeps
     this.entry = new InfiniteEntry<TPage, TItem, PageParam>({
@@ -341,7 +437,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       clearTimeout(this.gcTimer)
       this.gcTimer = null
     }
-    if (this.subscriberCount === 1 && this.refetchInterval != null) {
+    if (this.subscriberCount === 1 && this.nextIntervalMs !== undefined) {
       this.startIntervalTimer()
     }
   }
@@ -370,8 +466,24 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   }
 
   private startIntervalTimer(): void {
-    if (this.refetchInterval == null || this.intervalTimer != null) return
-    this.intervalTimer = setInterval(() => {
+    if (this.nextIntervalMs === undefined || this.intervalTimer != null) return
+    this.armIntervalTick()
+  }
+
+  /**
+   * Same self-rescheduling chain as `ClientEntry.armIntervalTick` — see there
+   * for why it's a `setTimeout` chain and why the re-arm comes first. The one
+   * difference: the thunk's argument is the entry's pages array
+   * (`TPage[] | undefined`), since that's what an infinite entry stores.
+   */
+  private armIntervalTick(): void {
+    const ms = this.nextIntervalMs?.()
+    if (ms == null) {
+      this.intervalTimer = null
+      return
+    }
+    this.intervalTimer = setTimeout(() => {
+      this.armIntervalTick()
       // Same visibility-gate as the regular `ClientEntry.startIntervalTimer`.
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
@@ -382,12 +494,12 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       this.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
-    }, this.refetchInterval)
+    }, ms)
   }
 
   private stopIntervalTimer(): void {
     if (this.intervalTimer != null) {
-      clearInterval(this.intervalTimer)
+      clearTimeout(this.intervalTimer)
       this.intervalTimer = null
     }
   }

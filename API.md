@@ -291,7 +291,7 @@ const root = createRoot(app, {
 
 Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (the latter for `staleTime` / `keepPreviousData` — the only overlapping fields on `LocalCacheOptions`).
 
-**Not defaultable:** `refetchInterval` — a root-wide interval would start polling every query in the app; opt in per query. Also note `refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries, which install no focus/reconnect subscription.
+**Not defaultable:** `refetchInterval` — a root-wide interval would start polling every query in the app; opt in per query, in either of its two forms (see `QuerySpec` below). Also note `refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries, which install no focus/reconnect subscription.
 
 **See also:** SPEC §5.9. `createTestController` accepts the same option, so controllers whose behavior depends on it are testable in isolation.
 
@@ -488,7 +488,7 @@ type QuerySpec<Args extends unknown[], T> = {
   fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>
   staleTime?: number          // default 0 — data is immediately stale
   gcTime?: number             // default 5 * 60_000 — drop entry N ms after last subscriber
-  refetchInterval?: number    // periodic background refetch while subscribed
+  refetchInterval?: RefetchInterval<T>   // periodic background refetch while subscribed
   refetchOnWindowFocus?: boolean   // default false (root may override)
   refetchOnReconnect?: boolean     // default false (root may override)
   keepPreviousData?: boolean
@@ -497,10 +497,21 @@ type QuerySpec<Args extends unknown[], T> = {
 }
 
 type FetchCtx = { signal: AbortSignal; deps: AmbientDeps }
+type RefetchInterval<T> = number | ((data: T | undefined) => number)
 ```
 
 - **`key(...args)`** — must be a *pure* function of args. Its return value is stably hashed; same hash means same cache entry.
 - **`fetcher(ctx, ...args)`** — receives the abort signal + root deps as first arg, then the same positional args. Long-running fetchers must honor `signal`.
+- **`refetchInterval`** — a fixed gap in ms, or a thunk resolved **once per tick** (for the *next* gap) against the entry's latest data:
+
+  ```ts
+  // Poll fast while a job is running, back off when the queue is idle.
+  refetchInterval: (jobs) => (jobs?.some((j) => j.state === 'running') ? 1_000 : 30_000)
+  ```
+
+  The resolved gap must be a positive finite number — in **either** form. Anything else (`0`, `NaN`, negative, `Infinity`), whether it's a literal or a thunk's return, stops the timer for that entry and dev-warns rather than spinning a hot loop; it restarts only on the entry's next 0→1 subscriber transition. A thunk must also not **throw** — a throw is caught and treated as a bad gap, with a dev warning carrying the error, because the resolution runs before the chain re-arms.
+
+  The thunk's first call is synchronous at the 0→1 subscribe, before the initial fetch settles, so handle `data === undefined`. It is **not reactive** — a signal read inside yields that tick's value and registers no dependency. And it's resolved **per entry, not per subscriber** (the timer belongs to the shared cache entry), which is why `UseOptions` has no `refetchInterval` and `DefaultQueryOptions` excludes it. `ctx.cache` / `LocalCache` has no interval at all. SPEC §5.9.
 
 **Gotcha:** the value of `spec.key(...)` is what's hashed; the *original* `args` are what the fetcher receives. They're not the same thing — see [`.wiki/pitfalls/callargs-vs-keyargs.md`](.wiki/pitfalls/callargs-vs-keyargs.md).
 
@@ -603,6 +614,8 @@ export const feedQuery = defineInfiniteQuery({
 ```
 
 The subscription returned by `ctx.use(feedQuery, ...)` includes `pages`, `items` (flattened), `hasNextPage`, `fetchNextPage`, etc. — full shape in SPEC §20.4.
+
+`refetchInterval` works here too, with the same two forms: `RefetchInterval<TPage[]>`, so the thunk receives the entry's pages array (`undefined` until the first page lands). Remember that a tick re-fetches *every* loaded page (SPEC §5.11), so a list scrolled 20 pages deep costs 20 requests per tick — that's the case where a data-driven gap earns its keep.
 
 ---
 

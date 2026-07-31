@@ -11,11 +11,12 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query-focus-online.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query-default-options.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/regressions.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
   - { type: uses, target: entry.md }
   - { type: uses, target: ../decisions/per-root-query-client.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-07-29
+last_verified: 2026-07-31
 confidence: high
 ---
 
@@ -40,15 +41,15 @@ Every consumer resolves the same way — **`spec.X ?? client.defaults.X ?? built
 
 | Field | Resolved in |
 |---|---|
-| `staleTime`, `retry`, `retryDelay`, `networkMode`, `structuralShare` | `ClientEntry` ctor → `Entry` options (`client.ts:89-104`); `InfiniteClientEntry` ctor → `InfiniteEntry` (`client.ts:313-329`) |
-| `gcTime` | `ClientEntry` / `InfiniteClientEntry` fields (`client.ts:90`, `client.ts:314`) |
+| `staleTime`, `retry`, `retryDelay`, `networkMode`, `structuralShare` | `ClientEntry` ctor → `Entry` options (`client.ts:155-169`); `InfiniteClientEntry` ctor → `InfiniteEntry` (`client.ts:402-418`) |
+| `gcTime` | `ClientEntry` / `InfiniteClientEntry` fields (`client.ts:143`, `client.ts:394`) |
 | `keepPreviousData` | `createUse` / `createInfiniteUse` (`use.ts:149`, `use.ts:396`) — it lives on the subscription, not the entry |
 | `refetchOnWindowFocus`, `refetchOnReconnect` | folded into `client.refetchOnWindowFocus` / `client.refetchOnReconnect` at construction; see above |
 | `staleTime`, `keepPreviousData` (for `ctx.cache`) | `instance.ts` `cache()` merges them into `LocalCacheOptions` before `createLocalCache` |
 
 Two asymmetries worth knowing:
 
-- **`refetchInterval` is not defaultable** — a root-wide interval would silently poll every query in the app.
+- **`refetchInterval` is not defaultable** — a root-wide interval would silently poll every query in the app. Same reasoning keeps it off `UseOptions`: the timer is per **entry**, so a per-subscriber interval would need a "whose interval wins" rule.
 - **`refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries.** `InfiniteClientEntry` installs no focus/online subscription at all, so those fields aren't threaded there (comment at the ctor records this).
 - **`ctx.cache` only gets `staleTime` / `keepPreviousData`**, because those are the only fields `LocalCacheOptions` carries — `retry` / `gcTime` / `networkMode` aren't part of its surface.
 
@@ -58,8 +59,9 @@ Two asymmetries worth knowing:
 
 - `subscriberCount` — incremented by `acquire()`, decremented by `release()`.
 - `gcTimer` — started on `release()` when count hits zero; cleared on `acquire()`. Fires `client.dropEntry(this)`.
-- `intervalTimer` — every `refetchInterval` ms while subscribers exist, runs `entry.startFetch()` **unless a fetch is already in flight** (`isFetching.peek()`) — the tick joins the running fetch rather than aborting it, so a fetch slower than the interval can't livelock (T3.2). Also skipped while `document.visibilityState === 'hidden'`.
-- `unsubFocus` / `unsubOnline` — `window` focus and `online` subscriptions, installed on the 0→1 acquire transition when the resolved flag is `true`. Resolution: `spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus ?? false` (and same for reconnect) — per-query spec wins, root-wide default fills in, otherwise off. `client.refetchOnWindowFocus` itself resolves at construction as `defaultQueryOptions.refetchOnWindowFocus ?? opts.refetchOnWindowFocus ?? false` (`client.ts:488-493`) — the dedicated `defaultQueryOptions` slot beats the older flat shorthand. Cleared on release-to-zero and on dispose. The handler skips refetch if `entry.isStaleNow()` is false, so a freshly-fetched query within `staleTime` ignores the focus event. The window/document listeners themselves live in `query/focus-online.ts` as a lazy single-listener pubsub, shared across all clients and SSR-safe.
+- `intervalTimer` — a self-rescheduling `setTimeout` chain (`client.ts:259-310`), not a `setInterval`. Each tick **re-arms first**, then runs the two guards: skip while `document.visibilityState === 'hidden'`, and skip while a fetch is in flight (`isFetching.peek()`) so the tick joins the running fetch rather than aborting it — a fetch slower than the interval can't livelock (T3.2). Re-arm-before-guards is load-bearing twice over: it keeps the cadence a metronome (gap N+1 measured from tick N, not from whenever the fetch settles) and it stops a skipped tick from ending the chain forever. Pinned in `regressions.test.ts` under R-Q3.2 and in `query-focus-online.test.ts`'s "refetchInterval — hidden tab".
+- `nextIntervalMs` — the closure that resolves the gap for the next tick, `undefined` when the query declared no `refetchInterval`. `refetchInterval` is `number | ((data: T | undefined) => number)` (spec §5.9); the function form is called on every scheduling decision with `entry.data.peek()` — non-subscribing, so it can't become a reactive dependency. Held as a closure rather than as a `RefetchInterval<T>` field because a `(data: T) => number` member puts `T` in a contravariant position and makes `ClientEntry<T>` invariant, which breaks every `ClientEntry<unknown>` boundary in the file (the maps, `dropEntry`). A resolved gap that isn't a positive finite number stops the chain and dev-warns (`resolveRefetchInterval`, `client.ts:30-82`) rather than spinning a `setTimeout(…, 0)` hot loop — and because the rule is written against the *resolved* gap, it binds a numeric literal too: `refetchInterval: 0` no longer arms at all (it used to mean "fetch every macrotask" via `setInterval`'s clamp). A thunk that **throws** takes the same path, with a warning that names the throw and carries the error; the data read is passed in as a thunk so it happens inside that same try, since the resolution runs before the re-arm and anything non-total there would end polling permanently. Recovery is only the entry's next **0→1 acquire** — a subscriber joining an entry that still has others does not re-arm it, and the warning string says so. All three cases (bad literal, bad return, throw) are pinned in `query.test.ts` under `refetchInterval`.
+- `unsubFocus` / `unsubOnline` — `window` focus and `online` subscriptions, installed on the 0→1 acquire transition when the resolved flag is `true`. Resolution: `spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus ?? false` (and same for reconnect) — per-query spec wins, root-wide default fills in, otherwise off. `client.refetchOnWindowFocus` itself resolves at construction as `defaultQueryOptions.refetchOnWindowFocus ?? opts.refetchOnWindowFocus ?? false` (`client.ts:589-593`) — the dedicated `defaultQueryOptions` slot beats the older flat shorthand. Cleared on release-to-zero and on dispose. The handler skips refetch if `entry.isStaleNow()` is false, so a freshly-fetched query within `staleTime` ignores the focus event. The window/document listeners themselves live in `query/focus-online.ts` as a lazy single-listener pubsub, shared across all clients and SSR-safe.
 - `callArgs` and `keyArgs` — separately stored. `callArgs` is fed to the fetcher. `keyArgs = spec.key(...callArgs)` is hashed for identity. See `../pitfalls/callargs-vs-keyargs.md`.
 
 ## Cross-root query operation
@@ -68,7 +70,7 @@ A `Query` is module-scoped. When `bindEntry` runs on this client for that query,
 
 ## Mutation inflight counter
 
-`mutationsInflight$: Signal<number>` lives on the client (not on individual mutations). `MutationImpl` receives a reference and `.update(n => n+1)` on each `executeRun` start, `.update(n => n-1)` on settle (in `finally`). `waitForIdle()` waits for this AND for all per-entry `isFetching` flags. Counter signal at `client.ts:346`; `waitForIdle` at `client.ts:710-740`.
+`mutationsInflight$: Signal<number>` lives on the client (not on individual mutations). `MutationImpl` receives a reference and `.update(n => n+1)` on each `executeRun` start, `.update(n => n-1)` on settle (in `finally`). `waitForIdle()` waits for this AND for all per-entry `isFetching` flags. Counter signal at `client.ts:541`; `waitForIdle` at `client.ts:1040-1071`.
 
 ## SSR
 
