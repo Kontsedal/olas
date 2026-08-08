@@ -27,6 +27,21 @@ describe('signal', () => {
     expect(s.value).toBe(22)
   })
 
+  test('.set / .update are bound — safe to pass as a value (detached)', () => {
+    const s = signal('a')
+    // Detach the methods, as happens with `onChange={s.set}` or `setName: s.set`.
+    const set = s.set
+    const update = s.update
+    expect(() => set('b')).not.toThrow()
+    expect(s.value).toBe('b')
+    update((prev) => `${prev}c`)
+    expect(s.value).toBe('bc')
+    // Stable identity across reads (like React's setState), so a memo dep on it
+    // never changes.
+    expect(s.set).toBe(set)
+    expect(s.update).toBe(update)
+  })
+
   test('.peek returns the current value', () => {
     const s = signal(42)
     expect(s.peek()).toBe(42)

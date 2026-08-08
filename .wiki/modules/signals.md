@@ -49,7 +49,7 @@ type Computed<T>   = ReadSignal<T>
 ## Why wrapped, not re-exported
 
 - A stable public surface independent of the upstream library.
-- Add `.set()` / `.update()` methods we want even though upstream uses property setters.
+- Add `.set()` / `.update()` methods we want even though upstream uses property setters. Both are **arrow-bound instance fields** (`runtime.ts` `SignalImpl`), not prototype methods — so `onChange={s.set}` / `const setName = s.set` work and keep a stable identity (like React's `setState`) instead of throwing `Cannot read properties of undefined (reading 'inner')` once detached. `FieldImpl.set` (`forms/field.ts`) is bound for the same reason.
 - Make `readOnly(...)` projection mechanically sound.
 - Dodge a TS overload-resolution bug in upstream — see `pitfalls/preact-signals-overload-return.md`.
 

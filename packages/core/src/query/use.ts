@@ -33,6 +33,7 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
   constructor(
     private readonly keepPreviousData: boolean,
     private readonly select?: (data: T) => U,
+    private readonly keepDataWhileDisabled: boolean = false,
   ) {
     // The underlying entry stores `T`. The subscription's `data` is `U`
     // (or `T` when no projection). We compute the raw `T` once, then layer
@@ -44,7 +45,11 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
       const cur = this.current$.value
       const curData = cur?.entry.data.value
       if (curData !== undefined) return curData
-      if (keepPreviousData) return this.previousData$.value
+      // Fall back to the retained snapshot for BOTH transitions that keep the
+      // last good value: a key change (`keepPreviousData`) and a disable
+      // (`keepDataWhileDisabled`). `previousData$` is only populated when one of
+      // them is on, so testing either flag here is sufficient.
+      if (keepPreviousData || this.keepDataWhileDisabled) return this.previousData$.value
       return undefined
     })
     this.data =
@@ -81,7 +86,14 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     this.current$.set(entry)
   }
 
-  detach(): void {
+  detach(retainData = false): void {
+    // On a disable with `keepDataWhileDisabled`, snapshot the current entry's
+    // data into `previousData$` before unbinding, so `rawData` keeps reporting
+    // it. Not done on dispose (`retainData` defaults false) — the sub is gone.
+    if (retainData) {
+      const d = this.current$.peek()?.entry.data.peek()
+      if (d !== undefined) this.previousData$.set(d)
+    }
     this.current$.set(null)
   }
 
@@ -153,8 +165,12 @@ export function createUse<Args extends unknown[], T, U = T>(
     typeof keyOrOptions === 'object' && keyOrOptions !== null ? keyOrOptions.enabled : undefined
   const select =
     typeof keyOrOptions === 'object' && keyOrOptions !== null ? keyOrOptions.select : undefined
+  const keepDataWhileDisabled =
+    typeof keyOrOptions === 'object' && keyOrOptions !== null
+      ? (keyOrOptions.keepDataWhileDisabled ?? false)
+      : false
 
-  const sub = new SubscriptionImpl<T, U>(keepPreviousData, select)
+  const sub = new SubscriptionImpl<T, U>(keepPreviousData, select, keepDataWhileDisabled)
   let currentEntry: ClientEntry<T> | null = null
   let suspended = false
 
@@ -178,7 +194,9 @@ export function createUse<Args extends unknown[], T, U = T>(
           currentEntry.release()
           currentEntry = null
         }
-        sub.detach()
+        // `keepDataWhileDisabled` snapshots the last data so `data` keeps
+        // reporting it while disabled; otherwise the subscription blanks (§5.7).
+        sub.detach(keepDataWhileDisabled)
       })
       return
     }

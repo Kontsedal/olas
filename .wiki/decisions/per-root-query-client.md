@@ -50,10 +50,11 @@ const query = {
   __clients: new Set<QueryClient>(),
 
   invalidate(...args) {
-    for (const client of this.__clients) client.invalidate(this, args)
+    // Promise<void>: resolves when every client's triggered refetch settles.
+    return Promise.all([...this.__clients].map((c) => c.invalidate(this, args))).then(() => {})
   },
   invalidateAll() {
-    for (const client of this.__clients) client.invalidateAll(this)
+    return Promise.all([...this.__clients].map((c) => c.invalidateAll(this))).then(() => {})
   },
   setData(...rest) {
     // collect rollbacks across clients; aggregate

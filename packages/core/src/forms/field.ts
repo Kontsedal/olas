@@ -250,7 +250,9 @@ class FieldImpl<T> implements Field<T> {
   }
 
   // --- mutating methods ---
-  set(value: T): void {
+  // Arrow-bound so `set` survives being passed as a value — `onChange={field.set}`
+  // or `setName: field.set` — instead of throwing once detached from the field.
+  set = (value: T): void => {
     if (this.disposed) return
     batch(() => {
       this.value$.set(value)

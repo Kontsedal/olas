@@ -1209,48 +1209,59 @@ export class QueryClient {
     hasSubscribers(): boolean
     keyArgs: readonly unknown[]
     entry: { invalidate(): Promise<unknown>; markStale(): void }
-  }): void {
+  }): Promise<void> {
     if (entry.hasSubscribers()) {
-      entry.entry.invalidate().catch((err) => {
-        if (isAbortError(err)) return
-        dispatchError(this.onError, err, {
-          kind: 'cache',
-          controllerPath: [],
-          queryKey: entry.keyArgs,
-        })
-      })
-    } else {
-      entry.entry.markStale()
+      // Resolve when the triggered refetch settles. Errors are reported through
+      // `onError` (as before) and swallowed for the awaiter, so `await invalidate()`
+      // never throws — it means "the refetch this invalidate kicked off has finished",
+      // matching TanStack's `invalidateQueries`.
+      return entry.entry.invalidate().then(
+        () => {},
+        (err) => {
+          if (isAbortError(err)) return
+          dispatchError(this.onError, err, {
+            kind: 'cache',
+            controllerPath: [],
+            queryKey: entry.keyArgs,
+          })
+        },
+      )
     }
+    // Subscriber-less: marked stale only, no refetch, so nothing to await.
+    entry.entry.markStale()
+    return Promise.resolve()
   }
 
-  invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): void {
+  invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): Promise<void> {
     const internal = query as AnyQuery
     const map = this.maps.get(internal)
-    if (!map) return
+    if (!map) return Promise.resolve()
     const keyArgs = internal.__spec.key(...args)
     const hash = stableHash(keyArgs)
     const entry = map.get(hash)
-    if (!entry) return
+    if (!entry) return Promise.resolve()
     if (__DEV__) {
       this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
     }
-    this.invalidateEntry(entry)
+    const settled = this.invalidateEntry(entry)
     this.emitInvalidate(internal, keyArgs, 'data')
+    return settled
   }
 
-  invalidateAll(query: Query<any, any>): void {
+  invalidateAll(query: Query<any, any>): Promise<void> {
     const internal = query as AnyQuery
     const map = this.maps.get(internal)
-    if (!map) return
+    if (!map) return Promise.resolve()
+    const settled: Promise<void>[] = []
     for (const [hash, entry] of map) {
       void hash
       if (__DEV__) {
         this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
       }
-      this.invalidateEntry(entry)
+      settled.push(this.invalidateEntry(entry))
       this.emitInvalidate(internal, entry.keyArgs, 'data')
     }
+    return Promise.all(settled).then(() => {})
   }
 
   cancel<Args extends unknown[]>(query: Query<Args, any>, args: Args): void {
@@ -1352,26 +1363,29 @@ export class QueryClient {
   invalidateInfinite<Args extends unknown[]>(
     query: InfiniteQuery<Args, any, any>,
     args: Args,
-  ): void {
+  ): Promise<void> {
     const internal = query as AnyInfiniteQuery
     const map = this.infiniteMaps.get(internal)
-    if (!map) return
+    if (!map) return Promise.resolve()
     const keyArgs = internal.__spec.key(...args)
     const hash = stableHash(keyArgs)
     const entry = map.get(hash)
-    if (!entry) return
-    this.invalidateEntry(entry)
+    if (!entry) return Promise.resolve()
+    const settled = this.invalidateEntry(entry)
     this.emitInvalidate(internal, keyArgs, 'infinite')
+    return settled
   }
 
-  invalidateAllInfinite(query: InfiniteQuery<any, any, any>): void {
+  invalidateAllInfinite(query: InfiniteQuery<any, any, any>): Promise<void> {
     const internal = query as AnyInfiniteQuery
     const map = this.infiniteMaps.get(internal)
-    if (!map) return
+    if (!map) return Promise.resolve()
+    const settled: Promise<void>[] = []
     for (const entry of map.values()) {
-      this.invalidateEntry(entry)
+      settled.push(this.invalidateEntry(entry))
       this.emitInvalidate(internal, entry.keyArgs, 'infinite')
     }
+    return Promise.all(settled).then(() => {})
   }
 
   cancelInfinite<Args extends unknown[]>(query: InfiniteQuery<Args, any, any>, args: Args): void {

@@ -1,0 +1,6 @@
+# Normalize all text files to LF in the repository and on checkout, so tooling
+# stays consistent across platforms. Biome enforces LF, and CI runs on Linux;
+# without this, a Windows checkout (core.autocrlf=true) has CRLF working files
+# and `pnpm lint` reports every file as a formatting error locally while CI is
+# green. `text=auto` still leaves git-detected binary files untouched.
+* text=auto eol=lf

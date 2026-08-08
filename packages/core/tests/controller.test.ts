@@ -189,6 +189,21 @@ describe('ctx.field — sync validators', () => {
     root.dispose()
   })
 
+  test('field.set is bound — safe to pass as a value (detached), still runs validators', () => {
+    const def = defineController((ctx) => ({
+      n: ctx.field(0, [(v) => (v < 5 ? 'too small' : null)]),
+    }))
+    const root = createRoot(def, { deps: noopApi })
+    // Detach `set`, as with `onChange={field.set}` or `setName: field.set`.
+    const set = root.n.set
+    expect(() => set(10)).not.toThrow()
+    expect(root.n.value).toBe(10)
+    expect(root.n.errors.value).toEqual([]) // validators still ran through the bound path
+    expect(root.n.isDirty.value).toBe(true)
+    expect(root.n.set).toBe(set) // stable identity
+    root.dispose()
+  })
+
   test('reset returns to initial and clears dirty/touched/errors', () => {
     const def = defineController((ctx) => ({
       s: ctx.field('init', [(v) => (v === 'init' ? null : 'must equal init')]),

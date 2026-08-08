@@ -76,6 +76,8 @@ See `flows/query-subscription.md`.
 
 A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it registers itself in `query.__clients`. `query.invalidate(...args)` iterates `__clients` and calls `client.invalidate(query, args)` on each. On root dispose, the client removes itself from every touched query's set — this is the mechanism for test isolation. See `decisions/per-root-query-client.md`.
 
+`invalidate` / `invalidateAll` return a `Promise<void>` (`Promise.all` over the clients) that resolves when every triggered refetch has **settled** — the per-entry settle-promise `client.invalidateEntry` returns (immediately for a subscriber-less entry, which is marked stale but not refetched). It **never rejects**: a fetch error routes to the root's `onError` and stays on the entry's `error` signal, so `await query.invalidate(id)` is a safe sequencing point (spec §5.7). Ignore the return for fire-and-forget.
+
 ## How mutations integrate with the cache
 
 - `onMutate` typically calls `query.setData(...)`. That writes through `client.setData` which calls `entry.setData(updater)`. The Entry records a snapshot (pre-value) and returns `{ rollback }`.

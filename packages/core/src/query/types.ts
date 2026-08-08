@@ -75,8 +75,12 @@ export type Snapshot = {
  * `ctx.cache(fetcher, options?)`. Disposed automatically with the controller.
  */
 export type LocalCache<T> = AsyncState<T> & {
-  /** Mark stale and trigger an immediate refetch. */
-  invalidate(): void
+  /**
+   * Mark stale and trigger an immediate refetch. The returned promise resolves
+   * when that refetch settles (errors surface on the `error` signal, so it
+   * resolves rather than rejects). Ignore it for fire-and-forget.
+   */
+  invalidate(): Promise<void>
   /** Patch the current data. Returns a `Snapshot` for rollback. */
   setData(updater: (prev: T | undefined) => T): Snapshot
   /** Idempotent — also called when the owning controller disposes. */
@@ -292,10 +296,16 @@ export type DefaultQueryOptions = Pick<
  */
 export type Query<Args extends unknown[], T> = {
   readonly __olas: 'query'
-  /** Mark a specific keyed entry stale + trigger refetch if any subscribers. */
-  invalidate(...args: Args): void
-  /** Mark every keyed entry stale + trigger refetch on all subscribers. */
-  invalidateAll(): void
+  /**
+   * Mark a specific keyed entry stale + trigger refetch if any subscribers. The
+   * returned promise resolves when the triggered refetch settles — immediately if
+   * the entry is subscriber-less (marked stale only). It never rejects (fetch errors
+   * are reported via the root's `onError`), so `await invalidate(...)` is safe to
+   * use as a sequencing point; ignore it for fire-and-forget.
+   */
+  invalidate(...args: Args): Promise<void>
+  /** Like `invalidate` for every keyed entry; resolves when all triggered refetches settle. */
+  invalidateAll(): Promise<void>
   /** Patch the current data for a specific key. Returns a `Snapshot` for rollback. */
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
   /**
@@ -329,6 +339,17 @@ export type QuerySubscription<T> = AsyncState<T> & {
 export type UseOptions<Args extends readonly unknown[]> = {
   key?: () => Args
   enabled?: () => boolean
+  /**
+   * When `enabled` flips to `false`, keep reporting the last `data` this
+   * subscription held (snapshotted at disable time) instead of blanking to
+   * `undefined`. Default `false` — the spec's disable behaviour (§5.7:
+   * `status: 'idle'`, `data: undefined`). Turn it on to port react-query's
+   * "a disabled observer still reads the cache" behaviour: the entry is still
+   * released (refcount / GC unchanged) and `status` stays `'idle'`, but `data`
+   * survives the disable so a dependent view doesn't flash empty. `error` is
+   * not retained; on re-enable the live entry's data takes over as usual.
+   */
+  keepDataWhileDisabled?: boolean
 }
 
 /**

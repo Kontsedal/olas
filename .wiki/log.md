@@ -914,3 +914,22 @@ shape: a release config can be wrong for a whole release cycle without any test
 noticing, because nothing in `install → typecheck → lint → test → build` reads
 it — the only detector is running `changeset status` before a release, which is
 worth doing on any PR that adds a non-patch changeset.
+
+## [2026-08-08 22:44] schema-change | invalidate / invalidateAll now return Promise<void>
+
+`Query.invalidate` / `invalidateAll`, the `InfiniteQuery` equivalents, and
+`LocalCache.invalidate` changed return type `void` → `Promise<void>`, resolving when the
+refetch(es) they trigger have **settled** (immediately for a subscriber-less entry;
+`Promise.all` across a query's `__clients` and across all entries for `invalidateAll`).
+They never reject — a fetch error routes to the root's `onError` and stays on the entry's
+`error` signal — so `await query.invalidate(id)` is a safe sequencing point without a
+`try/catch`, matching TanStack's `invalidateQueries`. Non-breaking: existing fire-and-forget
+callers ignoring the return still work. The plumbing already existed — `Entry.invalidate()`
+returns `Promise<T>`; `client.invalidateEntry` now returns that (mapped to `void`, errors
+swallowed for the awaiter) instead of discarding it, and `define.ts` / `local.ts` propagate
+it. Touched: `query/client.ts` (invalidateEntry + the 4 methods), `query/define.ts` (both
+handles), `query/local.ts` (LocalCache), `query/types.ts` + `query/infinite.ts` (types),
+`SPEC.md` §5.7 + the three type blocks. Updated `modules/query.md`,
+`decisions/per-root-query-client.md`, `entities/query-client.md`. Motivation: the Monghoul
+integration hit this repeatedly — a helper had to join a `prefetch` onto each `invalidate`
+purely to get something awaitable (invalidation as a sequencing primitive).

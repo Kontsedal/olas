@@ -37,11 +37,15 @@ class SignalImpl<T> implements Signal<T> {
     return subscribeChangesImpl(this.inner, handler)
   }
 
-  set(value: T): void {
+  // Arrow-bound so `set` / `update` survive being passed as a value — e.g.
+  // `onChange={sig.set}` or `const setName = sig.set`. As prototype methods they
+  // read `this.inner` and threw ("Cannot read properties of undefined") the moment
+  // they were detached from the signal. Stable identity, like React's setState.
+  set = (value: T): void => {
     this.inner.value = value
   }
 
-  update(fn: (prev: T) => T): void {
+  update = (fn: (prev: T) => T): void => {
     this.inner.value = fn(this.inner.peek())
   }
 }

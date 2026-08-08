@@ -78,8 +78,10 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
  */
 export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
   readonly __olas: 'infiniteQuery'
-  invalidate(...args: Args): void
-  invalidateAll(): void
+  /** Like `Query.invalidate`; resolves when the triggered refetch (all loaded pages) settles. */
+  invalidate(...args: Args): Promise<void>
+  /** Like `Query.invalidateAll`; resolves when every entry's refetch settles. */
+  invalidateAll(): Promise<void>
   setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot
   /** Cancel the in-flight fetch (initial/refetch or paging) for a key. See
    *  `Query.cancel` (spec §5, §6.4). */

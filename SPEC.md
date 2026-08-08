@@ -359,6 +359,8 @@ const feed = ctx.use(newsfeedQuery, {
 
 While `enabled` returns `false`, the subscription holds `status: 'idle'`, `data: undefined`, no network fetch fires, and `isLoading` stays `false`. When `enabled` flips to `true`, the key is evaluated and fetching starts normally. Flipping back to `false` does **not** dispose the entry — subsequent re-enables reuse the cached data subject to `staleTime`.
 
+**`keepDataWhileDisabled` (opt-in).** Pass `ctx.use(query, { enabled, keepDataWhileDisabled: true })` to keep the subscription reporting its **last `data`** (snapshotted at the moment `enabled` went false) instead of blanking to `undefined` — the react-query "a disabled observer still reads the cache" shape, for porting flows that flash empty otherwise. The entry is still released (refcount / GC unchanged) and `status` stays `'idle'`; only `data` survives. `error` is not retained. On re-enable the live entry's data takes over. Default `false`.
+
 For the common case (no `enabled`), continue to pass a bare thunk: `ctx.use(query, () => [id])`. The options object form is only needed when you want `enabled`.
 
 ### 5.3 Subscription state shape
@@ -452,8 +454,8 @@ This applies to both local caches and queries.
 Invalidation and write methods hang directly off the query value (no DI needed):
 
 ```ts
-userQuery.invalidate(id) // mark stale + refetch if subscribed
-userQuery.invalidateAll() // mark stale + refetch every entry for this query (TanStack-style)
+await userQuery.invalidate(id) // mark stale + refetch if subscribed; awaitable (resolves when the refetch settles)
+await userQuery.invalidateAll() // mark stale + refetch every entry for this query (TanStack-style)
 userQuery.setData(id, (u) => ({ ...u, name: 'X' })) // optimistic write, returns snapshot
 userQuery.cancel(id) // abort the in-flight fetch for this key (optimistic recipe, §6.4)
 userQuery.cancelAll() // abort in-flight fetches for every entry of this query
@@ -463,6 +465,8 @@ userQuery.prefetch(id) // fire-and-forget warmup
 Internally these all dispatch to the root's query client.
 
 **Invalidate semantics.** `invalidate` / `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry — one kept warm by `gcTime` after its last subscriber left, or created by `prefetch` — is marked stale and *not* refetched; the next subscriber triggers the fetch. This matches TanStack and avoids waking data nobody is watching.
+
+Both return a `Promise<void>` that resolves when the refetch(es) they trigger have **settled** — immediately (already resolved) for a subscriber-less entry, since nothing refetched; for `invalidateAll`, when *every* subscribed entry's refetch settles. The promise **never rejects**: a fetch error is reported through the root's `onError` (and left on the entry's `error` signal), so `await query.invalidate(id)` is safe to use as a sequencing point — "the refresh I asked for has completed" — without a `try/catch`. Ignore the return for fire-and-forget. (This matches TanStack's `invalidateQueries`, which resolves once refetching completes.)
 
 **Deep updates.** `setData` returns the new value; you build it however you want. Two canonical patterns:
 
@@ -2059,8 +2063,8 @@ type ReadSignal<T> = {
 
 type Signal<T> = ReadSignal<T> & {
   value: T // writable
-  set(value: T): void
-  update(fn: (prev: T) => T): void
+  set(value: T): void // bound: stable identity, safe to pass (`onChange={s.set}`)
+  update(fn: (prev: T) => T): void // bound, like `set`
 }
 
 type Computed<T> = ReadSignal<T>
@@ -2281,7 +2285,7 @@ type Snapshot = {
 
 // Local — anonymous, owned by one controller
 type LocalCache<T> = AsyncState<T> & {
-  invalidate(): void
+  invalidate(): Promise<void>
   setData(updater: (prev: T | undefined) => T): Snapshot
   dispose(): void // idempotent; also called when controller disposes
 }
@@ -2289,8 +2293,8 @@ type LocalCache<T> = AsyncState<T> & {
 // Query — module-scoped, sharable across the tree
 type Query<Args extends unknown[], T> = {
   readonly __olas: 'query'
-  invalidate(...args: Args): void
-  invalidateAll(): void
+  invalidate(...args: Args): Promise<void>
+  invalidateAll(): Promise<void>
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
   prefetch(...args: Args): Promise<T>
 }
@@ -2329,6 +2333,7 @@ type QuerySubscription<T> = AsyncState<T>
 type UseOptions<Args extends readonly unknown[]> = {
   key?: () => Args
   enabled?: () => boolean  // tracking scope; when false, no fetch, status='idle'
+  keepDataWhileDisabled?: boolean  // keep last data while disabled instead of blanking (default false)
 }
 
 // Infinite / paginated queries
@@ -2359,8 +2364,8 @@ type InfiniteFetchCtx<PageParam> = {
 
 type InfiniteQuery<Args extends unknown[], TPage, TItem> = {
   readonly __olas: 'infiniteQuery'
-  invalidate(...args: Args): void
-  invalidateAll(): void
+  invalidate(...args: Args): Promise<void>
+  invalidateAll(): Promise<void>
   setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot
   prefetch(...args: Args): Promise<TPage>
 }
@@ -2469,7 +2474,7 @@ type Field<T> = ReadSignal<T> & {
   touched: ReadSignal<boolean>
   isValidating: ReadSignal<boolean>
 
-  set(value: T): void
+  set(value: T): void // bound: stable identity, safe to pass (`onChange={field.set}`)
   reset(): void
   markTouched(): void
   revalidate(): Promise<boolean>

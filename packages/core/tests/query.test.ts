@@ -161,6 +161,182 @@ describe('defineQuery + ctx.use', () => {
     root.dispose()
   })
 
+  test('invalidate() resolves only after the triggered refetch settles', async () => {
+    const gate = deferred<void>()
+    let calls = 0
+    const q = defineQuery({
+      key: () => ['c'],
+      fetcher: async () => {
+        calls++
+        if (calls === 2) await gate.promise // block the refetch mid-flight
+        return calls
+      },
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.x.data.value).toBe(1)
+
+    let resolved = false
+    const p = q.invalidate().then(() => {
+      resolved = true
+    })
+    await flush()
+    // The refetch is in flight (blocked on the gate) — the promise must NOT be
+    // resolved yet, and the data must not have advanced. This is exactly what the
+    // old `void` return could not express.
+    expect(resolved).toBe(false)
+    expect(root.x.data.value).toBe(1)
+
+    gate.resolve()
+    await p
+    expect(resolved).toBe(true)
+    expect(root.x.data.value).toBe(2)
+    root.dispose()
+  })
+
+  test('invalidateAll() resolves after every subscribed entry has refetched', async () => {
+    const calls: Record<string, number> = {}
+    const q = defineQuery({
+      key: (id: string) => ['m', id],
+      fetcher: async (_ctx, id: string) => {
+        calls[id] = (calls[id] ?? 0) + 1
+        return `${id}:${calls[id]}`
+      },
+    })
+    const def = defineController((ctx) => ({
+      a: ctx.use(q, () => ['a']),
+      b: ctx.use(q, () => ['b']),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(calls.a).toBe(1)
+    expect(calls.b).toBe(1)
+
+    await q.invalidateAll() // the await is the settle for BOTH entries
+    expect(calls.a).toBe(2)
+    expect(calls.b).toBe(2)
+    root.dispose()
+  })
+
+  test('invalidate() on a subscriber-less entry resolves immediately without refetching', async () => {
+    const calls: Record<string, number> = {}
+    const q = defineQuery({
+      key: (id: string) => ['orphan', id],
+      fetcher: async (_ctx, id: string) => {
+        calls[id] = (calls[id] ?? 0) + 1
+        return `${id}:${calls[id]}`
+      },
+      gcTime: 60_000,
+      staleTime: 60_000,
+    })
+    const idSig = signal('a')
+    const def = defineController((ctx) => ({ x: ctx.use(q, () => [idSig.value]) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.waitFor(() => expect(calls.a).toBe(1))
+    idSig.set('b') // entry 'a' released, kept warm by gcTime
+    await vi.waitFor(() => expect(calls.b).toBe(1))
+
+    // Subscriber-less: marked stale only, nothing refetches, so the promise
+    // resolves right away and the fetcher is not called again.
+    await q.invalidate('a')
+    expect(calls.a).toBe(1)
+    root.dispose()
+  })
+
+  test('invalidate() resolves (never rejects) when the refetch errors; the error routes to onError', async () => {
+    let calls = 0
+    const q = defineQuery({
+      key: () => ['e'],
+      fetcher: async () => {
+        calls++
+        if (calls >= 2) throw new Error('boom')
+        return calls
+      },
+      retry: 0, // fail the refetch immediately
+    })
+    const onError = vi.fn()
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps, onError })
+    await flush()
+    expect(root.x.data.value).toBe(1)
+
+    await expect(q.invalidate()).resolves.toBeUndefined()
+    expect(onError).toHaveBeenCalledTimes(1)
+    root.dispose()
+  })
+
+  test('LocalCache.invalidate() resolves after its refetch settles', async () => {
+    let counter = 0
+    const def = defineController((ctx) => ({ c: ctx.cache(async () => ++counter) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.c.data.value).toBe(1)
+
+    await root.c.invalidate() // awaitable now (was void)
+    expect(root.c.data.value).toBe(2)
+    root.dispose()
+  })
+
+  test('keepDataWhileDisabled retains the last data when enabled flips to false', async () => {
+    let counter = 0
+    const q = defineQuery({ key: () => ['kd'], fetcher: async () => ++counter })
+    const enabled = signal(true)
+    const def = defineController((ctx) => ({
+      x: ctx.use(q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.x.data.value).toBe(1)
+
+    enabled.set(false) // disable
+    await flush()
+    // Default would blank to undefined; keepDataWhileDisabled keeps the last value.
+    expect(root.x.data.value).toBe(1)
+    // The entry is still released, so status/loading follow the spec's disabled shape.
+    expect(root.x.status.value).toBe('idle')
+    expect(root.x.isLoading.value).toBe(false)
+    root.dispose()
+  })
+
+  test('without keepDataWhileDisabled, disabling blanks data to undefined (spec default)', async () => {
+    let counter = 0
+    const q = defineQuery({ key: () => ['kd2'], fetcher: async () => ++counter })
+    const enabled = signal(true)
+    const def = defineController((ctx) => ({
+      x: ctx.use(q, { enabled: () => enabled.value }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.x.data.value).toBe(1)
+
+    enabled.set(false)
+    await flush()
+    expect(root.x.data.value).toBeUndefined()
+    root.dispose()
+  })
+
+  test('keepDataWhileDisabled: re-enabling lets the live entry data take over', async () => {
+    let counter = 0
+    const q = defineQuery({ key: () => ['kd3'], fetcher: async () => ++counter, staleTime: 0 })
+    const enabled = signal(true)
+    const def = defineController((ctx) => ({
+      x: ctx.use(q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.x.data.value).toBe(1)
+
+    enabled.set(false)
+    await flush()
+    expect(root.x.data.value).toBe(1) // retained snapshot
+
+    enabled.set(true) // re-enable → stale (staleTime 0) → refetch
+    await flush()
+    expect(root.x.data.value).toBe(2) // live entry data replaces the snapshot
+    root.dispose()
+  })
+
   test('invalidate from one root does not affect another', async () => {
     let counterA = 0
     let counterB = 0
