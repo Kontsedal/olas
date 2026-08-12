@@ -117,6 +117,26 @@ export function defineQuery<Args extends unknown[], T>(spec: QuerySpec<Args, T>)
       }
     },
 
+    write(...rest: [...Args, updater: (prev: T | undefined) => T]): void {
+      const updater = rest[rest.length - 1] as (prev: T | undefined) => T
+      const keyArgs = rest.slice(0, -1) as unknown as Args
+      for (const client of clients) {
+        client.writeData(query as Query<Args, T>, keyArgs, updater)
+      }
+    },
+
+    peek(...args: Args): T | undefined {
+      // First client holding data wins. Unlike `prefetch` this neither throws on
+      // zero clients (no root subscribed yet is a legitimate "nothing cached")
+      // nor warns on several: a read is side-effect-free, and warning would fire
+      // from the hot paths peek exists for (click handlers, event folds).
+      for (const client of clients) {
+        const data = client.peekData(query as Query<Args, T>, args)
+        if (data !== undefined) return data
+      }
+      return undefined
+    },
+
     prefetch(...args: Args): Promise<T> {
       // Single-client common case; if none, throw.
       const [first] = clients

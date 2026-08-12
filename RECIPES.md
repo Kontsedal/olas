@@ -391,6 +391,56 @@ Combined with `useQuery(sub, { suspense: true })`, the suspense fallback is skip
 
 ---
 
+## `readsFactory` — one query, many React readers that own no controller
+
+`useQuery(subscription)` reads a subscription; it cannot *create* one. Only a controller can (`ctx.use`), and that is deliberate — a component that mints its own cache subscription owns data lifetime, which is the thing Olas exists to move out of the view. But it leaves a real shape unaddressed: a **React context or hook** that needs server data and has no controller of its own. Theme providers, feature-flag gates, keybinding overrides, "current user" wrappers — all of them read one query and render children.
+
+The pattern: a controller owns the subscriptions, exposes them as a plain object, and React reads them **by identity**.
+
+```ts
+// reads.ts — a reusable composable (spec §3.3), not a controller
+import type { Ctx } from '@kontsedal/olas-core'
+import { themeQuery, flagsQuery } from './queries'
+
+export function appReads(ctx: Ctx) {
+  return {
+    theme: ctx.use(themeQuery),
+    flags: ctx.use(flagsQuery),
+  }
+}
+export type AppReads = ReturnType<typeof appReads>
+```
+
+```ts
+// app.controller.ts — the root (or any long-lived controller) owns them
+export const appController = defineController((ctx) => ({
+  reads: appReads(ctx),
+  // ...the rest of the root's api
+}))
+```
+
+```tsx
+// ThemeProvider.tsx — a context that reads, and owns nothing
+import { useQuery, useRoot } from '@kontsedal/olas-react'
+
+export function ThemeProvider({ children }: { children: React.ReactNode }) {
+  const { theme } = useRoot<AppApi>().reads
+  const { data, isLoading } = useQuery(theme)
+  if (isLoading) return null
+  return <ThemeContext.Provider value={data}>{children}</ThemeContext.Provider>
+}
+```
+
+Three properties make this worth the indirection:
+
+- **One entry, one fetch.** Every reader goes through the same subscription, so N providers reading the same query dedupe to one fetch and one cache entry — where N components each minting a subscription would at least each hold a reference.
+- **Lifetime is the controller's.** The subscription lives and dies with the controller that owns it, not with whichever component mounted first. A provider that unmounts and remounts (a route change, a StrictMode double-mount) re-reads a warm entry instead of re-acquiring one.
+- **It survives the reader moving.** When the provider eventually becomes a controller itself, the factory does not change — only who calls it.
+
+If two roots share the same provider (a main window and a detached one, say), have **both** roots expose the factory under the same key; `useRoot()` then resolves to whichever root the component is mounted under. And keep the factory to reads that a React *provider* owns — a read belonging to one feature belongs in that feature's controller, where `ctx.use` is already available.
+
+---
+
 ## When to lift to a package
 
 If a composable ends up:

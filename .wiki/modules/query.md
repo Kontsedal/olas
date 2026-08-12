@@ -28,7 +28,9 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-07-31
+  - { type: uses, target: ../decisions/canonical-vs-optimistic-writes.md }
+  - { type: related, target: ../pitfalls/no-invalidator-still-refetches.md }
+last_verified: 2026-08-12
 confidence: high
 ---
 
@@ -77,6 +79,15 @@ See `flows/query-subscription.md`.
 A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it registers itself in `query.__clients`. `query.invalidate(...args)` iterates `__clients` and calls `client.invalidate(query, args)` on each. On root dispose, the client removes itself from every touched query's set — this is the mechanism for test isolation. See `decisions/per-root-query-client.md`.
 
 `invalidate` / `invalidateAll` return a `Promise<void>` (`Promise.all` over the clients) that resolves when every triggered refetch has **settled** — the per-entry settle-promise `client.invalidateEntry` returns (immediately for a subscriber-less entry, which is marked stale but not refetched). It **never rejects**: a fetch error routes to the root's `onError` and stays on the entry's `error` signal, so `await query.invalidate(id)` is a safe sequencing point (spec §5.7). Ignore the return for fire-and-forget.
+
+## The imperative surface: read, and two kinds of write
+
+Beyond `ctx.use`, the handle carries the operations that reach a keyed entry from outside a subscription — `invalidate` / `invalidateAll` / `cancel` / `cancelAll` / `prefetch` / `setData`, and since 0.6.0 also:
+
+- **`peek(...keyArgs): T | undefined`** (`client.peekData`, `client.ts`) — synchronous read. Looks the entry up in `maps` **without** `bindEntry`, so a peek cannot mint the entry it is asking about, and reads through `.peek()` so it registers no reactive dependency. `undefined` conflates "no entry" with "not settled", deliberately: the caller that cares is guarding a write, and both answers mean *don't*. At the handle level it returns the first `__clients` member holding data — no throw on zero clients (unlike `prefetch`) and no multi-root warning, since a read is side-effect-free and the warning would fire from the hot paths peek exists for.
+- **`write(...keyArgs, updater): void`** (`client.writeData`) — canonical write: `Entry.setData(updater, { track: false })`, so no snapshot record and no `hasPendingMutations` flip. Same entry-binding and the same `source: 'set'` event as `setData`; the devtools `source` is pinned to `'set'` rather than inheriting `'mutate'` from an ambient cause. Why this is a separate method rather than an option: `decisions/canonical-vs-optimistic-writes.md`.
+
+`setData` remains the **optimistic** write, and its snapshot is the caller's to settle — see `pitfalls/no-invalidator-still-refetches.md` for the `cancel()`-first rule that applies to it even when nothing invalidates the query.
 
 ## How mutations integrate with the cache
 

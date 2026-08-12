@@ -435,6 +435,10 @@ Fetchers are responsible for passing the signal to their I/O (`fetch(url, { sign
 
 **Explicit cancellation.** `query.cancel(...keyArgs)` (and `subscription.cancel()` for the bound entry) aborts the in-flight fetch on demand: it supersedes the request so its result can never land, restores a settled status (`'success'` if data exists, else `'idle'`), and leaves `data` untouched. `query.cancelAll()` cancels every keyed entry of the query. The canonical use is the optimistic-write recipe (§6.4): cancel outgoing refetches *before* an optimistic `setData`, so a slower in-flight response can't land and clobber the optimistic value. Complementarily, on a **successful** fetch any live optimistic snapshots are rebased onto the fresh result, so a later rollback restores server truth rather than resurrecting pre-fetch data.
 
+**"Nothing invalidates this query" does not mean "no fetch is in flight".** The cancel-before-write step is not only for queries something else invalidates. An entry fetches on its own whenever a subscription **acquires it while stale** — a first subscriber, a second root binding the same key, or a `resume()` after a suspend (§4.1), all `staleTime`-driven and with no invalidator anywhere in the program. Skipping `cancel(...)` because a grep found no `invalidate(...)` call is therefore unsound: the refetch lands after the optimistic write and overwrites it. The failure is transient and self-healing, which is exactly why it survives review.
+
+**Reading without subscribing.** `query.peek(...keyArgs)` returns the entry's current data synchronously, or `undefined` when there is nothing to read — no entry (never fetched, or gc'd), or an entry that has not settled. It never creates an entry (asking cannot change the answer), never fetches, and **registers no reactive dependency**: a `peek` inside a `computed` or an effect will not re-run it when the data changes. Reactive reads are `ctx.use(...)`'s job; `peek` is for imperative moments — an event handler that needs the current value, a guard before a canonical write (§6.4) — and for the read side of the imperative surface, whose write side (`setData`, `cancel`) could already reach a keyed entry from outside a subscription.
+
 **Network mode & `isPaused`.** A query's `networkMode` (spec'd on `QuerySpec`) controls how fetches interact with `navigator.onLine`:
 
 - `online` (default) — a fetch requested while offline is **deferred**, not run; it resumes automatically on the next reconnect. The entry reports `isPaused: true` while deferred.
@@ -456,7 +460,9 @@ Invalidation and write methods hang directly off the query value (no DI needed):
 ```ts
 await userQuery.invalidate(id) // mark stale + refetch if subscribed; awaitable (resolves when the refetch settles)
 await userQuery.invalidateAll() // mark stale + refetch every entry for this query (TanStack-style)
-userQuery.setData(id, (u) => ({ ...u, name: 'X' })) // optimistic write, returns snapshot
+userQuery.setData(id, (u) => ({ ...u, name: 'X' })) // OPTIMISTIC write, returns a snapshot to settle
+userQuery.write(id, (u) => ({ ...u, name: 'X' })) // CANONICAL write, no snapshot (§6.4)
+userQuery.peek(id) // read the cached value synchronously, or undefined (§5.5)
 userQuery.cancel(id) // abort the in-flight fetch for this key (optimistic recipe, §6.4)
 userQuery.cancelAll() // abort in-flight fetches for every entry of this query
 userQuery.prefetch(id) // fire-and-forget warmup
@@ -697,6 +703,10 @@ The guarantee this buys: **once every optimistic layer has rolled back — in an
 This is snapshot-based rollback, not full rebasing: it does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For genuinely conflicting updates (two mutations writing the same field), prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
 
 Only `query.setData(...)` (as used inside a mutation's `onMutate`) creates a rollback snapshot and flips `hasPendingMutations`. **Canonical cache writes** that do not originate from an optimistic mutation — cross-tab receive, entity backprop (`setEntryData`, §13.2), realtime patches — write straight through the entry without pushing a snapshot, so they never set `hasPendingMutations` and can never wedge it at `true`.
+
+**Userland canonical writes use `query.write(...)`.** It is `setData` minus the snapshot: same entry (created if absent), same `source: 'set'` plugin/devtools event, no rollback handle, `hasPendingMutations` untouched. Use it whenever the write is not an optimistic guess that a mutation might have to undo — folding a server-pushed record into the cache, applying a realtime event, syncing a value another view just changed.
+
+This is a correctness distinction, not a stylistic one. A `setData` snapshot exists to be settled by the mutation that created it (`onMutate` returns it; success finalizes, failure rolls back). A fire-and-forget patcher has no mutation to settle it, so **every call leaves a live snapshot record on the entry**: `hasPendingMutations` wedged at `true` for the rest of the entry's life, and — on a long-lived entry patched on every server event — a snapshot array that grows without bound, each layer retaining its captured baseline. Before `write` existed, the only escapes were the plugin-facing `setEntryData` (not reachable from application code) or remembering to call `snapshot.finalize()` on every patch.
 
 ---
 
@@ -2295,7 +2305,14 @@ type Query<Args extends unknown[], T> = {
   readonly __olas: 'query'
   invalidate(...args: Args): Promise<void>
   invalidateAll(): Promise<void>
+  /** Optimistic write — returns a Snapshot the caller must settle (§6.4). */
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
+  /** Canonical write — no snapshot, `hasPendingMutations` untouched (§6.4). */
+  write(...args: [...Args, updater: (prev: T | undefined) => T]): void
+  /** Synchronous read; `undefined` when nothing is cached. No subscribe, no fetch (§5.5). */
+  peek(...args: Args): T | undefined
+  cancel(...args: Args): void
+  cancelAll(): void
   prefetch(...args: Args): Promise<T>
 }
 

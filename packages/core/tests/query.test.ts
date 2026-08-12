@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
 import { stableHash } from '../src/query/keys'
-import { signal } from '../src/signals'
+import { computed, signal } from '../src/signals'
 import { createTestController } from '../src/testing'
 
 const emptyDeps = {}
@@ -886,5 +886,213 @@ describe('q.prefetch — public surface', () => {
     await expect(p).resolves.toBe('done')
     expect(starts).toBe(1)
     root.dispose()
+  })
+})
+
+describe('q.peek — synchronous, non-creating cache read (§5.5)', () => {
+  test('undefined before anything is cached, the value once it lands', async () => {
+    const q = defineQuery({
+      key: (id: string) => ['user', id],
+      fetcher: async (_ctx, id: string) => ({ id, name: `User ${id}` }),
+    })
+    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['u1']) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    // The fetch is in flight, so there is nothing settled to read yet.
+    expect(q.peek('u1')).toBeUndefined()
+    await flush()
+    expect(q.peek('u1')).toEqual({ id: 'u1', name: 'User u1' })
+    // Another key of the same query is still empty.
+    expect(q.peek('u2')).toBeUndefined()
+    root.dispose()
+  })
+
+  test('peeking does NOT create an entry and does NOT fetch', async () => {
+    // The property that makes peek usable as a guard: asking cannot change the
+    // answer. `setData` / `prefetch` both bind an entry; peek must not.
+    let fetches = 0
+    const q = defineQuery({
+      key: (k: string) => [k],
+      fetcher: async () => {
+        fetches++
+        return 'value'
+      },
+    })
+    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(fetches).toBe(1)
+    expect(root.__debug.queryEntries().length).toBe(1)
+
+    expect(q.peek('never-touched')).toBeUndefined()
+    expect(fetches).toBe(1)
+    expect(root.__debug.queryEntries().length).toBe(1)
+    root.dispose()
+  })
+
+  test('registers no reactive dependency — a computed over peek does not re-run', async () => {
+    const q = defineQuery({
+      key: () => ['n'],
+      fetcher: async () => 1,
+    })
+    const def = defineController((ctx) => ({ n: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    let recomputes = 0
+    const derived = computed(() => {
+      recomputes++
+      return q.peek()
+    })
+    expect(derived.value).toBe(1)
+    expect(recomputes).toBe(1)
+
+    // A write the computed would have tracked had peek subscribed.
+    q.write(() => 42)
+    expect(root.n.data.value).toBe(42)
+    expect(derived.value).toBe(1) // cached — no dependency, so no invalidation
+    expect(recomputes).toBe(1)
+    root.dispose()
+  })
+
+  test('undefined again after the entry is gc-collected', async () => {
+    vi.useFakeTimers()
+    const q = defineQuery({
+      key: () => ['x'],
+      fetcher: async () => 'cached',
+      gcTime: 1000,
+    })
+    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(q.peek()).toBe('cached')
+
+    root.dispose()
+    await vi.advanceTimersByTimeAsync(1001)
+    expect(q.peek()).toBeUndefined()
+    vi.useRealTimers()
+  })
+
+  test('undefined when no root has subscribed at all', () => {
+    // Unlike `prefetch`, which rejects — a read has a correct answer here.
+    const q = defineQuery({ key: () => ['unbound'], fetcher: async () => 'x' })
+    expect(q.peek()).toBeUndefined()
+  })
+})
+
+describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
+  test('patches data for subscribers without pushing a snapshot', async () => {
+    const q = defineQuery({
+      key: () => ['n'],
+      fetcher: async () => 1,
+    })
+    const def = defineController((ctx) => ({ n: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.n.data.value).toBe(1)
+
+    q.write((prev) => (prev ?? 0) + 10)
+    expect(root.n.data.value).toBe(11)
+    // The whole point: no optimistic layer, so nothing is "pending".
+    expect(root.n.hasPendingMutations.value).toBe(false)
+    root.dispose()
+  })
+
+  test('repeated writes leave no accumulating pending state (what setData leaks)', async () => {
+    const q = defineQuery({
+      key: () => ['n'],
+      fetcher: async () => 0,
+    })
+    const def = defineController((ctx) => ({ n: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+
+    for (let i = 1; i <= 5; i++) q.write(() => i)
+    expect(root.n.data.value).toBe(5)
+    expect(root.n.hasPendingMutations.value).toBe(false)
+
+    // Contrast — the reason `write` exists: a fire-and-forget `setData` (whose
+    // Snapshot nobody settles, because there is no mutation to settle it)
+    // wedges `hasPendingMutations` at true and keeps every layer alive.
+    q.setData(() => 6)
+    expect(root.n.hasPendingMutations.value).toBe(true)
+    root.dispose()
+  })
+
+  test('creates the entry when absent, like setData', async () => {
+    const q = defineQuery({
+      key: (k: string) => [k],
+      fetcher: async () => 'fetched',
+    })
+    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.__debug.queryEntries().length).toBe(1)
+
+    q.write('other', () => 'written')
+    expect(root.__debug.queryEntries().length).toBe(2)
+    expect(q.peek('other')).toBe('written')
+    root.dispose()
+  })
+
+  test('emits a plugin SetDataEvent with source "set", like any local write', async () => {
+    const events: Array<{ source: string; data: unknown }> = []
+    const q = defineQuery({
+      queryId: 'write.plugin',
+      key: () => ['p'],
+      fetcher: async () => 'initial',
+    })
+    const def = defineController((ctx) => ({ p: ctx.use(q) }))
+    const root = createRoot(def, {
+      deps: emptyDeps,
+      plugins: [
+        {
+          name: 'spy',
+          onSetData: (ev) => {
+            events.push({ source: ev.source, data: ev.data })
+          },
+        },
+      ],
+    })
+    await flush()
+
+    q.write(() => 'written')
+    const sets = events.filter((e) => e.source === 'set')
+    expect(sets).toEqual([{ source: 'set', data: 'written' }])
+    root.dispose()
+  })
+
+  test('a write lands over an in-flight fetch only until that fetch resolves', async () => {
+    // Same hazard as the optimistic recipe, and the reason `setData`'s doc points
+    // at `cancel()`: a canonical write is not protected from an outstanding fetch
+    // either — the fetch result is newer canonical data and wins.
+    const d = deferred<string>()
+    const q = defineQuery({
+      key: () => ['race'],
+      fetcher: () => d.promise,
+    })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    q.write(() => 'local')
+    expect(root.r.data.value).toBe('local')
+
+    d.resolve('from server')
+    await flush()
+    expect(root.r.data.value).toBe('from server')
+
+    // With the fetch cancelled first, the write stands.
+    const d2 = deferred<string>()
+    const q2 = defineQuery({ key: () => ['race2'], fetcher: () => d2.promise })
+    const def2 = defineController((ctx) => ({ r: ctx.use(q2) }))
+    const root2 = createRoot(def2, { deps: emptyDeps })
+    q2.cancel()
+    q2.write(() => 'local')
+    d2.resolve('from server')
+    await flush()
+    expect(root2.r.data.value).toBe('local')
+
+    root.dispose()
+    root2.dispose()
   })
 })

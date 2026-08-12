@@ -462,7 +462,7 @@ Shared, keyed, cacheable async data. Two controllers subscribing to the same que
 
 ### `defineQuery<Args, T>(spec: QuerySpec<Args, T>): Query<Args, T>`
 
-Declare a query at module scope. The returned `Query` value is passed to `ctx.use(...)` in subscribers, and exposes `invalidate`, `invalidateAll`, `setData`, `cancel`, `cancelAll`, `prefetch` at the module level for direct cache writes (e.g., from a mutation's `onMutate`).
+Declare a query at module scope. The returned `Query` value is passed to `ctx.use(...)` in subscribers, and exposes `invalidate`, `invalidateAll`, `setData`, `write`, `peek`, `cancel`, `cancelAll`, `prefetch` at the module level for direct cache reads and writes (e.g., from a mutation's `onMutate`).
 
 ```ts
 import { defineQuery } from '@kontsedal/olas-core'
@@ -519,19 +519,23 @@ type RefetchInterval<T> = number | ((data: T | undefined) => number)
 
 ```ts
 type Query<Args extends unknown[], T> = {
-  invalidate(...args: Args): void
-  invalidateAll(): void
+  invalidate(...args: Args): Promise<void>
+  invalidateAll(): Promise<void>
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
+  write(...args: [...Args, updater: (prev: T | undefined) => T]): void
+  peek(...args: Args): T | undefined
   cancel(...args: Args): void
   cancelAll(): void
   prefetch(...args: Args): Promise<T>
 }
 ```
 
-- `invalidate(...args)` — mark a specific keyed entry stale + refetch if it has subscribers.
+- `invalidate(...args)` — mark a specific keyed entry stale + refetch if it has subscribers. Awaitable: resolves when the refetch it triggered settles, never rejects (spec §5.7).
 - `invalidateAll()` — same, every entry of this query.
-- `setData(...args, updater)` — patch the cached data for one key. Returns a `Snapshot` for rollback. Used in mutation `onMutate` for optimistic updates.
-- `cancel(...args)` — abort the in-flight fetch for one key (if any). Supersedes the request, restores a settled status, leaves `data` untouched. Call before an optimistic `setData` so a stale in-flight response can't clobber it (spec §5.5, §6.4).
+- `setData(...args, updater)` — **optimistic** patch of one key's cached data. Returns a `Snapshot` the caller must settle — normally by returning it from a mutation's `onMutate`, which finalizes on success and rolls back on error. Until it is settled the entry reports `hasPendingMutations: true` (spec §6.4).
+- `write(...args, updater)` — **canonical** patch of one key's cached data: no snapshot, no rollback handle, `hasPendingMutations` untouched. This is the write for data that is already true (a server push folded into the cache, a realtime event, a cross-view sync). Reach for it whenever there is no mutation to settle a snapshot — a fire-and-forget `setData` leaks one live snapshot per call (spec §6.4).
+- `peek(...args)` — read one key's cached data **synchronously**; `undefined` when there is nothing to read (no entry, or an entry that has not settled). Never creates an entry, never fetches, and registers **no reactive dependency** — a `peek` inside a `computed` will not re-run it. For imperative moments: an event handler that needs the current value, or a guard before a `write` (spec §5.5).
+- `cancel(...args)` — abort the in-flight fetch for one key (if any). Supersedes the request, restores a settled status, leaves `data` untouched. Call before an optimistic `setData` so a stale in-flight response can't clobber it — **including when nothing invalidates the query**, since a stale entry refetches by itself whenever a subscription acquires or resumes (spec §5.5, §6.4).
 - `cancelAll()` — cancel in-flight fetches for every keyed entry of this query.
 - `prefetch(...args)` — fetch into the cache without subscribing (e.g., on hover before navigating).
 
@@ -552,7 +556,7 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
 Forms accepted for the second argument:
 
 - A thunk `() => Args` — reactive key.
-- A full options object `UseOptions<Args>`: `{ key?: () => Args, enabled?: () => boolean }`. Use `enabled` to gate the fetch (returns `status: 'idle'` while false).
+- A full options object `UseOptions<Args>`: `{ key?: () => Args, enabled?: () => boolean, keepDataWhileDisabled?: boolean }`. Use `enabled` to gate the fetch (the subscription detaches while false: `status: 'idle'`, `data`/`error` `undefined`). Add `keepDataWhileDisabled: true` to keep reporting the last `data` across a disable — react-query's "a disabled observer still reads the cache" behaviour — for views that would otherwise flash empty (`error` is not retained).
 
 ### Type: `AsyncState<T>` (`QuerySubscription<T>`)
 

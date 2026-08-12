@@ -306,13 +306,64 @@ export type Query<Args extends unknown[], T> = {
   invalidate(...args: Args): Promise<void>
   /** Like `invalidate` for every keyed entry; resolves when all triggered refetches settle. */
   invalidateAll(): Promise<void>
-  /** Patch the current data for a specific key. Returns a `Snapshot` for rollback. */
+  /**
+   * Patch the current data for a specific key **optimistically**. Returns a
+   * `Snapshot` whose `rollback()` / `finalize()` the caller MUST eventually
+   * call — normally by returning it from a mutation's `onMutate`, which settles
+   * it automatically. Until then the entry reports `hasPendingMutations: true`
+   * and keeps the snapshot record alive (spec §6.4).
+   *
+   * Two things to get right, both of which have bitten real code:
+   *
+   * 1. **`cancel(...)` first.** An in-flight fetch that resolves *after* this
+   *    patch overwrites it. "Nothing invalidates this query" is NOT sufficient
+   *    grounds to skip the cancel: an entry also refetches on its own when a
+   *    subscription (re)acquires it while stale — a `staleTime`-driven fetch on
+   *    subscribe, or on `resume()` after a suspend — with no invalidator
+   *    anywhere. See §6.4's optimistic recipe.
+   * 2. **Use `write(...)` for a canonical patch.** If the write is
+   *    fire-and-forget (folding a server push, applying a realtime event) there
+   *    is no mutation to settle the snapshot, and every call leaks a live
+   *    record: `hasPendingMutations` wedged at `true` plus an unbounded
+   *    snapshot array on a long-lived entry.
+   */
   setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot
+  /**
+   * Patch the current data for a specific key **canonically** — no optimistic
+   * snapshot, no rollback handle, `hasPendingMutations` untouched (spec §6.4).
+   *
+   * This is the write for data that is already true: a server push folded into
+   * the cache, a realtime event, a cross-view sync. `setData`'s snapshot is for
+   * a patch that might have to be undone; a canonical write has nothing to undo
+   * and no mutation to settle it, which is why using `setData` for one leaks a
+   * live snapshot per call.
+   *
+   * Otherwise identical to `setData`: same entry (created if absent), same
+   * `source: 'set'` plugin/devtools event, so cross-tab and entity plugins
+   * treat it as any other local write. Guard with `peek(...)` when patching an
+   * absent key would produce nonsense (a merge over `undefined` usually does).
+   */
+  write(...args: [...Args, updater: (prev: T | undefined) => T]): void
+  /**
+   * Read the cached data for a specific key **synchronously**, without
+   * subscribing and without fetching (spec §5.5).
+   *
+   * `undefined` means there is nothing to read — no entry (never fetched, or
+   * gc'd), or an entry that has not settled. A peek never creates an entry, so
+   * asking cannot change the answer, and it registers no reactive dependency:
+   * calling it inside a `computed` or an effect will NOT re-run them when the
+   * data changes. Reactive reads are what `ctx.use(...)` is for; this is for
+   * imperative moments — an event handler that needs the current value, or a
+   * guard before a `write(...)`.
+   */
+  peek(...args: Args): T | undefined
   /**
    * Cancel the in-flight fetch for a specific key (if any). Aborts + supersedes
    * it, restores a settled status (`'success'` if data exists, else `'idle'`),
    * and does NOT touch data. Use before an optimistic `setData` so an
-   * outgoing refetch's stale response can't clobber it (spec §5, §6.4).
+   * outgoing refetch's stale response can't clobber it (spec §5, §6.4) —
+   * including when nothing invalidates the query, since a stale entry refetches
+   * by itself when a subscription acquires or resumes.
    */
   cancel(...args: Args): void
   /** Cancel in-flight fetches for every keyed entry of this query. */

@@ -16,7 +16,8 @@ edges:
   - { type: uses, target: entry.md }
   - { type: uses, target: ../decisions/per-root-query-client.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
-last_verified: 2026-07-31
+  - { type: uses, target: ../decisions/canonical-vs-optimistic-writes.md }
+last_verified: 2026-08-12
 confidence: high
 ---
 
@@ -66,7 +67,9 @@ Two asymmetries worth knowing:
 
 ## Cross-root query operation
 
-A `Query` is module-scoped. When `bindEntry` runs on this client for that query, the client adds itself to `query.__clients`. On dispose, the client removes itself from every `touchedQueries`. So `query.invalidate(...)` reaches exactly the live clients, no GC concerns. The same fan-out serves `setData`, `cancel` / `cancelAll` (→ `client.cancel`/`cancelAll` → `entry.cancel`, T3.4), and `prefetch`. See `../decisions/per-root-query-client.md`.
+A `Query` is module-scoped. When `bindEntry` runs on this client for that query, the client adds itself to `query.__clients`. On dispose, the client removes itself from every `touchedQueries`. So `query.invalidate(...)` reaches exactly the live clients, no GC concerns. The same fan-out serves `setData`, `write` (→ `client.writeData`), `cancel` / `cancelAll` (→ `client.cancel`/`cancelAll` → `entry.cancel`, T3.4), and `prefetch`. `peek` (→ `client.peekData`) is the exception: it returns the first client holding data instead of fanning out, since a read has one answer and no side effect. See `../decisions/per-root-query-client.md`.
+
+Two of these deliberately do **not** go through `bindEntry`: `peekData` (a read must not create the entry it reports on) and `cancel` / `invalidate` (nothing to cancel or invalidate if no entry exists). `writeData` and `setData` do bind — see `../decisions/canonical-vs-optimistic-writes.md` for why `write` matches `setData` here rather than `setEntryData`.
 
 ## Mutation inflight counter
 

@@ -933,3 +933,78 @@ handles), `query/local.ts` (LocalCache), `query/types.ts` + `query/infinite.ts` 
 `decisions/per-root-query-client.md`, `entities/query-client.md`. Motivation: the Monghoul
 integration hit this repeatedly — a helper had to join a `prefetch` onto each `invalidate`
 purely to get something awaitable (invalidation as a sequencing primitive).
+
+## [2026-08-12 17:45] ingest | Query.peek + Query.write — the read side of the imperative surface, and canonical vs optimistic writes
+
+Two additive `Query` methods, both from the Monghoul integration (the same source as
+0.5.0's three ergonomics fixes), plus the doc correction that motivated the second one.
+
+**`peek(...keyArgs): T | undefined`** — `client.peekData`. The imperative surface could
+already *write* a keyed entry from outside a subscription (`setData`, `cancel`) but not
+*read* one; downstream that asymmetry cost four workarounds — an optimistic `setData`
+downgraded to a plain `invalidate` because there was no way to read the previous value, a
+construction-time cache read replaced by a derived one-shot latch, a targeted
+"find-by-field" scan degraded to a coarse `invalidateAll()`, and one real server
+round-trip through the vanilla client to answer a question the cache already knew.
+Deliberately does NOT call `bindEntry` (a peek must not mint the entry it reports on, or
+"is anything cached?" answers itself yes) and reads via `.peek()` (no reactive
+dependency — a `peek` inside a `computed` must not silently behave like a subscription).
+At the handle level: first `__clients` member holding data, no throw on zero clients
+(unlike `prefetch` — "nothing cached" is a correct answer), no multi-root warning (a read
+is side-effect-free and the warning would fire from the hot paths peek exists for).
+
+**`write(...keyArgs, updater): void`** — `client.writeData`, i.e.
+`Entry.setData(updater, { track: false })`. The **userland canonical write**. SPEC §6.4
+already recognised the category ("canonical cache writes … write straight through the
+entry without pushing a snapshot") but only plugins could perform one — `setEntryData`
+is plugin-facing and `queryId`-routed. So a fire-and-forget patcher in application code
+(server-push fold, realtime event) had to use `setData` and then either discard the
+`Snapshot` — leaving a LIVE record: `hasPendingMutations` wedged at `true` plus one
+retained baseline per call, unbounded on a long-lived entry patched per event — or
+remember `finalize()` at every site. Downstream accumulated eight such sites and filed it
+as "mint a `writeTab` helper with `{ track: false }`", i.e. re-derived this method as glue
+it could not implement, `track` being internal. Not an options bag on `setData`: the
+signature is variadic (`[...Args, updater]`, recovered positionally at
+`define.ts:104`), so a trailing options object is not cleanly distinguishable from a key
+argument. Rationale preserved in `decisions/canonical-vs-optimistic-writes.md`.
+
+**The doc fix that came with it.** A downstream regression (an optimistic toggle reverting
+after hide→show) traced to a false-but-plausible optimisation: *"nothing calls
+`invalidate()` on this query, so no fetch can be in flight — skip the `cancel()`"*. Unsound —
+an entry refetches whenever a subscription acquires it **while stale**: first subscriber,
+second root on the same key, or `resume()` after a suspend, all `staleTime`-driven with no
+invalidator in the program. Transient, self-healing, review-surviving; caught only by
+mutation-testing the `cancel()` back in. Now stated in SPEC §5.5 + §6.4 and in the TSDoc
+on `setData` / `cancel`, and filed as `pitfalls/no-invalidator-still-refetches.md`.
+
+**Also corrected while adjacent** (pre-existing drift, all doc-only): `API.md`'s
+`Query<Args, T>` block still typed `invalidate` / `invalidateAll` as `void` (0.5.0 made
+them `Promise<void>`) and omitted `cancel` / `cancelAll` though the prose listed them; its
+`ctx.use` options bag omitted `keepDataWhileDisabled` (0.5.0); SPEC's §21 appendix `Query`
+block omitted `cancel` / `cancelAll`; `CLAUDE.md`'s implementation-status line said 621
+tests across 55 files (now 843 / 59).
+
+**New**: `RECIPES.md` gains the **`readsFactory`** recipe — the supported answer for a
+React context/hook that needs server data and owns no controller (a controller owns the
+subscriptions and exposes them; React reads by identity via `useRoot()` + `useQuery(sub)`).
+Downstream invented this shape twice independently (`themeReads`, `uiReads`) after hitting
+the same wall, so the pattern was load-bearing and undocumented. The API it implies —
+`useQuery(query, { key })`, a component minting its own subscription — is filed
+`[dropped]` in BACKLOG.md with the reasoning (it would move data lifetime back into the
+view, and would be reached for far past the provider case).
+
+BACKLOG also gains `peek`/`write` for infinite queries (the same leak is still reachable
+there; `InfiniteEntry.setData` already takes `{ track: false }`, so it is mostly plumbing +
+one open question about whether an infinite `peek` returns pages or flattened items) and
+`subscription.refetch()` rejecting when detached (four `.catch(() => {})` sites downstream
+exist only to silence it; every fix is either a breaking return-type change or new
+surface, so recorded rather than done).
+
+Tests: 12 new cases in `packages/core/tests/query.test.ts` (two describes). Each of the
+four load-bearing behaviours was mutation-verified red: tracked `write` (→ the two
+no-snapshot cases fail), entry-creating `peek` (→ the non-creation case fails),
+`.value`-instead-of-`.peek()` (→ the no-dependency case fails), and a `write` that skips
+`emitSetData` (→ the plugin-event case fails). Gate: typecheck clean, `biome lint .`
+clean, 843 tests / 59 files, build clean. `pnpm lint` still reports formatter errors on 5
+root config files — the known Windows CRLF issue already in BACKLOG.md, untouched by this
+change (staged diff contains zero CR).

@@ -55,6 +55,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/per-root-query-client.md](decisions/per-root-query-client.md) — why each root has its own client, not a singleton
 - [decisions/brand-markers-not-classes.md](decisions/brand-markers-not-classes.md) — why `Symbol.for(...)` over `instanceof`
 - [decisions/no-react-adapter-yet.md](decisions/no-react-adapter-yet.md) — why `@kontsedal/olas-react` is an empty shell
+- [decisions/canonical-vs-optimistic-writes.md](decisions/canonical-vs-optimistic-writes.md) — why `Query` has two write methods (`setData` optimistic, `write` canonical) rather than one with an options bag
 
 ## Pitfalls
 
@@ -68,6 +69,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/fieldarray-factory-uses-initial.md](pitfalls/fieldarray-factory-uses-initial.md) — `add(x)` only works if factory uses it
 - [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert
 - [pitfalls/raf-unbound-illegal-invocation.md](pitfalls/raf-unbound-illegal-invocation.md) — native `requestAnimationFrame` assigned unbound throws "Illegal invocation" in real browsers (jsdom hides it)
+- [pitfalls/no-invalidator-still-refetches.md](pitfalls/no-invalidator-still-refetches.md) — "nothing invalidates this query" is not grounds to skip `cancel()` before an optimistic `setData`: a stale entry refetches on subscribe / `resume()` with no invalidator anywhere
 
 ## Candidates (not authoritative)
 

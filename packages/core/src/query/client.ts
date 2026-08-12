@@ -1278,6 +1278,64 @@ export class QueryClient {
     for (const entry of map.values()) entry.entry.cancel()
   }
 
+  /**
+   * Synchronous, non-creating, non-subscribing read of one keyed entry's data
+   * (spec §5.5). The counterpart to `setData` / `cancel`, which could already
+   * reach a keyed entry imperatively while nothing could *read* one.
+   *
+   * Deliberately does NOT call `bindEntry`: a peek must not mint an entry, or
+   * "is anything cached for this key?" would answer itself yes. `undefined`
+   * therefore covers both "no entry" (never fetched, or gc'd) and "entry has
+   * not settled". A caller that needs to distinguish those has `status` through
+   * a subscription; a caller that only wants to guard a merge (patch if we
+   * have data, skip if we don't) wants exactly this.
+   *
+   * `.peek()` on the signal, so calling this inside a `computed` or an effect
+   * registers no dependency — a peek is not a subscription and must not
+   * silently behave like one.
+   */
+  peekData<Args extends unknown[], T>(query: Query<Args, T>, args: Args): T | undefined {
+    const internal = query as AnyQuery
+    const map = this.maps.get(internal)
+    if (!map) return undefined
+    const hash = stableHash(internal.__spec.key(...args))
+    return map.get(hash)?.entry.data.peek() as T | undefined
+  }
+
+  /**
+   * A **canonical** write to one keyed entry: patches data, pushes no
+   * optimistic snapshot, never flips `hasPendingMutations` (spec §6.4).
+   *
+   * The userland counterpart to the plugin-facing `setEntryData` — same
+   * `{ track: false }` path through `Entry.setData`, same `source: 'set'`
+   * event, so cross-tab and entity plugins see it exactly as they see any
+   * other local write. What it is NOT is an optimistic patch: there is no
+   * `Snapshot` to roll back, which is the whole point. `setData`'s snapshot
+   * exists to be settled by the mutation that created it, and a fire-and-forget
+   * patcher (a server-push handler, a realtime event fold) has no mutation to
+   * settle it — so with `setData` every call leaves a live snapshot record on
+   * the entry forever: `hasPendingMutations` wedged at `true` and an array that
+   * grows without bound on a long-lived entry.
+   *
+   * Unlike `setEntryData` this DOES bind (create) the entry when absent, for
+   * one reason: symmetry with `setData`, whose behaviour it otherwise matches
+   * exactly. Guard with `peekData` when writing into a possibly-absent key is
+   * wrong for your data shape (a merge over `undefined` usually is).
+   */
+  writeData<Args extends unknown[], T>(
+    query: Query<Args, T>,
+    args: Args,
+    updater: (prev: T | undefined) => T,
+  ): void {
+    const entry = this.bindEntry(query, args)
+    entry.entry.setData(updater, { track: false })
+    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
+    // Explicit `'set'`, not the ambient-cause default: a canonical write inside
+    // a mutation's `onMutate` inherits the `causeId` but its KIND is still a
+    // plain set, never `'mutate'` (the `setEntryData` precedent).
+    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
+  }
+
   setData<Args extends unknown[], T>(
     query: Query<Args, T>,
     args: Args,
