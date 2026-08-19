@@ -469,6 +469,28 @@ export class Entry<T> {
   }
 
   /**
+   * Does this entry hold data that a full rollback would leave behind — i.e. data that came
+   * from the server rather than from an optimistic guess?
+   *
+   * `data` alone cannot answer it. An optimistic `setData` over an entry that has never
+   * loaded sets `data` while the first fetch is still in flight, so a plain
+   * `data !== undefined` reports "yes" for an entry whose only value is a guess. Anything
+   * that then treats the in-flight fetch as a stale answer to be discarded (the canonical
+   * write in `QueryClient.writeData`) would cancel the load that was going to produce the
+   * entry's first real value — and the guess's own rollback restores `undefined` without
+   * restoring `status`, leaving `success` over no data with nothing left to refetch it.
+   *
+   * The honest answer is the baseline the oldest LIVE snapshot captured: that is what the
+   * entry held before any optimistic layer. With no live layers it is simply `data`.
+   */
+  hasCanonicalData(): boolean {
+    for (const sn of this.snapshots) {
+      if (sn.live) return sn.prev !== undefined
+    }
+    return this.data.peek() !== undefined
+  }
+
+  /**
    * Write data into the entry.
    *
    * `track` (default `true`) is the optimistic-update path: it pushes a
@@ -494,6 +516,17 @@ export class Entry<T> {
       ? { id: this.nextSnapshotId++, prev, live: true }
       : null
     if (record) this.snapshots.push(record)
+    // A CANONICAL write rebases live optimistic snapshots onto itself, exactly as a
+    // successful fetch does (`applySuccess`) and for the same stated reason (spec §6.4):
+    // a later rollback must restore server truth, not a baseline captured before that
+    // truth arrived. Without this, a `write` landing mid-mutation is silently undone by
+    // the mutation's own rollback — and undone to a value OLDER than the one the write
+    // superseded, since the write also aborts the fetch that used to do the rebasing.
+    // Tracked writes are excluded: an optimistic layer is a guess, and rebasing onto a
+    // guess is what the baseline exists to protect against.
+    if (!track && this.snapshots.length > 0) {
+      for (const sn of this.snapshots) sn.prev = next
+    }
 
     batch(() => {
       this.data.set(next)

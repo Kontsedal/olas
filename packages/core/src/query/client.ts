@@ -1339,13 +1339,15 @@ export class QueryClient {
     // where this diverges from react-query, which has one door for both and therefore cannot
     // treat them differently.
     //
-    // **Only when there is already data.** With none, the in-flight fetch is not a stale
-    // answer to supersede — it is the thing that will PRODUCE the entry's first value, and
-    // cancelling it leaves a `success`-with-`undefined` entry (see `Entry.setData`, which
+    // **Only when there is already CANONICAL data.** With none, the in-flight fetch is not a
+    // stale answer to supersede — it is the thing that will PRODUCE the entry's first value,
+    // and cancelling it leaves a `success`-with-`undefined` entry (see `Entry.setData`, which
     // flips idle/pending to success whatever it is handed) that nothing refetches until
-    // `staleTime` lapses. `Entry.cancel` is a no-op when nothing is fetching, so this costs
-    // one `peek` on the common path.
-    if (entry.entry.data.peek() !== undefined) entry.entry.cancel()
+    // `staleTime` lapses. `hasCanonicalData` rather than `data !== undefined` because an
+    // optimistic `setData` over a never-loaded entry sets `data` too, and cancelling on the
+    // strength of a guess is exactly the case above with an extra step. `Entry.cancel` is a
+    // no-op when nothing is fetching, so this costs one array scan on the common path.
+    if (entry.entry.hasCanonicalData()) entry.entry.cancel()
     entry.entry.setData(updater, { track: false })
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
     // Explicit `'set'`, not the ambient-cause default: a canonical write inside
@@ -1532,7 +1534,15 @@ export class QueryClient {
       if (entry.entry.isFetching.peek()) {
         return entry.entry.firstValue()
       }
-      return entry.entry.startFetch()
+      return entry.entry.startFetch().catch((err) => {
+        // A supersede aborts this fetch without it being a failure — a newer refetch, a key
+        // change, or a canonical `write` landing while this was outstanding (§6.4). Don't
+        // surface the spurious AbortError: resolve with whatever the entry settles on, which
+        // is what `subscription.refetch` has done since T3.9 (`use.ts`) and what an awaiting
+        // SSR loader needs. Real errors still reject.
+        if (isAbortError(err)) return entry.entry.firstValue()
+        throw err
+      })
     })()
     return promise.finally(() => entry.release())
   }

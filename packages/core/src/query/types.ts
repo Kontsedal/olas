@@ -298,7 +298,10 @@ export type Query<Args extends unknown[], T> = {
   readonly __olas: 'query'
   /**
    * Mark a specific keyed entry stale + trigger refetch if any subscribers. The
-   * returned promise resolves when the triggered refetch settles — immediately if
+   * returned promise resolves when the triggered refetch settles **or is discarded**
+   * (a supersede — a newer refetch, a key change, or a canonical `write`, §6.4 —
+   * resolves it rather than rejecting, so a caller cannot tell the two apart from
+   * the promise alone) — immediately if
    * the entry is subscriber-less (marked stale only). It never rejects (fetch errors
    * are reported via the root's `onError`), so `await invalidate(...)` is safe to
    * use as a sequencing point; ignore it for fire-and-forget.
@@ -338,10 +341,27 @@ export type Query<Args extends unknown[], T> = {
    * and no mutation to settle it, which is why using `setData` for one leaks a
    * live snapshot per call.
    *
-   * Otherwise identical to `setData`: same entry (created if absent), same
-   * `source: 'set'` plugin/devtools event, so cross-tab and entity plugins
-   * treat it as any other local write. Guard with `peek(...)` when patching an
-   * absent key would produce nonsense (a merge over `undefined` usually does).
+   * Same entry (created if absent) and same `source: 'set'` plugin/devtools event
+   * as `setData`, so cross-tab and entity plugins treat it as any other local
+   * write. Guard with `peek(...)` when patching an absent key would produce
+   * nonsense (a merge over `undefined` usually does).
+   *
+   * **It supersedes a fetch already in flight, and `setData` does not.** A
+   * canonical write is newer by definition — the server has already said this,
+   * while an outstanding request was issued before that happened and will answer
+   * with the state from before it. So no `cancel(...)` is needed here, unlike the
+   * optimistic recipe (§5.5), where a response is entitled to overrule a guess.
+   * It also rebases live optimistic snapshots onto the written value, so a
+   * mutation rolling back afterwards restores this rather than an older baseline.
+   *
+   * Two limits worth knowing:
+   * - It supersedes only when the entry holds **canonical** data. With none, the
+   *   in-flight fetch is what will produce the first value, and cancelling it
+   *   would strand the entry at `success` over `undefined`. An optimistic guess
+   *   does not count as data for this purpose.
+   * - "Holds data" is `!== undefined`, so a query whose fetcher legitimately
+   *   resolves `undefined` never supersedes, and a stale answer can still clobber
+   *   a write on it. Call `cancel(...)` first on such a query.
    */
   write(...args: [...Args, updater: (prev: T | undefined) => T]): void
   /**

@@ -1090,6 +1090,9 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     answers[1]!.resolve('answer from before the push')
     await flush()
     expect(root.r.data.value).toBe('from the push')
+    // Pin the fetch count: an unexpected third fetch would index past `answers`, throw inside
+    // the fetcher, and leave `data` untouched — which the assertion above would read as a pass.
+    expect(call).toBe(2)
 
     root.dispose()
   })
@@ -1114,6 +1117,89 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     expect(root.r.data.value).toBe('from server')
     expect(root.r.status.value).toBe('success')
 
+    root.dispose()
+  })
+
+  test('an optimistic guess does not count as data, so the first load survives', async () => {
+    // `data !== undefined` is the wrong question. `setData` over a never-loaded entry sets
+    // `data` while the first fetch is still outstanding, so a plain data check reports "this
+    // entry has data" on the strength of a GUESS — and a write would then cancel the load that
+    // was going to produce the first real value. The guess's own rollback restores `undefined`
+    // without restoring `status`, leaving `success` over no data with nothing to refetch it:
+    // precisely the state the empty-entry rule exists to prevent, reached through it.
+    const d = deferred<string>()
+    const q = defineQuery({ key: () => ['masked'], fetcher: () => d.promise, staleTime: 60_000 })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.r.isFetching.value).toBe(true)
+
+    const snap = q.setData(() => 'guess')
+    q.write(() => 'push')
+    expect(root.r.isFetching.value).toBe(true)
+
+    snap.rollback()
+    d.resolve('server')
+    await flush()
+
+    expect(root.r.status.value).toBe('success')
+    expect(root.r.data.value).toBe('server')
+    root.dispose()
+  })
+
+  test('rebases live optimistic snapshots, so a rollback cannot undo it', async () => {
+    // The counterpart of "fetch success rebases live snapshots" (§6.4), and it became load
+    // bearing when `write` started superseding: the write aborts the fetch whose `applySuccess`
+    // used to do the rebasing, so without this a `write` landing mid-mutation is undone by that
+    // mutation's rollback — and undone to a value older than the one the write superseded.
+    const answers = [deferred<string>(), deferred<string>()]
+    let call = 0
+    const q = defineQuery({ key: () => ['rebase'], fetcher: () => answers[call++]!.promise })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    answers[0]!.resolve('v0')
+    await flush()
+
+    const snap = q.setData(() => 'optimistic')
+    void q.invalidate()
+    await flush()
+    q.write(() => 'push')
+    answers[1]!.resolve('server-fresh')
+    await flush()
+
+    snap.rollback()
+    expect(root.r.data.value).toBe('push')
+    expect(root.r.hasPendingMutations.value).toBe(false)
+    root.dispose()
+  })
+
+  test('a prefetch superseded by a write resolves rather than rejecting', async () => {
+    // `subscription.refetch` has recovered from a supersede since T3.9; `prefetch` never did,
+    // and `write` gives it a trigger the docs encourage sprinkling everywhere. An SSR loader
+    // awaiting a prefetch while a realtime fold arrives must not see an unhandled AbortError.
+    const answers = [deferred<string>(), deferred<string>()]
+    let call = 0
+    const q = defineQuery({ key: () => ['pf'], fetcher: () => answers[call++]!.promise })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    answers[0]!.resolve('v0')
+    await flush()
+
+    let outcome = 'pending'
+    const p = q.prefetch().then(
+      (v) => {
+        outcome = `resolved:${v}`
+      },
+      (e) => {
+        outcome = `rejected:${(e as Error).name}`
+      },
+    )
+    await flush()
+    q.write(() => 'push')
+    answers[1]!.resolve('later')
+    await p
+
+    expect(outcome).toBe('resolved:push')
     root.dispose()
   })
 

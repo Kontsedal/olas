@@ -24,6 +24,17 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 ## Packages
 
+### [planned] A superseded catch-up refetch is discarded, not re-run
+
+`query.write(...)` supersedes an in-flight fetch (SPEC §6.4). When that fetch was a **catch-up** — a reconnect's `invalidateAll()`, whose whole purpose is to reconcile whatever was missed while disconnected — discarding it loses the reconciliation, and the write that superseded it carries only its own delta. Nothing re-runs it: `forcedStale` is cleared only by `applySuccess`, `refetchOnWindowFocus` defaults to `false`, and an already-subscribed reader never re-acquires. Worse, `await invalidateAll()` **resolves** (`invalidateEntry` swallows the AbortError), so a caller that treats resolution as "synced" cannot detect it.
+
+Reachable by composing two of this library's own documented recipes: the realtime package's reconnect resync and §6.4's fold-a-buffered-event write.
+
+Shape to aim at: after discarding a response *because a canonical write superseded it*, re-fetch once — but only when the entry was force-stale and still has subscribers, and coalesced so a burst of pushes cannot hold one request in a cancel/restart loop. Plain "supersede without aborting" is not an answer: the result is still discarded.
+
+Deferred out of the change that introduced it because it needs a scheduling policy, not a guard.
+
+
 ### [idea] `SetDataEvent.source === 'remote'` is redundant with `isRemote === true`
 
 After §13.2 grew the `source: 'set' | 'fetch' | 'remote'` field, `source === 'remote'` carries the same information as `isRemote === true`. They're kept both for back-compat — existing plugins (cross-tab) gate on `isRemote`, new plugins (entities) can gate on `source`. Pick one in v2 and drop the other. Migration: keep `isRemote` (shorter, predates `source`) and reserve `source` strictly for `'set' | 'fetch'`.
