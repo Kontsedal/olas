@@ -4,7 +4,7 @@ description: Why the Query handle has two write methods — setData (optimistic,
 type: decision
 covers:
   - packages/core/src/query/types.ts:297-380
-  - packages/core/src/query/client.ts:1281-1345
+  - packages/core/src/query/client.ts:1293-1357
   - packages/core/src/query/define.ts:103-140
   - packages/core/src/query/entry.ts:486-520
 edges:
@@ -13,7 +13,7 @@ edges:
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: ../pitfalls/no-invalidator-still-refetches.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-08-12
+last_verified: 2026-08-19
 confidence: high
 ---
 
@@ -46,6 +46,23 @@ The handle's signature is variadic — `setData(...args: [...Args, updater])` �
 
 It also reads better where it matters. `write` says *this is true* and `setData` says *this might have to be undone* — the distinction a reader needs, at the call site, without knowing what `track: false` means.
 
+## What the split bought that could not be bought otherwise
+
+The two methods started as one distinction — snapshot or no snapshot — and grew a second, sharper one on 2026-08-19: **`write` supersedes an in-flight fetch and `setData` does not.**
+
+The reasoning is about who is newer, and it differs between them:
+
+| | is it newer than a request already in flight? | so |
+|---|---|---|
+| `write` | **yes, by definition** — the caller is folding in something the server has already said | supersedes it itself |
+| `setData` | no — it is a guess about what the server will say | a response may overrule it; the caller cancels first if it must not |
+
+This is where olas leaves react-query behaviour deliberately, and the split is what makes leaving possible. react-query has one door — `setQueryData` — for both meanings, so it *cannot* treat them differently; its fetch resolution calls the same `setData` with no check for a manual write since (measured against `@tanstack/query-core` 5.101, which clobbers exactly as olas did before this change). Its answer is `cancelQueries` at every call site, and its own optimistic recipe opens with one. A library with two doors does not have to make every caller remember which door needs it.
+
+The evidence was downstream: a consumer app shipped two user-visible bugs from this in a day — a query-result grid blanking a moment after the results arrived, and a tab, split or panel-close undoing itself — plus a CI suite quarantined for two days over failures that all had this single cause. Every one of them was a `write` call site that had not remembered `cancel`.
+
+**The rule stops at the empty entry**, which is the part that has to be in the library rather than in a call site's head: with no data cached, the in-flight fetch is not a stale answer to discard, it is what will produce the first value, and superseding it strands the entry at `status: 'success'` over `undefined` (a write flips idle/pending to success whatever it is handed) with nothing to refetch it until `staleTime` lapses. The two edges pull opposite ways and `data.peek() !== undefined` separates them.
+
 ## Why `write` still creates a missing entry
 
 `setEntryData` (the plugin path) drops silently when no entry exists; `write` binds one, exactly as `setData` does. The reason is symmetry: `write` is `setData` minus the snapshot, and diverging on entry creation would make it a second, subtly different write. Callers that must not patch an absent key have `peek(...)` as the guard — and a merge over `undefined` is usually the shape that needs it.
@@ -54,4 +71,5 @@ It also reads better where it matters. `write` says *this is true* and `setData`
 
 - `write` emits the same `SetDataEvent` with `source: 'set'` as any local write, so cross-tab and entity plugins treat it identically (matching `setEntryData`'s documented behaviour, spec §13.2).
 - Its devtools event is explicitly `'set'`, never `'mutate'`, even when called inside a mutation's `onMutate` — it inherits the ambient `causeId` but its *kind* is a plain set.
+- The supersede rule belongs to `writeData` alone. `setEntryData` and `applyRemoteSetData` (plugin and cross-tab paths, `client.ts`) still write straight through: they have their own ordering contracts, and cross-tab in particular relays another tab's write rather than this tab's server truth.
 - `hasPendingMutations` is purely observational (nothing in core gates on it), so this was never a correctness bug in the engine — it was a wrong-state report plus unbounded retention. Both are gone for callers who use the right method.

@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-08-12
+last_verified: 2026-08-19
 confidence: high
 ---
 
@@ -54,9 +54,18 @@ onMutate: (vars) => {
 },
 ```
 
-## The adjacent trap
+## The adjacent trap, and why it is no longer one
 
-The same reasoning error has a sibling: assuming a *canonical* write is safe from the same race. It isn't — `query.write(...)` has no snapshot to lose, but a fetch landing after it still overwrites the value (pinned in `query.test.ts`, "a write lands over an in-flight fetch only until that fetch resolves"). Cancel first there too when the write must win.
+The same reasoning error used to have a sibling: assuming a *canonical* write was safe from this race. It wasn't, and every `write` call site had to remember `cancel()` exactly as an optimistic one does. A consumer app paid for that twice in a day — a result grid blanking a moment after its query finished, and a tab, split or panel-close undoing itself — so **`write` supersedes the in-flight fetch itself now** (spec §6.4; pinned in `query.test.ts`, "supersedes an in-flight fetch when the entry already holds data").
+
+The trap above is unchanged for `setData`, and deliberately so. The asymmetry is the point:
+
+| | is it newer than an outstanding request? | so |
+|---|---|---|
+| `write` | **yes, by definition** — the server already said this | supersedes it itself |
+| `setData` | no — it is a guess | a response may overrule it; cancel first |
+
+**The one thing `write` still will not do is cancel a fetch when the entry holds no data.** That fetch is not a stale answer to discard, it is what will produce the first value — and cancelling it strands the entry at `status: 'success'` over `undefined` with nothing to refetch it until `staleTime` lapses. The two edges pull opposite ways, and "is anything cached?" separates them, which is the same `peek` guard the recipe below already uses for a different reason.
 
 ## Where it's documented
 

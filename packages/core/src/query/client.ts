@@ -1328,6 +1328,24 @@ export class QueryClient {
     updater: (prev: T | undefined) => T,
   ): void {
     const entry = this.bindEntry(query, args)
+    // A canonical write SUPERSEDES a fetch that is already in flight (§6.4). It is newer by
+    // definition: the caller is folding in something the server has already said, while the
+    // outstanding request was issued before that happened and will answer with the state from
+    // before it. Without this the response lands last and silently undoes the write.
+    //
+    // `setData` deliberately does NOT do this — an optimistic patch is a guess, and a server
+    // response is entitled to overrule a guess. That asymmetry is the whole reason the two
+    // methods are separate (`.wiki/decisions/canonical-vs-optimistic-writes.md`), and it is
+    // where this diverges from react-query, which has one door for both and therefore cannot
+    // treat them differently.
+    //
+    // **Only when there is already data.** With none, the in-flight fetch is not a stale
+    // answer to supersede — it is the thing that will PRODUCE the entry's first value, and
+    // cancelling it leaves a `success`-with-`undefined` entry (see `Entry.setData`, which
+    // flips idle/pending to success whatever it is handed) that nothing refetches until
+    // `staleTime` lapses. `Entry.cancel` is a no-op when nothing is fetching, so this costs
+    // one `peek` on the common path.
+    if (entry.entry.data.peek() !== undefined) entry.entry.cancel()
     entry.entry.setData(updater, { track: false })
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
     // Explicit `'set'`, not the ambient-cause default: a canonical write inside

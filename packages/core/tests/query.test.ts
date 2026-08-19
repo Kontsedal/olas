@@ -1062,37 +1062,74 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('a write lands over an in-flight fetch only until that fetch resolves', async () => {
-    // Same hazard as the optimistic recipe, and the reason `setData`'s doc points
-    // at `cancel()`: a canonical write is not protected from an outstanding fetch
-    // either — the fetch result is newer canonical data and wins.
+  test('supersedes an in-flight fetch when the entry already holds data', async () => {
+    // The canonical write is newer BY DEFINITION: the caller is folding in something the
+    // server has already said, while the outstanding request was issued before that happened.
+    // Letting it answer last silently undoes the write — a server-pushed record that
+    // disappears a moment after it arrives, with nothing in the UI to explain it.
+    const answers = [deferred<string>(), deferred<string>()]
+    let call = 0
+    const q = defineQuery({ key: () => ['race'], fetcher: () => answers[call++]!.promise })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    answers[0]!.resolve('v1')
+    await flush()
+    expect(root.r.data.value).toBe('v1')
+
+    // Something invalidates, so a second fetch is outstanding...
+    void q.invalidate()
+    await flush()
+    expect(root.r.isFetching.value).toBe(true)
+
+    // ...and a push lands while it is in flight.
+    q.write(() => 'from the push')
+    expect(root.r.data.value).toBe('from the push')
+    expect(root.r.isFetching.value).toBe(false)
+
+    answers[1]!.resolve('answer from before the push')
+    await flush()
+    expect(root.r.data.value).toBe('from the push')
+
+    root.dispose()
+  })
+
+  test('does NOT supersede the fetch that has not produced a first value yet', async () => {
+    // The other edge, and it pulls the opposite way. With nothing cached, the in-flight fetch
+    // is not a stale answer to discard — it is what will produce the entry's first value.
+    // Cancelling it would leave `status: 'success'` over `undefined` data (`Entry.setData`
+    // flips idle/pending to success whatever it is handed) with nothing to refetch it until
+    // `staleTime` lapses: a query that never loads.
     const d = deferred<string>()
-    const q = defineQuery({
-      key: () => ['race'],
-      fetcher: () => d.promise,
-    })
+    const q = defineQuery({ key: () => ['first-load'], fetcher: () => d.promise })
     const def = defineController((ctx) => ({ r: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
 
     q.write(() => 'local')
     expect(root.r.data.value).toBe('local')
+    expect(root.r.isFetching.value).toBe(true)
 
     d.resolve('from server')
     await flush()
     expect(root.r.data.value).toBe('from server')
-
-    // With the fetch cancelled first, the write stands.
-    const d2 = deferred<string>()
-    const q2 = defineQuery({ key: () => ['race2'], fetcher: () => d2.promise })
-    const def2 = defineController((ctx) => ({ r: ctx.use(q2) }))
-    const root2 = createRoot(def2, { deps: emptyDeps })
-    q2.cancel()
-    q2.write(() => 'local')
-    d2.resolve('from server')
-    await flush()
-    expect(root2.r.data.value).toBe('local')
+    expect(root.r.status.value).toBe('success')
 
     root.dispose()
-    root2.dispose()
+  })
+
+  test('an explicit cancel still holds the first load back, when that is what you want', async () => {
+    // `cancel()` is unconditional — it is the caller saying "I know what I am doing".
+    const d = deferred<string>()
+    const q = defineQuery({ key: () => ['race2'], fetcher: () => d.promise })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+
+    q.cancel()
+    q.write(() => 'local')
+    d.resolve('from server')
+    await flush()
+    expect(root.r.data.value).toBe('local')
+
+    root.dispose()
   })
 })
