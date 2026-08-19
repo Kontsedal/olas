@@ -1097,19 +1097,45 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('does NOT supersede the fetch that has not produced a first value yet', async () => {
-    // The other edge, and it pulls the opposite way. With nothing cached, the in-flight fetch
-    // is not a stale answer to discard — it is what will produce the entry's first value.
-    // Cancelling it would leave `status: 'success'` over `undefined` data (`Entry.setData`
-    // flips idle/pending to success whatever it is handed) with nothing to refetch it until
-    // `staleTime` lapses: a query that never loads.
+  test('supersedes a first load too, when the write leaves the entry holding data', async () => {
+    // The order matters: the question is what the entry holds AFTER the write, not before.
+    // Asking beforehand declines to supersede here — and this is the commonest shape of the
+    // bug: open a thing, act on it, and the push carrying the result is undone by the body
+    // read that was issued before the action. Nothing is stranded, because the write itself
+    // supplies the value the fetch would have.
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['first-load'], fetcher: () => d.promise })
     const def = defineController((ctx) => ({ r: ctx.use(q) }))
     const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.r.isFetching.value).toBe(true)
 
     q.write(() => 'local')
     expect(root.r.data.value).toBe('local')
+    expect(root.r.isFetching.value).toBe(false)
+
+    d.resolve('from server')
+    await flush()
+    expect(root.r.data.value).toBe('local')
+    expect(root.r.status.value).toBe('success')
+
+    root.dispose()
+  })
+
+  test('does NOT supersede when the write leaves the entry with nothing', async () => {
+    // The merge that cannot patch what is not there — `prev ? fn(prev) : prev`, the usual
+    // shape over a possibly-absent key. It writes `undefined`, so the in-flight fetch is
+    // still what will produce the first value and is left alone to do it. Superseding here
+    // is what would stand `status: 'success'` over `undefined` with nothing to refetch it.
+    const d = deferred<string>()
+    const q = defineQuery({ key: () => ['merge-absent'], fetcher: () => d.promise })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    expect(root.r.isFetching.value).toBe(true)
+
+    q.write((prev) => (prev ? `${prev}+patch` : (prev as unknown as string)))
+    expect(root.r.data.value).toBe(undefined)
     expect(root.r.isFetching.value).toBe(true)
 
     d.resolve('from server')
@@ -1120,13 +1146,13 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('an optimistic guess does not count as data, so the first load survives', async () => {
-    // `data !== undefined` is the wrong question. `setData` over a never-loaded entry sets
-    // `data` while the first fetch is still outstanding, so a plain data check reports "this
-    // entry has data" on the strength of a GUESS — and a write would then cancel the load that
-    // was going to produce the first real value. The guess's own rollback restores `undefined`
-    // without restoring `status`, leaving `success` over no data with nothing to refetch it:
-    // precisely the state the empty-entry rule exists to prevent, reached through it.
+  test('a rollback after a write over a never-loaded entry cannot strand it', async () => {
+    // The failure this must not reach: an optimistic guess over an entry that has never
+    // loaded, a write, then the mutation fails. The write supersedes the first load (it left
+    // data), so nothing else will produce a value — which means the rollback is the last word,
+    // and if it restored the pre-guess `undefined` the entry would sit at `success` over no
+    // data until `staleTime` lapses. The snapshot rebase is what prevents that: rollback
+    // restores the WRITE, which is canonical and was never the mutation's to undo.
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['masked'], fetcher: () => d.promise, staleTime: 60_000 })
     const def = defineController((ctx) => ({ r: ctx.use(q) }))
@@ -1136,14 +1162,13 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
 
     const snap = q.setData(() => 'guess')
     q.write(() => 'push')
-    expect(root.r.isFetching.value).toBe(true)
 
     snap.rollback()
     d.resolve('server')
     await flush()
 
+    expect(root.r.data.value).toBe('push')
     expect(root.r.status.value).toBe('success')
-    expect(root.r.data.value).toBe('server')
     root.dispose()
   })
 

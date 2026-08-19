@@ -355,10 +355,11 @@ export type Query<Args extends unknown[], T> = {
    * mutation rolling back afterwards restores this rather than an older baseline.
    *
    * Two limits worth knowing:
-   * - It supersedes only when the entry holds **canonical** data. With none, the
-   *   in-flight fetch is what will produce the first value, and cancelling it
-   *   would strand the entry at `success` over `undefined`. An optimistic guess
-   *   does not count as data for this purpose.
+   * - It supersedes only if it leaves the entry holding data — asked after the
+   *   updater runs. A merge that cannot patch what is not there
+   *   (`prev ? fn(prev) : prev`) writes `undefined`, so the in-flight fetch is
+   *   left alone to produce the first value rather than being cancelled into a
+   *   `success`-over-`undefined` entry nothing will refetch.
    * - "Holds data" is `!== undefined`, so a query whose fetcher legitimately
    *   resolves `undefined` never supersedes, and a stale answer can still clobber
    *   a write on it. Call `cancel(...)` first on such a query.

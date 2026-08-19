@@ -469,28 +469,6 @@ export class Entry<T> {
   }
 
   /**
-   * Does this entry hold data that a full rollback would leave behind — i.e. data that came
-   * from the server rather than from an optimistic guess?
-   *
-   * `data` alone cannot answer it. An optimistic `setData` over an entry that has never
-   * loaded sets `data` while the first fetch is still in flight, so a plain
-   * `data !== undefined` reports "yes" for an entry whose only value is a guess. Anything
-   * that then treats the in-flight fetch as a stale answer to be discarded (the canonical
-   * write in `QueryClient.writeData`) would cancel the load that was going to produce the
-   * entry's first real value — and the guess's own rollback restores `undefined` without
-   * restoring `status`, leaving `success` over no data with nothing left to refetch it.
-   *
-   * The honest answer is the baseline the oldest LIVE snapshot captured: that is what the
-   * entry held before any optimistic layer. With no live layers it is simply `data`.
-   */
-  hasCanonicalData(): boolean {
-    for (const sn of this.snapshots) {
-      if (sn.live) return sn.prev !== undefined
-    }
-    return this.data.peek() !== undefined
-  }
-
-  /**
    * Write data into the entry.
    *
    * `track` (default `true`) is the optimistic-update path: it pushes a

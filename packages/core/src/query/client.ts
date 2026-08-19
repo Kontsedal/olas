@@ -1339,16 +1339,27 @@ export class QueryClient {
     // where this diverges from react-query, which has one door for both and therefore cannot
     // treat them differently.
     //
-    // **Only when there is already CANONICAL data.** With none, the in-flight fetch is not a
-    // stale answer to supersede — it is the thing that will PRODUCE the entry's first value,
-    // and cancelling it leaves a `success`-with-`undefined` entry (see `Entry.setData`, which
-    // flips idle/pending to success whatever it is handed) that nothing refetches until
-    // `staleTime` lapses. `hasCanonicalData` rather than `data !== undefined` because an
-    // optimistic `setData` over a never-loaded entry sets `data` too, and cancelling on the
-    // strength of a guess is exactly the case above with an extra step. `Entry.cancel` is a
-    // no-op when nothing is fetching, so this costs one array scan on the common path.
-    if (entry.entry.hasCanonicalData()) entry.entry.cancel()
+    // **Supersede AFTER the write, and only if the entry is left holding data.** The state to
+    // avoid is `status: 'success'` over `undefined` with nothing fetching — an entry nothing
+    // will refetch until `staleTime` lapses, because `Entry.setData` flips idle/pending to
+    // success whatever it is handed. That state is knowable exactly, and only, once the
+    // updater has run: it is reached iff the write leaves `data` undefined.
+    //
+    // Which makes the order load-bearing. Asking BEFORE the write ("did this entry already
+    // hold data?") answers a different and worse question — it declines to supersede for a
+    // full-body write onto an entry whose first load is still outstanding, which is the
+    // commonest shape of the bug this exists to fix: open a tab, run a query, and the push
+    // carrying the result is undone by the body read that was issued before the run. Nothing
+    // is stranded there, because the write itself supplies the value the fetch would have.
+    //
+    // A merge that cannot patch what is not there (`prev ? fn(prev) : prev`, the usual shape
+    // over a possibly-absent key) leaves `undefined` and so does NOT supersede — the in-flight
+    // fetch is what will produce the first value, and it is left alone to do that.
+    //
+    // `Entry.cancel` is a no-op when nothing is fetching, so this costs one `peek` on the
+    // common path.
     entry.entry.setData(updater, { track: false })
+    if (entry.entry.data.peek() !== undefined) entry.entry.cancel()
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
     // Explicit `'set'`, not the ambient-cause default: a canonical write inside
     // a mutation's `onMutate` inherits the `causeId` but its KIND is still a
