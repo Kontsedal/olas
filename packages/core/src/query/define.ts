@@ -125,6 +125,14 @@ export function defineQuery<Args extends unknown[], T>(spec: QuerySpec<Args, T>)
       }
     },
 
+    replace(...rest: [...Args, value: T]): void {
+      const value = rest[rest.length - 1] as T
+      const keyArgs = rest.slice(0, -1) as unknown as Args
+      for (const client of clients) {
+        client.replaceData(query as Query<Args, T>, keyArgs, value)
+      }
+    },
+
     peek(...args: Args): T | undefined {
       // First client holding data wins. Unlike `prefetch` this neither throws on
       // zero clients (no root subscribed yet is a legitimate "nothing cached")

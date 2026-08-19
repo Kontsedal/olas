@@ -46,24 +46,37 @@ The handle's signature is variadic — `setData(...args: [...Args, updater])` �
 
 It also reads better where it matters. `write` says *this is true* and `setData` says *this might have to be undone* — the distinction a reader needs, at the call site, without knowing what `track: false` means.
 
-## What the split bought that could not be bought otherwise
+## Three write methods, and why the third one takes a value
 
-The two methods started as one distinction — snapshot or no snapshot — and grew a second, sharper one on 2026-08-19: **`write` supersedes an in-flight fetch and `setData` does not.**
+The split started as one distinction — snapshot or no snapshot — and grew a second on 2026-08-19:
+which writes may supersede a fetch that is already in flight.
 
-The reasoning is about who is newer, and it differs between them:
-
-| | is it newer than a request already in flight? | so |
+| | claim it makes | supersedes an outstanding fetch? |
 |---|---|---|
-| `write` | **yes, by definition** — the caller is folding in something the server has already said | supersedes it itself |
-| `setData` | no — it is a guess about what the server will say | a response may overrule it; the caller cancels first if it must not |
+| `setData(...updater)` | a guess a mutation may have to undo | no — a server response may overrule a guess |
+| `write(...updater)` | canonical, but only about the fields it touched | no — it has no claim on the rest |
+| `replace(...value)` | canonical AND complete: *this is the record now* | **yes** — an earlier request has nothing to add |
 
-This is where olas leaves react-query behaviour deliberately, and the split is what makes leaving possible. react-query has one door — `setQueryData` — for both meanings, so it *cannot* treat them differently; its fetch resolution calls the same `setData`, with no check for whether a manual write landed in the meantime — measured against `@tanstack/query-core` 5.101, which clobbers exactly as olas did before this change. Its answer is `cancelQueries` at every call site, and its own optimistic recipe opens with one. A library with two doors does not have to make every caller remember which door needs it.
+**The signature is the contract.** `replace` takes a value rather than an updater, and that is not
+sugar: an updater reading `prev` can only ever describe a patch, and the distinction cannot be
+recovered inside the entry because the updater's OUTPUT looks identical either way. Asking the
+caller to pass the whole value is asking them to make the claim explicitly, and it is the only place
+the claim can be made.
 
-The evidence was downstream: a consumer app shipped two user-visible bugs from this in a day — a query-result grid blanking a moment after the results arrived, and a tab, split or panel-close undoing itself — plus a CI suite quarantined for two days over failures that all had this single cause. Every one of them was a `write` call site that had not remembered `cancel`.
+This is also where olas leaves react-query behaviour deliberately. react-query has one door,
+`setQueryData`, for all three meanings, so it cannot treat them differently; its answer is
+`cancelQueries` at every call site (measured against `@tanstack/query-core` 5.101, which clobbers
+exactly as olas did before any of this). Three doors can each carry their own rule.
 
-**Two limits, both found by review rather than by design.** A canonical write must also *rebase* live optimistic snapshots onto itself — the same thing `applySuccess` does — because the fetch it now aborts is the one that used to do the rebasing; without that, a `write` landing mid-mutation is undone by that mutation's rollback, to a value older than the one the write superseded. And the empty-entry guard has to be asked AFTER the updater runs, not before: the state to avoid is `success` over `undefined` with nothing in flight, reached exactly when a write both supersedes and leaves `data` undefined, so the post-write value is the precise test. Asked beforehand it declines to supersede a full-body write onto an entry whose first load is outstanding — the commonest shape of the bug. That version shipped as 0.7.0 and a downstream upgrade found the hole within minutes, which is the argument for integrating a release against a real consumer before believing it.
+**It cost two published versions to find the middle row.** 0.7.0 and 0.7.1 made `write` itself
+supersede, on the reasoning that a canonical write is newer by definition. True of a whole record;
+false of a patch. A downstream app folded a one-field push into a cached record while a refetch was
+outstanding, the refetch was discarded, and the field it would have brought never arrived — twice,
+in two unrelated suites, intermittently, because it is a race. Both releases were rolled back.
 
-**The rule stops at the empty entry**, which is the part that has to be in the library rather than in a call site's head: with no data cached, the in-flight fetch is not a stale answer to discard, it is what will produce the first value, and superseding it strands the entry at `status: 'success'` over `undefined` (a write flips idle/pending to success whatever it is handed) with nothing to refetch it until `staleTime` lapses. The two edges pull opposite ways and `data.peek() !== undefined` separates them.
+The guard moved three times before landing in the signature: "did the entry hold canonical data"
+(0.7.0), then "does it hold data after the write" (0.7.1), then — the only one that answers the real
+question — "is this write the whole record", which nothing inside the entry can know.
 
 ## Why `write` still creates a missing entry
 

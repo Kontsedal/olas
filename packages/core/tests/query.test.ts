@@ -1062,11 +1062,11 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('supersedes an in-flight fetch when the entry already holds data', async () => {
-    // The canonical write is newer BY DEFINITION: the caller is folding in something the
-    // server has already said, while the outstanding request was issued before that happened.
-    // Letting it answer last silently undoes the write — a server-pushed record that
-    // disappears a moment after it arrives, with nothing in the UI to explain it.
+  test('replace supersedes an in-flight fetch when the entry already holds data', async () => {
+    // A replacement is newer BY DEFINITION: the caller has the whole record as the server
+    // last stated it, while the outstanding request was issued before that happened. Letting
+    // it answer last silently undoes the replacement — a server-pushed record that disappears
+    // a moment after it arrives, with nothing in the UI to explain it.
     const answers = [deferred<string>(), deferred<string>()]
     let call = 0
     const q = defineQuery({ key: () => ['race'], fetcher: () => answers[call++]!.promise })
@@ -1083,7 +1083,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     expect(root.r.isFetching.value).toBe(true)
 
     // ...and a push lands while it is in flight.
-    q.write(() => 'from the push')
+    q.replace('from the push')
     expect(root.r.data.value).toBe('from the push')
     expect(root.r.isFetching.value).toBe(false)
 
@@ -1097,12 +1097,11 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('supersedes a first load too, when the write leaves the entry holding data', async () => {
-    // The order matters: the question is what the entry holds AFTER the write, not before.
-    // Asking beforehand declines to supersede here — and this is the commonest shape of the
-    // bug: open a thing, act on it, and the push carrying the result is undone by the body
-    // read that was issued before the action. Nothing is stranded, because the write itself
-    // supplies the value the fetch would have.
+  test('replace supersedes a first load too', async () => {
+    // The commonest shape of the bug: open a thing, act on it, and the push carrying the
+    // result is undone by the body read issued before the action. The entry holds nothing yet
+    // when the push lands, and nothing is stranded either — the replacement supplies the value
+    // the fetch would have.
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['first-load'], fetcher: () => d.promise })
     const def = defineController((ctx) => ({ r: ctx.use(q) }))
@@ -1110,7 +1109,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     await flush()
     expect(root.r.isFetching.value).toBe(true)
 
-    q.write(() => 'local')
+    q.replace('local')
     expect(root.r.data.value).toBe('local')
     expect(root.r.isFetching.value).toBe(false)
 
@@ -1122,11 +1121,10 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('does NOT supersede when the write leaves the entry with nothing', async () => {
-    // The merge that cannot patch what is not there — `prev ? fn(prev) : prev`, the usual
-    // shape over a possibly-absent key. It writes `undefined`, so the in-flight fetch is
-    // still what will produce the first value and is left alone to do it. Superseding here
-    // is what would stand `status: 'success'` over `undefined` with nothing to refetch it.
+  test('replace does NOT supersede when it leaves the entry with nothing', async () => {
+    // Replacing with `undefined` says there is no record. The in-flight fetch is still what
+    // will produce the first value and is left alone to do it; superseding here would stand
+    // `status: 'success'` over `undefined` with nothing to refetch it.
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['merge-absent'], fetcher: () => d.promise })
     const def = defineController((ctx) => ({ r: ctx.use(q) }))
@@ -1134,7 +1132,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     await flush()
     expect(root.r.isFetching.value).toBe(true)
 
-    q.write((prev) => (prev ? `${prev}+patch` : (prev as unknown as string)))
+    q.replace(undefined as unknown as string)
     expect(root.r.data.value).toBe(undefined)
     expect(root.r.isFetching.value).toBe(true)
 
@@ -1146,7 +1144,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('a rollback after a write over a never-loaded entry cannot strand it', async () => {
+  test('a rollback after a replace over a never-loaded entry cannot strand it', async () => {
     // The failure this must not reach: an optimistic guess over an entry that has never
     // loaded, a write, then the mutation fails. The write supersedes the first load (it left
     // data), so nothing else will produce a value — which means the rollback is the last word,
@@ -1161,7 +1159,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     expect(root.r.isFetching.value).toBe(true)
 
     const snap = q.setData(() => 'guess')
-    q.write(() => 'push')
+    q.replace('push')
 
     snap.rollback()
     d.resolve('server')
@@ -1172,7 +1170,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('rebases live optimistic snapshots, so a rollback cannot undo it', async () => {
+  test('replace rebases live optimistic snapshots, so a rollback cannot undo it', async () => {
     // The counterpart of "fetch success rebases live snapshots" (§6.4), and it became load
     // bearing when `write` started superseding: the write aborts the fetch whose `applySuccess`
     // used to do the rebasing, so without this a `write` landing mid-mutation is undone by that
@@ -1188,7 +1186,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const snap = q.setData(() => 'optimistic')
     void q.invalidate()
     await flush()
-    q.write(() => 'push')
+    q.replace('push')
     answers[1]!.resolve('server-fresh')
     await flush()
 
@@ -1198,7 +1196,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('a prefetch superseded by a write resolves rather than rejecting', async () => {
+  test('a prefetch superseded by a replace resolves rather than rejecting', async () => {
     // `subscription.refetch` has recovered from a supersede since T3.9; `prefetch` never did,
     // and `write` gives it a trigger the docs encourage sprinkling everywhere. An SSR loader
     // awaiting a prefetch while a realtime fold arrives must not see an unhandled AbortError.
@@ -1220,11 +1218,41 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
       },
     )
     await flush()
-    q.write(() => 'push')
+    q.replace('push')
     answers[1]!.resolve('later')
     await p
 
     expect(outcome).toBe('resolved:push')
+    root.dispose()
+  })
+
+  test('write does NOT supersede — a patch has no claim on the fields it did not touch', async () => {
+    // The regression that took two published versions to find. An updater reading `prev`
+    // describes the fields it touches and says nothing about the rest, so a response already
+    // on its way may be carrying newer values for them. A downstream app folded a one-field
+    // push into a tab record while a refetch was outstanding, the refetch was discarded, and
+    // the field it WOULD have brought — the query's new code — never arrived.
+    const answers = [deferred<Record<string, string>>(), deferred<Record<string, string>>()]
+    let call = 0
+    const q = defineQuery({ key: () => ['patch'], fetcher: () => answers[call++]!.promise })
+    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const root = createRoot(def, { deps: emptyDeps })
+    answers[0]!.resolve({ title: 'old', code: 'old' })
+    await flush()
+
+    void q.invalidate()
+    await flush()
+    expect(root.r.isFetching.value).toBe(true)
+
+    // A push carrying ONLY the title lands mid-flight.
+    q.write((prev) => ({ ...(prev ?? {}), title: 'pushed' }))
+    expect(root.r.isFetching.value).toBe(true)
+
+    // The refetch still lands, and the code it was carrying survives.
+    answers[1]!.resolve({ title: 'pushed', code: 'new' })
+    await flush()
+    expect(root.r.data.value).toEqual({ title: 'pushed', code: 'new' })
+
     root.dispose()
   })
 

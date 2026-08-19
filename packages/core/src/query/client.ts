@@ -1339,31 +1339,41 @@ export class QueryClient {
     // where this diverges from react-query, which has one door for both and therefore cannot
     // treat them differently.
     //
-    // **Supersede AFTER the write, and only if the entry is left holding data.** The state to
-    // avoid is `status: 'success'` over `undefined` with nothing fetching — an entry nothing
-    // will refetch until `staleTime` lapses, because `Entry.setData` flips idle/pending to
-    // success whatever it is handed. That state is knowable exactly, and only, once the
-    // updater has run: it is reached iff the write leaves `data` undefined.
-    //
-    // Which makes the order load-bearing. Asking BEFORE the write ("did this entry already
-    // hold data?") answers a different and worse question — it declines to supersede for a
-    // full-body write onto an entry whose first load is still outstanding, which is the
-    // commonest shape of the bug this exists to fix: open a tab, run a query, and the push
-    // carrying the result is undone by the body read that was issued before the run. Nothing
-    // is stranded there, because the write itself supplies the value the fetch would have.
-    //
-    // A merge that cannot patch what is not there (`prev ? fn(prev) : prev`, the usual shape
-    // over a possibly-absent key) leaves `undefined` and so does NOT supersede — the in-flight
-    // fetch is what will produce the first value, and it is left alone to do that.
-    //
-    // `Entry.cancel` is a no-op when nothing is fetching, so this costs one `peek` on the
-    // common path.
+    // A PATCH. It does not supersede an in-flight fetch, and that is deliberate: an updater
+    // reading `prev` describes the fields it touches and says nothing about the others, so a
+    // response already on its way may well be carrying newer values for them. Discarding it on
+    // the strength of a one-field patch loses those. `replaceData` is the write that supersedes,
+    // and it takes a whole value precisely so the caller cannot make this claim by accident.
     entry.entry.setData(updater, { track: false })
-    if (entry.entry.data.peek() !== undefined) entry.entry.cancel()
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
     // Explicit `'set'`, not the ambient-cause default: a canonical write inside
     // a mutation's `onMutate` inherits the `causeId` but its KIND is still a
     // plain set, never `'mutate'` (the `setEntryData` precedent).
+    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
+  }
+
+  /**
+   * Replace one keyed entry's data with a value that IS the record — and supersede any fetch
+   * already in flight for it (spec §6.4).
+   *
+   * The difference from `writeData` is the claim being made, and the signature is what makes it
+   * honest: a whole value rather than an updater. A patch built from `prev` describes the fields
+   * it touches and nothing else, so a response already on its way may be carrying newer values
+   * for the rest; discarding it would lose them. A replacement asserts there is nothing else —
+   * this is the record now — which is exactly the precondition under which an older request has
+   * nothing left to contribute. The canonical source is a server read-back taken after the write
+   * it reports.
+   *
+   * Supersedes only when `value` is defined, for the reason `Entry.setData` makes necessary: it
+   * flips an idle/pending entry to `success` whatever it is handed, so replacing with `undefined`
+   * AND cancelling would strand the entry at `success` over no data, with nothing to refetch it
+   * until `staleTime` lapses. `Entry.cancel` is a no-op when nothing is fetching.
+   */
+  replaceData<Args extends unknown[], T>(query: Query<Args, T>, args: Args, value: T): void {
+    const entry = this.bindEntry(query, args)
+    entry.entry.setData(() => value, { track: false })
+    if (value !== undefined) entry.entry.cancel()
+    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
     if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
   }
 

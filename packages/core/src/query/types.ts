@@ -346,25 +346,34 @@ export type Query<Args extends unknown[], T> = {
    * write. Guard with `peek(...)` when patching an absent key would produce
    * nonsense (a merge over `undefined` usually does).
    *
-   * **It supersedes a fetch already in flight, and `setData` does not.** A
-   * canonical write is newer by definition — the server has already said this,
-   * while an outstanding request was issued before that happened and will answer
-   * with the state from before it. So no `cancel(...)` is needed here, unlike the
-   * optimistic recipe (§5.5), where a response is entitled to overrule a guess.
-   * It also rebases live optimistic snapshots onto the written value, so a
-   * mutation rolling back afterwards restores this rather than an older baseline.
+   * It rebases live optimistic snapshots onto the written value, so a mutation
+   * rolling back afterwards restores this rather than an older baseline.
    *
-   * Two limits worth knowing:
-   * - It supersedes only if it leaves the entry holding data — asked after the
-   *   updater runs. A merge that cannot patch what is not there
-   *   (`prev ? fn(prev) : prev`) writes `undefined`, so the in-flight fetch is
-   *   left alone to produce the first value rather than being cancelled into a
-   *   `success`-over-`undefined` entry nothing will refetch.
-   * - "Holds data" is `!== undefined`, so a query whose fetcher legitimately
-   *   resolves `undefined` never supersedes, and a stale answer can still clobber
-   *   a write on it. Call `cancel(...)` first on such a query.
+   * **It does NOT supersede a fetch already in flight.** An updater reading `prev`
+   * describes the fields it touches and says nothing about the rest, so a response
+   * already on its way may be carrying newer values for them — discarding it would
+   * lose those. Use `replace(...)` when the value you have IS the whole record and
+   * an older request has nothing left to contribute, or `cancel(...)` first when
+   * you have decided this patch should win anyway.
    */
   write(...args: [...Args, updater: (prev: T | undefined) => T]): void
+  /**
+   * Replace a specific key's data with a value that **is** the record, and
+   * supersede any fetch already in flight for it (spec §6.4).
+   *
+   * The signature is the point. `write` takes an updater, so it can only ever
+   * claim to patch; `replace` takes a whole value, which is the claim that lets
+   * it discard an outstanding request — that request was issued before this was
+   * true and has nothing left to contribute. The canonical source is a server
+   * read-back taken after the write it reports (a push carrying the new record),
+   * not a locally-assembled object.
+   *
+   * Supersedes only when `value` is defined: a write flips an idle/pending entry
+   * to `success` whatever it is handed, so replacing with `undefined` and
+   * cancelling together would strand it at `success` over no data with nothing to
+   * refetch it. Like `write`, it pushes no snapshot and rebases live ones.
+   */
+  replace(...args: [...Args, value: T]): void
   /**
    * Read the cached data for a specific key **synchronously**, without
    * subscribing and without fetching (spec §5.5).
