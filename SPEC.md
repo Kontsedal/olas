@@ -243,7 +243,26 @@ Most controllers have two states: **active** and **disposed**. Construction happ
 | Transition       | Triggers                                 | Effect                                                        |
 | ---------------- | ---------------------------------------- | ------------------------------------------------------------- |
 | construct        | `ctx.child(...)` or `createRoot(...)`    | Runs factory, sets up effects/caches/children                 |
-| dispose          | parent disposes, or `controller.dispose()` | Cleanup runs bottom-up: children → caches/effects → `onDispose` hooks |
+| dispose          | parent disposes, or `controller.dispose()` | Cleanup runs in **reverse registration order** — see below |
+
+**Teardown order is reverse registration order — one pass, all kinds interleaved.** Children, effects, caches, subscriptions and `onDispose` hooks live in a single lifecycle list in the order they were created, and dispose walks that list backwards. There is no phase ordering: an `onDispose` hook registered *after* an effect runs *before* that effect is torn down, and the same hook registered *before* it runs after. LIFO is the useful guarantee — a thing is torn down before whatever it was built on top of — and it is the only one.
+
+This matters when a hook needs a collaborator to still be alive. Flushing a pending `debounced` write from `onDispose` (§9) works only because the effect that consumes it is still subscribed, which is true only because the hook was registered later:
+
+```ts
+defineController((ctx) => {
+  const width = ctx.field(240)
+  const settled = debounced(width.signal, 500)
+  ctx.effect(() => void save({ width: settled.value }))  // registered first…
+
+  ctx.onDispose(() => {
+    settled.flush()   // …so the effect above is still live here and the write lands
+    settled.dispose()
+  })
+})
+```
+
+Register the hook before the effect and `flush()` emits into nothing.
 
 **Memory.** Disposal is always recursive and synchronous. After dispose, all signals owned by the controller are dropped; subscribers receive a final `disposed` notification and unsubscribe.
 
@@ -627,6 +646,7 @@ type MutationSpec<V, R> = {
   concurrency?: 'parallel' | 'latest-wins' | 'serial'    // default: 'parallel'
   retry?: RetryPolicy                                    // see §5.2
   retryDelay?: RetryDelay                                // see §5.2
+  detached?: boolean                                     // default: false — see §6.5
 }
 
 type Mutation<V, R> = {
@@ -673,9 +693,28 @@ try {
 
 Each `mutate` receives an `AbortSignal`. It's triggered when:
 
-- Controller is disposed.
+- Controller is disposed — **unless the mutation is `detached` (§6.5)**.
 - `mutation.reset()` is called.
 - `concurrency: 'latest-wins'` and a new `run()` supersedes this one.
+
+**`run()` after dispose rejects with `MutationDisposedError`, and `mutate` is never called.** The write does not happen. That error is deliberately **not** an `AbortError`: `isAbortError(err)` is how callers filter cancellations, and a run that was never accepted is not a cancellation — it is a write the app asked for and silently did not get. Filtering it away would hide that. It carries `mutationName` and `controllerPath` to say which one.
+
+```ts
+import { MutationDisposedError, isAbortError } from '@kontsedal/olas-core'
+
+try {
+  await mutation.run(vars)
+} catch (e) {
+  if (e instanceof MutationDisposedError) {
+    // The write never ran. Either own the mutation higher up, or mark it
+    // `detached` (§6.5) so it survives the screen that started it.
+  } else if (isAbortError(e)) {
+    return // superseded or reset — deliberate
+  } else throw e
+}
+```
+
+**A run that already completed is never rolled back.** If `mutate` resolves and the abort lands in the gap before the run's continuation, the work is done — you cannot cancel what already happened. The optimistic snapshot is **finalized**, not rolled back (rolling back would commit a value already known to be stale to a cache that outlives the mutation, with no `onSuccess` left to invalidate it), and a persistable run settles as `'success'` rather than `'cancelled'` so the queue does not replay a write the server accepted (§13.3). The returned promise still rejects with `AbortError` — the caller walked away, and `data` / `status` belong to the superseder or to nobody.
 
 ### 6.3 Optimistic updates
 
@@ -717,6 +756,31 @@ All three rebase live optimistic snapshots onto the written value, so a rollback
 **The limit of that rule.** "Holds data" means `!== undefined`, which is how the whole cache spells "nothing here" (`peek`, `firstValue`, `keepPreviousData`). A query whose fetcher legitimately resolves `undefined` therefore never supersedes, and a stale response can still clobber a `write` on it. Call `cancel(...)` first on such a query; distinguishing "no value yet" from "the value is `undefined`" would need a has-settled flag the entry does not carry.
 
 This is a correctness distinction, not a stylistic one. A `setData` snapshot exists to be settled by the mutation that created it (`onMutate` returns it; success finalizes, failure rolls back). A fire-and-forget patcher has no mutation to settle it, so **every call leaves a live snapshot record on the entry**: `hasPendingMutations` wedged at `true` for the rest of the entry's life, and — on a long-lived entry patched on every server event — a snapshot array that grows without bound, each layer retaining its captured baseline. Before `write` existed, the only escapes were the plugin-facing `setEntryData` (not reachable from application code) or remembering to call `snapshot.finalize()` on every patch.
+
+### 6.5 Detached runs — writes that outlive the screen
+
+`detached: true` stops `dispose()` from cancelling. In-flight runs finish, queued `serial` runs still drain, `run(...)` still works after dispose, and `onSuccess` / `onError` / `onSettled` still fire.
+
+```ts
+const activate = ctx.mutation({
+  mutate: (key: string) => api.activateLicense(key),
+  detached: true,
+  onSuccess: () => licenseQuery.invalidate()
+})
+```
+
+The default is right for a **read** a closing screen no longer wants. It is wrong for a **write**: the request is already at the server, the user asked for it, and cancelling the client half neither un-sends it nor tells anyone. The symptom is a modal that reports "Something went wrong: Aborted" for an operation that succeeded, or a confirm answered just after its panel closed that does nothing at all.
+
+What still cancels a detached run:
+
+- `reset()` — and it keeps working after dispose, since it is then the only stop button left.
+- A `latest-wins` supersede.
+
+Both are the app explicitly saying "drop this one". Dispose only says "this screen is gone", which is not the same claim.
+
+**The callbacks run after the controller is torn down.** That is the whole point — it is how the `onSuccess` invalidation lands — but it means they must not touch what dispose destroyed. Keep them to client-level work: `query.invalidate()`, a toast, a logger. Not the controller's signals, fields or children. If the whole **root** is gone the run still completes, but its cache writes no-op, because the client has deregistered itself from every query.
+
+Reach for it on writes whose completion the user has already been promised, and leave it off everything else.
 
 ---
 

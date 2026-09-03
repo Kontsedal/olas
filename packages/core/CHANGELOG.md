@@ -1,5 +1,23 @@
 # @kontsedal/olas-core
 
+## 0.8.0
+
+### Minor Changes
+
+- **Mutations: `detached: true`, a typed post-dispose rejection, and a completed run is no longer rolled back.**
+
+  Three fixes and one new option, all in how a mutation behaves when the controller that owns it goes away.
+
+  - **New: `ctx.mutation({ detached: true })` (SPEC §6.5).** `dispose()` stops cancelling — in-flight runs finish, queued `serial` runs drain, `run(...)` still works afterwards, and `onSuccess` / `onError` / `onSettled` still fire, so the invalidation that usually hangs off `onSuccess` lands instead of being skipped. The default is right for a read a closing screen no longer wants; it is wrong for a write, whose request is already at the server. `reset()` and a `latest-wins` supersede still cancel — those are the app saying "drop this one", where dispose only says "this screen is gone".
+
+  - **Breaking-ish: `run()` after dispose now rejects with `MutationDisposedError`**, exported from `@kontsedal/olas-core` and carrying `mutationName` + `controllerPath`. It was a bare `Error('Mutation disposed')`, which `isAbortError()` did not match and nothing identified — so a caller filtering cancellations correctly still surfaced the raw message to a user, and one filtering broadly lost the write in silence. It is deliberately **not** an `AbortError`: a run that was never accepted is not a cancellation. If you match on the message, match on the type instead.
+
+  - **Fixed: a run whose `mutate` already resolved is no longer rolled back.** When the abort landed in the gap before the run's continuation, the optimistic snapshot was rolled back — committing a value already known to be stale to a cache that outlives the mutation, with the `onSuccess` that would have invalidated it skipped. It finalizes now. The promise still rejects with `AbortError`.
+
+  - **Fixed: that same run no longer settles as `'cancelled'`.** `@kontsedal/olas-mutation-queue` reads `'cancelled'` as "keep the durable entry and replay on next load", so a `persist: true` write the server had accepted was queued for a second attempt. It settles `'success'`.
+
+  Also corrects SPEC §4, which described teardown as "children → caches/effects → `onDispose` hooks". It is one reverse-registration pass over all entry kinds, so whether an `onDispose` hook can still reach an effect depends on which was created first — see the new `.wiki/pitfalls/dispose-order-is-registration-order.md`.
+
 ## 0.7.2
 
 ### Patch Changes

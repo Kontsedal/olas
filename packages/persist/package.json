@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-persist",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "description": "Olas persistence composables — usePersisted with localStorage and IndexedDB (indexedDbAdapter) storage adapters.",
   "keywords": [
     "olas",

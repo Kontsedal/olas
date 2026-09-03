@@ -755,3 +755,56 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     }
   })
 })
+
+describe('a run that completed before dispose must not be replayed', () => {
+  const MUTATION_ID = 'mq-test/completed-then-disposed'
+
+  beforeEach(() => {
+    _unregisterMutationById(MUTATION_ID)
+  })
+
+  test('settles as success, so the durable entry is dropped rather than left for replay', async () => {
+    // `outcome: 'cancelled'` tells this plugin to KEEP the entry and replay it
+    // on the next page load. For a run whose request the server already
+    // accepted that is a second write of the same mutation — so a completed
+    // run reports success even when the abort beat its continuation.
+    const adapter = memoryAdapter()
+    let resolveWrite: (v: { id: string }) => void = () => {}
+    const pending = new Promise<{ id: string }>((res) => {
+      resolveWrite = res
+    })
+    const createOrder = defineMutation({
+      mutationId: MUTATION_ID,
+      // Not `async`: an async wrapper adds a microtask hop, and the window
+      // below is measured in hops.
+      mutate: (_vars: { sku: string }) => pending,
+    })
+    const def = defineController((ctx) => ({
+      create: ctx.mutation(createOrder) as Mutation<{ sku: string }, unknown>,
+    }))
+    type Api = { create: Mutation<{ sku: string }, unknown> }
+    const root = createRoot(def, {
+      deps: {},
+      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
+    }) as unknown as Api & { dispose(): void }
+
+    const run = root.create.run({ sku: 'A-1' }).catch((e: unknown) => e)
+    expect(adapter.store.size).toBe(1)
+
+    resolveWrite({ id: 'srv-1' }) // the server accepts the write…
+    // …and the screen closes in the window after the work completed but before
+    // the run's continuation ran.
+    await Promise.resolve()
+    await Promise.resolve()
+    root.create.dispose()
+
+    // Proves the window was hit: the run reports the abort, and the entry is
+    // still gone. Without this the assertion below would also pass on the
+    // ordinary success path, where the branch under test never runs.
+    expect(((await run) as Error).name).toBe('AbortError')
+    await settle()
+    expect(adapter.store.size).toBe(0)
+
+    root.dispose()
+  })
+})

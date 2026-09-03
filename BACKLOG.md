@@ -202,6 +202,29 @@ The other three examples (kanban, reader-ssr, stock-ticker) each ship a `tests/`
 
 `tsconfig.base.json` has no `paths`, so `@kontsedal/olas-*` imports in the satellite packages (react, persist, entities, …) and the integration suite resolve to each package's built `dist/*.d.ts` (via `exports.types`). Consequences: (1) `pnpm typecheck` needs a prior `pnpm build` or it sees stale/absent types — and **CI runs `typecheck` BEFORE `build`**, so a fresh checkout can't resolve them; (2) core src type changes aren't seen by satellites until a rebuild. Adding `paths` → src does NOT work cleanly (it pulls core src into each satellite's `rootDir`, and `__DEV__` isn't declared outside the build-time define). Proper fix belongs in T7.2: reorder CI to `build` before `typecheck` (or add a pre-typecheck build step), and/or add TS project references plus a `__DEV__` ambient declaration so src↔src typecheck is viable. Surfaced when T1.2 added `DehydratedEntry.id` — the integration suite's hand-built payload only typechecked after a rebuild.
 
+## Documentation / polish
+
+### [idea] Five wiki line-range citations into `mutation.ts` point at the wrong code
+
+Found while re-verifying citations after §6.5 landed (2026-09-03). `wiki-lint` only checks that a
+`file:N-M` range is within the file, so a range that drifted onto unrelated code is silent. These
+five were already wrong *before* that change — they are not shift damage from it, and they were left
+alone rather than fixed mid-task:
+
+- `pitfalls/latest-wins-rollback-order.md` → `mutation.ts:138-154` lands on the `MutationRun` type
+  doc; the synchronous rollback it describes is the `case 'latest-wins'` block.
+- `pitfalls/raceabort-for-misbehaving-mutate.md` → `mutation.ts:184-247` lands on `RunHandle` /
+  `SerialEntry`, and `:347-374` on the `onMutate`-throw path. `raceAbort` itself is at the bottom of
+  the file.
+- `modules/devtools.md` → `mutation.ts:230-246` lands on the constructor parameter list, not the
+  `emit` overloads it names.
+- `modules/examples.md` → `mutation.ts:196-208` lands on `MutationLifecycleHooks`, not the
+  `onError(err, vars, snapshot)` signature it cites.
+
+Worth fixing as one pass over every `file:N-M` in `.wiki/`, and worth asking whether lint can do
+better than an EOF check — e.g. store a hash of the cited range, or require citations to name a
+symbol the range must contain.
+
 ## Loose ends
 
 ### Internal peer ranges have no upper bound

@@ -4,7 +4,7 @@ description: "End-to-end flow of the devtools causal timeline: how a mutation's 
 type: flow
 covers:
   - packages/core/src/devtools.ts
-  - packages/core/src/query/mutation.ts:302-441
+  - packages/core/src/query/mutation.ts:387-536
   - packages/core/src/query/client.ts:98-140
   - packages/devtools/src/store.ts
   - packages/devtools/src/DevtoolsPanel.tsx
