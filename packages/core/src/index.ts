@@ -79,7 +79,7 @@ export type {
   MutationDef,
   MutationSpec,
 } from './query/mutation'
-export { defineMutation } from './query/mutation'
+export { defineMutation, MutationDisposedError } from './query/mutation'
 // Query-client plugins (§13.2 / §13.3)
 export type {
   GcEvent,

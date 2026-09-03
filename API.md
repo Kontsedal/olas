@@ -699,6 +699,7 @@ type MutationSpec<V, R> = {
   concurrency?: MutationConcurrency    // default 'parallel'
   retry?: RetryPolicy
   retryDelay?: RetryDelay
+  detached?: boolean                   // default false — survive dispose
 }
 
 type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
@@ -710,8 +711,11 @@ type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
   - `parallel` *(default)* — runs are independent. `isPending` is true if any are in-flight.
   - `latest-wins` — a new `.run()` aborts the in-flight one.
   - `serial` — runs queue and execute one at a time.
+- **`detached`** — when `true`, `dispose()` stops cancelling: in-flight runs finish, queued `serial` runs drain, `run(...)` still works afterwards, and `onSuccess` / `onError` / `onSettled` still fire. Use it for **writes** whose completion the user has already been promised — a licence activation behind a modal the user can close, a destructive action whose confirm may be answered after its panel is gone. The callbacks then run after the controller is torn down, so keep them to client-level work (`query.invalidate()`, a toast) and away from the controller's own signals and children. SPEC §6.5.
 
 **Gotcha:** rollback is **automatic only on abort** (latest-wins supersede, dispose). For normal `mutate` rejections, call `snapshot?.rollback()` in `onError` explicitly. See [`.wiki/pitfalls/latest-wins-rollback-order.md`](.wiki/pitfalls/latest-wins-rollback-order.md).
+
+**A run that already finished is never rolled back.** If `mutate` resolves and the abort lands before the run's continuation, the snapshot is *finalized* rather than rolled back — the work happened, and rolling back would commit a knowingly stale value to a cache that outlives the mutation. The promise still rejects with `AbortError`. SPEC §6.2.
 
 ### Type: `Mutation<V, R>`
 
@@ -733,6 +737,33 @@ type Mutation<V, R> = {
 `reset()` **cancels**: it aborts every in-flight run (awaiters reject with an `AbortError` — use `isAbortError`) and rejects queued `serial` runs so nobody hangs, then clears `data` / `error` / `lastVariables` and returns `status` to `'idle'` with `isPending` false. SPEC §6.2 lists it among the abort triggers.
 
 **Gotcha when porting from react-query:** rq's `reset()` detaches the observer and lets the in-flight request finish. Olas aborts it. A mechanical `reset()` → `reset()` port silently changes whether the write lands.
+
+### Class: `MutationDisposedError`
+
+```ts
+class MutationDisposedError extends Error {
+  readonly mutationName: string          // spec.name / spec.mutationId, else '(anonymous)'
+  readonly controllerPath: readonly string[]
+}
+```
+
+What `run(...)` rejects with once the mutation has been disposed. `mutate` is never called — **the write does not happen.**
+
+It is deliberately **not** an `AbortError`. `isAbortError(err)` is how callers filter cancellations, and a run that was never accepted is not one: it is work the app asked for and silently did not get, and a blanket abort filter would hide the loss.
+
+```ts
+import { MutationDisposedError, isAbortError } from '@kontsedal/olas-core'
+
+await mutation.run(vars).catch((e) => {
+  if (e instanceof MutationDisposedError) {
+    // the write never ran — own the mutation higher up, or mark it `detached`
+  } else if (!isAbortError(e)) {
+    toast.error(e)
+  }
+})
+```
+
+`detached: true` mutations never throw it: `run(...)` keeps working after dispose.
 
 ### Type: `Snapshot`
 

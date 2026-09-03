@@ -69,6 +69,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/fieldarray-factory-uses-initial.md](pitfalls/fieldarray-factory-uses-initial.md) — `add(x)` only works if factory uses it
 - [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert
 - [pitfalls/raf-unbound-illegal-invocation.md](pitfalls/raf-unbound-illegal-invocation.md) — native `requestAnimationFrame` assigned unbound throws "Illegal invocation" in real browsers (jsdom hides it)
+- [pitfalls/dispose-order-is-registration-order.md](pitfalls/dispose-order-is-registration-order.md) — teardown is one reverse-registration pass, not phased; an `onDispose` hook reaches an effect only if the effect was created first
 - [pitfalls/no-invalidator-still-refetches.md](pitfalls/no-invalidator-still-refetches.md) — "nothing invalidates this query" is not grounds to skip `cancel()` before an optimistic `setData`: a stale entry refetches on subscribe / `resume()` with no invalidator anywhere
 
 ## Candidates (not authoritative)

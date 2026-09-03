@@ -1008,3 +1008,13 @@ no-snapshot cases fail), entry-creating `peek` (→ the non-creation case fails)
 clean, 843 tests / 59 files, build clean. `pnpm lint` still reports formatter errors on 5
 root config files — the known Windows CRLF issue already in BACKLOG.md, untouched by this
 change (staged diff contains zero CR).
+
+## [2026-09-03 22:40] ingest | mutation dispose semantics + detached runs (§6.5)
+
+Three defects found by auditing a consumer's backlog of "olas bugs" against the source, plus one doc divergence. All shipped in one change; `pitfalls/dispose-order-is-registration-order.md` is new and `entities/mutation.md` is updated.
+
+- `run()` after dispose rejected with a bare `Error('Mutation disposed')` — not matched by the library's own `isAbortError`, while `dispose()`'s serial-queue rejection three lines below was an `AbortError`. Now `MutationDisposedError`, exported and deliberately not an abort.
+- A run whose `mutate` had already resolved was rolled back and settled `'cancelled'` when the abort landed in the gap before its continuation — committing a knowingly stale value to a surviving cache, and telling the mutation queue to replay a write the server had accepted. Now finalizes and settles `'success'`.
+- `detached: true` added: dispose stops cancelling, so a write outlives the screen that started it. `reset()` and `latest-wins` still cancel.
+- `SPEC.md` §4 claimed teardown ran "children → caches/effects → onDispose hooks". It is one reverse-registration pass over all kinds. The wiki said "iterates reverse" correctly in three places the whole time — spec and wiki disagreed for months with nothing checking one against the other.
+

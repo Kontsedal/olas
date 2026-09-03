@@ -7,6 +7,44 @@ import { registerMutationById } from './plugin'
 import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 /**
+ * Rejection from `mutation.run(...)` when the mutation was already disposed —
+ * the owning controller is gone, so `mutate` was never called and **the write
+ * did not happen**.
+ *
+ * Deliberately NOT an `AbortError`. Every other cancellation in this library
+ * is one, and `isAbortError(err)` is the documented way to filter them — which
+ * is exactly why an abort is the wrong shape here. A superseded or reset run is
+ * work the app *chose* to drop; a run against a disposed mutation is work the
+ * app asked for and silently did not get, and a blanket abort filter would hide
+ * that lost write.
+ *
+ * Reaching this usually means a callback outlived its controller — a confirm
+ * dialog answered after the panel behind it closed, a retry button in a toast
+ * that outlives the view. Two fixes, in order of preference:
+ *
+ * 1. Own the mutation somewhere that lives as long as the interaction does.
+ * 2. `ctx.mutation({ detached: true })` — runs then survive dispose, and this
+ *    error is never thrown. SPEC §6.5.
+ */
+export class MutationDisposedError extends Error {
+  /** `spec.name` / `spec.mutationId` if either was given, else `'(anonymous)'`. */
+  readonly mutationName: string
+  /** Path of the controller that owned the mutation. */
+  readonly controllerPath: readonly string[]
+
+  constructor(mutationName: string, controllerPath: readonly string[]) {
+    super(
+      `[olas] mutation ${mutationName} at ${controllerPath.join('/') || '<root>'} was disposed ` +
+        'before run() was called — the write did NOT run. Own the mutation somewhere that ' +
+        'outlives the interaction, or pass `detached: true` to let runs survive dispose.',
+    )
+    this.name = 'MutationDisposedError'
+    this.mutationName = mutationName
+    this.controllerPath = controllerPath
+  }
+}
+
+/**
  * How concurrent calls to `mutation.run(...)` interact:
  * - `parallel` (default): every call runs concurrently.
  * - `latest-wins`: a new call aborts any in-flight previous call (`AbortSignal` fires).
@@ -59,6 +97,33 @@ export type MutationSpec<V, R> = {
    * SPEC §13.3.
    */
   persist?: boolean
+  /**
+   * Let runs outlive the controller that owns them. Default `false`.
+   *
+   * By default `dispose()` aborts in-flight runs, rejects queued `serial`
+   * runs, and makes any later `run(...)` reject with `MutationDisposedError`.
+   * That is right for a read a closing screen no longer wants. It is wrong for
+   * a **write**: the request is already at the server, the user asked for it,
+   * and cancelling the client half neither un-sends it nor tells anyone.
+   *
+   * With `detached: true`, `dispose()` stops aborting — in-flight runs finish,
+   * queued `serial` runs still drain, `run(...)` still works after dispose,
+   * and `onSuccess` / `onError` / `onSettled` still fire, so the invalidation
+   * that usually hangs off `onSuccess` lands instead of being skipped.
+   *
+   * What still cancels a detached run: `reset()` and a `latest-wins`
+   * supersede. Both are the app explicitly saying "drop this one"; dispose
+   * only says "this screen is gone".
+   *
+   * **The callbacks run after the controller is torn down.** Keep them to
+   * client-level work — `query.invalidate()`, a toast, a logger. Do not touch
+   * signals, fields or children the controller owned; those are disposed. If
+   * the whole ROOT is gone the run still completes, but its cache writes
+   * no-op — the client has deregistered itself from every query.
+   *
+   * SPEC §6.5.
+   */
+  detached?: boolean
 }
 
 /**
@@ -177,7 +242,17 @@ export type Mutation<V, R> = {
    * a request you expected to complete will not.
    */
   reset(): void
-  /** Abort in-flight runs and tear down. Idempotent. Called by the parent controller's dispose. */
+  /**
+   * Abort in-flight runs and tear down. Idempotent. Called by the parent
+   * controller's dispose.
+   *
+   * Afterwards `run(...)` rejects with `MutationDisposedError` and the write
+   * does NOT happen. That rejection is deliberately not an `AbortError`, so a
+   * blanket `isAbortError` filter cannot swallow a dropped write.
+   *
+   * `detached: true` changes all of this: in-flight runs finish, queued
+   * `serial` runs drain, and `run(...)` keeps working. SPEC §6.5.
+   */
   dispose(): void
 }
 
@@ -244,6 +319,15 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     return this.spec.persist === true && this.lifecycle !== undefined
   }
 
+  /**
+   * True when teardown must be treated as a cancellation. A `detached`
+   * mutation is disposed like any other — the controller drops its reference —
+   * but its runs are not the controller's to cancel. SPEC §6.5.
+   */
+  private get cancelledByDispose(): boolean {
+    return this.disposed && this.spec.detached !== true
+  }
+
   private emit(event: { type: 'mutation:run'; vars: unknown }, causeId?: string): void
   private emit(event: { type: 'mutation:success'; result: unknown }, causeId?: string): void
   private emit(event: { type: 'mutation:error'; error: unknown }, causeId?: string): void
@@ -271,8 +355,9 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   // `undefined`) so call sites for `Mutation<void, R>` can call `.run()` with
   // no args. The public type forces the right shape per `V`.
   run = ((vars: V = undefined as V): Promise<R> => {
-    if (this.disposed) {
-      return Promise.reject(new Error('Mutation disposed'))
+    if (this.cancelledByDispose) {
+      const label = this.spec.name ?? this.spec.mutationId ?? '(anonymous)'
+      return Promise.reject(new MutationDisposedError(label, this.controllerPath))
     }
     const mode = this.spec.concurrency ?? 'parallel'
     switch (mode) {
@@ -379,11 +464,28 @@ class MutationImpl<V, R> implements Mutation<V, R> {
 
     try {
       const result = await raceAbort(this.runWithRetry(vars, abort.signal), abort.signal)
-      if (abort.signal.aborted || this.disposed) {
-        snapshot?.rollback()
+      if (abort.signal.aborted || this.cancelledByDispose) {
+        // Reaching here means `raceAbort` RESOLVED — the work finished, and the
+        // abort landed in the gap before this continuation ran. You cannot
+        // cancel what already happened, so neither of the two things a
+        // cancellation normally does is correct:
+        //
+        // - `rollback()` would write a value we KNOW to be stale into a cache
+        //   that outlives this mutation, and nothing would repair it (the
+        //   `onSuccess` that usually invalidates is skipped on this path).
+        //   `finalize()` commits the optimistic value instead — which is what
+        //   the server now holds. A `latest-wins` supersede already consumed
+        //   its snapshot back in `run()`, so this is a no-op for that case.
+        // - `outcome: 'cancelled'` tells the mutation-queue plugin to KEEP the
+        //   durable entry and replay it on the next page load — a second write
+        //   of a request that succeeded. It settled; say so.
+        snapshot?.finalize()
         if (this.isPersistable && mutationId !== undefined) {
-          this.safeEmitSettle({ mutationId, runId, outcome: 'cancelled' })
+          this.safeEmitSettle({ mutationId, runId, outcome: 'success' })
         }
+        // The caller still walked away, so the promise still reports the abort:
+        // whoever awaited this run is gone, and `data` / `status` belong to the
+        // superseder or to nobody.
         throw new DOMException('Superseded', 'AbortError')
       }
       batch(() => {
@@ -503,7 +605,9 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   }
 
   reset(): void {
-    if (this.disposed) return
+    // A detached mutation keeps its control surface after dispose: its runs
+    // outlive the controller, so `reset()` is the only way left to stop them.
+    if (this.cancelledByDispose) return
     for (const handle of this.inflight) handle.abort.abort()
     // Reject queued serial runs so their awaiters don't hang — symmetric with
     // `dispose()`. Without this, callers of `mutation.run(...)` on a serial
@@ -527,6 +631,10 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    // SPEC §6.5: detached runs are not the controller's to cancel. Leave the
+    // in-flight handles and the serial queue alone — they finish, settle, and
+    // fire their callbacks on their own.
+    if (this.spec.detached === true) return
     for (const handle of this.inflight) handle.abort.abort()
     for (const queued of this.serialQueue) {
       queued.reject(new DOMException('Disposed', 'AbortError'))
