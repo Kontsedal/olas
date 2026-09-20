@@ -40,16 +40,16 @@ type Computed<T>   = ReadSignal<T>
 
 ## Internal helper
 
-`readOnly(source)` in `signals/readonly.ts` returns a fresh `ReadSignal<T>` view that omits `set`, `update` and writable `.value`. The returned object is `Object.freeze`d, so a `(ro as any).value = …` assignment throws in strict mode and is a no-op in sloppy mode — defense-in-depth on top of the type system, not a substitute for it. Use when exposing a `Signal` as a `ReadSignal` on a public surface.
+`readOnly(source)` in `signals/readonly.ts` returns a fresh `ReadSignal<T>` view that omits `set`, `update` and writable `.value`. The returned object is `Object.freeze`d, so a `(ro as any).value = …` assignment throws in strict mode and is a no-op in sloppy mode. That is defense-in-depth on top of the type system, not a substitute for it. Use when exposing a `Signal` as a `ReadSignal` on a public surface.
 
 ## Subscribe semantics
 
-`subscribe(handler)` from `@preact/signals-core` fires immediately with the current value AND on every change. This is the upstream behavior we keep; some consumers rely on the initial sync delivery (e.g. `@kontsedal/olas-persist` uses it to read the source after load — and explicitly skips the first delivery to avoid writing back). See `pitfalls/preact-signals-overload-return.md`.
+`subscribe(handler)` from `@preact/signals-core` fires immediately with the current value AND on every change. This is the upstream behavior we keep, and some consumers rely on the initial sync delivery. `@kontsedal/olas-persist` uses it to read the source after load, and explicitly skips the first delivery to avoid writing back. See `pitfalls/preact-signals-overload-return.md`.
 
 ## Why wrapped, not re-exported
 
 - A stable public surface independent of the upstream library.
-- Add `.set()` and `.update()` methods we want even though upstream uses property setters. Both are **arrow-bound instance fields** (`runtime.ts` `SignalImpl`), not prototype methods — so `onChange={s.set}` and `const setName = s.set` work and keep a stable identity (like React's `setState`) instead of throwing `Cannot read properties of undefined (reading 'inner')` once detached. `FieldImpl.set` (`forms/field.ts`) is bound for the same reason.
+- Add `.set()` and `.update()` methods we want even though upstream uses property setters. Both are **arrow-bound instance fields** on `SignalImpl` in `runtime.ts`, not prototype methods. So `onChange={s.set}` and `const setName = s.set` work and keep a stable identity, the way React's `setState` does, instead of throwing `Cannot read properties of undefined (reading 'inner')` once detached. `FieldImpl.set` (`forms/field.ts`) is bound for the same reason.
 - Make `readOnly(...)` projection mechanically sound.
 - Dodge a TS overload-resolution bug in upstream — see `pitfalls/preact-signals-overload-return.md`.
 

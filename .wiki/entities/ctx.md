@@ -52,7 +52,7 @@ The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:390`). 
 
 `ctx.effect`, `ctx.on`, and the lifecycle hooks also wrap user callbacks in a `dispatchError(rootShared.onError, err, {kind, controllerPath})` shield.
 
-**`ctx.debug({...})` is the exception to that shape.** It pushes no `LifecycleEntry` and returns nothing — it merges the given live values onto `instance.debugValues` for the devtools "Variables" view (riding out on `controller:constructed`'s `debug` field during construction, or a `controller:debug` event after). It is `__DEV__`-only (a no-op in production, so it retains nothing there) and does NOT `assertLive`, so it's safe to call from an effect post-construction. See `../modules/devtools.md`.
+**`ctx.debug({...})` is the exception to that shape.** It pushes no `LifecycleEntry` and returns nothing. It merges the given live values onto `instance.debugValues` for the devtools "Variables" view. During construction those ride out on `controller:constructed`'s `debug` field, and afterwards on a `controller:debug` event. It is `__DEV__`-only, a no-op in production that retains nothing there, and it does NOT `assertLive`, so it is safe to call from an effect after construction. See `../modules/devtools.md`.
 
 ## When is `ctx.*` callable?
 
@@ -60,7 +60,7 @@ Spec §3.4: **any time during the controller's active lifetime, not only the ini
 
 Individual primitives also expose `.dispose()` — idempotent, safe to call early. The owning controller will call it again on its own dispose; both calls are no-ops after the first.
 
-**After dispose, every `ctx.*` factory throws** `[olas] ctx.<name>() called after the controller was disposed` (guarded by `assertLive` in `buildCtx`). A captured `ctx` reused past its owner's lifetime is a programming error; without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
+**After dispose, every `ctx.*` factory throws** `[olas] ctx.<name>() called after the controller was disposed`. The guard is `assertLive` in `buildCtx`. A captured `ctx` reused past its owner's lifetime is a programming error. Without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
 
 ## `ctx.deps` — DI surface
 
@@ -84,6 +84,6 @@ The TS overloads in `Ctx<TDeps>` declare two signatures: one for `Query`, one fo
 
 ## Dynamic-child surface
 
-`ctx.session(...)`, `ctx.collection(...)`, and `ctx.lazyChild(...)` cover the three dynamic-child cases — singleton-with-key (e.g. tenant switch), keyed homogeneous list (e.g. board cards), and code-split-loaded child (e.g. modal). Construction failures route through `onError({ kind: 'construction' })`. See [`modules/controller.md`](../modules/controller.md) and `packages/core/tests/dynamic-children.test.ts`.
+`ctx.session(...)`, `ctx.collection(...)` and `ctx.lazyChild(...)` cover the three dynamic-child cases. A singleton with a key, such as a tenant switch. A keyed homogeneous list, such as board cards. A code-split-loaded child, such as a modal. Construction failures route through `onError({ kind: 'construction' })`. See [`modules/controller.md`](../modules/controller.md) and `packages/core/tests/dynamic-children.test.ts`.
 
 `provide` and `inject` cover cross-tree dependency injection — see [`scope.md`](scope.md) for the semantics and [`modules/react.md`](../modules/react.md) for the React adapter that composes with them.

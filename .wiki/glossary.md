@@ -14,9 +14,9 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Ambient deps.** The `AmbientDeps` interface (in `controller/types.ts`). Users module-augment it to add app-wide services; every `ctx.deps` carries that type. Default has an index signature so `ctx.deps.anything` compiles as `unknown`.
 
-**AsyncState.** The eight signals (`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`) plus methods (`refetch`, `reset`, `firstValue`) that every cache subscription exposes. Defined in `query/types.ts`.
+**AsyncState.** What every cache subscription exposes: the eight signals `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt` and `hasPendingMutations`, plus the methods `refetch`, `reset` and `firstValue`. Defined in `query/types.ts`.
 
-**callArgs and keyArgs.** Inside `ClientEntry`: `callArgs` is the original args from the consumer (forwarded to the fetcher), `keyArgs` is the output of `spec.key(...callArgs)` (used for hashing). They are not interchangeable. See `pitfalls/callargs-vs-keyargs.md`.
+**callArgs and keyArgs.** Inside `ClientEntry`, `callArgs` is the original args from the consumer, forwarded to the fetcher. `keyArgs` is the output of `spec.key(...callArgs)`, used for hashing. They are not interchangeable. See `pitfalls/callargs-vs-keyargs.md`.
 
 **ClientEntry and InfiniteClientEntry.** Per-root wrapper around `Entry` and `InfiniteEntry`. Adds subscriber-count, gcTime timer, and refetchInterval timer. Lives in `QueryClient`'s maps.
 
@@ -26,7 +26,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Ctx.** The lifecycle-bound primitive factory passed to every controller's factory function. Surface includes `effect`, `emitter`, `field`, `form`, `fieldArray`, `cache`, `use`, `mutation`, `child`, `on`, `onDispose/Suspend/Resume`, `deps`. Each primitive registers cleanup with the owning controller.
 
-**Entry.** The state machine for one cache slot — race-protected via a `currentFetchId`, with the snapshot stack for optimistic updates. Used by both `ctx.cache` (local) and shared queries (via `ClientEntry`). `InfiniteEntry` is the paginated variant.
+**Entry.** The state machine for one cache slot, race-protected via a `currentFetchId` and carrying the snapshot stack for optimistic updates. Local `ctx.cache` uses it directly, and shared queries reach it through `ClientEntry`. `InfiniteEntry` is the paginated variant.
 
 **Field.** A primitive form input — `ReadSignal<T>` plus errors, isValid, isDirty, touched, isValidating, plus methods (`set`, `reset`, `markTouched`, `revalidate`). Field IS a ReadSignal, so `field.value` returns `T` directly.
 
@@ -36,7 +36,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **LocalCache.** Anonymous cache owned by one controller (`ctx.cache(fetcher, options)`). Not shared. Disposed with the controller.
 
-**Mutation.** A controller-scoped async write with concurrency policy (parallel, latest-wins or serial), optimistic updates, lifecycle callbacks (`onMutate`, `onSuccess`, `onError`, `onSettled`).
+**Mutation.** A controller-scoped async write. It carries a concurrency policy of parallel, latest-wins or serial, optimistic updates, and the lifecycle callbacks `onMutate`, `onSuccess`, `onError` and `onSettled`.
 
 **Query.** Module-scoped, keyed, sharable cache definition produced by `defineQuery`. Branded `__olas: 'query'`. Per-root binding happens via `QueryClient.bindEntry`.
 
@@ -50,8 +50,8 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Stale time and GC time.** `staleTime` — how long data is considered fresh; influences refetch-on-subscribe. `gcTime` — after the last subscriber leaves, how long the entry sticks around before being dropped.
 
-**Suspend and Resume vs Dispose.** Suspend pauses effects and recursion into children; data + subscriptions survive. Resume re-instantiates effects. Dispose tears down. Use suspend for "definitely coming back soon" (tab UIs); use dispose for "user navigated away" (gcTime carries cached data forward).
+**Suspend and Resume vs Dispose.** Suspend pauses effects and recursion into children, while data and subscriptions survive. Resume re-instantiates effects. Dispose tears down. Use suspend for "definitely coming back soon", such as tab UIs. Use dispose for "user navigated away", where gcTime carries cached data forward.
 
 **Validators.** Functions `(value, signal) => string | null | Promise<string | null>`. Run in a tracking scope so reading signals inside re-runs the validator when those signals change. Sync validators short-circuit; async only runs if sync passed.
 
-**`__olas` brand.** Runtime discriminator. Values: `'controller'` (ControllerDef), `'query'` (Query), `'infiniteQuery'` (InfiniteQuery). Used for dispatch in `ctx.use`.
+**`__olas` brand.** Runtime discriminator used for dispatch in `ctx.use`. A `ControllerDef` carries `'controller'`, a `Query` carries `'query'`, and an `InfiniteQuery` carries `'infiniteQuery'`.

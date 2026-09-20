@@ -84,7 +84,7 @@ The returned methods (`set`, `reset`, `markTouched`, `revalidate` on `useField`;
 
 ## Why a computed snapshot, not a version counter?
 
-An earlier version used `getSnapshot = () => versionRef.current`, a number bumped only inside the `subscribe` callback. It's referentially stable, but it **defeats uSES's mount-consistency check**: a write landing between render and subscription doesn't bump the counter (the hook isn't subscribed yet), so uSES's re-check compares the same stale number, passes vacuously, and the component shows stale `.peek()`ed values until the next write — initial-mount tearing is undetectable for the same reason (T4.5). The computed's `.value` changes identity exactly when a dep changes, so `getSnapshot` reflects the actual store and the consistency check works. Pinned by `adapter.test.tsx` (R4.5).
+An earlier version used `getSnapshot = () => versionRef.current`, a number bumped only inside the `subscribe` callback. It is referentially stable, but it **defeats uSES's mount-consistency check**. A write landing between render and subscription does not bump the counter, because the hook is not subscribed yet. uSES's re-check then compares the same stale number, passes vacuously, and the component shows stale `.peek()`ed values until the next write. Initial-mount tearing is undetectable for the same reason (T4.5). The computed's `.value` changes identity exactly when a dep changes, so `getSnapshot` reflects the actual store and the consistency check works. Pinned by `adapter.test.tsx` (R4.5).
 
 ## `<OlasProvider>` and StrictMode
 
@@ -99,17 +99,17 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 - on React (re-)mount → `controller.resume()`
 - on React unmount → `controller.suspend()`
 
-**Refcounted across wrappers (T4.6).** A module-level `WeakMap<controller, count>` means `resume()` fires only when the FIRST wrapper on a controller mounts and `suspend()` only when the LAST unmounts. So during a cross-fade — the entering screen mounts while the exiting one is still mounted — the controller stays resumed regardless of effect order, and the exiting screen's unmount can't suspend a controller the entering screen still uses. Uses an isomorphic `useLayoutEffect` so `resume()` runs before the first paint after a remount. Pinned by `keep-alive.test.tsx` (R4.6).
+**Refcounted across wrappers (T4.6).** A module-level `WeakMap<controller, count>` means `resume()` fires only when the FIRST wrapper on a controller mounts, and `suspend()` only when the LAST unmounts. During a cross-fade the entering screen mounts while the exiting one is still mounted. The controller therefore stays resumed regardless of effect order, and the exiting screen's unmount cannot suspend a controller the entering screen still uses. Uses an isomorphic `useLayoutEffect` so `resume()` runs before the first paint after a remount. Pinned by `keep-alive.test.tsx` (R4.6).
 
 `useSuspendOnHidden` is the same idea keyed off `document.visibilityState` (not refcounted — it's a single per-controller visibility hook). Guards `typeof document !== 'undefined'` so it's safe to import from SSR code (no-op on the server).
 
 ## `HydrationBoundary` — root ownership (T4.1)
 
-Unlike `<OlasProvider>` (which takes a root created outside React), `HydrationBoundary` **creates and owns** the root for client-side SSR hydration. `createRoot` is side-effectful (fetches, timers, focus/online listeners), so it must NOT run in `useMemo` and a `useState` initializer — StrictMode re-invokes those and orphans a live root (the original bug). Instead (`context.ts`):
+`<OlasProvider>` takes a root created outside React. `HydrationBoundary` instead **creates and owns** the root for client-side SSR hydration. `createRoot` is side-effectful, starting fetches, timers and focus and online listeners, so it must NOT run in a `useMemo` or a `useState` initializer. StrictMode re-invokes those and orphans a live root, which was the original bug. `context.ts` does this instead:
 
 - The root is created **lazily during render** in a `useRef` (`if (rootRef.current === null) …`) — a ref mutated in render creates exactly one root across StrictMode's double render.
 - `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render). The root is recreated only when the **`def` identity** changes (dispose old + create new, in render).
-- A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount→unmount→remount **without re-rendering between them**, so the effect's remount-setup recreates the disposed root and `forceRender()`s so the Provider hands descendants a live root (a dev-only double-construct, as TanStack does). Pinned by `packages/react/tests/hydration-boundary.test.tsx`.
+- A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount, unmount and remount **without re-rendering between them**. The effect's remount-setup therefore recreates the disposed root and calls `forceRender()`, so the Provider hands descendants a live root. This is a dev-only double-construct, as TanStack does. Pinned by `packages/react/tests/hydration-boundary.test.tsx`.
 
 ## Fakes for UI tests
 
