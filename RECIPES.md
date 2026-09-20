@@ -247,6 +247,7 @@ import { localStorageAdapter } from '@kontsedal/olas-persist'
 import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
 
 const root = createRoot(appController, {
+  queries: queryEngine(),
   deps,
   plugins: [
     mutationQueuePlugin({

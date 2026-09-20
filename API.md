@@ -1107,14 +1107,14 @@ Replay a `DehydratedState` on the client. Hydrated entries don't refetch on firs
 
 ```ts
 // server
-const root = createRoot(app, { deps: serverDeps })
+const root = createRoot(app, { queries: queryEngine(), deps: serverDeps })
 const html = renderToString(<OlasProvider root={root}><App /></OlasProvider>)
 await root.waitForIdle()
 const state = root.dehydrate()
 // inline `state` into the HTML response
 
 // client
-const root = createRoot(app, { deps: clientDeps, hydrate: state })
+const root = createRoot(app, { queries: queryEngine(), deps: clientDeps, hydrate: state })
 ```
 
 **Limitation:** `defineInfiniteQuery` entries are *not* serialized today — regular `defineQuery` keyed by cursor works for SSR pagination.
@@ -1547,10 +1547,11 @@ type DevtoolsTab = 'tree' | 'cache' | 'mutations' | 'fields' | 'events'
 `BroadcastChannel`-backed cross-tab cache sync as a `QueryClientPlugin`. Pass to `createRoot(..., { plugins: [crossTabPlugin(...)] })`; queries that opt in (`crossTab: true` on `defineQuery`) propagate their results to other tabs in the same origin.
 
 ```ts
-import { createRoot } from '@kontsedal/olas-core'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 
 const root = createRoot(app, {
+  queries: queryEngine(),
   deps,
   plugins: [crossTabPlugin({ channelName: 'app-cache' })],
 })
@@ -1576,7 +1577,7 @@ const PostEntity = defineEntity<Post>({
 })
 
 const entities = entitiesPlugin([PostEntity])
-const root = createRoot(app, { deps, plugins: [entities] })
+const root = createRoot(app, { queries: queryEngine(), deps, plugins: [entities] })
 
 // later, with `entities` in scope:
 entities.update(PostEntity, 'p1', { title: 'Renamed' })
@@ -1613,7 +1614,7 @@ import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
 import { localStorageAdapter } from '@kontsedal/olas-persist'
 
 const queue = mutationQueuePlugin({ adapter: localStorageAdapter, keyPrefix: 'my-app/mutations/v1' })
-const root = createRoot(app, { deps, plugins: [queue] })
+const root = createRoot(app, { queries: queryEngine(), deps, plugins: [queue] })
 // queue.replayNow() — manually re-drive pending entries
 ```
 

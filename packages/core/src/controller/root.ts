@@ -46,11 +46,29 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
       defaultQueryOptions: options.defaultQueryOptions,
       plugins: options.plugins,
     }) ?? null
+  if (__DEV__ && options.queries === undefined) {
+    // These only ever reach a QueryClient, so without an engine they are
+    // inert. Silence here would strand mutationQueuePlugin's previous-session
+    // replay and discard an SSR payload, both without a symptom.
+    if (options.plugins !== undefined && options.plugins.length > 0) {
+      console.warn(
+        '[olas] createRoot got `plugins` but no `queries` engine — they will not be installed. ' +
+          'Pass `queries: queryEngine()`.',
+      )
+    }
+    if (options.hydrate !== undefined) {
+      console.warn(
+        '[olas] createRoot got `hydrate` but no `queries` engine — the payload is discarded. ' +
+          'Pass `queries: queryEngine()`.',
+      )
+    }
+  }
   const rootShared: RootShared = {
     devtools,
     onError: options.onError,
     queryClient,
-    queryDefaults: options.defaultQueryOptions ?? {},
+    queryDefaults:
+      options.queries?.__options.defaultQueryOptions ?? options.defaultQueryOptions ?? {},
     scopesVersion: { value: 0 },
   }
 
@@ -195,7 +213,7 @@ function attachRootControls<Api>(
     // No engine means no cache, so nothing to dehydrate. Returning an
     // empty state beats throwing: an SSR render of a query-free root is
     // legitimate, and the client hydrates the same nothing.
-    value: () => queryClient?.dehydrate() ?? { queries: [] },
+    value: () => queryClient?.dehydrate() ?? { version: 1 as const, entries: [] },
     ...lock,
   })
   Object.defineProperty(target, 'waitForIdle', {

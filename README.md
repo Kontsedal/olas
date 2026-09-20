@@ -409,6 +409,7 @@ declare module '@kontsedal/olas-core' {
 
 ```ts
 const root = createRoot(appController, {
+  queries: queryEngine(),
   deps: {
     api: realApiClient,
     router: realRouter,
@@ -453,7 +454,7 @@ usePersisted(ctx, 'theme', theme)
 
 ```ts
 // server
-const root = createRoot(app, { deps: serverDeps })
+const root = createRoot(app, { queries: queryEngine(), deps: serverDeps })
 renderToString(<OlasProvider root={root}><App /></OlasProvider>)
 await root.waitForIdle()
 const state = root.dehydrate()

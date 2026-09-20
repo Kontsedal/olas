@@ -25,13 +25,14 @@ Spec §15.
 
 ```ts
 // server
-const root = createRoot(rootController, { deps: serverDeps })
+const root = createRoot(rootController, { queries: queryEngine(), deps: serverDeps })
 await root.waitForIdle()
 const state = root.dehydrate()
 // — embed state in HTML or send as JSON —
 
 // client
 const root = createRoot(rootController, {
+  queries: queryEngine(),
   deps: clientDeps,
   hydrate: state,
 })

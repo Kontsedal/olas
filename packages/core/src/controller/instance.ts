@@ -30,7 +30,7 @@ export type RootShared = {
   readonly queryClient: QueryClient | null
   /**
    * Root-wide query defaults, held here rather than read off the client.
-   * `ctx.cache` is a controller-local cache that still honours them (§5.9),
+   * `createCache` is a controller-local cache that still honours them (§5.9),
    * and it must not drag the whole query engine into the bundle to read two
    * fields.
    */
@@ -54,7 +54,7 @@ type LifecycleEntry =
   | { kind: 'cleanup'; dispose: () => void }
   | {
       /**
-       * Cache subscription via `ctx.use`. Suspend/resume call the
+       * Cache subscription via `createQuery`. Suspend/resume call the
        * `suspend`/`resume` hooks so the underlying entry's `refetchInterval`
        * and event listeners pause for the duration. Spec §4.1.
        */
@@ -411,7 +411,7 @@ export class ControllerInstance {
     // condition. (T2.4, spec §4)
     const assertLive = (method: string): void => {
       if (self.isTerminal()) {
-        throw new Error(`[olas] ctx.${method}() called after the controller was disposed`)
+        throw new Error(`[olas] ${method}() called after the controller was disposed`)
       }
     }
     const requireClient = (operation: string): QueryClient => {

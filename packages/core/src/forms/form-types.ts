@@ -71,7 +71,7 @@ export type FieldArrayOptions<I> = {
 }
 
 /**
- * A nested form. Created via `ctx.form(schema, options?)`. `value` aggregates
+ * A nested form. Created via `createForm(ctx, schema, options?)`. `value` aggregates
  * every leaf into the structurally-typed `FormValue<S>`; `errors` mirrors that
  * shape with `string[] | undefined`. `flatErrors` is a flattened view useful
  * for rendering a single error summary. Spec §8, §20.7.
@@ -161,7 +161,7 @@ export type Form<S extends FormSchema> = {
 
 /**
  * A dynamically-sized list of `Field` or `Form` items. Created via
- * `ctx.fieldArray(itemFactory, options?)`. The factory is invoked per
+ * `createFieldArray(ctx, itemFactory, options?)`. The factory is invoked per
  * insertion. Spec §8, §20.7.
  */
 export type FieldArray<I extends Field<any> | Form<any>> = {

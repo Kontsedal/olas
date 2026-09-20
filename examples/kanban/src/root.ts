@@ -10,7 +10,7 @@
  *    emitter via a mutable `notifyRef` bridge that `appController` swaps.
  */
 
-import { createRoot } from '@kontsedal/olas-core'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 import { type Api, type Broadcaster, createBroadcaster, createFakeApi } from './api'
 import type { NotifyRef } from './api/schema'
@@ -24,6 +24,7 @@ export function createAppRoot(opts?: { api?: Api; broadcaster?: Broadcaster }) {
   const notifyRef: NotifyRef = { current: () => {} }
 
   const root = createRoot(appController, {
+    queries: queryEngine(),
     deps: {
       api,
       broadcaster,

@@ -13,7 +13,7 @@ pnpm add @kontsedal/olas-cross-tab @kontsedal/olas-core @preact/signals-core
 ## 30-second example
 
 ```ts
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import { createRoot, defineController, defineQuery, queryEngine } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 
 // Opt the query in. `queryId` is required — it routes inbound messages
@@ -31,6 +31,7 @@ const appController = defineController((ctx) => {
 })
 
 const root = createRoot(appController, {
+  queries: queryEngine(),
   deps: {},
   plugins: [crossTabPlugin({ channelName: 'my-app/cache/v1' })],
 })

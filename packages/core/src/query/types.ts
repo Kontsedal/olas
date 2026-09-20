@@ -72,7 +72,7 @@ export type Snapshot = {
 
 /**
  * A cache owned by one controller — no sharing across the tree. Returned by
- * `ctx.cache(fetcher, options?)`. Disposed automatically with the controller.
+ * `createCache(ctx, fetcher, options?)`. Disposed automatically with the controller.
  */
 export type LocalCache<T> = AsyncState<T> & {
   /**
@@ -157,7 +157,7 @@ export type RetryDelay = number | ((attempt: number) => number)
  *   "whose interval wins" rule and every answer to that surprises somebody.
  *   Same reason it stays out of `DefaultQueryOptions` (§5.9) — a root-wide
  *   interval polls the entire app.
- * - `ctx.cache` (`LocalCache`) has no interval of any kind. This is a
+ * - `createCache` (`LocalCache`) has no interval of any kind. This is a
  *   `defineQuery` / `defineInfiniteQuery` feature only.
  *
  * For infinite queries `T` is the pages array (`TPage[]`) — whatever the entry
@@ -293,9 +293,9 @@ export type DefaultQueryOptions = Pick<
 
 /**
  * A module-scoped shared query handle. Bind a subscriber via
- * `ctx.use(query, () => [...args])`. The same `Query` value can be used by
+ * `createQuery(ctx, query, () => [...args])`. The same `Query` value can be used by
  * many controllers across many roots — each root has its own cache.
- * Use `ctx.bindQuery(query)` or `root.bindQuery(query)` for imperative operations.
+ * Use `bindQuery(ctx, query)` or `root.bindQuery(query)` for imperative operations.
  * Unbound operations reject/throw when more than one root has touched the query.
  */
 export type Query<Args extends unknown[], T> = {
@@ -386,7 +386,7 @@ export type Query<Args extends unknown[], T> = {
    * gc'd), or an entry that has not settled. A peek never creates an entry, so
    * asking cannot change the answer, and it registers no reactive dependency:
    * calling it inside a `computed` or an effect will NOT re-run them when the
-   * data changes. Reactive reads are what `ctx.use(...)` is for; this is for
+   * data changes. Reactive reads are what `createQuery(ctx, ...)` is for; this is for
    * imperative moments — an event handler that needs the current value, or a
    * guard before a `write(...)`.
    */
@@ -416,7 +416,7 @@ export type QuerySubscription<T> = AsyncState<T> & {
 }
 
 /**
- * Options passed to `ctx.use(query, opts)` to control the subscription
+ * Options passed to `createQuery(ctx, query, opts)` to control the subscription
  * (reactive key, enabled-gating). The `key` thunk reads signals —
  * re-evaluating when they change re-keys the subscription.
  *

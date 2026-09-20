@@ -61,7 +61,7 @@ function isStructurallyEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Hook attached by `ctx.form` (or `createForm`) so a Field can publish
+ * Hook attached by `createForm` (or `createForm`) so a Field can publish
  * `field:validated` devtools events with its owning controller path + the
  * field's name within the form schema. See devtools §20.9 and FieldImpl.bind.
  */
@@ -72,7 +72,7 @@ export type FieldDevtoolsOwner = {
 }
 
 /**
- * Optional reporter for synchronous validator throws — wired in by `ctx.field`
+ * Optional reporter for synchronous validator throws — wired in by `createField`
  * (and `createForm` for leaf fields inside a form) so a thrown validator
  * doesn't escape the signal effect silently. Without this, a buggy validator
  * just stops contributing to `errors` and the field reads as "valid" while
@@ -204,7 +204,7 @@ class FieldImpl<T> implements Field<T> {
   }
 
   /**
-   * Internal hook for `ctx.field` / `createForm` to route synchronous
+   * Internal hook for `createField` / `createForm` to route synchronous
    * validator throws through `root.onError`. See `ValidatorErrorReporter`.
    */
   bindValidatorErrorReporter(reporter: ValidatorErrorReporter | null): void {
@@ -519,7 +519,7 @@ export function bindFieldDevtoolsOwner<T>(field: Field<T>, owner: FieldDevtoolsO
 /**
  * Internal — install a synchronous-validator-throw reporter on a `Field`
  * (matched structurally to keep the public `Field<T>` surface stable).
- * Called by `ctx.field` and `bindTreeToDevtools` so leaves inside a form/
+ * Called by `createField` and `bindTreeToDevtools` so leaves inside a form/
  * field-array tree get the same reporting as a standalone field.
  */
 export function bindFieldValidatorErrorReporter<T>(

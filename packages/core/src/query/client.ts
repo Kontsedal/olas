@@ -582,7 +582,7 @@ export class QueryClient {
 
   /**
    * Root-wide query defaults from `RootOptions.defaultQueryOptions`. Read by
-   * `ClientEntry` / `InfiniteClientEntry` / `createUse` / `ctx.cache` when a
+   * `ClientEntry` / `InfiniteClientEntry` / `createUse` / `createCache` when a
    * spec omits the field. Always an object (never `undefined`) so call sites
    * are a plain `spec.X ?? this.defaults.X ?? <built-in>`. Spec §5.9.
    */

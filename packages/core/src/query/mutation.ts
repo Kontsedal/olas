@@ -23,7 +23,7 @@ import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
  * that outlives the view. Two fixes, in order of preference:
  *
  * 1. Own the mutation somewhere that lives as long as the interaction does.
- * 2. `ctx.mutation({ detached: true })` — runs then survive dispose, and this
+ * 2. `createMutation(ctx, { detached: true })` — runs then survive dispose, and this
  *    error is never thrown. SPEC §6.5.
  */
 export class MutationDisposedError extends Error {
@@ -55,7 +55,7 @@ export class MutationDisposedError extends Error {
 export type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
 
 /**
- * The configuration object passed to `ctx.mutation(spec)`. See spec §20.5 for
+ * The configuration object passed to `createMutation(ctx, spec)`. See spec §20.5 for
  * the full lifecycle semantics. `onMutate` may return a `Snapshot` (from
  * `query.setData(...)`) to enable automatic rollback on error.
  */
@@ -128,7 +128,7 @@ export type MutationSpec<V, R> = {
 
 /**
  * Module-scope handle for a persistable mutation. Returned by
- * `defineMutation(...)`. Pass it to `ctx.mutation(...)` (spread or as-is)
+ * `defineMutation(...)`. Pass it to `createMutation(ctx, ...)` (spread or as-is)
  * so per-controller lifecycle hooks (`onSuccess` / `onError` / ...) can be
  * layered on top.
  *
@@ -144,7 +144,7 @@ export type MutationDef<V, R> = MutationSpec<V, R> & {
 /**
  * Register a persistable mutation at module scope. Returns the spec
  * unchanged (with a `__olas: 'mutation'` brand) so consumers can pass it
- * to `ctx.mutation(...)`, optionally spreading per-controller hooks on
+ * to `createMutation(ctx, ...)`, optionally spreading per-controller hooks on
  * top:
  *
  * ```ts
@@ -155,7 +155,7 @@ export type MutationDef<V, R> = MutationSpec<V, R> & {
  * })
  *
  * // controller
- * const m = ctx.mutation({
+ * const m = createMutation(ctx, {
  *   ...createOrder,
  *   onSuccess: () => toast('Order placed'),
  * })
@@ -186,7 +186,7 @@ export function defineMutation<V, R>(
 }
 
 /**
- * A running mutation. Created via `ctx.mutation(spec)` — the controller owns
+ * A running mutation. Created via `createMutation(ctx, spec)` — the controller owns
  * its lifetime. Each `run(vars)` returns a Promise; the four signals reflect
  * the last-resolved run for UI binding.
  *
@@ -196,7 +196,7 @@ export function defineMutation<V, R>(
  * Call signature for `mutation.run`:
  *  - When `V` is `void` → no args. (`mutation.run()`)
  *  - When `V` was not constrained (default-inferred as `unknown`) → optional
- *    arg. Lets `ctx.mutation({ mutate: async () => 1 })` call `run()` *or*
+ *    arg. Lets `createMutation(ctx, { mutate: async () => 1 })` call `run()` *or*
  *    `run(anything)` without a type error.
  *  - Otherwise → arg required. (`mutation.run(vars)`)
  *
@@ -656,7 +656,7 @@ export function createMutation<V, R>(
   if (spec.persist === true) {
     if (typeof spec.mutationId !== 'string' || spec.mutationId.length === 0) {
       throw new Error(
-        '[olas] ctx.mutation({ persist: true, ... }) requires a non-empty `mutationId`.',
+        '[olas] createMutation(ctx, { persist: true, ... }) requires a non-empty `mutationId`.',
       )
     }
   }

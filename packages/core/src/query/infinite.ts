@@ -99,7 +99,7 @@ export type InfiniteQueryActions<Args extends unknown[], TPage, TItem> = Omit<
 >
 
 /**
- * What `ctx.use(infiniteQuery, ...)` returns. Extends `AsyncState<TPage[]>`
+ * What `createQuery(ctx, infiniteQuery, ...)` returns. Extends `AsyncState<TPage[]>`
  * with paginated controls: `fetchNextPage` / `fetchPreviousPage`,
  * `hasNextPage` / `hasPreviousPage`, and per-direction `isFetching` signals.
  *

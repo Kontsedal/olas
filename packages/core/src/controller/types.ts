@@ -351,7 +351,7 @@ export type RootOptions<TDeps> = {
    */
   refetchOnReconnect?: boolean
   /**
-   * Root-wide defaults for every query, infinite query, and `ctx.cache` under
+   * Root-wide defaults for every query, infinite query, and `createCache` under
    * this root. A per-query spec field always overrides its default here.
    * Resolution: `spec.X ?? defaultQueryOptions.X ?? <built-in default>`.
    *
@@ -365,8 +365,8 @@ export type RootOptions<TDeps> = {
    */
   defaultQueryOptions?: DefaultQueryOptions
   /**
-   * The query engine. Omit it and this root has no cache: `ctx.use`,
-   * `ctx.mutation` and `ctx.bindQuery` throw a message naming the fix, and
+   * The query engine. Omit it and this root has no cache: `createQuery`,
+   * `createMutation` and `bindQuery` throw a message naming the fix, and
    * `query/client.ts` — the largest module in the package — never enters the
    * bundle.
    *

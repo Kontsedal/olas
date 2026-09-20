@@ -17,7 +17,7 @@ pnpm add @kontsedal/olas-mutation-queue @kontsedal/olas-core @kontsedal/olas-per
 ## 30-second example
 
 ```ts
-import { createRoot, defineController, defineMutation } from '@kontsedal/olas-core'
+import { createRoot, defineController, defineMutation, queryEngine } from '@kontsedal/olas-core'
 import { localStorageAdapter } from '@kontsedal/olas-persist'
 import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
 
@@ -46,6 +46,7 @@ const checkout = defineController((ctx) => ({
 
 // 3. Install the plugin at the root.
 const root = createRoot(checkout, {
+  queries: queryEngine(),
   deps: {},
   plugins: [
     mutationQueuePlugin({

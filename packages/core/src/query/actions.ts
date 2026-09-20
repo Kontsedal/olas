@@ -11,7 +11,7 @@ export function singleClient(clients: Set<QueryClient>): QueryClient | undefined
   if (clients.size > 1) {
     throw new Error(
       '[olas] Query operation is ambiguous across multiple roots. ' +
-        'Use ctx.bindQuery(query) or root.bindQuery(query).',
+        'Use bindQuery(ctx, query) or root.bindQuery(query).',
     )
   }
   return clients.values().next().value

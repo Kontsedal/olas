@@ -37,6 +37,7 @@ Wire into `RootOptions.plugins`:
 
 ```ts
 createRoot(appController, {
+  queries: queryEngine(),
   deps,
   plugins: [crossTabPlugin({ channelName: 'app/cache/v1' })],
 })

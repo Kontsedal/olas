@@ -1143,7 +1143,7 @@ export function createFieldArray<I extends Field<any> | Form<any>>(
  * Recursively wire every leaf `Field` in a form / field-array tree to a
  * devtools emitter. Returns a single disposer that tears down every standalone
  * `effect()` registered along the way (used for FieldArray watching), so the
- * caller — `ctx.form` / `ctx.fieldArray` in the controller — can register one
+ * caller — `createForm` / `createFieldArray` in the controller — can register one
  * cleanup entry and have the whole subtree's reactive work die with the
  * controller. Spec §20.9.
  */
@@ -1235,7 +1235,7 @@ function bindTreeToDevtoolsInto(
 /**
  * Walk a Form/FieldArray subtree and install `reporter` on every level —
  * leaf fields, nested forms' top-level validators, and field-arrays' top-level
- * validators. Called by `ctx.form` / `ctx.fieldArray` so synchronous validator
+ * validators. Called by `createForm` / `createFieldArray` so synchronous validator
  * throws anywhere in the tree route through `root.onError`. See
  * `ValidatorErrorReporter` in `./field.ts`.
  */
@@ -1255,7 +1255,7 @@ export function bindTreeValidatorErrorReporter(
     const impl = node as { bindValidatorErrorReporter?: (r: ValidatorErrorReporter | null) => void }
     impl.bindValidatorErrorReporter?.(reporter)
     // Items currently in the array. (Items added later won't get the reporter
-    // unless `ctx.fieldArray` is wrapped to rebind — but the leaf items in the
+    // unless `createFieldArray` is wrapped to rebind — but the leaf items in the
     // typical pattern come from a user factory that constructs through
     // `createField` and is bound here by the parent traversal.)
     for (const item of node.items.value) {

@@ -18,6 +18,7 @@ import {
   debounced,
   defineController,
   defineQuery,
+  queryEngine,
   type ReadSignal,
   signal,
   throttled,
@@ -216,7 +217,7 @@ export function createAppRoot(market: Market, props: TickerProps = {}) {
     }),
     { name: 'app' },
   )
-  return createRoot(appController, { deps: { market } })
+  return createRoot(appController, { deps: { market }, queries: queryEngine() })
 }
 
 export type AppRoot = ReturnType<typeof createAppRoot>

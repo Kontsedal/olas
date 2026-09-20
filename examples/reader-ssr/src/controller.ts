@@ -25,6 +25,7 @@ import {
   createRoot,
   defineController,
   defineQuery,
+  queryEngine,
   signal,
 } from '@kontsedal/olas-core'
 import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
@@ -189,6 +190,7 @@ const appController = defineController(
 
 export function createAppRoot(deps: ReaderDeps, hydrate?: DehydratedState) {
   return createRoot(appController, {
+    queries: queryEngine(),
     deps,
     onError: (err, context) => {
       deps.logger?.error(err, context)

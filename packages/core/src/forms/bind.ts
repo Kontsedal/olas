@@ -25,7 +25,7 @@ import type { Validator } from './types'
  * const email = createField(ctx, '', [required('Required')])
  * ```
  *
- * Was `ctx.field(...)`. It moved off `Ctx` so that a controller which never
+ * Was `createField(ctx, ...)`. It moved off `Ctx` so that a controller which never
  * builds a field does not ship the forms subsystem — see
  * `.wiki/decisions/ctx-primitives-are-free-functions.md`.
  */
@@ -62,7 +62,7 @@ export function createField<T>(
  * const form = createForm(ctx, { email, password })
  * ```
  *
- * Was `ctx.form(...)`.
+ * Was `createForm(ctx, ...)`.
  */
 export function createForm<S extends FormSchema>(
   ctx: Ctx,
@@ -97,7 +97,7 @@ export function createForm<S extends FormSchema>(
  * const lines = createFieldArray(ctx, () => createField(ctx, ''))
  * ```
  *
- * Was `ctx.fieldArray(...)`.
+ * Was `createFieldArray(ctx, ...)`.
  */
 export function createFieldArray<I extends Field<any> | Form<any>>(
   ctx: Ctx,

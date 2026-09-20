@@ -31,7 +31,7 @@ Two changes, shipped together as one pre-1.0 major.
 
 ## What it bought
 
-Measured with `esbuild --bundle --minify --define:__DEV__=false`, gzipped, `@preact/signals-core` external, against `packages/core/src/index.ts`:
+Measured with `esbuild --bundle --minify --define:__DEV__=false`, gzipped, `@preact/signals-core` external, against `packages/core/src/index.ts`. **These are the source-structure ceiling, not what a consumer gets** — see the note below:
 
 | Imported | Before | After |
 |---|---|---|
@@ -41,7 +41,11 @@ Measured with `esbuild --bundle --minify --define:__DEV__=false`, gzipped, `@pre
 | \+ `queryEngine`, `createQuery` | 20.1 KB | 14.4 KB |
 | everything | 21.8 KB | 22.6 KB |
 
-A controllers-only consumer pays a quarter of what they used to. A consumer who imports everything pays 0.8 KB more, for the engine indirection and the internals plumbing. That trade is the point: the cost moved onto the people who use the features.
+A consumer who imports everything pays 0.8 KB more, for the engine indirection and the internals plumbing. That trade is the point: the cost moved onto the people who use the features.
+
+**What consumers actually get today: 19.9 KB → 8.1 KB, not 4.8.** Bundling the published `dist/` rather than `src/`, the query engine is excluded as designed but the forms subsystem is not. `tsdown` flattens the package into one shared chunk, so exclusion inside it depends on statement-level dead-code elimination — and `FormImpl`/`FieldArrayImpl` declare their brand markers as computed class-field keys (`[FORM_BRAND] = true`), which esbuild refuses to drop. A signals-only dist bundle still contains `olas.form`, verified by grep.
+
+So the structural work is done and half the payoff is stuck in the build. Fixing it means assigning brands in the constructor instead of as computed field keys, or preserving module structure in the tsdown output. Tracked in `BACKLOG.md`. The honest summary: **2.5x today, 4.2x once the build stops retaining forms.**
 
 ## Why the old shape could not be fixed in place
 

@@ -13,7 +13,7 @@ import { createInfiniteUse, createUse } from './use'
  * const user = createQuery(ctx, userQuery, () => [userId.value])
  * ```
  *
- * Was `ctx.use(...)`. Needs a query engine on the root:
+ * Was `createQuery(ctx, ...)`. Needs a query engine on the root:
  * `createRoot(def, { deps, queries: queryEngine() })`.
  */
 export function createQuery<Args extends unknown[], T, U>(
@@ -60,7 +60,7 @@ export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
  * const report = createCache(ctx, (signal) => api.report(signal))
  * ```
  *
- * Was `ctx.cache(...)`. Unlike `createQuery` this needs **no** query engine:
+ * Was `createCache(ctx, ...)`. Unlike `createQuery` this needs **no** query engine:
  * a local cache is not a cache-client entry. It still honours the root's
  * `defaultQueryOptions`, which live on the root rather than on the client so
  * that reading them cannot pull the engine into the bundle.
@@ -93,7 +93,7 @@ export function createCache<T>(
  * const save = createMutation(ctx, { mutate: (v, signal) => api.save(v, signal) })
  * ```
  *
- * Was `ctx.mutation(...)`. Needs a query engine: mutations participate in the
+ * Was `createMutation(ctx, ...)`. Needs a query engine: mutations participate in the
  * root's in-flight accounting, which `waitForIdle()` reads during SSR.
  */
 export function createMutation<V, R>(ctx: Ctx, spec: MutationSpec<V, R>): Mutation<V, R> {
@@ -124,7 +124,7 @@ export function createMutation<V, R>(ctx: Ctx, spec: MutationSpec<V, R>): Mutati
  * Bind a query value to this controller's root, for imperative reads and
  * writes outside a subscription (§5.5, §6.4).
  *
- * Was `ctx.bindQuery(...)`.
+ * Was `bindQuery(ctx, ...)`.
  */
 export function bindQuery<Args extends unknown[], T>(
   ctx: Ctx,

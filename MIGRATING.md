@@ -60,8 +60,8 @@ Use a bound handle in controllers and request handlers:
 
 ```ts
 const feature = defineController((ctx) => {
-  const users = bindQuery(ctx, userQuery)
-  const user = createQuery(ctx, userQuery, () => ['me'])
+  const users = ctx.bindQuery(userQuery)
+  const user = ctx.use(userQuery, () => ['me'])
   return {
     user,
     rename: (name: string) => users.write('me', (prev) => ({ ...prev!, name })),
@@ -72,7 +72,7 @@ const feature = defineController((ctx) => {
 await root.bindQuery(userQuery).prefetch('me')
 ```
 
-Binding does not subscribe or fetch. It works before the first subscription. The handle exposes the query's imperative methods, retains argument/result types, and remains tied to that root; operations fail after root disposal. Subscribe with the original definition via `createQuery(ctx, userQuery)`.
+Binding does not subscribe or fetch. It works before the first subscription. The handle exposes the query's imperative methods, retains argument/result types, and remains tied to that root; operations fail after root disposal. Subscribe with the original definition via `ctx.use(userQuery)`. (In 1.0 these became `bindQuery(ctx, userQuery)` and `createQuery(ctx, userQuery)` — see the 0.9 to 1.0 section above.)
 
 Unbound helpers such as `userQuery.write`, `peek`, `cancel`, `invalidate`, and `prefetch` now throw or reject when multiple roots have touched the query. They no longer broadcast or pick the first root. With zero roots, the existing no-op/undefined behavior remains, except `prefetch` rejects. With one root they remain shortcuts. Prefer bound handles in reusable controllers and SSR code. For an intentional broadcast, explicitly iterate the roots and use their bound handles. Cross-tab plugin transport remains an explicit opt-in.
 

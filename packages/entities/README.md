@@ -13,7 +13,7 @@ pnpm add @kontsedal/olas-entities @kontsedal/olas-core @preact/signals-core
 ## 30-second example
 
 ```ts
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import { createRoot, defineController, defineQuery, queryEngine } from '@kontsedal/olas-core'
 import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
 
 type Post = { id: string; title: string; likes: number }
@@ -45,6 +45,7 @@ const profileQuery = defineQuery({
 // 3. Install the plugin at the root.
 const entities = entitiesPlugin([Post, User])
 const root = createRoot(appController, {
+  queries: queryEngine(),
   deps: {},
   plugins: [entities],
 })

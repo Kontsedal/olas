@@ -55,6 +55,13 @@ export type QueryEngineHost = {
  */
 export type QueryEngine = {
   readonly __olas: 'queryEngine'
+  /**
+   * @internal The options this engine was built with. `createRoot` reads
+   * `defaultQueryOptions` from here so that `createCache` — which needs no
+   * engine — still resolves the same defaults the client does. Without this
+   * the two disagree inside one root.
+   */
+  readonly __options: QueryEngineOptions
   /** @internal Called once, by `createRoot`. */
   __create(host: QueryEngineHost): QueryClient
 }
@@ -62,6 +69,7 @@ export type QueryEngine = {
 export function queryEngine(options: QueryEngineOptions = {}): QueryEngine {
   return {
     __olas: 'queryEngine',
+    __options: options,
     __create(host: QueryEngineHost): QueryClient {
       return new QueryClient({
         onError: host.onError,

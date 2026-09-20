@@ -1,6 +1,6 @@
 // Root composition for the virtualized-table example.
 
-import { createRoot, defineController } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
 import type { Api } from './api'
 import { tableController } from './controllers/table'
 
@@ -17,7 +17,7 @@ export function createAppRoot(api: Api, rowCount: number) {
     }),
     { name: 'app' },
   )
-  return createRoot(appController, { deps: { api } })
+  return createRoot(appController, { deps: { api }, queries: queryEngine() })
 }
 
 export type AppRoot = ReturnType<typeof createAppRoot>

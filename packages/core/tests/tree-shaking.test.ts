@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
 import instanceSrc from '../src/controller/instance.ts?raw'
 import rootSrc from '../src/controller/root.ts?raw'
@@ -6,38 +6,54 @@ import { createField, createForm } from '../src/forms/bind'
 import { bindQuery, createCache, createMutation, createQuery } from '../src/query/bind'
 import { defineQuery } from '../src/query/define'
 import { queryEngine } from '../src/query/engine'
-import engineSrc from '../src/query/engine.ts?raw'
 
 const noDeps = { deps: {} }
 
 /**
  * These pin the property the ctx split exists for. A bundler can only drop a
  * subsystem that is not statically reachable from `createRoot`, so the guard
- * has to be on the import graph, not on a measured byte count that would drift
+ * belongs on the import graph, not on a measured byte count that would drift
  * with every unrelated change.
  */
 describe('createRoot does not statically reach the heavy subsystems', () => {
-  test('instance.ts imports no forms or query implementation', () => {
-    const src = instanceSrc
-    // Type-only imports are erased and cannot retain anything.
-    const valueImports = src
-      .split('\n')
-      .filter((line) => line.startsWith('import ') && !line.startsWith('import type '))
-      .join('\n')
-    expect(valueImports).not.toMatch(/from '\.\.\/forms\//)
-    expect(valueImports).not.toMatch(/from '\.\.\/query\/(local|mutation|use|client|infinite)'/)
+  /**
+   * Normalize before matching. Biome wraps a long specifier list across lines,
+   * which hides the `from '...'` clause from any line-by-line filter, and an
+   * `export ... from` re-export retains a module just as hard as an import.
+   */
+  const valueEdges = (src: string): string[] => {
+    const withoutComments = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+    const flattened = withoutComments.replace(/\s*\n\s*/g, ' ')
+    return flattened.match(/\b(?:import|export)\s+(?!type\b)[^;']*from\s+'[^']+'/g) ?? []
+  }
+
+  test('instance.ts has no value edge into forms or the query implementation', () => {
+    const edges = valueEdges(instanceSrc).join('\n')
+    expect(edges).not.toMatch(/from '\.\.\/forms\//)
+    expect(edges).not.toMatch(/from '\.\.\/query\/(local|mutation|use|client|infinite)'/)
   })
 
-  test('root.ts imports QueryClient as a type only', () => {
-    const src = rootSrc
-    expect(src).toMatch(/import type \{ QueryClient \} from '\.\.\/query\/client'/)
-    expect(src).not.toMatch(/^import \{[^}]*QueryClient[^}]*\} from '\.\.\/query\/client'/m)
-    // The constructor call must live in the engine, not here.
-    expect(src).not.toMatch(/new QueryClient\(/)
+  test('root.ts imports QueryClient as a type only and never constructs one', () => {
+    expect(rootSrc).toMatch(/import type \{ QueryClient \} from '\.\.\/query\/client'/)
+    expect(valueEdges(rootSrc).join('\n')).not.toMatch(/from '\.\.\/query\/client'/)
+    expect(rootSrc).not.toMatch(/new QueryClient\(/)
   })
 
-  test('query/engine.ts is the only value importer of the client', () => {
-    expect(engineSrc).toMatch(/import \{ QueryClient \} from '\.\/client'/)
+  test('query/engine.ts is the ONLY value importer of the client', () => {
+    // Exclusivity is the property. Asserting that engine.ts imports the client
+    // proves nothing on its own — another module gaining that edge is exactly
+    // what would silently undo the change.
+    const all = import.meta.glob('../src/**/*.ts', {
+      query: '?raw',
+      import: 'default',
+      eager: true,
+    }) as Record<string, string>
+    const importers = Object.entries(all)
+      .filter(([path]) => !path.endsWith('/query/client.ts'))
+      .filter(([, src]) => valueEdges(src).some((edge) => /from '[^']*client'/.test(edge)))
+      .map(([path]) => path)
+      .sort()
+    expect(importers).toEqual(['../src/query/engine.ts'])
   })
 })
 
@@ -83,25 +99,64 @@ describe('a root without a query engine', () => {
     root.dispose()
   })
 
-  test('dehydrate and waitForIdle stay usable', async () => {
+  test('dehydrate produces a payload a hydrating root actually accepts', async () => {
     const root = createRoot(
       defineController(() => ({})),
       noDeps,
     )
-    expect(root.dehydrate()).toEqual({ queries: [] })
+    // Not `{ queries: [] }`. `QueryClient.hydrate` drops any payload whose
+    // `version` is not 1, so a malformed empty state would warn on the
+    // legitimate SSR render of a query-free root.
+    const state = root.dehydrate()
+    expect(state).toEqual({ version: 1, entries: [] })
     await expect(root.waitForIdle()).resolves.toBeUndefined()
     expect(root.__debug.queryEntries()).toEqual([])
     root.dispose()
+
+    const client = createRoot(
+      defineController(() => ({})),
+      { ...noDeps, queries: queryEngine({ hydrate: state }) },
+    )
+    expect(client.__debug.queryEntries()).toEqual([])
+    client.dispose()
+  })
+
+  test('plugins and hydrate without an engine warn rather than vanish', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    createRoot(
+      defineController(() => ({})),
+      {
+        ...noDeps,
+        plugins: [{ name: 'x', init: () => {} }],
+        hydrate: { version: 1, entries: [] },
+      },
+    )
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('plugins'))
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('hydrate'))
+    warn.mockRestore()
   })
 })
 
 describe('a root with a query engine behaves as before', () => {
   test('createQuery subscribes', async () => {
-    const q = defineQuery({ key: () => ['y'] as const, fetcher: async () => 'v' })
-    const def = defineController((ctx) => ({ sub: createQuery(ctx, q) }))
+    const yq = defineQuery({ key: () => ['y'] as const, fetcher: async () => 'v' })
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, yq) }))
     const root = createRoot(def, { ...noDeps, queries: queryEngine() })
     await root.waitForIdle()
     expect(root.sub.data.value).toBe('v')
+    root.dispose()
+  })
+
+  test('defaultQueryOptions on the engine reach createCache too', async () => {
+    // The client and controller-local caches resolve defaults from different
+    // places, so this is the seam where the two drift apart.
+    const def = defineController((ctx) => ({ local: createCache(ctx, async () => 1) }))
+    const root = createRoot(def, {
+      ...noDeps,
+      queries: queryEngine({ defaultQueryOptions: { staleTime: 300_000 } }),
+    })
+    await root.local.invalidate()
+    expect(root.local.isStale.value).toBe(false)
     root.dispose()
   })
 })

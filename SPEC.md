@@ -151,16 +151,18 @@ const userProfile = defineController((ctx, id: string) => {
 
 ### 3.2 The `ctx` object
 
-`ctx` exposes every primitive a controller can construct: cache, use, mutation, emitter, field, form, fieldArray, child, attach, collection, session, lazyChild, effect, on, provide and inject. It also carries the lifecycle hooks `onDispose`, `onSuspend` and `onResume`, the devtools helper `debug`, and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
+`ctx` carries what binds to a controller's **tree and lifetime**: `emitter`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `on`, `provide`, `inject`, the lifecycle hooks `onDispose`, `onSuspend` and `onResume`, the devtools helper `debug`, and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
 
-At a glance, the primitives split into these groups:
+The primitives that build lifetime-owned **things** are standalone functions taking `ctx` first: `createField`, `createForm`, `createFieldArray`, `createCache`, `createQuery`, `createMutation` and `bindQuery`. See "On `ctx`'s shape" below for why.
 
-- **Reactive state & async data:** `cache`, `use`, `mutation`, `effect`.
-- **Forms & input:** `field`, `form`, `fieldArray`.
-- **Events & communication:** `emitter`, `on`, `provide`, `inject`.
-- **Tree composition:** `child`, `attach`, `collection`, `dynamicCollection`, `session`.
-- **Lifecycle & DI:** `onDispose`, `onSuspend`, `onResume`, `deps`.
-- **Devtools, dev-only:** `debug({ ... })` — expose named live values such as signals, computeds and fields to the devtools "Variables" view for this controller. A no-op in production; see §14.
+At a glance:
+
+- **Async data:** `createCache`, `createQuery`, `createMutation`, plus `ctx.effect`.
+- **Forms & input:** `createField`, `createForm`, `createFieldArray`.
+- **Events & communication:** `ctx.emitter`, `ctx.on`, `ctx.provide`, `ctx.inject`.
+- **Tree composition:** `ctx.child`, `ctx.attach`, `ctx.collection`, `ctx.session`, `ctx.lazyChild`.
+- **Lifecycle & DI:** `ctx.onDispose`, `ctx.onSuspend`, `ctx.onResume`, `ctx.deps`.
+- **Devtools, dev-only:** `ctx.debug({ ... })` — expose named live values such as signals, computeds and fields to the devtools "Variables" view for this controller. A no-op in production; see §14.
 
 **On `ctx`'s shape.** `ctx` carries what binds to a controller's *tree and lifetime*: children, effects, scopes, emitters, lifecycle hooks. The primitives that build lifetime-owned **things** — fields, forms, field arrays, queries, local caches, mutations — are standalone functions that take `ctx` as their first argument.
 
@@ -1495,6 +1497,7 @@ The plugin requires a stable `queryId` per query to route messages across tabs. 
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 
 createRoot(appController, {
+  queries: queryEngine(),
   deps,
   plugins: [crossTabPlugin({ channelName: 'my-app/cache/v1' })],
 })
@@ -1561,12 +1564,13 @@ We ship serialization primitives, not framework-specific SSR glue:
 
 ```ts
 // server
-const root = createRoot(rootController, { deps: serverDeps })
+const root = createRoot(rootController, { queries: queryEngine(), deps: serverDeps })
 await root.waitForIdle() // resolves when no fetches in flight
 const state = root.dehydrate() // JSON-serializable snapshot of the query client
 
 // client
 const root = createRoot(rootController, {
+  queries: queryEngine(),
   deps: clientDeps,
   hydrate: state, // restores query client cache entries
 })
@@ -2036,7 +2040,7 @@ const patchPostEverywhere = (ctx: Ctx, id: string, patch: Partial<Post>) => {
 
 ```ts
 const Post = defineEntity<Post>({ name: 'Post', idOf: (v: any) => v?.id ?? null })
-createRoot(app, { plugins: [entitiesPlugin([Post])] })
+createRoot(app, { queries: queryEngine(), plugins: [entitiesPlugin([Post])] })
 
 // In a component:
 const post = use(entities.signal(Post, 'p1'))   // reactive, normalized
@@ -2203,36 +2207,11 @@ Standalone `effect()` is for use outside controllers (rare). Inside a controller
 
 ```ts
 type Ctx<TDeps = AmbientDeps> = {
-  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
-  bindQuery<Args extends unknown[], TPage, TItem>(
-    query: InfiniteQuery<Args, TPage, TItem>,
-  ): InfiniteQueryActions<Args, TPage, TItem>
-
-  // primitives
-  cache<T>(
-    fetcher: (signal: AbortSignal) => Promise<T>,
-    options?: { key?: () => unknown[]; staleTime?: number; gcTime?: number; keepPreviousData?: boolean },
-  ): LocalCache<T>
-
-  use<const Args extends readonly unknown[], T>(
-    source: Query<Args, T>,
-    keyOrOptions?: (() => Args) | UseOptions<Args>,
-  ): QuerySubscription<T>
-
-  use<const Args extends readonly unknown[], TPage, TItem>(
-    source: InfiniteQuery<Args, TPage, TItem>,
-    keyOrOptions?: (() => Args) | UseOptions<Args>,
-  ): InfiniteQuerySubscription<TPage, TItem>
-
-  mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>
-  emitter<T = void>(): Emitter<T>
-  field<T>(initial: T, validators?: Validator<T>[]): Field<T>
-  form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S>
-  fieldArray<I extends Field<any> | Form<any>>(
-    itemFactory: (initial?: ItemInitial<I>) => I,
-    options?: FieldArrayOptions<I>,
-  ): FieldArray<I>
-
+  // Lifetime-owned primitives are NOT methods — they are standalone functions
+  // taking `ctx` first, so a controller that never builds one does not retain
+  // its subsystem. See §3.2 and the list under "Primitives taking ctx" below.
+  //
+  // tree composition
   child<Props, Api>(
     def: ControllerDef<Props, Api>,
     props: Props,
@@ -2281,6 +2260,26 @@ type Ctx<TDeps = AmbientDeps> = {
   // DI
   deps: TDeps
 }
+
+// Primitives taking ctx. Each registers its teardown on the controller, so
+// everything here is disposed when the controller is (§3.4).
+type CtxPrimitives = {
+  createField<T>(ctx: Ctx, initial: T, validators?: Validator<T>[],
+    options?: { validateOn?: 'change' | 'blur' | 'submit' }): Field<T>
+  createForm<S extends FormSchema>(ctx: Ctx, schema: S, options?: FormOptions<S>): Form<S>
+  createFieldArray<I extends Field<any> | Form<any>>(ctx: Ctx,
+    itemFactory: (initial?: ItemInitial<I>) => I, options?: FieldArrayOptions<I>): FieldArray<I>
+
+  createCache<T>(ctx: Ctx, fetcher: (signal: AbortSignal) => Promise<T>,
+    options?: LocalCacheOptions<T>): LocalCache<T>
+  createQuery<Args extends unknown[], T>(ctx: Ctx, source: Query<Args, T>,
+    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>): QuerySubscription<T>
+  createQuery<Args extends unknown[], TPage, TItem>(ctx: Ctx,
+    source: InfiniteQuery<Args, TPage, TItem>,
+    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
+  ): InfiniteQuerySubscription<TPage, TItem>
+  createMutation<V, R>(ctx: Ctx, spec: MutationSpec<V, R>): Mutation<V, R>
+  bindQuery<Args extends unknown[], T>(ctx: Ctx, query: Query<Args, T>): QueryActions<Args, T>
 
 type Scope<T> = {
   readonly __olas: 'scope'
@@ -2455,7 +2454,7 @@ function defineQuery<Args extends unknown[], T>(
 // subscription returned by createQuery(ctx, ...) — same shape regardless of source
 type QuerySubscription<T> = AsyncState<T>
 
-// Options form of ctx.use's second argument. The thunk form is shorthand for { key }.
+// Options form of `createQuery`'s third argument. The thunk form is shorthand for { key }.
 type UseOptions<Args extends readonly unknown[]> = {
   key?: () => Args
   enabled?: () => boolean  // tracking scope; when false, no fetch, status='idle'
@@ -2741,6 +2740,13 @@ type Root<Api> = Api & {
 
 type RootOptions<TDeps> = {
   deps: TDeps
+  /**
+   * The query engine. Omit it and this root has no cache: `createQuery`,
+   * `createMutation` and `bindQuery` throw, and `plugins` / `hydrate` are
+   * inert (dev builds warn). Adopted eagerly, before the factory runs, so
+   * plugin `init` timing is unchanged.
+   */
+  queries?: QueryEngine
   onError?: (err: unknown, context: ErrorContext) => void
   hydrate?: DehydratedState
   /** Default for queries that don't set `refetchOnWindowFocus` on their spec (§5.9). */
@@ -3238,7 +3244,7 @@ root.dehydrate(): DehydratedState
 // iterates queryClient.entries, picks the ones with data, serializes
 
 // hydrate (client)
-createRoot(def, { hydrate: state })
+createRoot(def, { queries: queryEngine(), hydrate: state })
 // when QueryClient initializes, replays entries: data, status='success', lastUpdatedAt
 // no fetches kicked off until subscribers arrive (then staleTime applies)
 ```
