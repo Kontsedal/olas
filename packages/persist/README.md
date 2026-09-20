@@ -50,11 +50,11 @@ type PersistErrorOp = 'load' | 'deserialize' | 'serialize' | 'write' | 'migrate'
 
 Defaults: `JSON.stringify` and `JSON.parse`. Override `serialize` and `deserialize` for custom shapes (Dates, Maps, etc.). Cleanup is registered via `ctx.onDispose`.
 
-**Schema versioning.** Set `version: N` to wrap writes in a `{"v":N,"d":<serialized>}` envelope. On load, a payload with a different `version` (or a legacy un-versioned one, `fromVersion: undefined`) is handed to `migrate(raw, fromVersion)`, which returns the upgraded value (re-persisted as an envelope) or `undefined` to drop the entry.
+**Schema versioning.** Set `version: N` to wrap writes in a `{"v":N,"d":<serialized>}` envelope. On load, a payload with a different `version` is handed to `migrate(raw, fromVersion)`, and so is a legacy un-versioned one, which arrives as `fromVersion: undefined`. The migrator returns the upgraded value, re-persisted as an envelope, or `undefined` to drop the entry.
 
 **Error routing.** Every fallible op routes through `onError(err, op, key)` — storage `get`/`set` (quota, closed db, aborted IDB commit), `serialize`/`deserialize`, `migrate` throws, and cross-tab payload corruption. Without `onError`, errors are swallowed. The IndexedDB adapter resolves writes on the transaction's **commit** (not the request's `onsuccess`), so a quota failure surfaces here rather than silently vanishing.
 
-> **Note on serializer parity with `@kontsedal/olas-cross-tab`.** `@kontsedal/olas-persist` defaults to JSON; `@kontsedal/olas-cross-tab` uses structured clone via `BroadcastChannel`. They differ in what survives a round-trip: `Date` becomes a string under JSON but survives cross-tab; `Map`/`Set` are dropped by JSON but survive cross-tab; functions and symbols are dropped by both. If you use both packages on the same value, supply a `serialize` and `deserialize` pair to persist that matches cross-tab's structured-clone semantics.
+> **Note on serializer parity with `@kontsedal/olas-cross-tab`.** `@kontsedal/olas-persist` defaults to JSON; `@kontsedal/olas-cross-tab` uses structured clone via `BroadcastChannel`. They differ in what survives a round-trip. `Date` becomes a string under JSON but survives cross-tab. `Map` and `Set` are dropped by JSON but survive cross-tab. Functions and symbols are dropped by both. If you use both packages on the same value, supply a `serialize` and `deserialize` pair to persist that matches cross-tab's structured-clone semantics.
 
 > **Cross-tab delete.** When another tab calls `localStorage.removeItem(key)` (or your custom adapter signals `null` through `onChange`), the local source is reset to `undefined`. Consumers whose `T` excludes `undefined` should treat this as "value gone, fall back to your own initial".
 
@@ -73,9 +73,9 @@ type StorageAdapter = {
 }
 ```
 
-`get` returning a Promise is supported — `ready` stays `false` until the load completes. The source's *initial default* isn't persisted during that window (it would clobber the stored value), but a real **user write** before the load settles is not lost: it wins over the stored value and is flushed once ready. A cross-tab change that races the load is buffered and applied on ready.
+`get` returning a Promise is supported — `ready` stays `false` until the load completes. The source's *initial default* is not persisted during that window, because it would clobber the stored value. A real **user write** before the load settles is not lost: it wins over the stored value and is flushed once ready. A cross-tab change that races the load is buffered and applied on ready.
 
-The IndexedDB adapter (`indexedDbAdapter`) resolves each op on the transaction's commit and rejects on abort, and installs an `onversionchange` handler so it never blocks another tab's upgrade — write failures propagate to `onError('write')` instead of vanishing.
+The IndexedDB adapter, `indexedDbAdapter`, resolves each op on the transaction's commit and rejects on abort. It installs an `onversionchange` handler so it never blocks another tab's upgrade. Write failures propagate to `onError('write')` instead of vanishing.
 
 ## Cross-tab sync
 
@@ -85,4 +85,4 @@ The IndexedDB adapter (`indexedDbAdapter`) resolves each op on the transaction's
 
 - [`../../API.md`](../../API.md#olaspersist) — full reference.
 - [`../../.wiki/modules/persist.md`](../../.wiki/modules/persist.md)
-- SPEC §13 (Persistence), §20.11 (types).
+- SPEC §13 for persistence, and §20.11 for the types.

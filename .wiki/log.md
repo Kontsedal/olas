@@ -449,7 +449,17 @@ Phase 3 — query cache majors + a 10-item minor batch (`packages/core/src/query
 - **T3.6** — optimistic `snapshot.rollback()` re-emits a `SetDataEvent` (guarded on an actual data change) so cross-tab and entity peers drop failed optimistic state. `entities/query-client.md`.
 - **T3.7** — infinite refetch re-fetches **all** loaded pages (`runRefetchAll`), not collapse-to-page-one; atomic update, no truncation flash. SPEC §5.7. Infinite SSR dehydrate deferred → BACKLOG + SPEC §15 + react README.
 - **T3.8** — `stableHash` reads the raw holder property (`this[key]`) so Date tagging + the class-instance throw aren't dead code (`toJSON` runs before the replacer).
-- **T3.9** (commits a–e2) — onMutate-throw aborts the run; `subscription.refetch()` resolves (not AbortError-rejects) on supersede; exponential retry-backoff default; `dispose()` resets `isFetching`; focus/visibilitychange debounce + isFetching join; `invalidate` marks-stale-only when subscriber-less (`markStale`/`forcedStale` + `client.invalidateEntry`); query + mutation registries shared on `globalThis` (dual-package hazard); duplicate `queryId` dev-warn; `_unregisterMutationById` moved to `/testing`; streaming `flush()` skips un-serializable entries.
+- **T3.9** (commits a–e2):
+  - An `onMutate` throw aborts the run.
+  - `subscription.refetch()` resolves on supersede instead of rejecting with an AbortError.
+  - Exponential retry-backoff is the default.
+  - `dispose()` resets `isFetching`.
+  - Focus and `visibilitychange` are debounced, and a tick joins an in-flight fetch.
+  - `invalidate` marks stale only when the entry is subscriber-less, via `markStale`, `forcedStale` and `client.invalidateEntry`.
+  - Query and mutation registries are shared on `globalThis`, against the dual-package hazard.
+  - A duplicate `queryId` dev-warns.
+  - `_unregisterMutationById` moved to `/testing`.
+  - Streaming `flush()` skips un-serializable entries.
 
 New public surface: `Query.cancel` and `cancelAll`, `subscription.cancel`, `AsyncState.isPaused`. New `Entry`/`InfiniteEntry` methods: `cancel`, `markStale`. Regression tests R-Q3.1…R-Q3.9 in `regressions.test.ts` (+ `stableHash` cases in `query.test.ts`; offlineFirst and focus-double-fire in `query-focus-online.test.ts`; streaming guard in react `streaming.test.tsx`).
 
@@ -467,7 +477,14 @@ Phase 4 — `packages/react/src/` (context, hooks, keep-alive, streaming).
 - **T4.4** — `use(signal, { select })` re-derives when the **selector identity** changes (was returning the previous selector's slice when raw was unchanged). First `isEqual` coverage.
 - **T4.5** — replaced the version-counter `getSnapshot` (which defeated uSES's mount-consistency check — a write between render and subscription was invisible) with a memoized core **`computed` snapshot** whose `.value` reflects real store state. All four multi-signal hooks (`useQuery`/`useField`/`useFieldInput`/`useMutation`). `modules/react.md` rewritten.
 - **T4.6** — `SuspendOnUnmount`/`KeepAlive` **refcounted** across overlapping wrappers (module-level WeakMap): `resume` on 0→1, `suspend` on 1→0, so a cross-fade can't suspend a controller the entering screen still uses. Isomorphic `useLayoutEffect`. `modules/react.md`.
-- **T4.7** (2 commits) — dropped `aria-errormessage` (ARIA wants an ID ref, not text); `useFieldInput` transform-in-ref so handlers memo on `[field]`; fixed reset/suspense docstrings; streaming docstring passes the plugin through `HydrationBoundary` options; teardown re-installs a **queue** (not an inert sink) so late stream entries aren't dropped; `context.ts` `options as any` → `RootOptions`. `[?]` disabled+suspense guard: an idle-no-data sub is indistinguishable from one torn down at dispose (teardown false-positives + React-19 `uncaughtError`) — reverted; limitation in BACKLOG.
+- **T4.7** (2 commits):
+  - Dropped `aria-errormessage`, because ARIA wants an ID reference rather than text.
+  - `useFieldInput` keeps the transform in a ref, so handlers memo on `[field]`.
+  - Fixed the reset and suspense docstrings.
+  - The streaming docstring passes the plugin through `HydrationBoundary` options.
+  - Teardown re-installs a **queue** rather than an inert sink, so late stream entries are not dropped.
+  - `context.ts` uses `RootOptions` in place of `options as any`.
+  - `[?]` The disabled-plus-suspense guard was reverted. An idle-no-data subscription is indistinguishable from one torn down at dispose, which produced teardown false-positives and a React-19 `uncaughtError`. The limitation is in BACKLOG.
 
 New public surface: `Mutation.status`. Tests in `packages/react/tests/*` (hydration-boundary, adapter, suspense, keep-alive, streaming).
 
@@ -481,7 +498,13 @@ Phase 5 — `packages/core/src/forms/` (field, form, validators). Three commits.
 
 - **T5.1** — `FieldArray` tracks **structural dirtiness** (`structurallyDirty$`, flipped by `add`/`insert`/`remove`/`move`/`clear`, reset by `reset()` and `replaceInitialItems`). `isDirty = structural || anyItemDirty`. Before this, a reactive `initial: () => queryData` + default `resetOnInitialChange: 'when-clean'` re-seated the array on a background refetch and silently **deleted rows the user just added**. Pinned `R-F5.1`. SPEC §8.5; `modules/forms.md`.
 - **T5.2** — form-/array-level validators can **target specific fields**. `Validator<T>` widened to also return `FormIssue[]` (`{ path, message }`); `runTopLevelValidators` collects issues (`appendIssues`) and `routeFormIssues(this, …)` routes empty-path → the node's `topLevelErrors`, path → `resolveNode`'s descendant via `setFormErrors`. Fields gain a **third error channel** `formErrors$` (merged into `errors`); Form/FieldArray merge parent-injected errors into `topLevelErrors` (now a computed) + `isValid`. Cleared/re-applied each run (`lastFormErrorTargets`). Standard-Schema `validator()` rewritten to return **all** issues as `FormIssue[]` with paths; `zodValidator` inherits it. `debouncedValidator` narrowed to a precise `string | null` return so direct callers still type-check. Pinned `R-F5.2` + `standard-schema.test.ts`. SPEC §8.1/§8.3/§20.7; API.md; `modules/forms.md` + `zod.md`. BACKLOG: formFromZod root `.refine({path})` routing.
-- **T5.3** — minor batch: `validateOn: 'blur'|'submit'` now tested (were zero); `dirtyFields`/`clearSubtree` tested; `required(false)` now **passes** (a boolean is a legit value) + new **`mustBeTrue`** validator for consent checkboxes; `isValid` **holds last-known validity while `isValidating`** (`lastValid$`) so a `debouncedValidator` no longer strobes a submit button (replaces the old "invalid-while-validating" rule — SPEC §8.2 + docstring updated); `Form.reset()` re-applies initial **inside** the batch (no tearing); thrown-validator messages are **generic in prod** (`'Validation failed'`, real error still routed via `onValidatorError`), dev keeps the message. New tests in `form.test.ts` + `validators.test.ts`; `controller.test.ts` isValid-while-pending assertion updated.
+- **T5.3** — minor batch:
+  - `validateOn: 'blur'` and `'submit'` are now tested; they had zero coverage.
+  - `dirtyFields` and `clearSubtree` are tested.
+  - `required(false)` now **passes**, because a boolean is a legitimate value. A new **`mustBeTrue`** validator covers consent checkboxes.
+  - `isValid` **holds its last-known validity while `isValidating`**, through `lastValid$`, so a `debouncedValidator` no longer strobes a submit button. This replaces the old invalid-while-validating rule; SPEC §8.2 and the docstring were updated.
+  - `Form.reset()` re-applies initial **inside** the batch, so nothing tears.
+  - A thrown validator's message is **generic in production**, reading `'Validation failed'`, while `onValidatorError` still routes the real error. Dev builds keep the message. New tests in `form.test.ts` + `validators.test.ts`; `controller.test.ts` isValid-while-pending assertion updated.
 
 New public surface: `FormIssue` and `ValidatorResult` types, `mustBeTrue` validator. `Validator<T>` return widened.
 
@@ -1014,14 +1037,14 @@ change (staged diff contains zero CR).
 Three defects found by auditing a consumer's backlog of "olas bugs" against the source, plus one doc divergence. All shipped in one change; `pitfalls/dispose-order-is-registration-order.md` is new and `entities/mutation.md` is updated.
 
 - `run()` after dispose rejected with a bare `Error('Mutation disposed')` — not matched by the library's own `isAbortError`, while `dispose()`'s serial-queue rejection three lines below was an `AbortError`. Now `MutationDisposedError`, exported and deliberately not an abort.
-- A run whose `mutate` had already resolved was rolled back and settled `'cancelled'` when the abort landed in the gap before its continuation — committing a knowingly stale value to a surviving cache, and telling the mutation queue to replay a write the server had accepted. Now finalizes and settles `'success'`.
+- A run whose `mutate` had already resolved was rolled back and settled `'cancelled'` when the abort landed in the gap before its continuation. That committed a knowingly stale value to a surviving cache, and told the mutation queue to replay a write the server had accepted. It now finalizes and settles `'success'`.
 - `detached: true` added: dispose stops cancelling, so a write outlives the screen that started it. `reset()` and `latest-wins` still cancel.
 - `SPEC.md` §4 claimed teardown ran "children → caches/effects → onDispose hooks". It is one reverse-registration pass over all kinds. The wiki said "iterates reverse" correctly in three places the whole time — spec and wiki disagreed for months with nothing checking one against the other.
 
 
 ## 2026-09-19 — 0.9 cache identity and root isolation
 
-Added bound regular/infinite query actions and ambiguity guards, scoped mutation-queue replay invalidation, required explicit IDs for SSR serialization, replaced sentinel key encoding with full type tagging, and fixed infinite/long stale timers. Updated query, SSR, Entry, root-isolation decision and replay docs. Regression tests cover separately evaluated server/client modules, request-local cache actions and timer boundaries. Coverage now includes implementation entry points and TSX files with unchanged thresholds.
+Added bound query actions for regular and infinite queries, with ambiguity guards. Scoped mutation-queue replay invalidation. Required explicit IDs for SSR serialization. Replaced sentinel key encoding with full type tagging. Fixed infinite and long stale timers. Updated query, SSR, Entry, root-isolation decision and replay docs. Regression tests cover separately evaluated server/client modules, request-local cache actions and timer boundaries. Coverage now includes implementation entry points and TSX files with unchanged thresholds.
 
 ## 2026-09-20 — follow-ups from the 0.9 review
 
