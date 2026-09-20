@@ -4,6 +4,7 @@ import {
   type MutationSettleEvent,
   type Query,
   type QueryClientPlugin,
+  type QueryClientPluginApi,
 } from '@kontsedal/olas-core'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { PROTOCOL_VERSION, type QueueEntry } from './protocol'
@@ -16,11 +17,17 @@ import { PROTOCOL_VERSION, type QueueEntry } from './protocol'
  */
 export type ReplaySettleApi = {
   /**
-   * Invalidate a query's cached entry for `keyArgs` so subscribers refetch.
-   * Delegates to the query's own `invalidate(...)` (all bound roots), so it
-   * works whether or not the query carries an explicit `queryId`.
+   * Invalidate a query so its subscribers refetch. Targets only the plugin's
+   * owning root; works with or without a `queryId`.
+   *
+   * `callArgs` are the arguments you'd pass to the query itself — the ones
+   * `spec.key(...)` is called WITH — not the key tuple it returns. For
+   * `key: (id) => ['user', id]` that is `[id]`, not `['user', id]`. The
+   * distinction is the `callArgs` / `keyArgs` split documented in
+   * `.wiki/pitfalls/callargs-vs-keyargs.md`; passing the key tuple here
+   * hashes `key('user', 1)` and silently invalidates nothing.
    */
-  invalidate(query: Query<any, any>, keyArgs?: readonly unknown[]): void
+  invalidate(query: Query<any, any>, callArgs?: readonly unknown[]): void
 }
 
 /**
@@ -233,10 +240,26 @@ export function mutationQueuePlugin(
   }
 
   /** Passed to `onReplaySettle` so apps can invalidate affected queries. */
+  let ownerApi: QueryClientPluginApi | undefined
   const replaySettleApi: ReplaySettleApi = {
-    invalidate(query, keyArgs) {
+    invalidate(query, callArgs) {
+      // `ownerApi` is assigned in `init`, which the client calls before any
+      // replay can settle — so a missing one means the plugin was driven
+      // outside its lifecycle. Say so instead of silently not invalidating:
+      // the visible symptom would otherwise be a stale UI after a successful
+      // replay, which is exactly what this method exists to prevent.
+      if (!ownerApi) {
+        onWarn(
+          '[olas/mutation-queue] onReplaySettle invalidate skipped — the plugin is not attached ' +
+            'to a query client yet (init has not run). Subscribers will stay stale until their ' +
+            'own staleTime lapses.',
+        )
+        return
+      }
       try {
-        query.invalidate(...((keyArgs ?? []) as unknown[]))
+        void ownerApi.invalidate(query, callArgs ?? []).catch((cause) => {
+          onWarn('[olas/mutation-queue] onReplaySettle invalidate failed', cause)
+        })
       } catch (cause) {
         onWarn('[olas/mutation-queue] onReplaySettle invalidate failed', cause)
       }
@@ -635,7 +658,8 @@ export function mutationQueuePlugin(
   }
 
   return {
-    init() {
+    init(api) {
+      ownerApi = api
       // Retry in-session when the network returns — not only on reload (T6.2).
       if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
         onlineHandler = () => {

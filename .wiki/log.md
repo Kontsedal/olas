@@ -1018,3 +1018,69 @@ Three defects found by auditing a consumer's backlog of "olas bugs" against the 
 - `detached: true` added: dispose stops cancelling, so a write outlives the screen that started it. `reset()` and `latest-wins` still cancel.
 - `SPEC.md` §4 claimed teardown ran "children → caches/effects → onDispose hooks". It is one reverse-registration pass over all kinds. The wiki said "iterates reverse" correctly in three places the whole time — spec and wiki disagreed for months with nothing checking one against the other.
 
+
+## 2026-09-19 — 0.9 cache identity and root isolation
+
+Added bound regular/infinite query actions and ambiguity guards, scoped mutation-queue replay invalidation, required explicit IDs for SSR serialization, replaced sentinel key encoding with full type tagging, and fixed infinite/long stale timers. Updated query, SSR, Entry, root-isolation decision and replay docs. Regression tests cover separately evaluated server/client modules, request-local cache actions and timer boundaries. Coverage now includes implementation entry points and TSX files with unchanged thresholds.
+
+## 2026-09-20 — follow-ups from the 0.9 review
+
+Reviewing the 0.9 branch against the five reported defects: all five were genuinely fixed, but the
+stale-timer fix stopped one class short.
+
+- **`gcTime` had the same defect `staleTime` did.** `scheduleStaleTimeout` fixed staleness while the
+  gc timer kept calling `setTimeout(fn, this.gcTime)` raw in four places, so `gcTime: Infinity` — the
+  natural spelling of "cache for the session" — dropped the entry ~1ms after its last subscriber
+  left, and so did any `gcTime` past 2,147,483,647 ms. Verified before the fix with a single root and
+  a signal-driven key: `Infinity` and `2^31-1 + 5000` both refetched on return, a `60_000` control did
+  not. The scheduler is now `scheduleExpiry` in `expiry-timer.ts` (renamed from
+  `stale-timer.ts`, since it is no longer stale-specific) and backs both timers.
+- The lesson is in `pitfalls/isstale-needs-timer.md` rather than only in the fix: that page already
+  taught "you need a timer, not a computed" and its code sample was itself the `setTimeout(fn, delay)`
+  shape that fails. It now carries the second half — any timer whose delay comes from user config
+  needs `scheduleExpiry`, because the failure is silent and inverts the setting.
+- **`dehydrate()` skipping anonymous queries was silent.** Safe (the client refetches) but invisible;
+  the only symptom of a forgotten `queryId` was a slower page. It now counts the successful entries it
+  had to drop and warns once per call in dev.
+- Smaller: the mutation-queue's `onReplaySettle` invalidate warns instead of no-opping when the plugin
+  is not attached; a `realtime` docstring still showed an unbound `ordersQuery.invalidateAll()`.
+- The `peek` break is documented rather than softened. 0.8 deliberately never warned from `peek`
+  because it runs in click handlers; 0.9 throws there under multiple roots. That is the right call —
+  reading an arbitrary root is how the wrong user's data reaches the screen — but it surfaces at
+  runtime, not at the type level, so MIGRATING and the changeset now call it out as the edge to audit
+  first.
+
+## 2026-09-20 — second review pass: the rest of the timer class, and a docs sweep
+
+An independent review of the 0.9 branch rated it 8/10 and found the previous pass had stopped one
+step short in two directions.
+
+- **The expiry-timer fix was incomplete.** Staleness and gc were routed through the shared scheduler;
+  `refetchInterval`, the retry backoff and `suspend({ maxIdle })` were not. `refetchInterval` looked
+  guarded and wasn't: `resolveRefetchInterval` rejects non-finite and non-positive gaps, which covers
+  `Infinity`, but a *finite* gap above 2^31-1 passes that guard and still overflows — a ~1ms poll
+  storm out of the longest interval you can ask for. Rejecting `Infinity` is not the same as handling
+  overflow. All three now go through `scheduleExpiry`, which moved to `src/expiry-timer.ts` (it has
+  consumers in `query/`, `controller/` and `utils.ts`, so it no longer belongs under `query/`).
+  Four tests, each verified to fail against the raw-`setTimeout` version.
+- The worse half: the previous pass wrote the false claim into
+  `pitfalls/isstale-needs-timer.md` ("`refetchInterval` doesn't need it"). A wiki page asserting
+  something wrong is worse than silence, because every later query inherits it. Corrected, and the
+  page now names every user-supplied duration in core rather than listing two.
+- **`-0` was splitting cache entries.** The tagged key encoding distinguished `-0` from `0` and a test
+  pinned it deliberately. But `-0` arrives from arithmetic (`x * -1`), never on purpose; every
+  equality a caller touches treats the two as one; and `JSON.stringify(-0)` is `'0'`, so a `-0`-keyed
+  entry could dehydrate on the server and never be adopted on the client. Normalized, test flipped.
+- **A docs-wide sweep for unbound query calls.** `RECIPES.md` had never been migrated (a router-loader
+  `prefetch` that rejects under per-request SSR roots, and a realtime handler doing fire-and-forget
+  `setData`); `packages/router/README.md` had the same loader; SPEC, API.md, the cross-tab README and
+  a pitfall page had their own. The kanban example was patching the cache with fire-and-forget
+  `setData` in five places — leaking a snapshot per call, against the library's own documented reason
+  for `write` existing. Fixed everywhere; the archive one uses `.finalize()` because infinite queries
+  have no `write` yet (BACKLOG).
+- `ReplaySettleApi.invalidate`'s parameter was named `keyArgs` but takes *call* args — free to rename
+  now, expensive after 0.9 ships. Renamed, README row corrected.
+- Removed four `examples/*/CHANGELOG.md`: the examples are `private: true` and changesets is
+  configured not to version them, so these were stale artifacts recording versions that never shipped
+  (`@kontsedal/olas-react@1.0.0`).
+

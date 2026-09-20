@@ -45,12 +45,14 @@ Scale that controller up — shared queries, optimistic mutations with rollback,
   - [Async data with `defineQuery`](#4-async-data-with-definequery)
   - [Writes with mutations](#5-writes-with-mutations)
   - [Forms](#6-forms)
-- [Common recipes](#common-recipes)
+- [Common patterns](#common-patterns)
+- [Working with AI assistants](#working-with-ai-assistants)
 - [How it scales](#how-it-scales)
 - [Packages](#packages)
 - [Examples](#examples)
 - [How it compares](#how-it-compares)
 - [Learn more](#learn-more)
+- [Commands](#commands)
 
 ---
 
@@ -231,6 +233,7 @@ For data that comes from the network and might be shared across screens, define 
 import { defineQuery } from '@kontsedal/olas-core'
 
 export const userQuery = defineQuery({
+  queryId: 'users/detail', // stable across server/client bundles for SSR
   key: (id: string) => [id],
   fetcher: async ({ signal }, id) => {
     const res = await fetch(`/api/users/${id}`, { signal })
@@ -288,6 +291,7 @@ import { defineController } from '@kontsedal/olas-core'
 export const userProfile = defineController((ctx, props: { id: string }) => {
   const user = ctx.use(userQuery, () => [props.id])
 
+  const users = ctx.bindQuery(userQuery)
   const updateName = ctx.mutation<string, void>({
     mutate: async (newName, signal) => {
       const res = await fetch(`/api/users/${props.id}`, {
@@ -298,8 +302,8 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
       if (!res.ok) throw new Error('save failed')
     },
     onMutate: (newName) => {
-      userQuery.cancel(props.id) // stop an in-flight refetch from clobbering the optimistic write
-      return userQuery.setData(props.id, (prev) => {
+      users.cancel(props.id) // stop an in-flight refetch from clobbering the optimistic write
+      return users.setData(props.id, (prev) => {
         if (!prev) throw new Error('updateName before user loaded')
         return { ...prev, name: newName }
       })
@@ -313,7 +317,7 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
 })
 ```
 
-`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `userQuery.cancel(...)` so an outgoing refetch's stale response can't land on top of the optimistic value; if the call fails, `onError` calls `snapshot.rollback()` and the UI reverts (rollback restores server truth when a fetch succeeded in between — see SPEC §6.4).
+`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `users.cancel(...)` — `users` being the root-scoped handle from `ctx.bindQuery(userQuery)` — so an outgoing refetch's stale response can't land on top of the optimistic value; if the call fails, `onError` calls `snapshot.rollback()` and the UI reverts (rollback restores server truth when a fetch succeeded in between — see SPEC §6.4).
 
 Three concurrency modes (`parallel` is default):
 
@@ -383,7 +387,9 @@ That's the whole tour. Everything else in Olas is variations on these six pieces
 
 ---
 
-## Common recipes
+## Common patterns
+
+The everyday wiring. For composable custom hooks — debounced writes, pagination, inline edit, realtime patching, router integration — see [RECIPES.md](RECIPES.md).
 
 ### Dependency injection
 
@@ -459,7 +465,9 @@ const state = root.dehydrate()
 const root = createRoot(app, { deps: clientDeps, hydrate: state })
 ```
 
-The cache survives the boundary. Queries already in `state` don't refetch on the client.
+Only queries with an explicit, stable `queryId` are serialized. Anonymous queries fetch on the client. Hydrated queries respect `staleTime`; fresh entries skip the initial refetch.
+
+Use `ctx.bindQuery(query)` inside controllers or `root.bindQuery(query)` outside them for imperative cache operations. The returned handle targets one root and can prefetch before any subscription exists. Unbound query methods throw (or reject their promise) when multiple roots have touched the query. See [the 0.9 migration notes](MIGRATING.md#upgrading-from-08-to-09).
 
 ### Devtools
 

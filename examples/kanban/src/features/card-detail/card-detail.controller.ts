@@ -44,6 +44,7 @@ const blankInitials: CardFormValue = {
 
 export const cardDetailController = defineController(
   (ctx: Ctx) => {
+    const boardQueryActions = ctx.bindQuery(boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const { selectedCardId, close } = ctx.inject(selectedCardScope)
     const activity = ctx.inject(activityScope)
@@ -157,7 +158,9 @@ export const cardDetailController = defineController(
           subtasks: value.subtasks,
         }
         const saved = await ctx.deps.api.saveCard(activeBoardId.peek(), input, signal)
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        // Server truth, post-save: `write` (canonical), not `setData` (optimistic
+        // + needs settling). See `.wiki/decisions/canonical-vs-optimistic-writes.md`.
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev ? { ...prev, cards: { ...prev.cards, [saved.id]: saved } } : (prev as never),
         )
         return saved

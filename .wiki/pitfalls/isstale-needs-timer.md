@@ -1,13 +1,17 @@
 ---
 name: isstale-needs-timer
-description: isStale cannot be a computed of Date.now() — its dependencies don't change as time passes. Use a Signal with a setTimeout.
+description: Expiry cannot be a computed of Date.now() — its deps don't change as time passes. Use a Signal with a timer, and don't hand that timer a raw delay.
 type: pitfall
 covers:
   - packages/core/src/query/entry.ts:48-110
+  - packages/core/src/expiry-timer.ts
+  - packages/core/src/utils.ts
+  - packages/core/src/controller/root.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/cache.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/expiry-timers.test.ts }
   - { type: uses, target: ../entities/entry.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -59,12 +63,12 @@ Make `isStale` a `Signal<boolean>` set by a timer:
 readonly isStale: Signal<boolean> = signal(true)
 
 private scheduleStaleness(): void {
-  if (this.staleTimer != null) clearTimeout(this.staleTimer)
+  if (this.staleTimer != null) this.staleTimer()       # cancellation closure, not a handle
   if (this.staleTime > 0) {
-    this.staleTimer = setTimeout(() => {
+    this.staleTimer = scheduleExpiry(this.staleTime, () => {
       this.staleTimer = null
       if (!this.disposed) this.isStale.set(true)
-    }, this.staleTime)
+    })
   }
 }
 
@@ -97,6 +101,25 @@ isStaleNow(): boolean {
 }
 ```
 
+## The second half of the trap: don't hand the timer a raw delay (0.9)
+
+Having established that you need a timer, the obvious next line — `setTimeout(fn, this.staleTime)` — is wrong for any duration the *user* supplies, and it fails in the direction nobody checks. `setTimeout` takes a signed 32-bit delay: a non-finite value is coerced toward 1ms rather than "never", and a finite value above 2,147,483,647 overflows and also fires almost immediately. So the two settings that mean "keep this the longest" behave as the shortest:
+
+```ts
+staleTime: Infinity   # intent: never goes stale.   Actual (pre-0.9): stale in ~1ms
+gcTime: Infinity      # intent: cache for the session. Actual (pre-0.9): collected in ~1ms
+```
+
+This is a *silent* failure — data still renders, it just refetches constantly — which is why both survived until an audit. `scheduleExpiry` (`expiry-timer.ts`) is the fix and the only place a duration should meet a timer:
+
+- non-finite → schedules **nothing**, returns `null`. The callers already treat `timer == null` as "no expiry pending", so `Infinity` falls out as "never" with no special case at the call site.
+- finite → walked in chunks against an absolute deadline, so a long delay stays accurate across chunk boundaries.
+- returns a **cancellation closure** rather than a handle, so callers can't accidentally `clearTimeout` a chunked timer's stale inner id.
+
+Every user-supplied duration in core routes through it: the staleness timer (`Entry`, `InfiniteEntry`), the gc timer (`ClientEntry`, `InfiniteClientEntry`), the `refetchInterval` chain (`ClientEntry.armIntervalTick`, and the infinite twin), the retry backoff (`abortableSleep`, fed by user `retryDelay`), and `suspend({ maxIdle })` (`controller/root.ts`).
+
+`refetchInterval` is worth calling out, because it looks guarded and isn't quite: `resolveRefetchInterval` (`client.ts:60-91`) rejects non-finite and non-positive gaps and stops the chain loudly, which covers `Infinity` — but a *finite* gap above the 32-bit limit sails through that guard and overflows anyway, turning the longest interval you can ask for into a ~1ms poll storm. Rejecting `Infinity` is not the same as handling overflow; both halves need the scheduler.
+
 ## When to be careful
 
-Anywhere "is something stale / expired" is exposed as a reactive signal, you need a timer. `Date.now()`-derived computeds are inert.
+Anywhere "is something stale / expired" is exposed as a reactive signal, you need a timer. `Date.now()`-derived computeds are inert. And any timer whose delay comes from user config needs `scheduleExpiry`, not `setTimeout` — the failure mode is the opposite of what the setting says, and it is invisible.

@@ -1,4 +1,10 @@
-import { createRoot, defineController, defineMutation, type Mutation } from '@kontsedal/olas-core'
+import {
+  createRoot,
+  defineController,
+  defineMutation,
+  defineQuery,
+  type Mutation,
+} from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -488,31 +494,51 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
     _unregisterMutationById(id)
     const adapter = memoryAdapter()
     seed(adapter, 'test/mq/settle', { mutationId: id, runId: 'r1', variables: { a: 1 } })
-    defineMutation({ mutationId: id, mutate: async () => 'server-truth' })
+    let finishReplay!: (value: string) => void
+    defineMutation({
+      mutationId: id,
+      mutate: () =>
+        new Promise<string>((resolve) => {
+          finishReplay = resolve
+        }),
+    })
 
     const settled: Array<{ result: unknown; runId: string }> = []
-    let invalidatedWith: readonly unknown[] | null = null
-    const fakeQuery = { invalidate: (...args: unknown[]) => (invalidatedWith = args) }
+    const calls: string[] = []
+    const query = defineQuery({
+      key: (id: number) => ['user', id],
+      fetcher: async ({ deps }, id: number) => {
+        calls.push(`${deps.owner}:${id}`)
+        return id
+      },
+      staleTime: Infinity,
+    })
 
-    const def = defineController(() => ({}))
+    const def = defineController((ctx) => ({ sub: ctx.use(query, () => [1]) }))
+    const other = createRoot(def, { deps: { owner: 'other' } })
     const root = createRoot(def, {
-      deps: {},
+      deps: { owner: 'queue' },
       plugins: [
         mutationQueuePlugin({
           adapter,
           keyPrefix: 'test/mq/settle',
           onReplaySettle: (entry, result, api) => {
             settled.push({ result, runId: entry.runId })
-            api.invalidate(fakeQuery as never, ['user', 1])
+            api.invalidate(query, [1])
           },
         }),
       ],
     })
+    await Promise.all([root.waitForIdle(), other.waitForIdle()])
+    await vi.waitFor(() => expect(finishReplay).toBeTypeOf('function'))
+    calls.length = 0
+    finishReplay('server-truth')
     await settle()
     expect(settled).toEqual([{ result: 'server-truth', runId: 'r1' }])
-    expect(invalidatedWith).toEqual(['user', 1])
+    expect(calls).toEqual(['queue:1'])
     expect(adapter.store.size).toBe(0)
     root.dispose()
+    other.dispose()
   })
 
   test('replayNow() re-drives a pending entry in-session', async () => {

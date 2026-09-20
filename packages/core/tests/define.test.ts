@@ -19,7 +19,7 @@ describe('defineQuery.prefetch — no clients yet', () => {
 })
 
 describe('defineQuery.prefetch — multiple clients', () => {
-  test('warns once and resolves via an arbitrary root', async () => {
+  test('rejects an ambiguous prefetch and supports explicit root binding', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       let fetches = 0
@@ -33,11 +33,9 @@ describe('defineQuery.prefetch — multiple clients', () => {
       const r2 = createRoot(def, { deps: emptyDeps })
       await flush()
 
-      const value = await q.prefetch()
+      await expect(q.prefetch()).rejects.toThrow(/ambiguous/)
+      const value = await r1.bindQuery(q).prefetch()
       expect(typeof value).toBe('number')
-      expect(warn).toHaveBeenCalled()
-      const message = warn.mock.calls[0]?.[0]
-      expect(String(message)).toMatch(/ambiguous when multiple roots/)
       r1.dispose()
       r2.dispose()
     } finally {
@@ -71,7 +69,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
       expect(b.x.pages.value).toEqual(['k2p0'])
     })
     const baseline = calls.length
-    q.invalidate(1)
+    await a.bindQuery(q).invalidate(1)
     await vi.waitFor(() => expect(calls.length).toBeGreaterThan(baseline))
     expect(calls.filter((k) => k === 1).length).toBe(2)
     expect(calls.filter((k) => k === 2).length).toBe(1)
@@ -103,7 +101,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
       expect(b.x.pages.value).toEqual(['k2'])
     })
     const baseline = calls.length
-    q.invalidateAll()
+    await Promise.all([a.bindQuery(q).invalidateAll(), b.bindQuery(q).invalidateAll()])
     await vi.waitFor(() => expect(calls.length).toBe(baseline + 2))
     a.dispose()
     b.dispose()
@@ -166,7 +164,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
     await expect(q.prefetch()).rejects.toThrow(/before any root has subscribed/)
   })
 
-  test('prefetch with multiple roots warns and still resolves', async () => {
+  test('prefetch with multiple roots requires explicit binding', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const q = defineInfiniteQuery({
@@ -181,10 +179,8 @@ describe('defineInfiniteQuery — module-level methods', () => {
       const b = createRoot(def, { deps: emptyDeps })
       await vi.waitFor(() => expect(a.x.pages.value).toEqual(['page']))
 
-      await expect(q.prefetch()).resolves.toBe('page')
-      expect(warn).toHaveBeenCalled()
-      const message = warn.mock.calls[0]?.[0]
-      expect(String(message)).toMatch(/ambiguous when multiple roots/)
+      await expect(q.prefetch()).rejects.toThrow(/ambiguous/)
+      await expect(a.bindQuery(q).prefetch()).resolves.toBe('page')
       a.dispose()
       b.dispose()
     } finally {
@@ -216,7 +212,7 @@ describe('defineQuery.invalidate(...args)', () => {
       expect(b.x.data.value).toBe('B')
     })
     const baseline = calls.length
-    q.invalidate('a')
+    await a.bindQuery(q).invalidate('a')
     await vi.waitFor(() => expect(calls.length).toBeGreaterThan(baseline))
     expect(calls.filter((k) => k === 'a').length).toBe(2)
     expect(calls.filter((k) => k === 'b').length).toBe(1)

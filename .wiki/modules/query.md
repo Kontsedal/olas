@@ -3,6 +3,8 @@ name: query
 description: Local cache, shared queries (defineQuery + ctx.use), mutations, infinite queries, SSR.
 type: module
 covers:
+  - packages/core/src/query/actions.ts
+  - packages/core/src/expiry-timer.ts
   - packages/core/src/query/types.ts
   - packages/core/src/query/entry.ts
   - packages/core/src/query/local.ts
@@ -15,6 +17,9 @@ covers:
   - packages/core/src/query/plugin.ts
   - packages/core/src/query/index.ts
 edges:
+  - { type: tested-by, target: ../../packages/core/tests/query-isolation.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/expiry-timers.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/cache.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
@@ -30,7 +35,7 @@ edges:
   - { type: uses, target: ../entities/mutation.md }
   - { type: uses, target: ../decisions/canonical-vs-optimistic-writes.md }
   - { type: related, target: ../pitfalls/no-invalidator-still-refetches.md }
-last_verified: 2026-08-12
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -74,17 +79,17 @@ sub.data / .error / .status / ...       (computeds over current$)
 
 See `flows/query-subscription.md`.
 
-## How invalidation propagates across roots
+## Root-scoped invalidation
 
-A `Query` is module-scoped. Each `QueryClient` that has bound an entry for it registers itself in `query.__clients`. `query.invalidate(...args)` iterates `__clients` and calls `client.invalidate(query, args)` on each. On root dispose, the client removes itself from every touched query's set — this is the mechanism for test isolation. See `decisions/per-root-query-client.md`.
+A `Query` is module-scoped. Binding a handle or entry registers its client in `query.__clients`. Bound actions select that client; unbound calls fail when multiple clients are registered. Disposal unregisters the client. See `../decisions/per-root-query-client.md` and `query-isolation.test.ts`.
 
-`invalidate` / `invalidateAll` return a `Promise<void>` (`Promise.all` over the clients) that resolves when every triggered refetch has **settled** — the per-entry settle-promise `client.invalidateEntry` returns (immediately for a subscriber-less entry, which is marked stale but not refetched). It **never rejects**: a fetch error routes to the root's `onError` and stays on the entry's `error` signal, so `await query.invalidate(id)` is a safe sequencing point (spec §5.7). Ignore the return for fire-and-forget.
+`invalidate` / `invalidateAll` return a `Promise<void>` for the selected root. Fetch errors route to that root's `onError`; ambiguity and root disposal reject. A subscriber-less entry is marked stale without refetching. See spec §5.7 and §21.5.
 
 ## The imperative surface: read, and two kinds of write
 
 Beyond `ctx.use`, the handle carries the operations that reach a keyed entry from outside a subscription — `invalidate` / `invalidateAll` / `cancel` / `cancelAll` / `prefetch` / `setData`, and since 0.6.0 also:
 
-- **`peek(...keyArgs): T | undefined`** (`client.peekData`, `client.ts`) — synchronous read. Looks the entry up in `maps` **without** `bindEntry`, so a peek cannot mint the entry it is asking about, and reads through `.peek()` so it registers no reactive dependency. `undefined` conflates "no entry" with "not settled", deliberately: the caller that cares is guarding a write, and both answers mean *don't*. At the handle level it returns the first `__clients` member holding data — no throw on zero clients (unlike `prefetch`) and no multi-root warning, since a read is side-effect-free and the warning would fire from the hot paths peek exists for.
+- **`peek(...keyArgs): T | undefined`** (`client.peekData`, `client.ts`) — synchronous read. Looks the entry up in `maps` **without** `bindEntry`, so a peek cannot mint the entry it is asking about, and reads through `.peek()` so it registers no reactive dependency. `undefined` conflates "no entry" with "not settled", deliberately: the caller that cares is guarding a write, and both answers mean *don't*. The bound handle reads only its selected root. An unbound peek returns undefined for zero clients and throws on multiple clients.
 - **`write(...keyArgs, updater): void`** (`client.writeData`) — canonical write: `Entry.setData(updater, { track: false })`, so no snapshot record and no `hasPendingMutations` flip. Same entry-binding and the same `source: 'set'` event as `setData`; the devtools `source` is pinned to `'set'` rather than inheriting `'mutate'` from an ambient cause. Why this is a separate method rather than an option: `decisions/canonical-vs-optimistic-writes.md`.
 
 `setData` remains the **optimistic** write, and its snapshot is the caller's to settle — see `pitfalls/no-invalidator-still-refetches.md` for the `cancel()`-first rule that applies to it even when nothing invalidates the query.
@@ -102,7 +107,7 @@ Beyond `ctx.use`, the handle carries the operations that reach a keyed entry fro
 
 ## SSR
 
-`root.dehydrate()` walks `client.maps` and emits `{ key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'` (`client.ts:1035-1050`). Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map (`client.ts:972-996`); the first `bindEntry` matching a hash consumes the row and threads `initialData` into the new `Entry` (`client.ts:1121-1123`). The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data (`client.ts:1155-1157`) — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md`. For phase-2 streaming SSR, the same flow is driven row-by-row via `QueryClient.applyDehydratedEntry` (`client.ts:863-892`), which buffers into `hydratedData` if the entry isn't bound yet, or applies directly via `applyRemoteSetData` if it is.
+`root.dehydrate()` walks `client.maps`, skips queries without explicit IDs, and emits `{ id: queryId, key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'` (`client.ts:1035-1050`). Infinite queries and error/idle entries are intentionally skipped. `createRoot(def, { hydrate: state })` populates a per-client `hydratedData` map (`client.ts:972-996`); the first `bindEntry` matching both the explicit ID and key hash consumes the row and threads `initialData` into the new `Entry` (`client.ts:1121-1123`). The `bindEntry` site ALSO emits a `SetDataEvent` with `source: 'fetch'` when the new entry consumes hydrated data (`client.ts:1155-1157`) — without that, plugins observing fetch results (entities, etc.) would miss every hydrated row, since `Entry.applySuccess` never runs for entries that start with `initialData`. See `flows/ssr.md`. For phase-2 streaming SSR, the same flow is driven row-by-row via `QueryClient.applyDehydratedEntry` (`client.ts:863-892`), which buffers into `hydratedData` if the entry isn't bound yet, or applies directly via `applyRemoteSetData` if it is.
 
 ## Plugin slot
 
@@ -128,3 +133,7 @@ Canonical consumers: `modules/cross-tab.md` (broadcast `setData` across tabs), `
 - `isStale` is a `Signal` with a `setTimeout`, not a computed. See `../pitfalls/isstale-needs-timer.md`.
 - Mutation `latest-wins` rollback ordering. See `../pitfalls/latest-wins-rollback-order.md`.
 - Mutation's `raceAbort` defends against misbehaving mutate fns. See `../pitfalls/raceabort-for-misbehaving-mutate.md`.
+
+## 0.9 identity and lifetime guarantees
+
+Bound query operations target one root; unbound calls fail if multiple roots have touched the definition. SSR serializes only explicit query IDs. Cache keys recursively tag all values, preventing user strings/objects from imitating special values. Stale timers skip Infinity and split long finite delays into platform-safe chunks. See the three regression files linked above and SPEC §21.5.

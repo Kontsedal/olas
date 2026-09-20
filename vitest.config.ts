@@ -28,8 +28,8 @@ export default defineConfig({
     pool: 'forks',
     coverage: {
       provider: 'v8',
-      include: ['packages/*/src/**/*.ts'],
-      exclude: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/index.ts'],
+      include: ['packages/*/src/**/*.{ts,tsx}'],
+      exclude: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.d.ts'],
       // Ratchet: seeded a few points below the current measured levels
       // (~83 stmts / 71 branch / 86 funcs / 87 lines as of the T7.2 pass) so CI
       // fails on a real regression without flaking on measurement jitter. Raise

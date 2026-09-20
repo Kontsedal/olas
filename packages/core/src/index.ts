@@ -65,6 +65,7 @@ export type {
 export { defineInfiniteQuery, defineQuery } from './query/define'
 export type {
   InfiniteQuery,
+  InfiniteQueryActions,
   InfiniteQuerySpec,
   InfiniteQuerySubscription,
 } from './query/infinite'
@@ -103,6 +104,7 @@ export type {
   LocalCache,
   NetworkMode,
   Query,
+  QueryActions,
   QuerySpec,
   QuerySubscription,
   RefetchInterval,

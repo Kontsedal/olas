@@ -56,6 +56,12 @@ The sub-path packages each have their own typed surfaces; their full reference l
 
 # @kontsedal/olas-core
 
+## Bound query operations (0.9)
+
+`ctx.bindQuery(query)` and `root.bindQuery(query)` return `QueryActions<Args, T>` (or `InfiniteQueryActions<Args, TPage, TItem>`). Methods target only that root. Binding does not subscribe or fetch; bound prefetch works before subscriptions. Bound operations fail after root disposal. Module-scoped helpers reject/throw when multiple roots have touched the definition.
+
+SSR serialization requires an explicit stable `queryId`; anonymous queries fetch on the client. See [0.9 migration](MIGRATING.md#upgrading-from-08-to-09).
+
 ## Signals
 
 The reactive substrate. A signal is a typed cell with a value; reads inside `computed` or `effect` are auto-tracked, writes notify subscribers. Wraps `@preact/signals-core`.
@@ -299,6 +305,7 @@ Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (the latter for
 
 ```ts
 type Root<Api> = Api & {
+  bindQuery: Ctx['bindQuery']
   dispose(): void
   suspend(options?: { maxIdle?: number }): void
   resume(): void
@@ -530,7 +537,7 @@ type Query<Args extends unknown[], T> = {
 }
 ```
 
-- `invalidate(...args)` — mark a specific keyed entry stale + refetch if it has subscribers. Awaitable: resolves when the refetch it triggered settles, never rejects (spec §5.7).
+- `invalidate(...args)` — mark a specific keyed entry stale + refetch if it has subscribers. Awaitable: resolves when the refetch it triggered settles or is discarded; ambiguity/disposed-root errors reject (spec §5.7).
 - `invalidateAll()` — same, every entry of this query.
 - `setData(...args, updater)` — **optimistic** patch of one key's cached data. Returns a `Snapshot` the caller must settle — normally by returning it from a mutation's `onMutate`, which finalizes on success and rolls back on error. Until it is settled the entry reports `hasPendingMutations: true` (spec §6.4).
 - `write(...args, updater)` — **canonical** patch of one key's cached data: no snapshot, no rollback handle, `hasPendingMutations` untouched. This is the write for data that is already true (a server push folded into the cache, a realtime event, a cross-view sync). Reach for it whenever there is no mutation to settle a snapshot — a fire-and-forget `setData` leaks one live snapshot per call (spec §6.4).
@@ -666,6 +673,7 @@ import { defineController } from '@kontsedal/olas-core'
 import { userQuery } from './queries'
 
 const profile = defineController((ctx, props: { id: string }) => {
+  const users = ctx.bindQuery(userQuery) // root-scoped cache operations
   const updateName = ctx.mutation<string, void>({
     name: 'updateName',
     mutate: async (newName, signal) => {
@@ -675,7 +683,7 @@ const profile = defineController((ctx, props: { id: string }) => {
       if (!res.ok) throw new Error('save failed')
     },
     onMutate: (newName) =>
-      userQuery.setData(props.id, (prev) => {
+      users.setData(props.id, (prev) => {
         if (!prev) throw new Error('updateName before user loaded')
         return { ...prev, name: newName }
       }),

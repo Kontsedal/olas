@@ -208,12 +208,17 @@ function useRealtimePatcher<TEvent extends { type: string }>(
 }
 
 // usage
+const newsfeed = ctx.bindQuery(newsfeedQuery)
+const comments = ctx.bindQuery(commentsQuery)
+
 useRealtimePatcher<FeedEvent>(ctx, 'feed-events', {
-  'like-added': (ev) => newsfeedQuery.setData('top-stories', (pages) => /* patch */),
-  'comment-added': (ev) => commentsQuery.setData(ev.postId, (prev) => [...(prev ?? []), ev.comment]),
-  'post-deleted': () => newsfeedQuery.invalidateAll(),
+  'like-added': (ev) => newsfeed.write('top-stories', (pages) => /* patch */),
+  'comment-added': (ev) => comments.write(ev.postId, (prev) => [...(prev ?? []), ev.comment]),
+  'post-deleted': () => newsfeed.invalidateAll(),
 })
 ```
+
+Two things are load-bearing here. **`ctx.bindQuery`** scopes every operation to this root — a server handling concurrent requests has one root per request, and an unbound `newsfeedQuery.write(...)` would refuse to guess which one (§21.5). **`write`, not `setData`** — a realtime event is server truth that already happened, so there is nothing to roll back. `setData` opens an optimistic snapshot that someone must settle; calling it fire-and-forget leaks one live snapshot per event and wedges `hasPendingMutations` true forever. `setData` is for the optimistic half of a mutation; `write` is for data that is already true.
 
 Requires a `realtime` service in deps with `subscribe(channel, handler)`. The framework primitive is `ctx.effect` + `setData`; this just wraps the dispatching boilerplate.
 
@@ -377,15 +382,19 @@ const appController = defineController((ctx) => {
 
 ### Pattern C — pre-fetching on route enter
 
-Use the router's loader / `beforeLoad` hook to call `query.prefetch(...)` — the data lands in the cache before the component mounts, so `ctx.use` returns it synchronously. (See "structural sharing" in §6 of `SPEC.md` for the ref-stability guarantees this gives you.)
+Use the router's loader / `beforeLoad` hook to prefetch — the data lands in the cache before the component mounts, so `ctx.use` returns it synchronously. (See "structural sharing" in §6 of `SPEC.md` for the ref-stability guarantees this gives you.)
+
+Prefetch through `root.bindQuery(query)` rather than the bare definition, so the fetch lands in *this* root's cache:
 
 ```tsx
 // TanStack Router route definition
 const userRoute = createRoute({
   path: '/users/$userId',
-  loader: ({ params }) => userQuery.prefetch(params.userId),
+  loader: ({ params }) => root.bindQuery(userQuery).prefetch(params.userId),
 })
 ```
+
+On the client there is usually one root and the bare `userQuery.prefetch(...)` still works, but the bound form is the one that survives SSR: a server handling concurrent requests has a root per request, and an unbound prefetch there rejects rather than guessing whose cache to warm.
 
 Combined with `useQuery(sub, { suspense: true })`, the suspense fallback is skipped because data is already in cache by the time React reads it.
 

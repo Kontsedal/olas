@@ -9,7 +9,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/mutation-queue/tests/plugin.test.ts }
   - { type: uses, target: persist.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-19
 confidence: high
 ---
 
@@ -42,3 +42,7 @@ A `QueryClientPlugin` that persists `defineMutation({ persist: true })` runs to 
 ## Limitations
 
 Cross-`mutationId` causal ordering is NOT guaranteed (different ids replay in parallel; cross-tab order isn't coordinated) — model dependent steps under one `mutationId` or make the server order-tolerant. Tracked in `BACKLOG.md`.
+
+## Replay invalidation scope (0.9)
+
+`ReplaySettleApi.invalidate(query, callArgs)` delegates to the owning plugin API, selecting only that root. It uses original fetcher arguments and works for anonymous definitions too. The replay reconciliation test in `packages/mutation-queue/tests/plugin.test.ts` verifies that another live root is not refetched.

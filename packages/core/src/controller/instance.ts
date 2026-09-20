@@ -511,6 +511,11 @@ export class ControllerInstance {
         return cache
       },
 
+      bindQuery(query: any): any {
+        assertLive('bindQuery')
+        return self.rootShared.queryClient.bindQuery(query)
+      },
+
       use(query: any, keyOrOptions?: any): any {
         assertLive('use')
         const brand = (query as { __olas?: string }).__olas

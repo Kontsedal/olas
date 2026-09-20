@@ -36,7 +36,7 @@ const root = createRoot(appController, {
 })
 ```
 
-Tab A calls `userQuery.setData('me', (prev) => ({ ...prev, name: 'New' }))` — Tab B's subscribers see the new value on the next signal flush. No fetch fires in Tab B.
+Tab A calls `users.write('me', (prev) => ({ ...prev, name: 'New' }))` (`users = ctx.bindQuery(userQuery)`) — Tab B's subscribers see the new value on the next signal flush. No fetch fires in Tab B.
 
 ## API
 

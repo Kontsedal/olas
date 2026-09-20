@@ -35,6 +35,8 @@ const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
 
 export const archiveController = defineController(
   (ctx: Ctx) => {
+    const archiveQueryActions = ctx.bindQuery(archiveQuery)
+    const boardQueryActions = ctx.bindQuery(boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
@@ -52,14 +54,20 @@ export const archiveController = defineController(
           signal,
         )
         // Surgically drop the restored card from the archive pages cache.
-        archiveQuery.setData(activeBoardId.peek(), (prev) =>
-          (prev ?? []).map((page) => ({
-            ...page,
-            items: page.items.filter((c) => c.id !== vars.cardId),
-          })),
-        )
+        // Infinite queries have no canonical `write` yet (see BACKLOG), so this
+        // settles its own snapshot with `.finalize()` — the server already
+        // accepted the restore, so committing is correct and leaves nothing
+        // pending. Without the settle this leaks a live snapshot per restore.
+        archiveQueryActions
+          .setData(activeBoardId.peek(), (prev) =>
+            (prev ?? []).map((page) => ({
+              ...page,
+              items: page.items.filter((c) => c.id !== vars.cardId),
+            })),
+          )
+          .finalize()
         // Patch the live board cache so the card reappears in the chosen column.
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev
             ? {
                 ...prev,

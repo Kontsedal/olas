@@ -1,10 +1,17 @@
 import { __currentCauseId, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
+import { scheduleExpiry } from '../expiry-timer'
 import { type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
+import { createInfiniteQueryActions, createQueryActions } from './actions'
 import { Entry } from './entry'
 import { subscribeReconnect, subscribeWindowFocus } from './focus-online'
-import { InfiniteEntry, type InfiniteQuery, type InfiniteQuerySpec } from './infinite'
+import {
+  InfiniteEntry,
+  type InfiniteQuery,
+  type InfiniteQueryActions,
+  type InfiniteQuerySpec,
+} from './infinite'
 import { stableHash } from './keys'
 import {
   type GcEvent,
@@ -18,6 +25,7 @@ import type {
   DefaultQueryOptions,
   DehydratedState,
   Query,
+  QueryActions,
   QuerySpec,
   RefetchInterval,
   RetryDelay,
@@ -83,13 +91,13 @@ function resolveRefetchInterval<T>(
 
 type AnyQuery = Query<any, any> & {
   readonly __spec: QuerySpec<any, any>
-  readonly __id: string
+  readonly __id: string | undefined
   __clients: Set<QueryClient>
 }
 
 type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
   readonly __spec: InfiniteQuerySpec<any, any, any, any>
-  readonly __id: string
+  readonly __id: string | undefined
   __clients: Set<QueryClient>
 }
 
@@ -111,8 +119,10 @@ export class ClientEntry<T> {
   readonly client: QueryClient
   readonly query: AnyQuery
   private subscriberCount = 0
-  private gcTimer: ReturnType<typeof setTimeout> | null = null
-  private intervalTimer: ReturnType<typeof setTimeout> | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = no gc pending. */
+  private gcTimer: (() => void) | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = chain stopped. */
+  private intervalTimer: (() => void) | null = null
   private unsubFocus: (() => void) | null = null
   private unsubOnline: (() => void) | null = null
   private gcTime: number
@@ -222,7 +232,7 @@ export class ClientEntry<T> {
   acquire(): void {
     this.subscriberCount += 1
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
     if (this.subscriberCount === 1) {
@@ -244,10 +254,10 @@ export class ClientEntry<T> {
       if (this.gcTime === 0) {
         this.client.dropEntry(this)
       } else {
-        this.gcTimer = setTimeout(() => {
+        this.gcTimer = scheduleExpiry(this.gcTime, () => {
           this.gcTimer = null
           this.client.dropEntry(this)
-        }, this.gcTime)
+        })
       }
     }
   }
@@ -275,7 +285,12 @@ export class ClientEntry<T> {
       this.intervalTimer = null
       return
     }
-    this.intervalTimer = setTimeout(() => {
+    // `scheduleExpiry` rather than a raw `setTimeout`: `resolveRefetchInterval`
+    // rejects non-finite gaps, but a FINITE one above the signed 32-bit limit
+    // still overflows into an immediate fire — a ~1ms poll storm out of the
+    // longest interval you can ask for. Chunking is the same fix staleness and
+    // gc use (§21.5).
+    this.intervalTimer = scheduleExpiry(ms, () => {
       // Re-arm BEFORE the guards and the fetch, so the cadence stays a
       // metronome: gap N+1 is measured from this tick, not from whenever the
       // fetch it kicks off happens to settle. `setInterval` behaved that way
@@ -299,12 +314,12 @@ export class ClientEntry<T> {
       this.entry.startFetch().catch(() => {
         /* error already captured on entry */
       })
-    }, ms)
+    })
   }
 
   stopIntervalTimer(): void {
     if (this.intervalTimer != null) {
-      clearTimeout(this.intervalTimer)
+      this.intervalTimer()
       this.intervalTimer = null
     }
   }
@@ -340,10 +355,10 @@ export class ClientEntry<T> {
       })
       return
     }
-    this.gcTimer = setTimeout(() => {
+    this.gcTimer = scheduleExpiry(this.gcTime, () => {
       this.gcTimer = null
       this.client.dropEntry(this)
-    }, this.gcTime)
+    })
   }
 
   /** Refetch on focus / reconnect, but only if the data is actually stale. */
@@ -359,7 +374,7 @@ export class ClientEntry<T> {
 
   dispose(): void {
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
     this.stopIntervalTimer()
@@ -375,8 +390,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   readonly client: QueryClient
   readonly query: AnyInfiniteQuery
   private subscriberCount = 0
-  private gcTimer: ReturnType<typeof setTimeout> | null = null
-  private intervalTimer: ReturnType<typeof setTimeout> | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = no gc pending. */
+  private gcTimer: (() => void) | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = chain stopped. */
+  private intervalTimer: (() => void) | null = null
   private gcTime: number
   /** See `ClientEntry.nextIntervalMs` — same closure, same variance reason. */
   private nextIntervalMs: (() => number | null) | undefined
@@ -434,7 +451,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   acquire(): void {
     this.subscriberCount += 1
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
     if (this.subscriberCount === 1 && this.nextIntervalMs !== undefined) {
@@ -455,12 +472,12 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
           this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
         )
       } else {
-        this.gcTimer = setTimeout(() => {
+        this.gcTimer = scheduleExpiry(this.gcTime, () => {
           this.gcTimer = null
           this.client.dropInfiniteEntry(
             this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
           )
-        }, this.gcTime)
+        })
       }
     }
   }
@@ -482,7 +499,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       this.intervalTimer = null
       return
     }
-    this.intervalTimer = setTimeout(() => {
+    this.intervalTimer = scheduleExpiry(ms, () => {
       this.armIntervalTick()
       // Same visibility-gate as the regular `ClientEntry.startIntervalTimer`.
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
@@ -494,12 +511,12 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       this.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
-    }, ms)
+    })
   }
 
   private stopIntervalTimer(): void {
     if (this.intervalTimer != null) {
-      clearTimeout(this.intervalTimer)
+      this.intervalTimer()
       this.intervalTimer = null
     }
   }
@@ -517,17 +534,17 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       })
       return
     }
-    this.gcTimer = setTimeout(() => {
+    this.gcTimer = scheduleExpiry(this.gcTime, () => {
       this.gcTimer = null
       this.client.dropInfiniteEntry(
         this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
       )
-    }, this.gcTime)
+    })
   }
 
   dispose(): void {
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
     this.stopIntervalTimer()
@@ -619,6 +636,9 @@ export class QueryClient {
   private makePluginApi(): QueryClientPluginApi {
     const self = this
     return {
+      invalidate(query, args) {
+        return self.bindQuery(query).invalidate(...args)
+      },
       applyRemoteSetData(queryId, keyArgs, data) {
         self.applyRemoteSetData(queryId, keyArgs, data)
       },
@@ -1034,7 +1054,20 @@ export class QueryClient {
 
   dehydrate(): DehydratedState {
     const entries: DehydratedState['entries'] = []
+    let skipped = 0
     for (const [query, map] of this.maps) {
+      // Registration order is not a stable identity across server/client bundles.
+      if (query.__id === undefined) {
+        // Silently shipping fewer entries than the server actually cached is a
+        // safe outcome (the client refetches) but an invisible one — the only
+        // symptom is a slower page. Count the entries that WOULD have made the
+        // payload and say so once, so the missing `queryId` presents as a
+        // config warning rather than as a performance mystery. Spec §15.
+        for (const ce of map.values()) {
+          if (ce.entry.status.peek() === 'success') skipped++
+        }
+        continue
+      }
       for (const ce of map.values()) {
         if (ce.entry.status.peek() === 'success') {
           entries.push({
@@ -1045,6 +1078,14 @@ export class QueryClient {
           })
         }
       }
+    }
+    if (__DEV__ && skipped > 0) {
+      console.warn(
+        `[olas] dehydrate() skipped ${skipped} cached ${skipped === 1 ? 'entry' : 'entries'} ` +
+          'belonging to queries without a `queryId`. SSR serialization needs an explicit, stable ' +
+          'id shared by the server and client bundles — add `queryId: "<unique-string>"` to those ' +
+          'specs. Until then the client refetches them after hydration.',
+      )
     }
     return { version: 1, entries }
   }
@@ -1105,6 +1146,28 @@ export class QueryClient {
     throw err
   }
 
+  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
+  bindQuery<Args extends unknown[], TPage, TItem>(
+    query: InfiniteQuery<Args, TPage, TItem>,
+  ): InfiniteQueryActions<Args, TPage, TItem>
+  bindQuery(
+    source: Query<any, any> | InfiniteQuery<any, any, any>,
+  ): QueryActions<any, any> | InfiniteQueryActions<any, any, any> {
+    const query = source as AnyQuery | AnyInfiniteQuery
+    const getClient = () => {
+      if (this.disposed) throw new Error('[olas] Bound query operation called after root disposal')
+      return this
+    }
+    getClient()
+    query.__clients.add(this)
+    if (query.__olas === 'infiniteQuery') {
+      this.touchedInfiniteQueries.add(query)
+      return createInfiniteQueryActions(query, getClient)
+    }
+    this.touchedQueries.add(query)
+    return createQueryActions(query, getClient)
+  }
+
   bindEntry<Args extends unknown[], T>(query: Query<Args, T>, args: Args): ClientEntry<T> {
     const internal = query as AnyQuery
     let map = this.maps.get(internal)
@@ -1118,9 +1181,11 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as ClientEntry<T> | undefined
     if (!entry) {
-      const hkey = hydrationKey(internal.__id, hash)
-      const hydrated = this.hydratedData.get(hkey) as { data: T; lastUpdatedAt: number } | undefined
-      if (hydrated) this.hydratedData.delete(hkey)
+      const hkey = internal.__id === undefined ? undefined : hydrationKey(internal.__id, hash)
+      const hydrated = (hkey === undefined ? undefined : this.hydratedData.get(hkey)) as
+        | { data: T; lastUpdatedAt: number }
+        | undefined
+      if (hkey !== undefined && hydrated) this.hydratedData.delete(hkey)
       // Build the fetcher-success emitter here so `emitSetData` can stay
       // `private` — `ClientEntry` doesn't reach back into the client to call
       // it; the closure captures (query, keyArgs, this) in this scope and

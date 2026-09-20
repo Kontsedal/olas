@@ -9,10 +9,14 @@ import type {
   ItemInitial,
 } from '../forms/form-types'
 import type { Validator } from '../forms/types'
-import type { InfiniteQuery, InfiniteQuerySubscription } from '../query/infinite'
+import type {
+  InfiniteQuery,
+  InfiniteQueryActions,
+  InfiniteQuerySubscription,
+} from '../query/infinite'
 import type { Mutation, MutationSpec } from '../query/mutation'
 import type { QueryClientPlugin } from '../query/plugin'
-import type { LocalCache, Query, QuerySubscription, UseOptions } from '../query/types'
+import type { LocalCache, Query, QueryActions, QuerySubscription, UseOptions } from '../query/types'
 import type { Scope } from '../scope'
 import type { Computed, ReadSignal, Signal } from '../signals/types'
 
@@ -198,6 +202,12 @@ export type Ctx<TDeps = AmbientDeps> = {
       initialData?: T | undefined
     },
   ): LocalCache<T>
+
+  /** Bind imperative query operations to this root without subscribing or fetching. */
+  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
+  bindQuery<Args extends unknown[], TPage, TItem>(
+    query: InfiniteQuery<Args, TPage, TItem>,
+  ): InfiniteQueryActions<Args, TPage, TItem>
 
   // Select-projecting overload — picked when the options object has a
   // required `select` field. `key`'s return is `readonly [...Args]` so
@@ -435,6 +445,8 @@ export type RootOptions<TDeps> = {
  * devtools (`__debug`). Spec §20.8.
  */
 export type Root<Api> = Api & {
+  /** Bind imperative query operations to this root without subscribing or fetching. */
+  bindQuery: Ctx['bindQuery']
   dispose(): void
   suspend(options?: { maxIdle?: number }): void
   resume(): void

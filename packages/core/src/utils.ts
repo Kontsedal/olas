@@ -1,3 +1,4 @@
+import { scheduleExpiry } from './expiry-timer'
 /**
  * True iff `err` looks like an AbortError. Matches the standard `DOMException`
  * shape thrown by `AbortController` AND any object whose `name === 'AbortError'`
@@ -17,9 +18,16 @@ export function isAbortError(err: unknown): boolean {
 }
 
 /**
- * `setTimeout` wrapped in a promise that rejects with `AbortError` if the
- * passed signal fires. Internal — used by the retry loops in `Entry`,
- * `InfiniteEntry`, and `Mutation` so a slow backoff never blocks a supersede.
+ * A sleep that rejects with `AbortError` if the passed signal fires. Internal —
+ * used by the retry loops in `Entry`, `InfiniteEntry`, and `Mutation` so a slow
+ * backoff never blocks a supersede.
+ *
+ * The delay comes from user `retryDelay`, so it goes through `scheduleExpiry`
+ * rather than a raw `setTimeout`: a backoff above the signed 32-bit limit would
+ * otherwise overflow and resolve immediately, turning the longest backoff into
+ * a retry storm. A non-finite delay schedules nothing and simply waits for the
+ * abort — "back off until something cancels me", which is the only sensible
+ * reading of `retryDelay: Infinity`.
  */
 export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -27,12 +35,12 @@ export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
       reject(abortReason(signal))
       return
     }
-    const timer = setTimeout(() => {
+    const cancel = scheduleExpiry(ms, () => {
       signal.removeEventListener('abort', onAbort)
       resolve()
-    }, ms)
+    })
     const onAbort = () => {
-      clearTimeout(timer)
+      cancel?.()
       signal.removeEventListener('abort', onAbort)
       reject(abortReason(signal))
     }

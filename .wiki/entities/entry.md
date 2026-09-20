@@ -3,14 +3,16 @@ name: entry
 description: Per-cache-key state machine — race protection, retry, snapshot stack, staleness timer.
 type: entity
 covers:
+  - packages/core/src/expiry-timer.ts
   - packages/core/src/query/entry.ts
 edges:
+  - { type: tested-by, target: ../../packages/core/tests/expiry-timers.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/cache.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../modules/signals.md }
   - { type: related, target: ../pitfalls/isstale-needs-timer.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -90,3 +92,9 @@ The stack is what enables positional rollback: when top-of-stack mutation B roll
 ## Hydrated entries
 
 When `client.bind(...)` finds a query already populated from `dehydrate`/`hydrate`, the entry constructor seeds `status: 'success'` and derives `isStale` from `Date.now() - lastUpdatedAt` (see `entry.ts:88-110`). If the data is fresh enough that the remaining stale window > 0, the constructor also schedules a partial-length `setTimeout` so the entry flips to stale at the correct wall-clock moment — preserving stale-time semantics across the SSR boundary.
+
+## Expiry scheduling (0.9)
+
+`scheduleExpiry` (`expiry-timer.ts`) returns a cancellation closure, or `null` for a non-finite delay — `null` is the "nothing scheduled" state the callers already check for, so `Infinity` means *no timer*, not a clamped one. Finite delays beyond 2,147,483,647 ms are walked in chunks against an absolute deadline. Fetch success, initial hydration and streaming hydration share this scheduler; infinite queries use it too. Disposal invokes the closure, clearing the current chunk. Explicit invalidation still marks an `Infinity` entry stale.
+
+The same scheduler backs the **gc** timer in `ClientEntry` / `InfiniteClientEntry` (`client.ts:256`, `client.ts:352`, `client.ts:468`, `client.ts:530`), which is why `gcTime: Infinity` retains a released entry for the life of the root. Both timers had the same defect before 0.9: a bare `setTimeout` clamps an out-of-range delay to ~1ms, so the two settings that mean "keep this the longest" behaved as the shortest. See `pitfalls/isstale-needs-timer.md`. Covered by `packages/core/tests/expiry-timers.test.ts`.

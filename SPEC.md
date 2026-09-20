@@ -491,7 +491,7 @@ Internally these all dispatch to the root's query client.
 
 **Invalidate semantics.** `invalidate` / `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry — one kept warm by `gcTime` after its last subscriber left, or created by `prefetch` — is marked stale and *not* refetched; the next subscriber triggers the fetch. This matches TanStack and avoids waking data nobody is watching.
 
-Both return a `Promise<void>` that resolves when the refetch(es) they trigger have **settled** — immediately (already resolved) for a subscriber-less entry, since nothing refetched; for `invalidateAll`, when *every* subscribed entry's refetch settles. The promise **never rejects**: a fetch error is reported through the root's `onError` (and left on the entry's `error` signal), so `await query.invalidate(id)` is safe to use as a sequencing point — "the refresh I asked for has completed" — without a `try/catch`. Ignore the return for fire-and-forget. (This matches TanStack's `invalidateQueries`, which resolves once refetching completes.)
+Both return a `Promise<void>` that resolves when the refetches they trigger settle or are discarded, or immediately for entries without subscribers (which are marked stale only). Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `ctx.bindQuery(query)` or `root.bindQuery(query)` to select a root (§21.5). Resolution alone does not guarantee reconciliation if a request was superseded (§6.4).
 
 **Deep updates.** `setData` returns the new value; you build it however you want. Two canonical patterns:
 
@@ -554,6 +554,7 @@ The contract:
 
 - **The gap for tick N+1 is resolved at tick N**, before that tick's fetch starts — so a change in data shows up in the gap *after* the fetch that produced it. The timer is a self-rescheduling chain, not a settle-chained delay: a fetch slower than the gap doesn't stretch the cadence, and a tick that lands while a fetch is already in flight is skipped (it joins the running fetch rather than aborting it).
 - **The gap must be a positive finite number, in either form.** `0`, `NaN`, negative and `Infinity` stop the timer for that entry (dev builds warn) rather than degenerating into a fetch-per-macrotask loop. This is a rule about the *resolved gap*, so it binds a literal `refetchInterval: 0` exactly as it binds a thunk returning `0`. Once stopped, the timer restarts only on the entry's next **0→1 subscriber transition** — a subscriber joining an entry that still has others does not re-arm it.
+- **A valid gap above the platform timer limit is scheduled in chunks, not clamped.** Rejecting `Infinity` is not the same as handling overflow: a finite gap larger than 2,147,483,647 ms passes the rule above and would still overflow a raw `setTimeout` into an immediate fire — the longest interval you can ask for behaving as the shortest. The chain goes through the shared expiry scheduler (§21.5) like every other user-supplied duration.
 - **A thunk must not throw.** A throw is handled like a bad gap — the chain stops with a dev warning that names the throw and carries the error. It is caught rather than left to escape because the resolution happens *before* the re-arm inside the timer callback: unguarded, one throw would end polling for that entry permanently with nothing but an uncaught error in a timer to show for it.
 - **The first resolution is synchronous, at acquire.** The 0→1 subscriber arms the chain before the initial fetch can settle, so a thunk's first call receives `undefined` — or hydrated/cached data when the entry already holds some. It must handle that argument.
 - **The thunk is not reactive.** Reading a signal inside it yields that tick's value and registers no dependency; changing that signal reschedules nothing. Drive the decision off the `data` argument.
@@ -779,6 +780,8 @@ What still cancels a detached run:
 Both are the app explicitly saying "drop this one". Dispose only says "this screen is gone", which is not the same claim.
 
 **The callbacks run after the controller is torn down.** That is the whole point — it is how the `onSuccess` invalidation lands — but it means they must not touch what dispose destroyed. Keep them to client-level work: `query.invalidate()`, a toast, a logger. Not the controller's signals, fields or children. If the whole **root** is gone the run still completes, but its cache writes no-op, because the client has deregistered itself from every query.
+
+**A non-detached run whose `mutate` already resolved is finalized, not rolled back.** If the abort lands in the gap between the promise resolving and its continuation, the work has already happened — rolling back would write a known-stale value into a cache that outlives the mutation. So the optimistic value is committed as server truth. The consequence worth knowing: `onSuccess` does *not* run on that path, so the invalidation that would normally reconcile the optimistic guess against the server's normalized record never fires. Nothing marks the entry stale either, which means on a query with `staleTime: Infinity` the committed guess is what the cache holds until something invalidates it explicitly. `detached: true` is the way to avoid the whole situation: the run finishes normally and `onSuccess` lands.
 
 Reach for it on writes whose completion the user has already been promised, and leave it off everything else.
 
@@ -1556,7 +1559,7 @@ const root = createRoot(rootController, {
 
 `dehydrate()` only serializes the **query client cache** (data + lastUpdatedAt per entry). Controller state isn't serialized — controllers reconstruct from their props on the client. **Infinite queries are not dehydrated** — their page arrays are skipped, so a server-rendered infinite list refetches (its currently-loaded pages, §5.7) on the client after hydration. This is a known limitation, not a bug; see `BACKLOG.md`.
 
-Each serialized entry also carries the query's **stable identity** (`id` — the `queryId` when set, otherwise an auto-assigned registration id) alongside its key. Hydration is namespaced by `id + keyHash`, so a client subscriber of query B can't adopt query A's payload merely because their `key()` outputs hash the same. Consequences: (1) a **hand-authored** `DehydratedState` (a server constructing the payload directly rather than via `dehydrate()`) must set `id` per entry to the target query's `queryId`, which means such a query needs an explicit `queryId`; (2) auto-ids are stable across a server/client pair evaluating the same bundle in the same order — if they drift (code-splitting), hydration degrades safely to a cache miss + refetch, never a cross-query adoption. Set an explicit `queryId` for a hard guarantee.
+Each serialized entry carries the query's **explicit stable identity** (`id = queryId`) alongside its key. Only queries with a `queryId` are dehydrated; in dev, `dehydrate()` warns once per call naming how many cached entries it had to skip for want of one. IDs must be unique per query and identical in server/client bundles. Anonymous queries are omitted and fetch on the client; registration order never identifies hydrated data. Hydration is namespaced by `id + keyHash`, so distinct query IDs cannot adopt one another's data when their keys match. Hand-authored payloads must use the target query's explicit ID. Legacy auto-ID entries cannot hydrate anonymous queries.
 
 ---
 
@@ -1637,14 +1640,17 @@ function useRealtimePatcher<TEvent>(
 }
 
 // usage
+const newsfeed = ctx.bindQuery(newsfeedQuery)
+const comments = ctx.bindQuery(commentsQuery)
+
 useRealtimePatcher(ctx, `feed-events`, {
-  'like-added': (ev) => newsfeedQuery.setData('top-stories', (pages) => /* patch */),
-  'comment-added': (ev) => commentsQuery.setData(ev.postId, (prev) => [...prev ?? [], ev.comment]),
-  'post-deleted': (ev) => newsfeedQuery.invalidateAll(),
+  'like-added': (ev) => newsfeed.write('top-stories', (pages) => /* patch */),
+  'comment-added': (ev) => comments.write(ev.postId, (prev) => [...prev ?? [], ev.comment]),
+  'post-deleted': (ev) => newsfeed.invalidateAll(),
 })
 ```
 
-Ship this composable in user code. The framework primitive is `ctx.effect` + `setData`; this wraps the typical dispatching boilerplate.
+Ship this composable in user code. The framework primitive is `ctx.effect` + `write`; this wraps the typical dispatching boilerplate. Note both halves: `ctx.bindQuery` scopes the writes to this root (§21.5), and `write` rather than `setData` because a realtime event is server truth with nothing to roll back — a fire-and-forget `setData` leaves a live snapshot per event (§6.4).
 
 ### Gesture / transient UI state
 
@@ -1932,8 +1938,9 @@ test('liking a post optimistically updates then rolls back on error', async () =
   const api = { likePost: vi.fn().mockRejectedValue(new Error('500')) }
   const ctrl = createTestController(postController, { deps: { api }, props: { id: 'p1' } })
 
-  // seed cache
-  postQuery.setData('p1', () => ({ id: 'p1', likes: 10, liked: false }))
+  // seed cache — `write`, not `setData`: a seed is not an optimistic guess,
+  // and a fire-and-forget `setData` would leave a snapshot pending (§6.4)
+  ctrl.bindQuery(postQuery).write('p1', () => ({ id: 'p1', likes: 10, liked: false }))
 
   await expect(ctrl.like.run()).rejects.toThrow('500')
   expect(ctrl.post.data.value).toEqual({ id: 'p1', likes: 10, liked: false }) // rolled back
@@ -1988,10 +1995,11 @@ Two equally-supported patterns:
 **Userland helper (no extra dependency).** Write a small helper per entity that knows which queries it lives in. Verbose but explicit and grep-able:
 
 ```ts
-const patchPostEverywhere = (id: string, patch: Partial<Post>) => {
-  newsfeedQuery.setData('top-stories', (pages) => /* patch */)
-  newsfeedQuery.setData('most-recent', (pages) => /* patch */)
-  userProfileQuery.setData(authorId, (u) => /* patch */)
+const patchPostEverywhere = (ctx: Ctx, id: string, patch: Partial<Post>) => {
+  const newsfeed = ctx.bindQuery(newsfeedQuery)
+  newsfeed.write('top-stories', (pages) => /* patch */)
+  newsfeed.write('most-recent', (pages) => /* patch */)
+  ctx.bindQuery(userProfileQuery).write(authorId, (u) => /* patch */)
   // ... explicit list of touch sites
 }
 ```
@@ -2173,6 +2181,11 @@ Standalone `effect()` is for use outside controllers (rare). Inside a controller
 
 ```ts
 type Ctx<TDeps = AmbientDeps> = {
+  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
+  bindQuery<Args extends unknown[], TPage, TItem>(
+    query: InfiniteQuery<Args, TPage, TItem>,
+  ): InfiniteQueryActions<Args, TPage, TItem>
+
   // primitives
   cache<T>(
     fetcher: (signal: AbortSignal) => Promise<T>,
@@ -2693,6 +2706,7 @@ Nested field access is via the `form.fields.address.fields.city`-style path. Pat
 
 ```ts
 type Root<Api> = Api & {
+  bindQuery: Ctx['bindQuery']
   dispose(): void
   suspend(options?: { maxIdle?: number }): void
   resume(): void
@@ -3113,26 +3127,15 @@ Each child `ControllerInstance` inherits a *reference* to the root's `QueryClien
 
 ### 21.5 The query-client / query-value binding
 
-Queries are defined at module scope (`export const userQuery = defineQuery(...)`). They predate any root. A `Query` object internally holds:
+Queries are module-scoped definitions. Each root owns its cache entries. `ctx.bindQuery(query)` and `root.bindQuery(query)` return a typed imperative handle for only that root, without subscribing or fetching. Regular handles expose `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `setData`, `write`, `replace`, `peek`, and `prefetch`; infinite handles expose their existing paginated equivalents. Bound prefetch can run before the first subscription. Bound handles fail after root disposal. `bindQuery` is a reserved root-control name.
 
-```ts
-class QueryValue<Args, T> {
-  readonly spec: QuerySpec<Args, T>
-  // one EntryRegistry per QueryClient that has ever touched this query
-  private readonly clients = new WeakMap<QueryClient, EntryRegistry<Args, T>>()
+Each definition carries a `Set<QueryClient>`. Binding a handle or an entry registers its client; disposal unregisters it. Unbound methods resolve only when at most one client is registered. With multiple clients they throw (synchronous methods) or reject (promise methods) before reading data, running an updater, or starting work. With no clients, reads return undefined and writes/cancellation/invalidation do nothing; prefetch rejects. An intentional broadcast requires explicitly iterating bound root handles.
 
-  bindTo(client: QueryClient): EntryRegistry<Args, T> { /* lazy create */ }
+`QueryClientPluginApi.invalidate(query, callArgs)` targets only the owning client, including mutation-queue replay reconciliation. Cross-tab transport remains explicit plugin behavior.
 
-  invalidate(...args: Args): void {
-    // iterate all known clients (we track them in a WeakSet on top of the map)
-    for (const client of this.activeClients) client.invalidate(this, args)
-  }
-}
-```
+Cache keys use a recursive tagged encoding: every primitive, array, object and supported special value has its own type tag. Object properties are sorted; user data cannot impersonate special-value tags. Cycles, functions, symbols, Map/Set and unsupported class instances throw. The exported hash string is opaque and its format is not a persistence protocol.
 
-Iterating "all known clients" requires we keep a `WeakRef` list (since WeakMap isn't iterable). Implementation detail; the point is: a query value works correctly across multiple roots (e.g. test isolation, SSR + client) without leaking, and `invalidate()` reaches every relevant client.
-
-For single-root apps (the common case), there's exactly one active client and this is trivial.
+Expiry scheduling is shared: `scheduleExpiry` (`expiry-timer.ts`) creates **no timer at all** for a non-finite delay and walks a finite one in chunks against an absolute deadline, so a delay above the platform's signed 32-bit limit cannot overflow into an immediate fire. Every user-supplied duration goes through it: the staleness timer (`Entry`, `InfiniteEntry`), the gc timer (`ClientEntry`, `InfiniteClientEntry`), the `refetchInterval` chain, the retry backoff (`abortableSleep`, fed by `retryDelay`), and `suspend({ maxIdle })`. So `staleTime: Infinity` stays fresh until explicitly invalidated, and `gcTime: Infinity` retains a released entry for the life of the root. This applies to regular and infinite entries, initial hydration and streamed hydration.
 
 ### 21.6 Cache entry state machine
 

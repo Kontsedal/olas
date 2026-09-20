@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-08-19
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -25,8 +25,9 @@ That reason invites an optimisation which is **wrong**:
 
 ```ts
 // "This query has exactly one reader and nothing anywhere calls
-//  uiStateQuery.invalidate(). So no fetch can be outstanding. Skip the cancel."
-onMutate: (vars) => uiStateQuery.setData((prev) => patch(prev, vars)),
+//  uiState.invalidate(). So no fetch can be outstanding. Skip the cancel."
+const uiState = ctx.bindQuery(uiStateQuery)
+onMutate: (vars) => uiState.setData((prev) => patch(prev, vars)),
 ```
 
 An entry does not need an invalidator to fetch. It fetches whenever a **subscription acquires it while stale** — and `staleTime` makes "stale" a function of the clock, not of anything a grep can find:
@@ -46,11 +47,13 @@ An optimistic toggle that visibly reverts a moment later, only if the user had h
 Call `cancel(...)` before an optimistic `setData(...)` **unconditionally**. It is synchronous, so it fits a sync `onMutate`; it is a no-op when nothing is in flight; and it costs one line against a class of bug whose defining property is that it doesn't reproduce.
 
 ```ts
+const uiState = ctx.bindQuery(uiStateQuery)  // root-scoped; see §21.5
+
 onMutate: (vars) => {
-  const prev = uiStateQuery.peek()          // guard: nothing cached ⇒ nothing to patch
+  const prev = uiState.peek()             // guard: nothing cached ⇒ nothing to patch
   if (prev === undefined) return undefined
-  uiStateQuery.cancel()                     // ALWAYS, invalidator or not
-  return uiStateQuery.setData((p) => patch(p, vars))
+  uiState.cancel()                        // ALWAYS, invalidator or not
+  return uiState.setData((p) => patch(p, vars))
 },
 ```
 

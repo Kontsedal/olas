@@ -8,11 +8,12 @@ covers:
   - packages/core/src/query/entry.ts
   - packages/react/src/streaming.ts
 edges:
+  - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../modules/react.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -53,7 +54,7 @@ Controller state isn't serialized; only the query cache. Controllers reconstruct
 
 Only entries with `status: 'success'` are included. Errors and pending fetches are not serialized — they'd be useless on the client. Infinite queries are skipped today (Phase 12 baseline); supporting them is straightforward but wasn't part of the v1 minimum.
 
-`keyArgs` is `spec.key(...callArgs)` — what `stableHash` runs over. `id` is the query's stable identity — `query.__id`, i.e. `spec.queryId ?? assignQueryId()`'s auto-counter (`define.ts`). Both must match between server and client; the same `defineQuery` runs in both environments and produces the same key tuples and the same `__id` (auto-ids are stable when the bundle evaluates in the same order — the non-code-split case; explicit `queryId` is a hard guarantee).
+`keyArgs` is `spec.key(...callArgs)`. `id` is the explicit `spec.queryId`, identical in server/client bundles. Only identified queries are dehydrated; anonymous ones are counted and reported in a single dev warning per `dehydrate()` call, so a missing `queryId` presents as a config warning rather than as an unexplained slow hydrate. Anonymous queries fetch on the client and cannot consume legacy auto-ID payloads. Registration order has no role in identity. `cache-identity.test.ts` evaluates separate modules in opposite orders to verify both anonymous fallback and explicit-ID hydration.
 
 ## What `hydrate(state)` does
 

@@ -1,64 +1,60 @@
 /**
- * Stable string hash of a key tuple. Two equal-by-content args produce the
- * same string regardless of property iteration order. Handles primitives,
- * arrays, plain objects, Date, BigInt, NaN, ±Infinity.
- *
- * Functions and symbols throw — keys must be serializable so distinct
- * subscribers can share entries.
+ * Stable, type-tagged encoding of query keys. Every value is encoded, including
+ * user arrays and objects, so user data cannot impersonate an internal tag.
+ * Object property order is ignored. Functions, symbols, class instances and
+ * cycles are rejected; repeated references without cycles are supported.
  */
 export function stableHash(args: readonly unknown[]): string {
-  return JSON.stringify(args, replacer)
+  return JSON.stringify(encode(args, new WeakSet<object>()))
 }
 
-// A regular `function` (not an arrow) so `this` is bound to the holder object
-// by `JSON.stringify`. Critical: `JSON.stringify` applies `toJSON()` to a value
-// BEFORE calling the replacer, so the `value` argument for a `Date` is already
-// its ISO string and a class instance with a `toJSON` is already its serialized
-// form — inspecting `value` would miss both (the old arrow did, making the Date
-// tag and the class-instance throw dead code: `stableHash([date])` collided
-// with `stableHash([date.toISOString()])`). Reading the RAW property off the
-// holder (`this[key]`) recovers the true pre-`toJSON` value. Spec §5.4; T3.8.
-const replacer = function (this: unknown, key: string, _value: unknown): unknown {
-  const value = (this as Record<string, unknown>)[key]
-  if (typeof value === 'function') {
-    throw new Error('[olas] query keys cannot contain functions')
+function encode(value: unknown, ancestors: WeakSet<object>): unknown {
+  if (value === null) return ['null']
+  switch (typeof value) {
+    case 'undefined':
+      return ['undefined']
+    case 'string':
+      return ['string', value]
+    case 'boolean':
+      return ['boolean', value]
+    case 'bigint':
+      return ['bigint', value.toString()]
+    case 'number':
+      // `-0` normalizes to `0`. It is distinguishable (`Object.is`), but every
+      // equality a caller actually touches — `===`, Map/Set keys, a `key()`
+      // that does arithmetic — treats the two as one, and `-0` arrives by
+      // accident (`-x`, `x * -1`, `Math.round(-0.4)`), never on purpose. A
+      // split here would be a silent second cache entry and a second request.
+      // It would also break SSR: `dehydrate` ships raw key args through JSON,
+      // and `JSON.stringify(-0)` is `'0'`, so a `-0`-keyed entry could never
+      // be re-adopted on the client (§15).
+      return ['number', String(value === 0 ? 0 : value)]
+    case 'function':
+      throw new Error('[olas] query keys cannot contain functions')
+    case 'symbol':
+      throw new Error('[olas] query keys cannot contain symbols')
   }
-  if (typeof value === 'symbol') {
-    throw new Error('[olas] query keys cannot contain symbols')
-  }
-  if (typeof value === 'bigint') {
-    // JSON has no bigint; serialize as a tagged string so `1n` and `'1'`
-    // don't collide. The tag survives round-trips for debugging.
-    return { __bigint: value.toString() }
-  }
-  if (typeof value === 'number') {
-    // `JSON.stringify(NaN)` → `'null'` and likewise for Infinity, which
-    // would collide with a literal `null` key. Tag them explicitly.
-    if (Number.isNaN(value)) return '__nan__'
-    if (value === Number.POSITIVE_INFINITY) return '__+inf__'
-    if (value === Number.NEGATIVE_INFINITY) return '__-inf__'
-    return value
-  }
-  if (value === undefined) return '__undefined__'
-  if (value instanceof Date) return { __date: value.toISOString() }
+  if (value instanceof Date) return ['date', value.toISOString()]
   if (value instanceof Map || value instanceof Set) {
-    throw new Error('[olas] query keys cannot contain Map/Set — use arrays/objects')
+    throw new Error('[olas] query keys cannot contain Map/Set; use arrays/objects')
   }
-  if (value && typeof value === 'object' && !Array.isArray(value)) {
-    // Reject class instances (proto !== Object.prototype): two `new MyKey(1)`
-    // calls would serialize identically to `{}` and collide. Plain objects
-    // pass through with sorted keys.
-    const proto = Object.getPrototypeOf(value)
-    if (proto !== null && proto !== Object.prototype) {
-      throw new Error(
-        `[olas] query keys cannot contain class instances (got ${proto.constructor?.name ?? 'unknown'}) — pass plain object/array data`,
-      )
-    }
-    const sorted: Record<string, unknown> = {}
-    for (const k of Object.keys(value).sort()) {
-      sorted[k] = (value as Record<string, unknown>)[k]
-    }
-    return sorted
+  const proto = Object.getPrototypeOf(value)
+  if (!Array.isArray(value) && proto !== null && proto !== Object.prototype) {
+    throw new Error(
+      '[olas] query keys cannot contain class instances; pass plain object/array data',
+    )
   }
-  return value
+  if (ancestors.has(value)) throw new Error('[olas] query keys cannot contain cycles')
+  ancestors.add(value)
+  try {
+    if (Array.isArray(value)) return ['array', Array.from(value, (item) => encode(item, ancestors))]
+    return [
+      'object',
+      Object.keys(value)
+        .sort()
+        .map((key) => [key, encode((value as Record<string, unknown>)[key], ancestors)]),
+    ]
+  } finally {
+    ancestors.delete(value)
+  }
 }

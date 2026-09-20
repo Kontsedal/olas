@@ -23,6 +23,8 @@
  * for queries the local tab actually has entries for).
  */
 export type QueryClientPluginApi = {
+  /** Invalidate a query in this plugin's owning root, using original call arguments. */
+  invalidate(query: import('./types').Query<any, any>, args: readonly unknown[]): Promise<void>
   /**
    * Apply a remote snapshot. The plugin's own `onSetData` IS fired for the
    * resulting cache write, but the event carries `isRemote: true` — plugins

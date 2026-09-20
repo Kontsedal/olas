@@ -28,6 +28,7 @@ const commentsQuery = defineQuery({
 
 export const commentsController = defineController(
   (ctx: Ctx) => {
+    const commentsQueryActions = ctx.bindQuery(commentsQuery)
     const { selectedCardId } = ctx.inject(selectedCardScope)
     const activity = ctx.inject(activityScope)
 
@@ -94,7 +95,8 @@ export const commentsController = defineController(
         const firstUser = ctx.deps.entities.entries(UserEntity).keys().next().value
         const authorId = firstUser ?? 'u_ada'
         const comment = await ctx.deps.api.addComment(id, authorId, vars.body, signal)
-        commentsQuery.setData(id, (prev) => [...(prev ?? []), comment])
+        // Canonical: the comment exists on the server. `write` leaves no snapshot.
+        commentsQueryActions.write(id, (prev) => [...(prev ?? []), comment])
         return comment
       },
       onSuccess: (comment) => {

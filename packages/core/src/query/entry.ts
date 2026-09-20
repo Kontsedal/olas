@@ -1,3 +1,4 @@
+import { scheduleExpiry } from '../expiry-timer'
 import { batch, type Signal, signal } from '../signals'
 import { abortableSleep, isAbortError } from '../utils'
 import { subscribeReconnect } from './focus-online'
@@ -89,7 +90,7 @@ export class Entry<T> {
   private structuralShareEnabled: boolean
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
-  private staleTimer: ReturnType<typeof setTimeout> | null = null
+  private staleTimer: (() => void) | null = null
   /** Set by `markStale()` (invalidate without fetch); forces `isStaleNow()`
    *  true until the next successful fetch clears it. Spec §5.7, T3.9. */
   private forcedStale = false
@@ -151,10 +152,10 @@ export class Entry<T> {
         // there's nothing to wait for.
         if (!alreadyStale) {
           const remaining = this.staleTime - (Date.now() - (last as number))
-          this.staleTimer = setTimeout(() => {
+          this.staleTimer = scheduleExpiry(remaining, () => {
             this.staleTimer = null
             if (!this.disposed) this.isStale.set(true)
-          }, remaining)
+          })
         }
       }
     } else {
@@ -354,12 +355,12 @@ export class Entry<T> {
   }
 
   private scheduleStaleness(): void {
-    if (this.staleTimer != null) clearTimeout(this.staleTimer)
+    if (this.staleTimer != null) this.staleTimer()
     if (this.staleTime > 0) {
-      this.staleTimer = setTimeout(() => {
+      this.staleTimer = scheduleExpiry(this.staleTime, () => {
         this.staleTimer = null
         if (!this.disposed) this.isStale.set(true)
-      }, this.staleTime)
+      })
     }
   }
 
@@ -389,7 +390,7 @@ export class Entry<T> {
     this.currentAbort?.abort()
     this.currentAbort = null
     if (this.staleTimer !== null) {
-      clearTimeout(this.staleTimer)
+      this.staleTimer()
       this.staleTimer = null
     }
     const alreadyStale = this.staleTime === 0 || Date.now() - lastUpdatedAt >= this.staleTime
@@ -404,10 +405,10 @@ export class Entry<T> {
     })
     if (!alreadyStale && this.staleTime > 0) {
       const remaining = this.staleTime - (Date.now() - lastUpdatedAt)
-      this.staleTimer = setTimeout(() => {
+      this.staleTimer = scheduleExpiry(remaining, () => {
         this.staleTimer = null
         if (!this.disposed) this.isStale.set(true)
-      }, remaining)
+      })
     }
     this.onSuccessData?.(data)
     // Resolve any awaiters parked in firstValue / promise.
@@ -427,7 +428,7 @@ export class Entry<T> {
   markStale(): void {
     if (this.disposed) return
     if (this.staleTimer != null) {
-      clearTimeout(this.staleTimer)
+      this.staleTimer()
       this.staleTimer = null
     }
     this.forcedStale = true
@@ -615,7 +616,7 @@ export class Entry<T> {
     if (this.disposed) return
     this.disposed = true
     if (this.staleTimer != null) {
-      clearTimeout(this.staleTimer)
+      this.staleTimer()
       this.staleTimer = null
     }
     this.currentAbort?.abort()

@@ -90,8 +90,8 @@ export type LocalCache<T> = AsyncState<T> & {
 /** One entry inside a `DehydratedState`. */
 export type DehydratedEntry = {
   /**
-   * Stable query identity — `spec.queryId` when set, else an auto-assigned
-   * registration id. Namespaces the hydration buffer so a subscriber of query
+   * Explicit stable query identity (`spec.queryId`). Anonymous queries are
+   * omitted from dehydration. Namespaces the hydration buffer so a subscriber of query
    * B can't adopt query A's payload just because their `key()` outputs hash
    * the same (spec §15).
    */
@@ -235,7 +235,9 @@ export type QuerySpec<Args extends unknown[], T> = {
   /**
    * Stable identifier used by `QueryClientPlugin`s (e.g. `@kontsedal/olas-cross-tab`)
    * to locate the same query across tabs / processes / persistence layers.
-   * REQUIRED for queries with `crossTab: true`. SPEC §13.2.
+   * REQUIRED for SSR dehydrate/hydrate and queries with `crossTab: true`.
+   * Anonymous queries are omitted from dehydration and fetch on the client.
+   * Must be unique per query and identical in server/client bundles. SPEC §13.2, §15.
    *
    * Don't auto-derive from `fetcher.name` or argument hashing — both are
    * fragile under minification.
@@ -293,6 +295,8 @@ export type DefaultQueryOptions = Pick<
  * A module-scoped shared query handle. Bind a subscriber via
  * `ctx.use(query, () => [...args])`. The same `Query` value can be used by
  * many controllers across many roots — each root has its own cache.
+ * Use `ctx.bindQuery(query)` or `root.bindQuery(query)` for imperative operations.
+ * Unbound operations reject/throw when more than one root has touched the query.
  */
 export type Query<Args extends unknown[], T> = {
   readonly __olas: 'query'
@@ -302,9 +306,9 @@ export type Query<Args extends unknown[], T> = {
    * (a supersede — a newer refetch, a key change, or a canonical `write`, §6.4 —
    * resolves it rather than rejecting, so a caller cannot tell the two apart from
    * the promise alone) — immediately if
-   * the entry is subscriber-less (marked stale only). It never rejects (fetch errors
-   * are reported via the root's `onError`), so `await invalidate(...)` is safe to
-   * use as a sequencing point; ignore it for fire-and-forget.
+   * the entry is subscriber-less (marked stale only). Fetch errors are reported
+   * via the root's `onError`. Ambiguous unbound calls and operations on a disposed
+   * root reject; use a bound handle to select the root explicitly.
    */
   invalidate(...args: Args): Promise<void>
   /** Like `invalidate` for every keyed entry; resolves when all triggered refetches settle. */
@@ -401,6 +405,9 @@ export type Query<Args extends unknown[], T> = {
   /** Eagerly fetch into the cache without subscribing. */
   prefetch(...args: Args): Promise<T>
 }
+
+/** Imperative query operations bound to one root, without a subscription. */
+export type QueryActions<Args extends unknown[], T> = Omit<Query<Args, T>, '__olas'>
 
 /** What `ctx.use(query, ...)` returns — `AsyncState<T>` plus `cancel()`. */
 export type QuerySubscription<T> = AsyncState<T> & {

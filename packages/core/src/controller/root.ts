@@ -1,10 +1,12 @@
 import { DevtoolsEmitter } from '../devtools'
+import { scheduleExpiry } from '../expiry-timer'
 import { QueryClient } from '../query/client'
 import { getFactory } from './define'
 import { ControllerInstance, type RootShared } from './instance'
 import type { AmbientDeps, ControllerDef, Root, RootOptions } from './types'
 
 const ROOT_METHODS = [
+  'bindQuery',
   'dispose',
   'suspend',
   'resume',
@@ -108,11 +110,12 @@ function attachRootControls<Api>(
   devtools: DevtoolsEmitter,
   queryClient: QueryClient,
 ): Root<Api> {
-  let suspendTimer: ReturnType<typeof setTimeout> | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = no auto-dispose armed. */
+  let suspendTimer: (() => void) | null = null
 
   const dispose = () => {
     if (suspendTimer != null) {
-      clearTimeout(suspendTimer)
+      suspendTimer()
       suspendTimer = null
     }
     instance.dispose()
@@ -122,21 +125,25 @@ function attachRootControls<Api>(
   const suspend = (opts?: { maxIdle?: number }) => {
     instance.suspend()
     if (suspendTimer != null) {
-      clearTimeout(suspendTimer)
+      suspendTimer()
       suspendTimer = null
     }
     const maxIdle = opts?.maxIdle
-    if (maxIdle != null && maxIdle !== Number.POSITIVE_INFINITY) {
-      suspendTimer = setTimeout(() => {
+    if (maxIdle != null) {
+      // `scheduleExpiry` returns `null` for `Infinity` (stay suspended until
+      // something else disposes) and chunks a finite value, so a `maxIdle`
+      // above the signed 32-bit limit can't overflow into "dispose on the next
+      // tick" — the opposite of asking to idle for a month. §21.5.
+      suspendTimer = scheduleExpiry(maxIdle, () => {
         suspendTimer = null
         dispose()
-      }, maxIdle)
+      })
     }
   }
 
   const resume = () => {
     if (suspendTimer != null) {
-      clearTimeout(suspendTimer)
+      suspendTimer()
       suspendTimer = null
     }
     instance.resume()
@@ -164,6 +171,10 @@ function attachRootControls<Api>(
   // typo. The `in`-check above is the friendly preflight; this is the
   // hard fence in case a consumer mutates the api after construction.
   const lock = { enumerable: false, writable: false, configurable: false }
+  Object.defineProperty(target, 'bindQuery', {
+    value: queryClient.bindQuery.bind(queryClient),
+    ...lock,
+  })
   Object.defineProperty(target, 'dispose', { value: dispose, ...lock })
   Object.defineProperty(target, 'suspend', { value: suspend, ...lock })
   Object.defineProperty(target, 'resume', { value: resume, ...lock })

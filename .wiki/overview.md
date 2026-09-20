@@ -77,7 +77,7 @@ See `modules/*.md` for per-directory details.
 
 **Lifecycle is owned by `ControllerInstance`.** Every `ctx.*` primitive registers a `LifecycleEntry` (effect / cleanup / child / on-subscription / hooks). Dispose iterates reverse; suspend disposes effects but recurses to children; resume re-instantiates effects via stored factories. See `flows/construction-rollback.md`.
 
-**Async data is shared per-root through `QueryClient`.** `defineQuery` produces a module-scoped value branded `__olas: 'query' | 'infiniteQuery'`. The query value carries a `__clients: Set<QueryClient>` so `query.invalidate()` reaches every root. `ctx.use(query, keyFn)` binds a subscription through the controller's root client. See `entities/query-client.md` and `flows/query-subscription.md`.
+**Async data is shared per-root through `QueryClient`.** `defineQuery` produces a module-scoped value branded `__olas: 'query' | 'infiniteQuery'`. The query value carries a `__clients: Set<QueryClient>` so unbound query operations can detect ambiguous roots. Use `ctx.bindQuery(query)` or `root.bindQuery(query)` to select one root explicitly. `ctx.use(query, keyFn)` binds a subscription through the controller's root client. See `entities/query-client.md` and `flows/query-subscription.md`.
 
 **Mutations dispatch by concurrency mode.** `parallel` / `latest-wins` / `serial`. Optimistic updates use a per-entry snapshot stack with positional rollback semantics (§6.4). See `flows/mutation-concurrency.md`.
 

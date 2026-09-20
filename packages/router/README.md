@@ -175,9 +175,11 @@ const user = ctx.use(userQuery, () => [userId.value])
 // TanStack Router route definition
 const userRoute = createRoute({
   path: '/users/$userId',
-  loader: ({ params }) => userQuery.prefetch(params.userId),
+  loader: ({ params }) => root.bindQuery(userQuery).prefetch(params.userId),
 })
 ```
+
+Bind the query to the root you're prefetching *into*. On the client there is one root and the bare `userQuery.prefetch(...)` still works, but a server handling concurrent requests has a root per request and an unbound prefetch there rejects rather than guessing whose cache to warm.
 
 `prefetch(...)` populates the cache before `<adapter.Bridge>` mounts. By the time `ctx.use(userQuery, ...)` fires, the entry is already there and `data.value` is non-null on first read.
 

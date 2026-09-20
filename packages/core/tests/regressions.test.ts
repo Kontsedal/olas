@@ -331,7 +331,7 @@ describe('regression: invalidateAll re-runs every bound entry', () => {
     const def2 = defineController((ctx) => ({ sub: ctx.use(q, () => ['b'] as const) }))
     const root2 = createRoot(def2, { deps: emptyDeps })
     await vi.waitFor(() => expect(counts.b).toBe(1))
-    q.invalidateAll()
+    await Promise.all([root.bindQuery(q).invalidateAll(), root2.bindQuery(q).invalidateAll()])
     await vi.waitFor(() => {
       expect(counts.a).toBe(2)
       expect(counts.b).toBe(2)
@@ -599,6 +599,7 @@ describe('gap: query latest-wins under concurrent fetches', () => {
 describe('gap: dehydrate while a mutation is in flight', () => {
   test('waitForIdle blocks until in-flight mutation settles; dehydrate then includes the optimistic state', async () => {
     const q = defineQuery({
+      queryId: 'regression/ssr-mutation',
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
@@ -750,11 +751,13 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
 describe('regression: hydration does not steal data across colliding-key queries (R-Q1.2)', () => {
   test('query B with a colliding key hydrates its OWN data, not query A payload', async () => {
     const qA = defineQuery({
+      queryId: 'regression/ssr-a',
       key: () => ['shared', 'k'] as const,
       fetcher: async () => 'A-data',
       staleTime: 60_000,
     })
     const qB = defineQuery({
+      queryId: 'regression/ssr-b',
       key: () => ['shared', 'k'] as const,
       fetcher: async () => 'B-data',
       staleTime: 60_000,
@@ -778,6 +781,7 @@ describe('regression: hydration does not steal data across colliding-key queries
   test('a query round-trips its own hydrated data without refetching (no regression)', async () => {
     let fetches = 0
     const q = defineQuery({
+      queryId: 'regression/ssr-solo',
       key: () => ['solo'] as const,
       fetcher: async () => {
         fetches += 1

@@ -6,6 +6,59 @@ Notes for users coming from TanStack Query, Redux Toolkit, or "hooks at the top 
 
 ---
 
+## Upgrading from 0.8 to 0.9
+
+### Select a root for imperative query operations
+
+Use a bound handle in controllers and request handlers:
+
+```ts
+const feature = defineController((ctx) => {
+  const users = ctx.bindQuery(userQuery)
+  const user = ctx.use(userQuery, () => ['me'])
+  return {
+    user,
+    rename: (name: string) => users.write('me', (prev) => ({ ...prev!, name })),
+  }
+})
+
+// Outside the controller, including a request-specific SSR handler:
+await root.bindQuery(userQuery).prefetch('me')
+```
+
+Binding does not subscribe or fetch. It works before the first subscription. The handle exposes the query's imperative methods, retains argument/result types, and remains tied to that root; operations fail after root disposal. Subscribe with the original definition via `ctx.use(userQuery)`.
+
+Unbound helpers such as `userQuery.write`, `peek`, `cancel`, `invalidate`, and `prefetch` now throw or reject when multiple roots have touched the query. They no longer broadcast or pick the first root. With zero roots, the existing no-op/undefined behavior remains, except `prefetch` rejects. With one root they remain shortcuts. Prefer bound handles in reusable controllers and SSR code. For an intentional broadcast, explicitly iterate the roots and use their bound handles. Cross-tab plugin transport remains an explicit opt-in.
+
+**The sharpest edge is `peek`.** In 0.8 it never threw and never warned — deliberately, because it is written in click handlers, event folds, and other hot paths where a warning would fire constantly. In 0.9 it is guarded like every other unbound operation, so an unbound `peek` in one of those paths now *throws* anywhere two roots coexist: a test file that builds several roots, a micro-frontend, or a root swap where the outgoing root has not disposed yet. This is intentional — reading from an arbitrary root is how the wrong user's data reaches the screen — but it is the change most likely to surface at runtime rather than at the type level. Audit `peek` call sites first, and bind them.
+
+`bindQuery` is now a reserved root-control name. Rename any root controller API member with that name. Mutation-queue replay invalidation targets only its owning root; upgrade core and the queue together.
+
+### Give serialized queries stable IDs
+
+Every query whose data must cross the SSR boundary needs a unique `queryId`, identical in server/client bundles:
+
+```ts
+const userQuery = defineQuery({
+  queryId: 'users/detail',
+  key: (id: string) => [id],
+  fetcher: async ({ signal }, id) => fetchUser(id, signal),
+  staleTime: 30_000,
+})
+```
+
+Anonymous queries are omitted from `dehydrate()` and fetch on the client. Registration order is no longer used for hydration identity. Legacy auto-ID payloads cannot seed anonymous queries. Fresh hydrated entries skip refetch; `staleTime: 0` still refetches. Infinite-query dehydration remains unsupported.
+
+### Cache keys and stale timers
+
+`stableHash` now uses a fully tagged encoding. Rebuild any external indexes that persist its output; the output format is not a persistence protocol. Ordinary query calls still pass the same arguments. Cyclic keys throw a descriptive error.
+
+`staleTime: Infinity` stays fresh until explicitly invalidated, with no expiry timer. `gcTime: Infinity` likewise keeps a released entry for the life of the root. Finite delays beyond the platform timer limit (2,147,483,647 ms) are scheduled in chunks instead of overflowing.
+
+If you already set `gcTime: Infinity` or a multi-week `gcTime` on 0.8, it did the opposite of what it says: platforms clamp an out-of-range `setTimeout` delay to 1 ms, so the entry was dropped almost immediately after its last subscriber left. Those entries now survive as intended — expect higher steady-state cache retention, which is the documented behavior of the setting.
+
+---
+
 ## From TanStack Query (React Query)
 
 ### Mental model shift

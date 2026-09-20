@@ -88,8 +88,8 @@ type MutationQueueOptions = {
   onWarn?: (message: string, cause?: unknown) => void
 }
 
-// api.invalidate(query, keyArgs) → query.invalidate(...keyArgs)
-type ReplaySettleApi = { invalidate(query: Query<any, any>, keyArgs?: readonly unknown[]): void }
+// api.invalidate(query, callArgs) targets only the plugin's owning root
+type ReplaySettleApi = { invalidate(query: Query<any, any>, callArgs?: readonly unknown[]): void }
 ```
 
 | Option | What |
@@ -104,7 +104,7 @@ type ReplaySettleApi = { invalidate(query: Query<any, any>, keyArgs?: readonly u
 | `migrate` | Translate entries written under a prior `PROTOCOL_VERSION` into the current shape. Return `null` to drop. Without a migrator, version mismatches silently discard the entry. |
 | `onReplayError` | Fires when replay gives up on an entry: `maxAttempts` exhausted, TTL expired, or no module registered the `mutationId`. The integration point for telemetry / "we couldn't deliver your action" UX. |
 | `onReplayAttempt` | Fires on every non-terminal replay failure — surfaces "we'll retry later" indicators. |
-| `onReplaySettle` | Fires after a queued mutation **replays successfully**, with `(entry, result, api)`. A replay writes server truth outside any live query's knowledge — call `api.invalidate(query, keyArgs)` here so subscribers refetch. **Without it, UIs stay stale after a replay** until their own `staleTime` lapses. |
+| `onReplaySettle` | Fires after a queued mutation **replays successfully**, with `(entry, result, api)`. Invalidation targets only the plugin's owning root. A replay writes server truth outside any live query's knowledge — call `api.invalidate(query, callArgs)` here so subscribers refetch — `callArgs` are the query's own arguments (`[id]`), not the tuple `key()` returns (`['user', id]`). **Without it, UIs stay stale after a replay** until their own `staleTime` lapses. |
 | `onWarn` | Soft conditions: variables not JSON-serializable, malformed entry on disk, adapter missing `keys()`. Default: `console.warn`. |
 
 ## How it works

@@ -102,3 +102,7 @@ Server rendering uses `root.dehydrate()` → `<HydrationBoundary>` (plus the str
 - [`../../API.md`](../../API.md#olasreact) — every export, signature, example.
 - [`../../.wiki/modules/react.md`](../../.wiki/modules/react.md) — how each hook is implemented and why.
 - [`../../.wiki/flows/use-root.md`](../../.wiki/flows/use-root.md) — end-to-end flow from `createRoot` to DOM.
+
+### SSR query identity in 0.9
+
+Queries included in `root.dehydrate()` must declare an explicit, unique `queryId` shared by the server and client bundles. Anonymous queries fetch on the client. Registration order does not identify queries. Use `ctx.bindQuery(query)` or `root.bindQuery(query)` for imperative operations when multiple roots may be alive.

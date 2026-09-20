@@ -76,3 +76,9 @@ import { createTestController, fakeField, fakeAsyncState } from '@kontsedal/olas
 - [`../../SPEC.md`](../../SPEC.md) — authoritative design.
 - [`../../.wiki/modules/`](../../.wiki/modules/) — per-module pages (signals, controller, query, forms, …).
 - [`../../.wiki/pitfalls/`](../../.wiki/pitfalls/) — known footguns.
+
+## Root-scoped operations and SSR (0.9)
+
+Use `ctx.bindQuery(query)` or `root.bindQuery(query)` to obtain imperative operations for one root. The handle supports the same cache actions as the definition, without subscribing or fetching. Unbound methods fail when multiple roots have touched the query. Bound prefetch works before the first subscription, and bound operations fail after root disposal.
+
+SSR serialization requires a stable, unique `queryId`. Anonymous queries are omitted from `dehydrate()` and fetch on the client. See [the migration guide](../../MIGRATING.md#upgrading-from-08-to-09).

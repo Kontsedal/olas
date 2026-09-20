@@ -1,3 +1,4 @@
+import { scheduleExpiry } from '../expiry-timer'
 import { batch, computed, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
@@ -91,6 +92,12 @@ export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
   prefetch(...args: Args): Promise<TPage>
 }
 
+/** Imperative paginated-query operations bound to one root. */
+export type InfiniteQueryActions<Args extends unknown[], TPage, TItem> = Omit<
+  InfiniteQuery<Args, TPage, TItem>,
+  '__olas'
+>
+
 /**
  * What `ctx.use(infiniteQuery, ...)` returns. Extends `AsyncState<TPage[]>`
  * with paginated controls: `fetchNextPage` / `fetchPreviousPage`,
@@ -142,7 +149,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
 
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
-  private staleTimer: ReturnType<typeof setTimeout> | null = null
+  private staleTimer: (() => void) | null = null
   /** Set by `markStale()` (invalidate without fetch). See `Entry.forcedStale`. */
   private forcedStale = false
   private snapshots: Array<{
@@ -534,7 +541,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   markStale(): void {
     if (this.disposed) return
     if (this.staleTimer != null) {
-      clearTimeout(this.staleTimer)
+      this.staleTimer()
       this.staleTimer = null
     }
     this.forcedStale = true
@@ -758,12 +765,12 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }
 
   private scheduleStaleness(): void {
-    if (this.staleTimer != null) clearTimeout(this.staleTimer)
+    if (this.staleTimer != null) this.staleTimer()
     if (this.staleTime > 0) {
-      this.staleTimer = setTimeout(() => {
+      this.staleTimer = scheduleExpiry(this.staleTime, () => {
         this.staleTimer = null
         if (!this.disposed) this.isStale.set(true)
-      }, this.staleTime)
+      })
     }
   }
 
@@ -771,7 +778,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     if (this.disposed) return
     this.disposed = true
     if (this.staleTimer != null) {
-      clearTimeout(this.staleTimer)
+      this.staleTimer()
       this.staleTimer = null
     }
     this.currentAbort?.abort()

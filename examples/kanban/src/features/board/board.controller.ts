@@ -51,6 +51,7 @@ const errMessage = (err: unknown): string => (err instanceof Error ? err.message
 
 export const boardController = defineController(
   (ctx: Ctx) => {
+    const boardQueryActions = ctx.bindQuery(boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
@@ -182,7 +183,7 @@ export const boardController = defineController(
       name: 'moveCard',
       concurrency: 'parallel',
       onMutate: (vars) =>
-        boardQuery.setData(activeBoardId.peek(), (prev) => {
+        boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('moveCard before board loaded')
           return applyMove(prev, vars)
         }),
@@ -241,7 +242,10 @@ export const boardController = defineController(
           },
           signal,
         )
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        // `write`, not `setData`: the server already accepted this, so there is
+        // no snapshot to roll back. A fire-and-forget `setData` would leak one
+        // live snapshot per call and wedge `hasPendingMutations` true.
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev
             ? {
                 ...prev,
@@ -281,7 +285,7 @@ export const boardController = defineController(
       mutate: async (vars, signal) => {
         const hue = vars.hue ?? randomColumnHue()
         const col = await ctx.deps.api.createColumn(activeBoardId.peek(), vars.title, hue, signal)
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev ? { ...prev, columns: [...prev.columns, col] } : (prev as never),
         )
         return col
@@ -302,7 +306,7 @@ export const boardController = defineController(
       name: 'reorderColumn',
       concurrency: 'serial',
       onMutate: (vars) =>
-        boardQuery.setData(activeBoardId.peek(), (prev) => {
+        boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('reorderColumn before board loaded')
           return {
             ...prev,
@@ -333,7 +337,7 @@ export const boardController = defineController(
       name: 'archiveCard',
       concurrency: 'serial',
       onMutate: (vars) =>
-        boardQuery.setData(activeBoardId.peek(), (prev) => {
+        boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('archiveCard before board loaded')
           return removeCard(prev, vars.cardId)
         }),
