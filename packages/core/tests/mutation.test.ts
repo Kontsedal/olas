@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createMutation, createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { MutationDisposedError } from '../src/query/mutation'
 import type { Snapshot } from '../src/query/types'
 import { isAbortError } from '../src/utils'
@@ -20,11 +22,11 @@ const deferred = <T>() => {
 describe('ctx.mutation — happy paths', () => {
   test('run() resolves with the mutator result and updates data/isPending', async () => {
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async (v: { x: number }) => v.x * 2,
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.save.isPending.value).toBe(false)
     const promise = root.save.run({ x: 5 })
     expect(root.save.isPending.value).toBe(true)
@@ -39,13 +41,13 @@ describe('ctx.mutation — happy paths', () => {
 
   test('errors are captured into .error and rejected from run()', async () => {
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async () => {
           throw new Error('save failed')
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await expect(root.save.run()).rejects.toThrow('save failed')
     expect((root.save.error.value as Error).message).toBe('save failed')
     expect(root.save.isPending.value).toBe(false)
@@ -55,11 +57,11 @@ describe('ctx.mutation — happy paths', () => {
   test('reset clears data/error/lastVariables and aborts in-flight', async () => {
     const d = deferred<number>()
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async () => d.promise,
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const promise = root.save.run().catch((e) => e)
     expect(root.save.isPending.value).toBe(true)
     root.save.reset()
@@ -77,11 +79,11 @@ describe('ctx.mutation — concurrency: parallel (default)', () => {
     const ds = [deferred<string>(), deferred<string>(), deferred<string>()]
     let i = 0
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async () => ds[i++]!.promise,
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const p1 = root.save.run()
     const p2 = root.save.run()
     const p3 = root.save.run()
@@ -106,7 +108,7 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
     const ds = [deferred<string>(), deferred<string>()]
     let i = 0
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async (_: void, sig) => {
           const d = ds[i++]!
           sig.addEventListener('abort', () => d.reject(new DOMException('Aborted', 'AbortError')))
@@ -115,7 +117,7 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
         concurrency: 'latest-wins',
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const p1 = root.save.run().catch((e) => e)
     const p2 = root.save.run()
 
@@ -135,8 +137,8 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
     })
     let initialFetchDone = false
     const def = defineController((ctx) => {
-      const x = ctx.use(q)
-      const save = ctx.mutation({
+      const x = createQuery(ctx, q)
+      const save = createMutation(ctx, {
         mutate: async (v: number) =>
           new Promise<number>((resolve) => setTimeout(() => resolve(v), 50)),
         onMutate: (v) => q.setData(() => v),
@@ -144,7 +146,7 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
       })
       return { x, save }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Wait for the initial query fetch to land before kicking off mutations
     // that touch the cache key.
     await vi.waitFor(() => expect(root.x.data.value).toBe(1))
@@ -171,7 +173,7 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
     const ds = [deferred<void>(), deferred<void>()]
     let i = 0
     const def = defineController((ctx) => ({
-      save: ctx.mutation<void, void>({
+      save: createMutation<void, void>(ctx, {
         mutate: async () => {
           const d = ds[i++]!
           return d.promise
@@ -181,7 +183,7 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
         concurrency: 'latest-wins',
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const p1 = root.save.run().catch(() => {})
     const p2 = root.save.run()
     ds[1]!.resolve()
@@ -200,7 +202,7 @@ describe('ctx.mutation — concurrency: serial', () => {
     const ds = [deferred<number>(), deferred<number>(), deferred<number>()]
     let i = 0
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async (v: number) => {
           order.push(v)
           return ds[i++]!.promise
@@ -208,7 +210,7 @@ describe('ctx.mutation — concurrency: serial', () => {
         concurrency: 'serial',
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const p1 = root.save.run(1)
     const p2 = root.save.run(2)
     const p3 = root.save.run(3)
@@ -230,12 +232,12 @@ describe('ctx.mutation — concurrency: serial', () => {
   test('serial dispose rejects queued runs', async () => {
     const d = deferred<number>()
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async () => d.promise,
         concurrency: 'serial',
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const p1 = root.save.run().catch((e) => e)
     const p2 = root.save.run().catch((e) => e)
     root.dispose()
@@ -253,8 +255,8 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       fetcher: async () => 0,
     })
     const def = defineController((ctx) => {
-      const x = ctx.use(q)
-      const save = ctx.mutation({
+      const x = createQuery(ctx, q)
+      const save = createMutation(ctx, {
         mutate: async () => {
           throw new Error('server says no')
         },
@@ -263,7 +265,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       })
       return { x, save }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     await expect(root.save.run()).rejects.toThrow('server says no')
@@ -278,8 +280,8 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     })
     let rollbackCalls = 0
     const def = defineController((ctx) => {
-      const x = ctx.use(q)
-      const save = ctx.mutation({
+      const x = createQuery(ctx, q)
+      const save = createMutation(ctx, {
         mutate: async () => {
           throw new Error('boom')
         },
@@ -297,7 +299,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       })
       return { x, save }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     await expect(root.save.run()).rejects.toThrow('boom')
@@ -314,8 +316,8 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       fetcher: async () => 0,
     })
     const def = defineController((ctx) => {
-      const x = ctx.use(q)
-      const save = ctx.mutation({
+      const x = createQuery(ctx, q)
+      const save = createMutation(ctx, {
         mutate: async () => {
           throw new Error('server says no')
         },
@@ -324,7 +326,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       })
       return { x, save }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     await expect(root.save.run()).rejects.toThrow('server says no')
@@ -341,14 +343,14 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       fetcher: async () => 0,
     })
     const def = defineController((ctx) => {
-      const x = ctx.use(q)
-      const save = ctx.mutation({
+      const x = createQuery(ctx, q)
+      const save = createMutation(ctx, {
         mutate: async () => 'ok',
         onMutate: () => q.setData(() => 99),
       })
       return { x, save }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Wait for initial fetch to settle. hasPendingMutations is the negative
     // assertion under test post-mutation, so use data as the wait condition.
     await vi.waitFor(() => expect(root.x.data.value).toBe(0))
@@ -371,8 +373,8 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     let bSnap: Snapshot | undefined
 
     const def = defineController((ctx) => {
-      const x = ctx.use(q)
-      const a = ctx.mutation({
+      const x = createQuery(ctx, q)
+      const a = createMutation(ctx, {
         mutate: async () => dA.promise,
         onMutate: () => {
           aSnap = q.setData((p) => (p ?? 0) + 1)
@@ -380,7 +382,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
         },
         onError: (_e, _v, snap) => snap?.rollback(),
       })
-      const b = ctx.mutation({
+      const b = createMutation(ctx, {
         mutate: async () => dB.promise,
         onMutate: () => {
           bSnap = q.setData((p) => (p ?? 0) + 10)
@@ -390,7 +392,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       })
       return { x, a, b }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.x.data.value).toBe(0))
 
     const pA = root.a.run().catch(() => {})
@@ -417,7 +419,7 @@ describe('ctx.mutation — retry', () => {
   test('retry: 2 → 3 attempts; final error reaches caller', async () => {
     let attempts = 0
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: async () => {
           attempts++
           throw new Error(`fail-${attempts}`)
@@ -426,7 +428,7 @@ describe('ctx.mutation — retry', () => {
         retryDelay: 10,
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const p = root.save.run().catch((e) => e as Error)
     // initial attempt (0ms) + 2 retries (10ms each)
     await vi.advanceTimersByTimeAsync(0)
@@ -444,8 +446,10 @@ describe('ctx.mutation — retry', () => {
 describe('ctx.mutation — status signal (T4.2)', () => {
   test('parallel: idle → pending → success', async () => {
     const d = deferred<string>()
-    const def = defineController((ctx) => ({ m: ctx.mutation({ mutate: async () => d.promise }) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({
+      m: createMutation(ctx, { mutate: async () => d.promise }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.m.status.value).toBe('idle')
     const p = root.m.run()
     expect(root.m.status.value).toBe('pending')
@@ -456,8 +460,8 @@ describe('ctx.mutation — status signal (T4.2)', () => {
   })
 
   test('a void mutation reports status success (data stays undefined)', async () => {
-    const def = defineController((ctx) => ({ m: ctx.mutation({ mutate: async () => {} }) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ m: createMutation(ctx, { mutate: async () => {} }) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await root.m.run()
     expect(root.m.status.value).toBe('success')
     expect(root.m.data.value).toBeUndefined()
@@ -466,13 +470,13 @@ describe('ctx.mutation — status signal (T4.2)', () => {
 
   test('a throwing mutation → status error', async () => {
     const def = defineController((ctx) => ({
-      m: ctx.mutation({
+      m: createMutation(ctx, {
         mutate: async () => {
           throw new Error('boom')
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await root.m.run().catch(() => {})
     expect(root.m.status.value).toBe('error')
     root.dispose()
@@ -481,12 +485,12 @@ describe('ctx.mutation — status signal (T4.2)', () => {
   test('latest-wins: a superseded run does not flip status to error', async () => {
     const dB = deferred<string>()
     const def = defineController((ctx) => ({
-      m: ctx.mutation({
+      m: createMutation(ctx, {
         mutate: async (v: 'a' | 'b') => (v === 'b' ? dB.promise : new Promise<string>(() => {})), // 'a' hangs until aborted
         concurrency: 'latest-wins',
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const pA = root.m.run('a').catch(() => {}) // superseded by B
     const pB = root.m.run('b')
     expect(root.m.status.value).toBe('pending')
@@ -499,8 +503,8 @@ describe('ctx.mutation — status signal (T4.2)', () => {
   })
 
   test('reset → status idle', async () => {
-    const def = defineController((ctx) => ({ m: ctx.mutation({ mutate: async () => 'x' }) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ m: createMutation(ctx, { mutate: async () => 'x' }) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await root.m.run()
     expect(root.m.status.value).toBe('success')
     root.m.reset()
@@ -514,7 +518,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     let mutateCalls = 0
     const def = defineController(
       (ctx) => ({
-        drop: ctx.mutation({
+        drop: createMutation(ctx, {
           name: 'dropDatabase',
           mutate: async () => {
             mutateCalls += 1
@@ -524,7 +528,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
       }),
       { name: 'sidebar' },
     )
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.dispose()
 
     const err = await root.drop.run().catch((e: unknown) => e)
@@ -542,9 +546,9 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     // accepted and then cancelled; the one above was never accepted at all.
     const d = deferred<number>()
     const def = defineController((ctx) => ({
-      m: ctx.mutation({ concurrency: 'serial' as const, mutate: async () => d.promise }),
+      m: createMutation(ctx, { concurrency: 'serial' as const, mutate: async () => d.promise }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const first = root.m.run()
     const queued = root.m.run()
     first.catch(() => {})
@@ -565,8 +569,8 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     const q = defineQuery({ key: () => ['doc'] as const, fetcher: async () => 'server-value' })
     let onSuccessCalls = 0
     const def = defineController((ctx) => ({
-      read: ctx.use(q),
-      save: ctx.mutation({
+      read: createQuery(ctx, q),
+      save: createMutation(ctx, {
         // Deliberately NOT `async`: an async wrapper adds a microtask hop and
         // the window below is measured in hops.
         mutate: () => d.promise,
@@ -576,7 +580,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await root.read.promise()
     const settled = root.save.run().catch((e: unknown) => e)
     expect(root.read.data.value).toBe('written-value')
@@ -609,13 +613,13 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['doc2'] as const, fetcher: async () => 'server-value' })
     const def = defineController((ctx) => ({
-      read: ctx.use(q),
-      save: ctx.mutation({
+      read: createQuery(ctx, q),
+      save: createMutation(ctx, {
         mutate: async () => d.promise,
         onMutate: () => q.setData(() => 'written-value'),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await root.read.promise()
     const settled = root.save.run().catch((e: unknown) => e)
     expect(root.read.data.value).toBe('written-value')
@@ -635,8 +639,8 @@ describe('detached mutations (§6.5)', () => {
     const q = defineQuery({ key: () => ['lic'] as const, fetcher: async () => 'free' })
     const seen: string[] = []
     const def = defineController((ctx) => ({
-      read: ctx.use(q),
-      activate: ctx.mutation({
+      read: createQuery(ctx, q),
+      activate: createMutation(ctx, {
         detached: true,
         mutate: async () => d.promise,
         onMutate: () => q.setData(() => 'pro-optimistic'),
@@ -644,7 +648,7 @@ describe('detached mutations (§6.5)', () => {
         onSettled: (_r, err) => seen.push(`settled:${err === undefined ? 'ok' : 'err'}`),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await root.read.promise()
     const run = root.activate.run()
 
@@ -662,7 +666,7 @@ describe('detached mutations (§6.5)', () => {
     // user answers after the panel that owns the mutation is already gone.
     let dropped: string | undefined
     const def = defineController((ctx) => ({
-      drop: ctx.mutation({
+      drop: createMutation(ctx, {
         detached: true,
         mutate: async (name: string) => {
           dropped = name
@@ -670,7 +674,7 @@ describe('detached mutations (§6.5)', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.drop.dispose()
 
     await expect(root.drop.run('analytics')).resolves.toBe('ok')
@@ -682,7 +686,7 @@ describe('detached mutations (§6.5)', () => {
     const gates = [deferred<number>(), deferred<number>(), deferred<number>()]
     let started = 0
     const def = defineController((ctx) => ({
-      m: ctx.mutation({
+      m: createMutation(ctx, {
         detached: true,
         concurrency: 'serial' as const,
         mutate: async () => {
@@ -692,7 +696,7 @@ describe('detached mutations (§6.5)', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const runs = [root.m.run(), root.m.run(), root.m.run()]
 
     root.m.dispose()
@@ -707,9 +711,9 @@ describe('detached mutations (§6.5)', () => {
   test('reset() still cancels a detached run — dispose is not the app saying "drop it"', async () => {
     const d = deferred<string>()
     const def = defineController((ctx) => ({
-      m: ctx.mutation({ detached: true, mutate: async () => d.promise }),
+      m: createMutation(ctx, { detached: true, mutate: async () => d.promise }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const settled = root.m.run().catch((e: unknown) => e)
     root.m.reset()
     d.resolve('late')
@@ -722,9 +726,9 @@ describe('detached mutations (§6.5)', () => {
     // Its runs outlive the controller, so reset() is the only stop button left.
     const d = deferred<string>()
     const def = defineController((ctx) => ({
-      m: ctx.mutation({ detached: true, mutate: async () => d.promise }),
+      m: createMutation(ctx, { detached: true, mutate: async () => d.promise }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const settled = root.m.run().catch((e: unknown) => e)
     root.m.dispose()
     root.m.reset()
@@ -739,7 +743,7 @@ describe('detached mutations (§6.5)', () => {
     const dB = deferred<string>()
     let call = 0
     const def = defineController((ctx) => ({
-      m: ctx.mutation({
+      m: createMutation(ctx, {
         detached: true,
         concurrency: 'latest-wins' as const,
         mutate: async () => {
@@ -748,7 +752,7 @@ describe('detached mutations (§6.5)', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const a = root.m.run().catch((e: unknown) => e)
     const b = root.m.run()
     dA.resolve('A')
@@ -764,7 +768,7 @@ describe('detached mutations (§6.5)', () => {
     const d = deferred<string>()
     let settledWith: string | undefined
     const def = defineController((ctx) => ({
-      m: ctx.mutation({
+      m: createMutation(ctx, {
         detached: true,
         mutate: async () => d.promise,
         onSettled: (r) => {
@@ -772,7 +776,7 @@ describe('detached mutations (§6.5)', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const run = root.m.run()
     root.dispose()
     d.resolve('landed')

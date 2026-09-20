@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, type ReadSignal } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine, type ReadSignal } from '@kontsedal/olas-core'
 import { act, cleanup, render } from '@testing-library/react'
 import { type ReactNode, useState } from 'react'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -19,7 +19,7 @@ describe('createRouterAdapter — scope wiring', () => {
       injected = ctx.inject(RouteParamsScope)
       return {}
     })
-    const root = createRoot(def, { deps: {}, scopes: adapter.scopes })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, scopes: adapter.scopes })
 
     // Render the bridge with initial params; the Bridge useEffect pushes
     // them into the underlying signal.
@@ -40,7 +40,7 @@ describe('createRouterAdapter — scope wiring', () => {
       injected = ctx.inject(RouteParamsScope)
       return {}
     })
-    const root = createRoot(def, { deps: {}, scopes: adapter.scopes })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, scopes: adapter.scopes })
 
     function Host(): ReactNode {
       const [id, setId] = useState('a')
@@ -78,7 +78,7 @@ describe('createRouterAdapter — scope wiring', () => {
       pathname = ctx.inject(RoutePathnameScope)
       return {}
     })
-    const root = createRoot(def, { deps: {}, scopes: adapter.scopes })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, scopes: adapter.scopes })
 
     render(
       <adapter.Bridge
@@ -102,7 +102,11 @@ describe('createRouterAdapter — scope wiring', () => {
       params: ctx.inject(RouteParamsScope),
     }))
     type Api = { params: ReadSignal<Record<string, string | undefined>> }
-    const root = createRoot(def, { deps: {}, scopes: adapter.scopes }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      scopes: adapter.scopes,
+    }) as unknown as Api & {
       dispose(): void
     }
 
@@ -144,8 +148,8 @@ describe('createRouterAdapter — scope wiring', () => {
       bSeen = ctx.inject(RouteParamsScope)
       return {}
     })
-    const rootA = createRoot(defA, { deps: {}, scopes: a.scopes })
-    const rootB = createRoot(defB, { deps: {}, scopes: b.scopes })
+    const rootA = createRoot(defA, { queries: queryEngine(), deps: {}, scopes: a.scopes })
+    const rootB = createRoot(defB, { queries: queryEngine(), deps: {}, scopes: b.scopes })
 
     render(
       <>
@@ -180,7 +184,7 @@ describe('createRouterAdapter — scope wiring', () => {
       pathname = ctx.inject(RoutePathnameScope)
       return {}
     })
-    const root = createRoot(def, { deps: {}, scopes: adapter.scopes })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, scopes: adapter.scopes })
     expect(params?.value).toEqual({ userId: '42' })
     expect(search?.value).toEqual({ q: 'x' })
     expect(pathname?.value).toBe('/users/42')
@@ -194,7 +198,7 @@ describe('createRouterAdapter — scope wiring', () => {
       params = ctx.inject(RouteParamsScope)
       return {}
     })
-    const root = createRoot(def, { deps: {}, scopes: adapter.scopes })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, scopes: adapter.scopes })
     // `optional` is absent from the URL → undefined, not a string. The widened
     // `Record<string, string | undefined>` type accepts it (typecheck), and it
     // round-trips at runtime.
@@ -214,7 +218,11 @@ describe('createRouterAdapter — scope wiring', () => {
       search: ReadSignal<Record<string, unknown>>
       pathname: ReadSignal<string>
     }
-    const root = createRoot(def, { deps: {}, scopes: adapter.scopes }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      scopes: adapter.scopes,
+    }) as unknown as Api & {
       dispose(): void
     }
 

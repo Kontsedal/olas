@@ -115,8 +115,8 @@ All inside `batch(() => ...)` so subscribers see one notification.
 `itemFactory: (initial?: ItemInitial<I>) => I` produces a new item. **The factory MUST consume the `initial` argument** or `add(x)` will silently ignore `x`. Canonical pattern:
 
 ```ts
-ctx.fieldArray((initial) => ctx.field(initial ?? ''))
-ctx.fieldArray((initial) => ctx.form(schema, { initial }))
+createFieldArray(ctx, (initial) => createField(ctx, initial ?? ''))
+createFieldArray(ctx, (initial) => createForm(ctx, schema, { initial }))
 ```
 
 See `../pitfalls/fieldarray-factory-uses-initial.md`.

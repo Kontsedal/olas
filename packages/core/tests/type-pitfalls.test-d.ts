@@ -2,7 +2,7 @@
  * Type-level regression tests for the two TS pitfalls documented in
  * `.wiki/pitfalls/`:
  *
- *  - `literal-type-narrowing` — `ctx.field('')` would infer `Field<''>` (the
+ *  - `literal-type-narrowing` — `createField(ctx, '')` would infer `Field<''>` (the
  *    literal type) without an explicit annotation; we want `Field<string>` so
  *    subsequent `.set('hello')` works.
  *  - `preact-signals-overload-return` — `ReturnType<typeof signal<T>>` picks
@@ -14,26 +14,28 @@
  * inferences would fail typecheck.
  */
 import { describe, expectTypeOf, test } from 'vitest'
+import { createField } from '../src'
 import { createRoot, defineController } from '../src/controller'
+import { queryEngine } from '../src/query/engine'
 import { type Signal, signal } from '../src/signals'
 
 describe('type pitfall: literal-type-narrowing', () => {
-  test("ctx.field<string>('') widens value to string", () => {
+  test("createField<string>(ctx, '') widens value to string", () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>(''),
+      name: createField<string>(ctx, ''),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // Explicit annotation widens — `.set('anything')` is valid.
     expectTypeOf(root.name.value).toEqualTypeOf<string>()
     root.name.set('anything')
     root.dispose()
   })
 
-  test("ctx.field('') without annotation narrows to '' (pitfall pin)", () => {
+  test("createField(ctx, '') without annotation narrows to '' (pitfall pin)", () => {
     const def = defineController((ctx) => ({
-      narrow: ctx.field(''),
+      narrow: createField(ctx, ''),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // The inferred type is `Field<''>` — `.set` accepts only the literal ''.
     // This is the documented pitfall (`.wiki/pitfalls/literal-type-narrowing.md`):
     // the assertion exists so a future change that *auto-widens* literals

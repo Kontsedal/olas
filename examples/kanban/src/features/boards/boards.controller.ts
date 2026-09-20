@@ -8,14 +8,14 @@
  * The sidebar reads `boards`; the main pane reads `activeBoardId`.
  */
 
-import { type Ctx, defineController, effect, signal } from '@kontsedal/olas-core'
+import { type Ctx, createQuery, defineController, effect, signal } from '@kontsedal/olas-core'
 import { preferencesScope } from '../../scopes'
 import { boardsListQuery } from './boards.query'
 
 export const boardsController = defineController(
   (ctx: Ctx) => {
     const prefs = ctx.inject(preferencesScope)
-    const list = ctx.use(boardsListQuery)
+    const list = createQuery(ctx, boardsListQuery)
 
     // The active board id. Seeded from the persisted preference; when the
     // list resolves we validate the seed and fall back to the first board

@@ -1,6 +1,8 @@
 import { describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import type { QueryClientPlugin, QueryClientPluginApi, SetDataEvent } from '../src/query/plugin'
 import type { QuerySubscription } from '../src/query/types'
 
@@ -13,7 +15,7 @@ import type { QuerySubscription } from '../src/query/types'
  * file pins the core hooks the plugin builds on.
  *
  * Note: `query.setData(...)` is a no-op until the query has been bound by
- * at least one `ctx.use(...)` subscription (so a client is registered in
+ * at least one `createQuery(ctx, ...)` subscription (so a client is registered in
  * `query.__clients`). Tests therefore build a controller that subscribes
  * to the query, then drive `setData` / `invalidate`.
  */
@@ -41,14 +43,15 @@ function mountUsersRoot(opts: {
 }) {
   const def = defineController((ctx) => {
     // Subscribe to two ids so subscribedKeys has something to return.
-    const user1 = ctx.use(usersQuery, () => ['1' as string])
-    const user2 = ctx.use(usersQuery, () => ['2' as string])
+    const user1 = createQuery(ctx, usersQuery, () => ['1' as string])
+    const user2 = createQuery(ctx, usersQuery, () => ['2' as string])
     return { user1, user2 } as {
       user1: QuerySubscription<unknown>
       user2: QuerySubscription<unknown>
     }
   })
   return createRoot(def, {
+    queries: queryEngine(),
     deps: {},
     plugins: opts.plugins,
     onError: opts.onError as never,
@@ -89,11 +92,11 @@ describe('QueryClientPlugin', () => {
     const plugin: QueryClientPlugin = { onSetData }
     // Build a controller that ALSO binds anonymousQuery so it has a client.
     const def = defineController((ctx) => {
-      ctx.use(usersQuery, () => ['1' as string])
-      ctx.use(anonymousQuery, () => ['1' as string])
+      createQuery(ctx, usersQuery, () => ['1' as string])
+      createQuery(ctx, anonymousQuery, () => ['1' as string])
       return {}
     })
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     anonymousQuery.setData('1', () => ({ id: '1' }))
     expect(onSetData).not.toHaveBeenCalled()

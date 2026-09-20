@@ -17,10 +17,13 @@
  */
 
 import {
+  createMutation,
+  createQuery,
   createRoot,
   defineController,
   defineQuery,
   type QuerySubscription,
+  queryEngine,
   type Snapshot,
 } from '@kontsedal/olas-core'
 import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
@@ -65,9 +68,9 @@ describe('integration: optimistic CRUD + entities', () => {
 
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const sidebar = ctx.use(sidebarQuery, () => [])
-      const likePost = ctx.mutation<string, { id: string; likes: number }>({
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const sidebar = createQuery(ctx, sidebarQuery, () => [])
+      const likePost = createMutation<string, { id: string; likes: number }>(ctx, {
         mutate: async (id: string) => {
           // Pretend server-authoritative count comes back.
           return { id, likes: 1 }
@@ -89,7 +92,11 @@ describe('integration: optimistic CRUD + entities', () => {
       sidebar: QuerySubscription<{ recent: Post[] }>
       likePost: { run: (id: string) => Promise<{ id: string; likes: number }> }
     }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose: () => void
     }
 
@@ -125,9 +132,9 @@ describe('integration: optimistic CRUD + entities', () => {
 
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const sidebar = ctx.use(sidebarQuery, () => [])
-      const likePost = ctx.mutation<string, void>({
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const sidebar = createQuery(ctx, sidebarQuery, () => [])
+      const likePost = createMutation<string, void>(ctx, {
         mutate: async () => {
           throw new Error('500 — like rejected')
         },
@@ -171,7 +178,11 @@ describe('integration: optimistic CRUD + entities', () => {
       sidebar: QuerySubscription<{ recent: Post[] }>
       likePost: { run: (id: string) => Promise<void> }
     }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose: () => void
     }
 
@@ -212,9 +223,9 @@ describe('integration: optimistic CRUD + entities', () => {
     let i = 0
 
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const sidebar = ctx.use(sidebarQuery, () => [])
-      const setLikes = ctx.mutation<number, number>({
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const sidebar = createQuery(ctx, sidebarQuery, () => [])
+      const setLikes = createMutation<number, number>(ctx, {
         mutate: async (target, signal) => {
           const slot = slots[i++]
           if (!slot) throw new Error('out of slots')
@@ -238,7 +249,11 @@ describe('integration: optimistic CRUD + entities', () => {
       sidebar: QuerySubscription<{ recent: Post[] }>
       setLikes: { run: (n: number) => Promise<number> }
     }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose: () => void
     }
     await settle()
@@ -277,8 +292,8 @@ describe('integration: optimistic CRUD + entities', () => {
     const hold = deferred<void>()
 
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const slow = ctx.mutation<void, void>({
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const slow = createMutation<void, void>(ctx, {
         mutate: async (_v, signal) => {
           signal.addEventListener('abort', () =>
             hold.reject(new DOMException('Aborted', 'AbortError')),
@@ -293,7 +308,11 @@ describe('integration: optimistic CRUD + entities', () => {
       feed: QuerySubscription<{ posts: Post[] }>
       slow: { run: () => Promise<void> }
     }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose: () => void
     }
     await settle()

@@ -11,7 +11,16 @@
  * stream (when a sibling tab adds one).
  */
 
-import { type Ctx, computed, defineController, defineQuery, signal } from '@kontsedal/olas-core'
+import {
+  bindQuery,
+  type Ctx,
+  computed,
+  createMutation,
+  createQuery,
+  defineController,
+  defineQuery,
+  signal,
+} from '@kontsedal/olas-core'
 import { useLiveStream } from '@kontsedal/olas-realtime'
 import { type Comment, REALTIME_CHANNEL, type RealtimeEvent } from '../../api'
 import { UserEntity } from '../../entities'
@@ -28,14 +37,14 @@ const commentsQuery = defineQuery({
 
 export const commentsController = defineController(
   (ctx: Ctx) => {
-    const commentsQueryActions = ctx.bindQuery(commentsQuery)
+    const commentsQueryActions = bindQuery(ctx, commentsQuery)
     const { selectedCardId } = ctx.inject(selectedCardScope)
     const activity = ctx.inject(activityScope)
 
     const draft = signal('')
 
     // The thread query — reactive on the active card id.
-    const thread = ctx.use(commentsQuery, () => [selectedCardId.value ?? '__none__'])
+    const thread = createQuery(ctx, commentsQuery, () => [selectedCardId.value ?? '__none__'])
 
     // Live stream from broadcast. Events filtered to `comment.added`
     // matching the current card id. Coalesced flush at 32ms — fast enough
@@ -84,7 +93,7 @@ export const commentsController = defineController(
     // The author is the first user in the entities store. In a real app
     // this would be `session.user.id`. We pick the first registered user as
     // a stand-in so the demo doesn't need a sign-in flow.
-    const addComment = ctx.mutation<{ body: string }, Comment>({
+    const addComment = createMutation<{ body: string }, Comment>(ctx, {
       name: 'addComment',
       concurrency: 'serial',
       mutate: async (vars, signal) => {

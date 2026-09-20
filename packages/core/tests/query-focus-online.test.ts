@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 
 const emptyDeps = {}
 
@@ -16,8 +18,8 @@ describe('refetchOnWindowFocus', () => {
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -36,8 +38,8 @@ describe('refetchOnWindowFocus', () => {
       staleTime: 5000,
       refetchOnWindowFocus: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -59,8 +61,8 @@ describe('refetchOnWindowFocus', () => {
       key: () => ['rfwf-off'],
       fetcher: async () => ++count,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -79,8 +81,8 @@ describe('refetchOnWindowFocus', () => {
       refetchOnWindowFocus: true,
       gcTime: 0,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -97,8 +99,8 @@ describe('refetchOnWindowFocus', () => {
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -125,8 +127,8 @@ describe('refetchOnReconnect', () => {
       fetcher: async () => ++count,
       refetchOnReconnect: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -143,8 +145,8 @@ describe('refetchOnReconnect', () => {
       key: () => ['rfr-off'],
       fetcher: async () => ++count,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -163,8 +165,8 @@ describe('refetchOnReconnect', () => {
       refetchOnWindowFocus: true,
       refetchOnReconnect: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -190,8 +192,12 @@ describe('root-wide defaults', () => {
       key: () => ['root-wide-focus'],
       fetcher: async () => ++count,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps, refetchOnWindowFocus: true })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: emptyDeps,
+      refetchOnWindowFocus: true,
+    })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -208,8 +214,12 @@ describe('root-wide defaults', () => {
       key: () => ['root-wide-reconnect'],
       fetcher: async () => ++count,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps, refetchOnReconnect: true })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: emptyDeps,
+      refetchOnReconnect: true,
+    })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -227,8 +237,12 @@ describe('root-wide defaults', () => {
       fetcher: async () => ++count,
       refetchOnWindowFocus: false,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps, refetchOnWindowFocus: true })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: emptyDeps,
+      refetchOnWindowFocus: true,
+    })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -247,8 +261,8 @@ describe('root-wide defaults', () => {
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -283,8 +297,8 @@ describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
         return 42
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // The initial fetch throws a network error while offline → parked, not errored.
     await vi.waitFor(() => expect(root.x.isPaused.value).toBe(true))
@@ -309,8 +323,8 @@ describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
       key: () => ['on-defer'],
       fetcher: async () => ++count, // networkMode defaults to 'online'
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // Deferred while offline: the fetcher never ran, entry parked at idle.
     await vi.waitFor(() => expect(root.x.isPaused.value).toBe(true))
@@ -342,8 +356,8 @@ describe('focus double-fire coalesces to one refetch (R-Q3.9)', () => {
       refetchOnWindowFocus: true,
       staleTime: 0, // always stale → focus refetches
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -382,8 +396,8 @@ describe('refetchInterval — hidden tab', () => {
       fetcher: async () => ++count,
       refetchInterval: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -411,8 +425,8 @@ describe('refetchInterval — hidden tab', () => {
         return 1000
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
     expect(seen).toEqual([undefined])

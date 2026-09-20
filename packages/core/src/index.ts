@@ -18,9 +18,10 @@ export type {
   RootOptions,
 } from './controller'
 export { createRoot, defineController } from './controller'
+export type { CtxInternals } from './controller/internals'
+export { CTX_INTERNALS } from './controller/internals'
 // Errors & devtools
 export type { DebugBus, DebugCacheEntry, DebugEvent, DebugEventMeta } from './devtools'
-
 // Emitter
 export type { Emitter, EmitterErrorReporter } from './emitter'
 export { createEmitter } from './emitter'
@@ -46,6 +47,10 @@ export {
   required,
   validator,
 } from './forms'
+// Lifetime-bound primitives. These take `ctx` rather than hanging off it, so
+// a controller that never builds a form or a query does not ship the forms or
+// query subsystem. See `.wiki/decisions/ctx-primitives-are-free-functions.md`.
+export { createField, createFieldArray, createForm } from './forms/bind'
 export { debouncedValidator } from './forms/field'
 export type {
   DeepPartial,
@@ -62,7 +67,10 @@ export type {
   FormValue,
   ItemInitial,
 } from './forms/form-types'
+export { bindQuery, createCache, createMutation, createQuery } from './query/bind'
 export { defineInfiniteQuery, defineQuery } from './query/define'
+export type { QueryEngine, QueryEngineOptions } from './query/engine'
+export { queryEngine } from './query/engine'
 export type {
   InfiniteQuery,
   InfiniteQueryActions,

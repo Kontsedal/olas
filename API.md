@@ -58,7 +58,7 @@ The sub-path packages each have their own typed surfaces; their full reference l
 
 ## Bound query operations (0.9)
 
-`ctx.bindQuery(query)` and `root.bindQuery(query)` return `QueryActions<Args, T>` (or `InfiniteQueryActions<Args, TPage, TItem>`). Methods target only that root. Binding does not subscribe or fetch; bound prefetch works before subscriptions. Bound operations fail after root disposal. Module-scoped helpers reject/throw when multiple roots have touched the definition.
+`bindQuery(ctx, query)` and `root.bindQuery(query)` return `QueryActions<Args, T>` (or `InfiniteQueryActions<Args, TPage, TItem>`). Methods target only that root. Binding does not subscribe or fetch; bound prefetch works before subscriptions. Bound operations fail after root disposal. Module-scoped helpers reject/throw when multiple roots have touched the definition.
 
 SSR serialization requires an explicit stable `queryId`; anonymous queries fetch on the client. See [0.9 migration](MIGRATING.md#upgrading-from-08-to-09).
 
@@ -295,7 +295,7 @@ const root = createRoot(app, {
 
 **When to use:** whenever your app's desired policy differs from the built-ins (`staleTime: 0`, `retry: 0`, `gcTime: 5min`). Without it, a single missed `staleTime` presents as "why does this refetch on every subscribe?" rather than as an error.
 
-Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (the latter for `staleTime` and `keepPreviousData` — the only overlapping fields on `LocalCacheOptions`).
+Applies to `defineQuery`, `defineInfiniteQuery`, and `createCache` (the latter for `staleTime` and `keepPreviousData` — the only overlapping fields on `LocalCacheOptions`).
 
 **Not defaultable:** `refetchInterval` — a root-wide interval would start polling every query in the app; opt in per query, in either of its two forms (see `QuerySpec` below). Also note `refetchOnWindowFocus` or `refetchOnReconnect` are no-ops for infinite queries, which install no focus/reconnect subscription.
 
@@ -429,27 +429,27 @@ type LazyChild<Api> = {
 }
 ```
 
-### `ctx.field<T>(initial, validators?): Field<T>`
+### `createField<T>(ctx, initial, validators?): Field<T>`
 
 See [Forms — Field](#forms--field).
 
-### `ctx.form<S>(schema, options?): Form<S>`
+### `createForm<S>(ctx, schema, options?): Form<S>`
 
 See [Forms — Form](#forms--form).
 
-### `ctx.fieldArray<I>(itemFactory, options?): FieldArray<I>`
+### `createFieldArray<I>(ctx, itemFactory, options?): FieldArray<I>`
 
 See [Forms — FieldArray](#forms--fieldarray).
 
-### `ctx.use(query, keyOrOptions?): AsyncState<T>` / `InfiniteQuerySubscription<...>`
+### `createQuery(ctx, query, keyOrOptions?): AsyncState<T>` / `InfiniteQuerySubscription<...>`
 
 See [Async data — queries](#async-data--queries).
 
-### `ctx.cache<T>(fetcher, options?): LocalCache<T>`
+### `createCache<T>(ctx, fetcher, options?): LocalCache<T>`
 
 See [Async data — local cache](#async-data--local-cache).
 
-### `ctx.mutation<V, R>(spec): Mutation<V, R>`
+### `createMutation<V, R>(ctx, spec): Mutation<V, R>`
 
 See [Mutations](#mutations).
 
@@ -469,7 +469,7 @@ Shared, keyed, cacheable async data. Two controllers subscribing to the same que
 
 ### `defineQuery<Args, T>(spec: QuerySpec<Args, T>): Query<Args, T>`
 
-Declare a query at module scope. Subscribers pass the returned `Query` value to `ctx.use(...)`. It also exposes `invalidate`, `invalidateAll`, `setData`, `write`, `peek`, `cancel`, `cancelAll` and `prefetch` at the module level, for direct cache reads and writes from a mutation's `onMutate`.
+Declare a query at module scope. Subscribers pass the returned `Query` value to `createQuery(ctx, ...)`. It also exposes `invalidate`, `invalidateAll`, `setData`, `write`, `peek`, `cancel`, `cancelAll` and `prefetch` at the module level, for direct cache reads and writes from a mutation's `onMutate`.
 
 ```ts
 import { defineQuery } from '@kontsedal/olas-core'
@@ -518,7 +518,7 @@ type RefetchInterval<T> = number | ((data: T | undefined) => number)
 
   The resolved gap must be a positive finite number — in **either** form. Anything else stops the timer for that entry and dev-warns, rather than spinning a hot loop. That covers `0`, `NaN`, a negative number and `Infinity`, as a literal or as a thunk's return. The timer restarts only on the entry's next 0→1 subscriber transition. A thunk must also not **throw**. A throw is caught and treated as a bad gap, with a dev warning carrying the error, because the resolution runs before the chain re-arms.
 
-  The thunk's first call is synchronous at the 0→1 subscribe, before the initial fetch settles, so handle `data === undefined`. It is **not reactive** — a signal read inside yields that tick's value and registers no dependency. And it's resolved **per entry, not per subscriber** (the timer belongs to the shared cache entry), which is why `UseOptions` has no `refetchInterval` and `DefaultQueryOptions` excludes it. `ctx.cache` and `LocalCache` has no interval at all. SPEC §5.9.
+  The thunk's first call is synchronous at the 0→1 subscribe, before the initial fetch settles, so handle `data === undefined`. It is **not reactive** — a signal read inside yields that tick's value and registers no dependency. And it's resolved **per entry, not per subscriber** (the timer belongs to the shared cache entry), which is why `UseOptions` has no `refetchInterval` and `DefaultQueryOptions` excludes it. `createCache` and `LocalCache` has no interval at all. SPEC §5.9.
 
 **Gotcha:** the value of `spec.key(...)` is what's hashed; the *original* `args` are what the fetcher receives. They're not the same thing — see [`.wiki/pitfalls/callargs-vs-keyargs.md`](.wiki/pitfalls/callargs-vs-keyargs.md).
 
@@ -546,7 +546,7 @@ type Query<Args extends unknown[], T> = {
 - `cancelAll()` — cancel in-flight fetches for every keyed entry of this query.
 - `prefetch(...args)` — fetch into the cache without subscribing (e.g., on hover before navigating).
 
-### `ctx.use<Args, T>(query, key?): AsyncState<T>`
+### `createQuery<Args, T>(ctx, query, key?): AsyncState<T>`
 
 Subscribe a controller to a `Query`. The `key` thunk reads signals — re-evaluating when they change re-keys the subscription (auto-unsubscribes the old entry, acquires the new).
 
@@ -555,7 +555,7 @@ import { defineController } from '@kontsedal/olas-core'
 import { userQuery } from './queries'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
-  const user = ctx.use(userQuery, () => [props.id])
+  const user = createQuery(ctx, userQuery, () => [props.id])
   return { user }
 })
 ```
@@ -588,7 +588,7 @@ type AsyncState<T> = {
 }
 ```
 
-Subscribers can read any of the 9 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` and `Query`; a `ctx.cache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
+Subscribers can read any of the 9 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` and `Query`; a `createCache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
 
 **`isPaused`** is `true` while a fetch is deferred waiting for connectivity. Two cases reach it: an `online`-mode fetch that hit `navigator.onLine === false`, and an `offlineFirst` fetch that got a `fetch` `TypeError` while offline. It resumes automatically on the next `online` event. Nothing is in flight while paused (`isFetching` is `false`) and `status` stays `idle` or last-success rather than flipping to `error`.
 
@@ -624,7 +624,7 @@ export const feedQuery = defineInfiniteQuery({
 })
 ```
 
-The subscription returned by `ctx.use(feedQuery, ...)` includes `pages`, `items` (flattened), `hasNextPage`, `fetchNextPage`, etc. — full shape in SPEC §20.4.
+The subscription returned by `createQuery(ctx, feedQuery, ...)` includes `pages`, `items` (flattened), `hasNextPage`, `fetchNextPage`, etc. — full shape in SPEC §20.4.
 
 `refetchInterval` works here too, with the same two forms: `RefetchInterval<TPage[]>`, so the thunk receives the entry's pages array (`undefined` until the first page lands). A tick re-fetches *every* loaded page (SPEC §5.11), so a list scrolled 20 pages deep costs 20 requests per tick. That is where a data-driven gap earns its keep.
 
@@ -634,13 +634,13 @@ The subscription returned by `ctx.use(feedQuery, ...)` includes `pages`, `items`
 
 Controller-scoped cache — no sharing, dies with the controller.
 
-### `ctx.cache<T>(fetcher, options?): LocalCache<T>`
+### `createCache<T>(ctx, fetcher, options?): LocalCache<T>`
 
 Use when one controller wants async data that no other controller will share. The cache disposes with the controller and never lives in the global QueryClient.
 
 ```ts
 const profile = defineController((ctx, props: { id: string }) => {
-  const summary = ctx.cache(
+  const summary = createCache(ctx, 
     (signal) => fetch(`/api/users/${props.id}/summary`, { signal }).then((r) => r.json()),
     { key: () => [props.id], staleTime: 60_000 },
   )
@@ -648,7 +648,7 @@ const profile = defineController((ctx, props: { id: string }) => {
 })
 ```
 
-**When to use this vs `defineQuery`:** if no other controller will need the same data, `ctx.cache` is simpler — no module-scope query value, no `define` boilerplate. If sharing is *opportunistic* (might happen later), prefer `defineQuery` to avoid a refactor.
+**When to use this vs `defineQuery`:** if no other controller will need the same data, `createCache` is simpler — no module-scope query value, no `define` boilerplate. If sharing is *opportunistic* (might happen later), prefer `defineQuery` to avoid a refactor.
 
 ### Type: `LocalCache<T>`
 
@@ -666,15 +666,15 @@ type LocalCache<T> = AsyncState<T> & {
 
 Writes that may need optimistic updates, abort handling, and concurrency rules.
 
-### `ctx.mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>`
+### `createMutation<V, R>(ctx, spec: MutationSpec<V, R>): Mutation<V, R>`
 
 ```ts
 import { defineController } from '@kontsedal/olas-core'
 import { userQuery } from './queries'
 
 const profile = defineController((ctx, props: { id: string }) => {
-  const users = ctx.bindQuery(userQuery) // root-scoped cache operations
-  const updateName = ctx.mutation<string, void>({
+  const users = bindQuery(ctx, userQuery) // root-scoped cache operations
+  const updateName = createMutation<string, void>(ctx, {
     name: 'updateName',
     mutate: async (newName, signal) => {
       const res = await fetch(`/api/users/${props.id}`, {
@@ -793,7 +793,7 @@ Both are idempotent and mutually exclusive — whichever happens first wins, sub
 
 ## Forms — `Field`
 
-### `ctx.field<T>(initial, validators?): Field<T>`
+### `createField<T>(ctx, initial, validators?): Field<T>`
 
 Create a single field. The `initial` value seeds the field; `validators` is an array of `Validator<T>` functions run on every change (and on `validate()` and `revalidate()`).
 
@@ -801,12 +801,12 @@ Create a single field. The `initial` value seeds the field; `validators` is an a
 import { defineController, required, minLength } from '@kontsedal/olas-core'
 
 const form = defineController((ctx) => {
-  const name = ctx.field<string>('', [required(), minLength(2)])
+  const name = createField<string>(ctx, '', [required(), minLength(2)])
   return { name }
 })
 ```
 
-**Gotcha:** `ctx.field('')` infers `Field<''>` (literal narrowing). Annotate when you want a wider type: `ctx.field<string>('')`. See [`.wiki/pitfalls/literal-type-narrowing.md`](.wiki/pitfalls/literal-type-narrowing.md).
+**Gotcha:** `createField(ctx, '')` infers `Field<''>` (literal narrowing). Annotate when you want a wider type: `createField<string>(ctx, '')`. See [`.wiki/pitfalls/literal-type-narrowing.md`](.wiki/pitfalls/literal-type-narrowing.md).
 
 ### Type: `Field<T>`
 
@@ -828,7 +828,7 @@ type Field<T> = ReadSignal<T> & {
 ```
 
 - `set(value)` — write a new value; marks `isDirty: true` and triggers validators.
-- `setAsInitial(value)` — write a new value AND re-anchor `reset()`'s target here, without marking dirty. Use for "load this value as the new baseline" — most commonly when reseating a form from server data outside the `ctx.form({initial})` path.
+- `setAsInitial(value)` — write a new value AND re-anchor `reset()`'s target here, without marking dirty. Use for "load this value as the new baseline" — most commonly when reseating a form from server data outside the `createForm(ctx, {initial})` path.
 - `field.value` reads the current value directly (because `Field<T>` *is* a `ReadSignal<T>`). Compare with `Form` and `FieldArray`, whose `value` is a `ReadSignal<...>`. See [`.wiki/pitfalls/field-value-shape.md`](.wiki/pitfalls/field-value-shape.md).
 
 ### Type: `Validator<T>`
@@ -865,7 +865,7 @@ const usernameAvailable = debouncedValidator<string>(async (value, signal) => {
 
 ## Forms — `Form`
 
-### `ctx.form<S>(schema, options?): Form<S>`
+### `createForm<S>(ctx, schema, options?): Form<S>`
 
 Aggregate fields, sub-forms, and field-arrays into one typed object with `value`, `errors`, `isValid`, etc. The schema is a record of primitives.
 
@@ -873,12 +873,12 @@ Aggregate fields, sub-forms, and field-arrays into one typed object with `value`
 import { defineController, required, email } from '@kontsedal/olas-core'
 
 const profile = defineController((ctx) => {
-  const form = ctx.form({
-    name: ctx.field('', [required()]),
-    email: ctx.field('', [required(), email()]),
-    address: ctx.form({
-      street: ctx.field(''),
-      city: ctx.field(''),
+  const form = createForm(ctx, {
+    name: createField(ctx, '', [required()]),
+    email: createField(ctx, '', [required(), email()]),
+    address: createForm(ctx, {
+      street: createField(ctx, ''),
+      city: createField(ctx, ''),
     }),
   })
   return { form }
@@ -931,7 +931,7 @@ type FormOptions<S> = {
 
 ## Forms — `FieldArray`
 
-### `ctx.fieldArray<I>(itemFactory, options?): FieldArray<I>`
+### `createFieldArray<I>(ctx, itemFactory, options?): FieldArray<I>`
 
 Dynamic list of `Field<T>` or `Form<S>` items. The factory is invoked once per insertion.
 
@@ -939,8 +939,8 @@ Dynamic list of `Field<T>` or `Form<S>` items. The factory is invoked once per i
 import { defineController } from '@kontsedal/olas-core'
 
 const todoList = defineController((ctx) => {
-  const todos = ctx.fieldArray(
-    (initial?: string) => ctx.field(initial ?? ''),
+  const todos = createFieldArray(ctx, 
+    (initial?: string) => createField(ctx, initial ?? ''),
     { initial: ['buy milk', 'feed cat'] },
   )
   return { todos }
@@ -997,7 +997,7 @@ email('Invalid email')
 pattern(/^\d{5}$/, 'ZIP must be 5 digits')
 ```
 
-Each returns a `Validator<T>` you pass to `ctx.field(initial, [validator, ...])`. For complex/cross-field rules, write your own or use `@kontsedal/olas-zod`.
+Each returns a `Validator<T>` you pass to `createField(ctx, initial, [validator, ...])`. For complex/cross-field rules, write your own or use `@kontsedal/olas-zod`.
 
 ---
 
@@ -1472,7 +1472,7 @@ Wrap a Zod schema as a synchronous `Validator<T>` (a thin alias over `validator(
 import { z } from 'zod'
 import { zodValidator } from '@kontsedal/olas-zod'
 
-const email = ctx.field('', [zodValidator(z.string().email())])
+const email = createField(ctx, '', [zodValidator(z.string().email())])
 ```
 
 ### `zodValidatorAsync<T>(schema: z.ZodType<T>): Validator<T>`

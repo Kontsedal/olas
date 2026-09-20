@@ -1,4 +1,10 @@
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import {
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import type { ChannelLike } from '../src/channel'
 import { crossTabPlugin } from '../src/plugin'
@@ -54,10 +60,11 @@ describe('crossTabPlugin non-cloneable data', () => {
 
     const onWarnA = vi.fn()
     const def = defineController((ctx) => {
-      const q = ctx.use(nonCloneableQuery, () => ['1' as string])
+      const q = createQuery(ctx, nonCloneableQuery, () => ['1' as string])
       return { q }
     })
     const a = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         crossTabPlugin({

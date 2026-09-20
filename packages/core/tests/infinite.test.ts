@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 
 const emptyDeps = {}
@@ -37,8 +39,8 @@ describe('defineInfiniteQuery + ctx.use', () => {
       getPreviousPageParam: (page) => page.prev,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.chat.status.value).toBe('success'))
     expect(root.chat.pages.value).toEqual([fx.pages[0]])
     expect(root.chat.flat.value).toEqual(['a', 'b'])
@@ -56,8 +58,8 @@ describe('defineInfiniteQuery + ctx.use', () => {
       getNextPageParam: (page) => page.next,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.chat.flat.value).toEqual(['a', 'b']))
 
     await root.chat.fetchNextPage()
@@ -80,8 +82,8 @@ describe('defineInfiniteQuery + ctx.use', () => {
       getPreviousPageParam: (page) => page.prev,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.chat.flat.value).toEqual(['c', 'd']))
     expect(root.chat.hasPreviousPage.value).toBe(true)
 
@@ -100,8 +102,8 @@ describe('defineInfiniteQuery + ctx.use', () => {
       getNextPageParam: (page) => page.next,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
     await root.chat.fetchNextPage()
     await root.chat.fetchNextPage()
@@ -124,8 +126,8 @@ describe('defineInfiniteQuery + ctx.use', () => {
       initialPageParam: 0,
       getNextPageParam: (page) => (page === 'page0' ? 1 : null),
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['page0']))
     expect(root.x.flat.value).toEqual(['page0'])
     root.dispose()
@@ -147,8 +149,8 @@ describe('infinite query: refetchInterval', () => {
       getNextPageParam: () => null,
       refetchInterval: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -173,8 +175,8 @@ describe('infinite query: refetchInterval', () => {
         return pages === undefined ? 250 : 1000
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -226,9 +228,9 @@ describe('infinite query: keepPreviousData', () => {
     })
     const keySig = signal<[number]>([1])
     const def = defineController((ctx) => ({
-      x: ctx.use(q, () => keySig.value),
+      x: createQuery(ctx, q, () => keySig.value),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     dKey1.resolve()
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['first-key']))
 

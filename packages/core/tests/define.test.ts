@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 
 const emptyDeps = {}
 
@@ -28,9 +30,9 @@ describe('defineQuery.prefetch — multiple clients', () => {
         fetcher: async () => ++fetches,
         staleTime: 60_000,
       })
-      const def = defineController((ctx) => ({ x: ctx.use(q) }))
-      const r1 = createRoot(def, { deps: emptyDeps })
-      const r2 = createRoot(def, { deps: emptyDeps })
+      const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+      const r1 = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+      const r2 = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       await flush()
 
       await expect(q.prefetch()).rejects.toThrow(/ambiguous/)
@@ -57,12 +59,12 @@ describe('defineInfiniteQuery — module-level methods', () => {
       getNextPageParam: () => null,
     })
     const a = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q, () => [1] as const) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q, () => [1] as const) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     const b = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q, () => [2] as const) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q, () => [2] as const) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => {
       expect(a.x.pages.value).toEqual(['k1p0'])
@@ -89,12 +91,12 @@ describe('defineInfiniteQuery — module-level methods', () => {
       getNextPageParam: () => null,
     })
     const a = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q, () => [1] as const) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q, () => [1] as const) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     const b = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q, () => [2] as const) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q, () => [2] as const) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => {
       expect(a.x.pages.value).toEqual(['k1'])
@@ -115,8 +117,8 @@ describe('defineInfiniteQuery — module-level methods', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
 
@@ -138,8 +140,8 @@ describe('defineInfiniteQuery — module-level methods', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
 
@@ -174,9 +176,9 @@ describe('defineInfiniteQuery — module-level methods', () => {
         getNextPageParam: () => null,
         staleTime: 60_000,
       })
-      const def = defineController((ctx) => ({ x: ctx.use(q) }))
-      const a = createRoot(def, { deps: emptyDeps })
-      const b = createRoot(def, { deps: emptyDeps })
+      const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+      const a = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+      const b = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       await vi.waitFor(() => expect(a.x.pages.value).toEqual(['page']))
 
       await expect(q.prefetch()).rejects.toThrow(/ambiguous/)
@@ -200,12 +202,12 @@ describe('defineQuery.invalidate(...args)', () => {
       },
     })
     const a = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q, () => ['a'] as const) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q, () => ['a'] as const) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     const b = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q, () => ['b'] as const) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q, () => ['b'] as const) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => {
       expect(a.x.data.value).toBe('A')

@@ -12,7 +12,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/signals.test.ts }
   - { type: uses, target: ../decisions/signals-runtime-wrapped.md }
   - { type: related, target: ../pitfalls/preact-signals-overload-return.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -31,7 +31,12 @@ function effect(fn: () => void | (() => void)): () => void  // returns dispose
 function batch<T>(fn: () => T): T
 function untracked<T>(fn: () => T): T
 
-type ReadSignal<T> = { readonly value: T; peek(): T; subscribe(handler: (v: T) => void): () => void }
+type ReadSignal<T> = {
+  readonly value: T
+  peek(): T
+  subscribe(handler: (v: T) => void): () => void        // fires synchronously on subscribe, then on change
+  subscribeChanges(handler: (v: T) => void): () => void // skips the synchronous first fire
+}
 type Signal<T>     = ReadSignal<T> & { value: T; set(v: T): void; update(fn: (prev: T) => T): void }
 type Computed<T>   = ReadSignal<T>
 ```
@@ -44,7 +49,7 @@ type Computed<T>   = ReadSignal<T>
 
 ## Subscribe semantics
 
-`subscribe(handler)` from `@preact/signals-core` fires immediately with the current value AND on every change. This is the upstream behavior we keep, and some consumers rely on the initial sync delivery. `@kontsedal/olas-persist` uses it to read the source after load, and explicitly skips the first delivery to avoid writing back. See `pitfalls/preact-signals-overload-return.md`.
+`subscribe(handler)` from `@preact/signals-core` fires immediately with the current value AND on every change. `subscribeChanges(handler)` is the olas-only sibling that skips that first fire — the shape almost every consumer wants, and the one `useField`, `usePersisted` and the React adapter each hand-rolled before it existed. It is also a reliable way to recognise an olas readable at runtime, since `@preact/signals-core` has no such method. This is the upstream behavior we keep, and some consumers rely on the initial sync delivery. `@kontsedal/olas-persist` uses it to read the source after load, and explicitly skips the first delivery to avoid writing back. See `pitfalls/preact-signals-overload-return.md`.
 
 ## Why wrapped, not re-exported
 

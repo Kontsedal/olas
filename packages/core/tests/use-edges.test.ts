@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 
 const emptyDeps = {}
@@ -16,9 +18,9 @@ describe('subscription.refetch / firstValue when not yet bound', () => {
       fetcher: async () => 'never',
     })
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { key: () => [], enabled: () => false }),
+      x: createQuery(ctx, q, { key: () => [], enabled: () => false }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     await expect(root.x.refetch()).rejects.toThrow(/no active subscription/)
     await expect(root.x.firstValue()).rejects.toThrow(/no active subscription/)
@@ -33,9 +35,9 @@ describe('subscription.refetch / firstValue when not yet bound', () => {
       getNextPageParam: () => null,
     })
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { key: () => [], enabled: () => false }),
+      x: createQuery(ctx, q, { key: () => [], enabled: () => false }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     await expect(root.x.refetch()).rejects.toThrow(/no active subscription/)
     await expect(root.x.firstValue()).rejects.toThrow(/no active subscription/)
@@ -55,9 +57,9 @@ describe('enabled gate flip causes detach + attach', () => {
       fetcher: async () => ++fetches,
     })
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { key: () => [], enabled: () => enabled.value }),
+      x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.x.data.value).toBe(1))
 
     enabled.set(false)
@@ -78,9 +80,9 @@ describe('enabled gate flip causes detach + attach', () => {
       getNextPageParam: () => null,
     })
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { key: () => [], enabled: () => enabled.value }),
+      x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
 
     enabled.set(false)
@@ -109,8 +111,8 @@ describe('root.suspend / root.resume with an infinite subscription', () => {
       getNextPageParam: () => null,
       // staleTime=0 → resume triggers refetch.
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(calls).toBe(1)
 
@@ -136,9 +138,9 @@ describe('root.suspend / root.resume with an infinite subscription', () => {
       getNextPageParam: () => null,
     })
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { key: () => [], enabled: () => enabled.value }),
+      x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(calls).toBe(0)
     root.suspend()
@@ -156,8 +158,8 @@ describe('root.suspend / root.resume with an infinite subscription', () => {
       initialPageParam: 0,
       getNextPageParam: () => null,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     // Double suspend / double resume should not throw or fetch extra.
     root.suspend()

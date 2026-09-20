@@ -26,7 +26,7 @@ const userQuery = defineQuery({
 })
 
 const appController = defineController((ctx) => {
-  const user = ctx.use(userQuery, () => ['me' as string])
+  const user = createQuery(ctx, userQuery, () => ['me' as string])
   return { user }
 })
 
@@ -36,7 +36,7 @@ const root = createRoot(appController, {
 })
 ```
 
-Tab A calls `users.write('me', (prev) => ({ ...prev, name: 'New' }))` (`users = ctx.bindQuery(userQuery)`) — Tab B's subscribers see the new value on the next signal flush. No fetch fires in Tab B.
+Tab A calls `users.write('me', (prev) => ({ ...prev, name: 'New' }))` (`users = bindQuery(ctx, userQuery)`) — Tab B's subscribers see the new value on the next signal flush. No fetch fires in Tab B.
 
 ## API
 

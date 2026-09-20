@@ -11,7 +11,15 @@
  * regression here is also a regression in the example app.
  */
 
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import {
+  createField,
+  createMutation,
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import {
   OlasProvider,
   useField,
@@ -44,8 +52,8 @@ describe('react integration: card list', () => {
     })
 
     const def = defineController((ctx) => {
-      const cards = ctx.use(cardsQuery, () => [])
-      const like = ctx.mutation<string, void>({
+      const cards = createQuery(ctx, cardsQuery, () => [])
+      const like = createMutation<string, void>(ctx, {
         mutate: async (id) => {
           cardsQuery.setData(() => {
             const prev = cards.data.peek() ?? []
@@ -56,7 +64,7 @@ describe('react integration: card list', () => {
       return { cards, like }
     })
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function CardList() {
       const { data, isLoading } = useQuery(root.cards)
@@ -117,8 +125,8 @@ describe('react integration: card list', () => {
       staleTime: 60_000,
     })
 
-    const def = defineController((ctx) => ({ slow: ctx.use(slowQuery, () => []) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ slow: createQuery(ctx, slowQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function SlowView() {
       const { data } = useSuspenseQuery(root.slow)
@@ -147,9 +155,9 @@ describe('react integration: card list', () => {
 
   test('useField round-trip with a controlled <input>', async () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>(''),
+      name: createField<string>(ctx, ''),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function NameInput() {
       const { value, set, isDirty } = useField(root.name)
@@ -180,13 +188,13 @@ describe('react integration: card list', () => {
 
   test('useMutation surfaces error state from a failing mutate', async () => {
     const def = defineController((ctx) => ({
-      save: ctx.mutation<void, void>({
+      save: createMutation<void, void>(ctx, {
         mutate: async () => {
           throw new Error('boom')
         },
       }),
     }))
-    const root = createRoot(def, { deps: {}, onError: () => {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
     function SaveButton() {
       const m = useMutation(root.save)

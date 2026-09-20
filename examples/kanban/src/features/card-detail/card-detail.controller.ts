@@ -12,8 +12,11 @@
  */
 
 import {
+  bindQuery,
   type Ctx,
   computed,
+  createMutation,
+  createQuery,
   debouncedValidator,
   defineController,
   signal,
@@ -44,7 +47,7 @@ const blankInitials: CardFormValue = {
 
 export const cardDetailController = defineController(
   (ctx: Ctx) => {
-    const boardQueryActions = ctx.bindQuery(boardQuery)
+    const boardQueryActions = bindQuery(ctx, boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const { selectedCardId, close } = ctx.inject(selectedCardScope)
     const activity = ctx.inject(activityScope)
@@ -54,7 +57,7 @@ export const cardDetailController = defineController(
 
     // Subscribe to the active board so we can pull the selected card's
     // current data from the cache reactively.
-    const board = ctx.use(boardQuery, () => [activeBoardId.value])
+    const board = createQuery(ctx, boardQuery, () => [activeBoardId.value])
 
     /** The card currently being edited — `null` when the panel is closed. */
     const card = computed<Card | null>(() => {
@@ -135,7 +138,7 @@ export const cardDetailController = defineController(
 
     // ───────── Save mutation (serial) ─────────
 
-    const save = ctx.mutation<void, Card>({
+    const save = createMutation<void, Card>(ctx, {
       name: 'saveCard',
       concurrency: 'serial',
       mutate: async (_v, signal) => {

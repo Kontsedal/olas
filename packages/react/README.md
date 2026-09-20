@@ -105,4 +105,4 @@ Server rendering goes from `root.dehydrate()` to `<HydrationBoundary>`, plus the
 
 ### SSR query identity in 0.9
 
-Queries included in `root.dehydrate()` must declare an explicit, unique `queryId` shared by the server and client bundles. Anonymous queries fetch on the client. Registration order does not identify queries. Use `ctx.bindQuery(query)` or `root.bindQuery(query)` for imperative operations when multiple roots may be alive.
+Queries included in `root.dehydrate()` must declare an explicit, unique `queryId` shared by the server and client bundles. Anonymous queries fetch on the client. Registration order does not identify queries. Use `bindQuery(ctx, query)` or `root.bindQuery(query)` for imperative operations when multiple roots may be alive.

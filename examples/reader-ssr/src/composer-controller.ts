@@ -6,7 +6,16 @@
 // the server thinks; `isValid` is false until the server says it's fine. The
 // usual mutation submits the comment when the form is valid.
 
-import { type Ctx, debouncedValidator, defineController, required } from '@kontsedal/olas-core'
+import {
+  type Ctx,
+  createCache,
+  createField,
+  createForm,
+  createMutation,
+  debouncedValidator,
+  defineController,
+  required,
+} from '@kontsedal/olas-core'
 import type { Comment } from './api'
 
 export type ComposerProps = { articleId: string }
@@ -15,12 +24,12 @@ const VALIDATION_DEBOUNCE_MS = 220
 
 export const composerController = defineController(
   (ctx: Ctx, props: ComposerProps) => {
-    const author = ctx.field<string>('', [required<string>()])
+    const author = createField<string>(ctx, '', [required<string>()])
 
     // Body field has TWO validators: a fast sync one (required) AND an async
     // debounced one that calls the api. `debouncedValidator` resets its
     // timer on every value change and aborts in-flight calls when superseded.
-    const body = ctx.field<string>('', [
+    const body = createField<string>(ctx, '', [
       required<string>(),
       debouncedValidator(
         (value, signal) => ctx.deps.api.validateCommentBody(value, signal),
@@ -28,16 +37,17 @@ export const composerController = defineController(
       ),
     ])
 
-    const form = ctx.form({ author, body })
+    const form = createForm(ctx, { author, body })
 
     // Comments list — private `ctx.cache` because no other controller cares
     // about this article's comments.
-    const comments = ctx.cache<Comment[]>(
+    const comments = createCache<Comment[]>(
+      ctx,
       (signal) => ctx.deps.api.listComments(props.articleId, signal),
       { staleTime: 10_000 },
     )
 
-    const submit = ctx.mutation<void, Comment>({
+    const submit = createMutation<void, Comment>(ctx, {
       name: 'postComment',
       mutate: async (_, signal) => {
         form.markAllTouched()

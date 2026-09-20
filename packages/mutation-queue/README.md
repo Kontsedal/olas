@@ -38,7 +38,7 @@ export const createOrder = defineMutation({
 
 // 2. Use it from a controller exactly like any other mutation.
 const checkout = defineController((ctx) => ({
-  create: ctx.mutation({
+  create: createMutation(ctx, {
     ...createOrder,
     onSuccess: () => toast('Order placed'),
   }),
@@ -112,7 +112,7 @@ type ReplaySettleApi = { invalidate(query: Query<any, any>, callArgs?: readonly 
 ```
 defineMutation({ persist: true })  →  registers mutationId at module scope
                                   ↓
-ctx.mutation({...mutation}).run()  →  runner emits onMutationEnqueue
+createMutation(ctx, {...mutation}).run()  →  runner emits onMutationEnqueue
                                   ↓
                               plugin: write QueueEntry to <prefix>/<id>/<runId>
                                   ↓

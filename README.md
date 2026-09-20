@@ -244,13 +244,13 @@ export const userQuery = defineQuery({
 })
 ```
 
-Subscribe to it from a controller. `ctx.use` returns an `AsyncState<T>` — eight signals you can read individually.
+Subscribe to it from a controller. `createQuery` returns an `AsyncState<T>` — eight signals you can read individually.
 
 ```ts
 import { defineController } from '@kontsedal/olas-core'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
-  const user = ctx.use(userQuery, () => [props.id])
+  const user = createQuery(ctx, userQuery, () => [props.id])
 
   return { user }
 })
@@ -289,10 +289,10 @@ You do not wire this up. Subscribing *is* the sharing. The same primitive scales
 import { defineController } from '@kontsedal/olas-core'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
-  const user = ctx.use(userQuery, () => [props.id])
+  const user = createQuery(ctx, userQuery, () => [props.id])
 
-  const users = ctx.bindQuery(userQuery)
-  const updateName = ctx.mutation<string, void>({
+  const users = bindQuery(ctx, userQuery)
+  const updateName = createMutation<string, void>(ctx, {
     mutate: async (newName, signal) => {
       const res = await fetch(`/api/users/${props.id}`, {
         method: 'PATCH',
@@ -317,7 +317,7 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
 })
 ```
 
-`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `users.cancel(...)`, where `users` is the root-scoped handle from `ctx.bindQuery(userQuery)`, so an outgoing refetch's stale response cannot land on top of the optimistic value. If the call fails, `onError` calls `snapshot.rollback()` and the UI reverts. Rollback restores server truth when a fetch succeeded in between; see SPEC §6.4.
+`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `users.cancel(...)`, where `users` is the root-scoped handle from `bindQuery(ctx, userQuery)`, so an outgoing refetch's stale response cannot land on top of the optimistic value. If the call fails, `onError` calls `snapshot.rollback()` and the UI reverts. Rollback restores server truth when a fetch succeeded in between; see SPEC §6.4.
 
 Three concurrency modes (`parallel` is default):
 
@@ -331,15 +331,15 @@ Three concurrency modes (`parallel` is default):
 import { defineController, required, minLength, email } from '@kontsedal/olas-core'
 
 export const signupForm = defineController((ctx) => {
-  const form = ctx.form({
-    name: ctx.field('', [required('Name is required')]),
-    email: ctx.field('', [required(), email()]),
-    password: ctx.field('', [minLength(8, 'Min 8 characters')]),
+  const form = createForm(ctx, {
+    name: createField(ctx, '', [required('Name is required')]),
+    email: createField(ctx, '', [required(), email()]),
+    password: createField(ctx, '', [minLength(8, 'Min 8 characters')]),
   })
 
   return {
     form,
-    submit: ctx.mutation<void, void>({
+    submit: createMutation<void, void>(ctx, {
       mutate: async () => {
         form.markAllTouched()
         if (!(await form.validate())) throw new Error('invalid')
@@ -467,7 +467,7 @@ const root = createRoot(app, { deps: clientDeps, hydrate: state })
 
 Only queries with an explicit, stable `queryId` are serialized. Anonymous queries fetch on the client. Hydrated queries respect `staleTime`; fresh entries skip the initial refetch.
 
-Use `ctx.bindQuery(query)` inside controllers or `root.bindQuery(query)` outside them for imperative cache operations. The returned handle targets one root and can prefetch before any subscription exists. Unbound query methods throw (or reject their promise) when multiple roots have touched the query. See [the 0.9 migration notes](MIGRATING.md#upgrading-from-08-to-09).
+Use `bindQuery(ctx, query)` inside controllers or `root.bindQuery(query)` outside them for imperative cache operations. The returned handle targets one root and can prefetch before any subscription exists. Unbound query methods throw (or reject their promise) when multiple roots have touched the query. See [the 0.9 migration notes](MIGRATING.md#upgrading-from-08-to-09).
 
 ### Devtools
 

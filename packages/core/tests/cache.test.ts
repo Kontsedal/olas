@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createCache } from '../src'
 import { createRoot, defineController } from '../src/controller'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 import { createTestController } from '../src/testing'
 
@@ -25,9 +27,9 @@ const flush = async () => {
 describe('ctx.cache — fetch lifecycle', () => {
   test('loads on construction; data + status update on success', async () => {
     const def = defineController((ctx) => ({
-      user: ctx.cache(async () => ({ id: 'u1', name: 'Alice' })),
+      user: createCache(ctx, async () => ({ id: 'u1', name: 'Alice' })),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.user.isLoading.value).toBe(true)
     expect(root.user.status.value).toBe('pending')
 
@@ -42,11 +44,11 @@ describe('ctx.cache — fetch lifecycle', () => {
 
   test('surfaces errors via .error and .status === "error"', async () => {
     const def = defineController((ctx) => ({
-      thing: ctx.cache(async () => {
+      thing: createCache(ctx, async () => {
         throw new Error('boom')
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.thing.status.value).toBe('error')
     expect((root.thing.error.value as Error).message).toBe('boom')
@@ -58,9 +60,9 @@ describe('ctx.cache — fetch lifecycle', () => {
   test('refetch() resolves with the new value and updates lastUpdatedAt', async () => {
     let counter = 0
     const def = defineController((ctx) => ({
-      counter: ctx.cache(async () => ++counter),
+      counter: createCache(ctx, async () => ++counter),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.counter.data.value).toBe(1)
     const first = root.counter.lastUpdatedAt.value!
@@ -76,13 +78,13 @@ describe('ctx.cache — fetch lifecycle', () => {
   test('reset() clears error/status but keeps data', async () => {
     let calls = 0
     const def = defineController((ctx) => ({
-      x: ctx.cache(async () => {
+      x: createCache(ctx, async () => {
         calls++
         if (calls === 1) return 'ok'
         throw new Error('boom-on-2')
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     await root.x.refetch().catch(() => {})
     expect(root.x.status.value).toBe('error')
@@ -98,9 +100,9 @@ describe('ctx.cache — fetch lifecycle', () => {
   test('firstValue() resolves on first success', async () => {
     const d = deferred<number>()
     const def = defineController((ctx) => ({
-      n: ctx.cache(() => d.promise),
+      n: createCache(ctx, () => d.promise),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const promise = root.n.firstValue()
     d.resolve(42)
     expect(await promise).toBe(42)
@@ -110,9 +112,9 @@ describe('ctx.cache — fetch lifecycle', () => {
   test('firstValue() rejects on first error', async () => {
     const d = deferred<number>()
     const def = defineController((ctx) => ({
-      n: ctx.cache(() => d.promise),
+      n: createCache(ctx, () => d.promise),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const promise = root.n.firstValue()
     d.reject(new Error('nope'))
     await expect(promise).rejects.toThrow('nope')
@@ -124,13 +126,13 @@ describe('ctx.cache — race protection (§5.6)', () => {
   test('latest fetch wins; older results are discarded', async () => {
     const fetchers: Array<{ promise: Promise<string>; resolve: (v: string) => void }> = []
     const def = defineController((ctx) => ({
-      thing: ctx.cache(() => {
+      thing: createCache(ctx, () => {
         const d = deferred<string>()
         fetchers.push(d)
         return d.promise
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // First fetch from initial load is in flight. Trigger a second.
     const secondPromise = root.thing.refetch()
@@ -152,7 +154,7 @@ describe('ctx.cache — race protection (§5.6)', () => {
     const seenAborts: boolean[] = []
     const fetchers: Array<{ promise: Promise<string>; resolve: (v: string) => void }> = []
     const def = defineController((ctx) => ({
-      thing: ctx.cache((sig) => {
+      thing: createCache(ctx, (sig) => {
         const d = deferred<string>()
         fetchers.push(d)
         sig.addEventListener('abort', () => {
@@ -162,7 +164,7 @@ describe('ctx.cache — race protection (§5.6)', () => {
         return d.promise
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.thing.refetch().catch(() => {})
     await flush()
     expect(seenAborts).toEqual([true])
@@ -175,7 +177,8 @@ describe('ctx.cache — reactive key', () => {
     const id = signal('a')
     const fetched: string[] = []
     const def = defineController((ctx) => ({
-      thing: ctx.cache(
+      thing: createCache(
+        ctx,
         async () => {
           fetched.push(id.peek())
           return `value-of-${id.peek()}`
@@ -183,7 +186,7 @@ describe('ctx.cache — reactive key', () => {
         { key: () => [id.value] },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.thing.data.value).toBe('value-of-a')
 
@@ -198,7 +201,8 @@ describe('ctx.cache — reactive key', () => {
     const id = signal('a')
     const d: Record<string, ReturnType<typeof deferred<string>>> = {}
     const def = defineController((ctx) => ({
-      thing: ctx.cache(
+      thing: createCache(
+        ctx,
         () => {
           const cur = id.peek()
           d[cur] = deferred<string>()
@@ -207,7 +211,7 @@ describe('ctx.cache — reactive key', () => {
         { key: () => [id.value] },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     d.a!.resolve('A')
     await flush()
     expect(root.thing.data.value).toBe('A')
@@ -228,7 +232,8 @@ describe('ctx.cache — reactive key', () => {
     const id = signal('a')
     const d: Record<string, ReturnType<typeof deferred<string>>> = {}
     const def = defineController((ctx) => ({
-      thing: ctx.cache(
+      thing: createCache(
+        ctx,
         () => {
           const cur = id.peek()
           d[cur] = deferred<string>()
@@ -237,7 +242,7 @@ describe('ctx.cache — reactive key', () => {
         { key: () => [id.value], keepPreviousData: true },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     d.a!.resolve('A')
     await flush()
     expect(root.thing.data.value).toBe('A')
@@ -258,7 +263,7 @@ describe('ctx.cache — disposal aborts in-flight', () => {
   test('controller dispose aborts the current fetcher signal', async () => {
     let aborted = false
     const def = defineController((ctx) => ({
-      thing: ctx.cache((sig) => {
+      thing: createCache(ctx, (sig) => {
         sig.addEventListener('abort', () => {
           aborted = true
         })
@@ -267,7 +272,7 @@ describe('ctx.cache — disposal aborts in-flight', () => {
         })
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.dispose()
     expect(aborted).toBe(true)
@@ -277,9 +282,9 @@ describe('ctx.cache — disposal aborts in-flight', () => {
 describe('ctx.cache — setData and rollback (§6.3, §6.4)', () => {
   test('setData applies optimistic updates and flags hasPendingMutations', async () => {
     const def = defineController((ctx) => ({
-      x: ctx.cache(async () => 1),
+      x: createCache(ctx, async () => 1),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.x.data.value).toBe(1)
     expect(root.x.hasPendingMutations.value).toBe(false)
@@ -296,9 +301,9 @@ describe('ctx.cache — setData and rollback (§6.3, §6.4)', () => {
 
   test('stacked optimistic updates: later rollback first lands on intermediate state', async () => {
     const def = defineController((ctx) => ({
-      x: ctx.cache(async () => 0),
+      x: createCache(ctx, async () => 0),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     const snapA = root.x.setData((p) => (p ?? 0) + 1) // 0 → 1
@@ -315,9 +320,9 @@ describe('ctx.cache — setData and rollback (§6.3, §6.4)', () => {
 
   test('rollback is idempotent', async () => {
     const def = defineController((ctx) => ({
-      x: ctx.cache(async () => 'a'),
+      x: createCache(ctx, async () => 'a'),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     const snap = root.x.setData(() => 'b')
     snap.rollback()
@@ -331,9 +336,9 @@ describe('ctx.cache — invalidate / reactive key short-circuit', () => {
   test('invalidate triggers a refetch on the local cache', async () => {
     let calls = 0
     const def = defineController((ctx) => ({
-      x: ctx.cache(async () => ++calls, { staleTime: 60_000 }),
+      x: createCache(ctx, async () => ++calls, { staleTime: 60_000 }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(calls).toBe(1)
 
@@ -350,7 +355,7 @@ describe('ctx.cache — invalidate / reactive key short-circuit', () => {
     const trigger = signal(0)
     let calls = 0
     const def = defineController((ctx) => ({
-      x: ctx.cache(async () => ++calls, {
+      x: createCache(ctx, async () => ++calls, {
         // The key reads `trigger` to re-run the effect, but the returned
         // tuple never changes — exercising the "arrays equal" branch.
         key: () => {
@@ -359,7 +364,7 @@ describe('ctx.cache — invalidate / reactive key short-circuit', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.x.data.value).toBe(1)
 
@@ -373,7 +378,7 @@ describe('ctx.cache — invalidate / reactive key short-circuit', () => {
 describe('ctx.cache via createTestController', () => {
   test('useful in isolation', async () => {
     const userCtl = defineController((ctx, props: { id: string }) => ({
-      user: ctx.cache(async () => ({ id: props.id, name: 'Mocky' })),
+      user: createCache(ctx, async () => ({ id: props.id, name: 'Mocky' })),
     }))
     const root = createTestController(userCtl, {
       deps: emptyDeps,
@@ -392,9 +397,9 @@ describe('ctx.cache — staleTime / isStale', () => {
   test('isStale is true before any successful fetch, false right after, true after staleTime', async () => {
     vi.setSystemTime(0)
     const def = defineController((ctx) => ({
-      x: ctx.cache(async () => 'v', { staleTime: 100 }),
+      x: createCache(ctx, async () => 'v', { staleTime: 100 }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.x.isStale.value).toBe(true)
 
     // Drain the microtasks that resolve the fetch.

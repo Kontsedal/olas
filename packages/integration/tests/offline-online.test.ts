@@ -15,7 +15,14 @@
  * contract), mutation-queue (enqueue / replay / drain semantics).
  */
 
-import { createRoot, defineController, defineMutation, type Mutation } from '@kontsedal/olas-core'
+import {
+  createMutation,
+  createRoot,
+  defineController,
+  defineMutation,
+  type Mutation,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -54,7 +61,7 @@ describe('integration: offline → online sync', () => {
     })
 
     const def1 = defineController((ctx) => ({
-      create: ctx.mutation({
+      create: createMutation(ctx, {
         // Spread the module-scope spec (mutationId + mutate) and add
         // retry: 0 so in-process retries don't consume our attempt budget.
         mutationId: idA,
@@ -78,6 +85,7 @@ describe('integration: offline → online sync', () => {
 
     type Api = { create: Mutation<OrderVars, OrderResult> }
     const root1 = createRoot(def1, {
+      queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
@@ -103,6 +111,7 @@ describe('integration: offline → online sync', () => {
     online = true
     const def2 = defineController(() => ({}))
     const root2 = createRoot(def2, {
+      queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
     })
@@ -135,7 +144,7 @@ describe('integration: offline → online sync', () => {
     })
 
     const def1 = defineController((ctx) => ({
-      create: ctx.mutation({
+      create: createMutation(ctx, {
         mutationId: id,
         mutate: async (vars: OrderVars) => {
           if (!online) throw new Error('NetworkError: offline')
@@ -149,6 +158,7 @@ describe('integration: offline → online sync', () => {
 
     type Api = { create: Mutation<OrderVars, OrderResult> }
     const root1 = createRoot(def1, {
+      queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 })],
@@ -172,6 +182,7 @@ describe('integration: offline → online sync', () => {
     const root2 = createRoot(
       defineController(() => ({})),
       {
+        queries: queryEngine(),
         deps: {},
         plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 })],
       },
@@ -225,6 +236,7 @@ describe('integration: offline → online sync', () => {
       const root = createRoot(
         defineController(() => ({})),
         {
+          queries: queryEngine(),
           deps: {},
           plugins: [
             mutationQueuePlugin({

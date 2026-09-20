@@ -1,6 +1,13 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery, effect } from '@kontsedal/olas-core'
+import {
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  effect,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   createStreamingHydrator,
@@ -21,10 +28,10 @@ describe('createStreamingHydrator (server side)', () => {
       key: () => [],
       fetcher: async () => ['alice', 'bob'],
     })
-    const def = defineController((ctx) => ({ users: ctx.use(users) }))
+    const def = defineController((ctx) => ({ users: createQuery(ctx, users) }))
 
     const { plugin, flush, dispose } = createStreamingHydrator()
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     // Wait for the initial fetch to settle.
     await root.waitForIdle()
@@ -46,10 +53,10 @@ describe('createStreamingHydrator (server side)', () => {
       key: () => [],
       fetcher: async () => 'x',
     })
-    const def = defineController((ctx) => ({ anon: ctx.use(anon) }))
+    const def = defineController((ctx) => ({ anon: createQuery(ctx, anon) }))
 
     const { plugin, flush, dispose } = createStreamingHydrator()
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await root.waitForIdle()
 
     // No queryId → cross-tab / streaming hooks don't fire.
@@ -72,11 +79,14 @@ describe('createStreamingHydrator (server side)', () => {
       key: () => [],
       fetcher: async () => ['ok'],
     })
-    const def = defineController((ctx) => ({ bad: ctx.use(bad), good: ctx.use(good) }))
+    const def = defineController((ctx) => ({
+      bad: createQuery(ctx, bad),
+      good: createQuery(ctx, good),
+    }))
 
     const { plugin, flush, dispose } = createStreamingHydrator()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await root.waitForIdle()
 
     // Must NOT throw. The good entry survives; the BigInt one is skipped + warned.
@@ -96,10 +106,10 @@ describe('createStreamingHydrator (server side)', () => {
       key: () => [],
       fetcher: async () => '</script><img src=x onerror=alert(1)>',
     })
-    const def = defineController((ctx) => ({ evil: ctx.use(evil) }))
+    const def = defineController((ctx) => ({ evil: createQuery(ctx, evil) }))
 
     const { plugin, flush } = createStreamingHydrator()
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await root.waitForIdle()
 
     const html = flush()
@@ -139,8 +149,8 @@ describe('installStreamingIntake (client side)', () => {
       key: () => [],
       fetcher: async () => ['fresh-from-fetcher'],
     })
-    const def = defineController((ctx) => ({ users: ctx.use(users) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ users: createQuery(ctx, users) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // Don't subscribe yet — the entry isn't bound. installStreamingIntake
     // should buffer the preloaded data so a future subscribe picks it up.
     const uninstall = installStreamingIntake(root)
@@ -183,8 +193,8 @@ describe('installStreamingIntake (client side)', () => {
       key: () => [],
       fetcher: async () => 'v2',
     })
-    const def = defineController((ctx) => ({ a: ctx.use(q1), b: ctx.use(q2) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ a: createQuery(ctx, q1), b: createQuery(ctx, q2) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // Override the pre-populated queue from `beforeEach` — irrelevant to
     // this test.
     ;(globalThis as unknown as Record<string, unknown>)[STREAMING_GLOBAL] = {
@@ -244,8 +254,8 @@ describe('installStreamingIntake (client side)', () => {
       },
     }
     const q = defineQuery({ queryId: 'streaming-late', key: () => [], fetcher: async () => 'x' })
-    const def = defineController((ctx) => ({ v: ctx.use(q) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ v: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     const uninstall = installStreamingIntake(root)
     uninstall() // teardown → re-installs a bootstrap-style queue
 

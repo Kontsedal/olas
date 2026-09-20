@@ -43,6 +43,31 @@ After §13.2 grew the `source: 'set' | 'fetch' | 'remote'` field, `source === 'r
 
 `@kontsedal/olas-mutation-queue` (shipped 0.0.5) covers durable enqueue + reload-replay for `defineMutation({ persist: true })`. The remaining offline layer would add navigator-online detection, a connection-state signal, conflict-resolution helpers, an exponential-backoff schedule for inter-attempt waits, and an opinionated mid-session retry policy. Today the queue only retries across page loads. Likely a thin package layered on top of `mutation-queue` + `@kontsedal/olas-persist`.
 
+### [planned] Verify `@kontsedal/olas-react` under `preact/compat`
+
+The adapter imports only `createContext`, `useContext`, `useCallback`, `useMemo`, `useRef`, `useSyncExternalStore`, `useEffect` and `useLayoutEffect`, plus three types, and never imports `react-dom` (`streaming.ts` names `renderToPipeableStream` only in doc comments; its exports are a bootstrap string and a `TransformStream`). Every one of those is in `preact/compat`, so preact support is likely an aliasing exercise rather than a package.
+
+Three things to verify before claiming it: `useSyncExternalStore` in compat is a shim, so the mount-consistency path `.wiki/modules/react.md` documents may not be exercised the same way; `useSuspenseQuery` throws `subscription.promise()` and preact's Suspense retry semantics differ from React's; and compat's `StrictMode` is a no-op, so `HydrationBoundary`'s double-construct handling never fires. Shape of the work: a second vitest project running `packages/react/tests/**` under a `preact/compat` alias, then either widen the peer range and document the setup or document which hooks do not survive.
+
+This replaces the `@kontsedal/olas-preact` package idea. A second adapter is the wrong shape when the first one already compiles against compat. See `.wiki/decisions/no-vanilla-adapter.md`.
+
+### [idea] Framework-agnostic `bindField(el, field, opts)`
+
+The one piece worth salvaging from the dropped vanilla adapter. 156 lines covering what no framework supplies and what `useFieldInput` only covers in a React props-spread shape:
+
+- Save and restore `selectionStart`/`selectionEnd` around a write-back that **differs** from the control's value. A field with a transform or a normalizing setter hits that on every keystroke, and an equality check alone does not cover it.
+- Suppress commits in both directions during an IME composition, and **replay a suppressed model write** at `compositionend` rather than discarding it and then overwriting the model with the stale buffer.
+- Route by element kind: `checked` for checkbox, per-element value matching for radio, `valueAsNumber` for `type=number`, selected options for `<select multiple>`.
+- `transform` parity with `useFieldInput`, plus `blur` calling `markTouched()` and `aria-invalid` from `touched && errors.length`.
+
+Would live in `@kontsedal/olas-core` or alongside the React adapter, taking a real `Element` and returning a disposer. Reference implementation and its tests are recoverable from this session's history if picked up.
+
+### [idea] Cross-adapter parity test — React and preact, one controller tree
+
+Demonstrates SPEC promise 4 ("swap frameworks by swapping a thin adapter") as a test rather than a claim: one controller tree, one set of DOM assertions, two renderers. A version of this existed briefly against React and the dropped vanilla adapter. Pointed at React and `preact/compat` it is better evidence, because both are real frameworks. Depends on the preact verification item above.
+
+Two things such a test must not overclaim: importing React at module level means it shows the *mount path* is framework-free, not the dependency graph; and rows binding a plain string prove less than rows whose content updates.
+
 ### [idea] `@kontsedal/olas-vue` — Vue adapter
 
 Signal/ref interop. Out of scope for v1; the architecture is framework-neutral, so it's additive.
@@ -125,7 +150,7 @@ Dropped on purpose. A component that creates a cache subscription owns data life
 
 ### [dropped] Next.js app-router / RSC support
 
-Next.js is misaligned with olas's philosophy: the controller-tree model assumes a client-driven, signal-reactive runtime where lifecycle, dispose, and `ctx.use` keying live in user space. RSC inverts that — the server owns rendering, components are render functions of props, and the framework dictates data-fetching boundaries. Bolting olas onto that model leads to one of two bad outcomes. It makes olas a thin pass-through to whatever Next.js already does, which defeats the point. Or it requires a parallel server-side controller runtime, doubling the surface area for an audience already well served by TanStack Query and `'use server'` actions.
+Next.js is misaligned with olas's philosophy: the controller-tree model assumes a client-driven, signal-reactive runtime where lifecycle, dispose, and `createQuery` keying live in user space. RSC inverts that — the server owns rendering, components are render functions of props, and the framework dictates data-fetching boundaries. Bolting olas onto that model leads to one of two bad outcomes. It makes olas a thin pass-through to whatever Next.js already does, which defeats the point. Or it requires a parallel server-side controller runtime, doubling the surface area for an audience already well served by TanStack Query and `'use server'` actions.
 
 **We don't need Next.js.** Olas is for logic-heavy client-driven apps (Linear/Notion class) where the controller tree carries real weight. Pages-router SSR via `dehydrate`/`hydrate` (already shipped, spec §11) covers the SSR case for the apps that benefit from it. RSC consumers should reach for the framework's native data-fetching story.
 
@@ -151,7 +176,7 @@ leftovers below are terse enough to live here.
 ### [idea] Wire `cache:subscribed` / `cache:unsubscribed`
 
 The `cache:subscribed` variant is declared in the `DebugEvent` union but never emitted —
-it needs the subscriber's controller path threaded through `ctx.use` → `ClientEntry.acquire`
+it needs the subscriber's controller path threaded through `createQuery` → `ClientEntry.acquire`
 (and a matching `cache:unsubscribed` on `release` 1→0). Feeds per-entry subscriber counts
 in the inspector and "who's watching this" in the timeline. Part of overhaul T8.5.
 

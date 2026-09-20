@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: ten published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 901 tests across 62 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker and virtualized-table. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
+Current implementation status: ten published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 911 tests across 63 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker and virtualized-table. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -238,7 +238,7 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 - **`latest-wins` mutations roll back the previous snapshot synchronously before calling the new `onMutate`** — not on the previous run's catch. Doing it later stacks snapshots wrong. See `.wiki/pitfalls/latest-wins-rollback-order.md`.
 - **`isStale` cannot be a `Date.now()` computed** — its deps don't change as time passes. Must be timer-driven. See `.wiki/pitfalls/isstale-needs-timer.md`.
 - **Mutations race against their abort signal** so misbehaving mutate fns can't block forever. See `.wiki/pitfalls/raceabort-for-misbehaving-mutate.md`.
-- **`ctx.field('')` infers `Field<''>`** because of literal narrowing. Annotate: `ctx.field<string>('')`. See `.wiki/pitfalls/literal-type-narrowing.md`.
+- **`createField(ctx, '')` infers `Field<''>`** because of literal narrowing. Annotate: `createField<string>(ctx, '')`. See `.wiki/pitfalls/literal-type-narrowing.md`.
 - **`@preact/signals-core`'s overloaded `signal()` gives `Signal<T | undefined>`** through `ReturnType` because the last overload wins. We use `PreactSignal<T>` directly to dodge it. See `.wiki/pitfalls/preact-signals-overload-return.md`.
 
 ---

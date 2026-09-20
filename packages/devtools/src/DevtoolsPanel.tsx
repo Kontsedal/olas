@@ -1081,7 +1081,7 @@ function FieldsView({ entries, filter }: { entries: FieldEntry[]; filter: string
     return (
       <Empty
         title="No field validations yet"
-        hint="Type into a form bound via ctx.form(...) or ctx.field(...) — each pass lands here."
+        hint="Type into a form bound via createForm(ctx, ...) or createField(ctx, ...) — each pass lands here."
       />
     )
   }

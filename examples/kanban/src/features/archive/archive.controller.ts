@@ -14,7 +14,14 @@
  * archive pages cache after success.
  */
 
-import { type Ctx, defineController, defineInfiniteQuery } from '@kontsedal/olas-core'
+import {
+  bindQuery,
+  type Ctx,
+  createMutation,
+  createQuery,
+  defineController,
+  defineInfiniteQuery,
+} from '@kontsedal/olas-core'
 import type { ArchivePage, Card } from '../../api'
 import { activeBoardScope, activityScope, notificationsScope } from '../../scopes'
 import { boardQuery } from '../board/board.query'
@@ -35,15 +42,15 @@ const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
 
 export const archiveController = defineController(
   (ctx: Ctx) => {
-    const archiveQueryActions = ctx.bindQuery(archiveQuery)
-    const boardQueryActions = ctx.bindQuery(boardQuery)
+    const archiveQueryActions = bindQuery(ctx, archiveQuery)
+    const boardQueryActions = bindQuery(ctx, boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
 
-    const sub = ctx.use(archiveQuery, () => [activeBoardId.value])
+    const sub = createQuery(ctx, archiveQuery, () => [activeBoardId.value])
 
-    const restore = ctx.mutation<{ cardId: string; columnId: string }, void>({
+    const restore = createMutation<{ cardId: string; columnId: string }, void>(ctx, {
       name: 'restoreCard',
       concurrency: 'serial',
       mutate: async (vars, signal) => {

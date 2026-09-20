@@ -1183,3 +1183,134 @@ Also closed: `JsonView` had zero `aria-` attributes while being an expand and co
 kanban handed the devtools panel three custom properties the panel does not read.
 
 The page states plainly that nothing gates any of the ten rules.
+
+---
+
+## [2026-09-20 15:10] ingest | `@kontsedal/olas-dom` — the vanilla adapter ships
+
+The adapter SPEC §16 has named since the beginning now exists. It binds signals to nodes the
+consumer already holds, and it does not build them.
+
+**Two layers, one package.** The binder (`mount`, `View`) depends on core and nothing else. The
+template layer is lit-html plus a 109-line bridge on the `/html` sub-path, with `lit-html` as an
+optional peer, so a consumer of the package root ships no lit bytes.
+
+**The design went through an adversarial review before any code.** The review returned a verdict
+of rework and changed four things that would otherwise have shipped wrong.
+
+- The proposed core prerequisite was broken. Adding `Symbol.for('olas.signal')` to `SignalImpl`
+  and `ComputedImpl` would have missed `FieldImpl`, which is its own class, and `readOnly()`,
+  which returns a frozen object literal. Both would have been misclassified as plain values. The
+  duck-check on `peek` + `subscribe` + `subscribeChanges` needs no core change and is stronger.
+- The in-house template engine was budgeted at 350 lines against an honest 550-750, with
+  raw-text elements, attribute-name case recovery, multi-interpolation attributes and the
+  different-strings-identity path all unbudgeted. Bridging to lit-html deletes the whole file.
+  See `decisions/lit-html-over-own-engine.md`.
+- `swap` was keyed on a value, so `() => query.data.value` would tear the subtree down on every
+  refetch that minted a new object. It takes a key thunk now.
+- `input()`'s four-behavior list was missing three: caret restoration around a *differing* write,
+  composition guarded in both directions, and `transform` parity with `useFieldInput`.
+
+**What the review got right that mattered most.** SPEC.md:442 rejects the `Source<T>` union by
+name for `ctx.use` keys. The package keeps the union and argues the distinction in
+`modules/dom.md`: a cache key is an identity where a non-thunk is a silent correctness bug, and a
+binding is a sink where a plain value is correctly static.
+
+**Enforcement.** 684 code lines, ceiling 700, checked by `pnpm dom:budget`
+(`scripts/dom-budget.mjs`). A README sentence is not enforcement; the repo already runs bespoke
+lint scripts and this is the same idiom.
+
+**Parity as a test, not a claim.** `packages/integration/tests/adapter-parity.test.tsx` runs one
+controller tree and one set of assertions through both the React adapter and the binder. The only
+difference is that React needs `act()` to flush; the binder commits synchronously.
+
+Drift found and fixed on the way: `modules/signals.md` documented `ReadSignal` without
+`subscribeChanges`, which has been on the type since before that page's `last_verified`. The
+dom package's duck-check depends on it.
+
+New pages: `modules/dom.md`, `decisions/lit-html-over-own-engine.md`.
+
+---
+
+## [2026-09-20 16:40] decision | `@kontsedal/olas-dom` built, measured, and dropped
+
+The vanilla adapter from the entry six hours earlier is deleted, uncommitted. SPEC §16 no
+longer promises one. Full reasoning in `decisions/no-vanilla-adapter.md`; the short
+version is three measurements taken after the package was working.
+
+The binder was 5.9 KB gzipped. Preact is in the same range and includes a component model.
+`@preact/signals` already binds a signal to a text node with no diff, so fine-grained
+updates were not a differentiator either.
+
+The decisive one generalises past preact: `@kontsedal/olas-core` is larger than any of
+these renderers, so anyone shipping olas has already spent the budget a hand-rolled binder
+was meant to save. "Avoid a framework to save bytes" is never live for this library's
+users. That kills the size argument permanently, not just against one competitor.
+
+The fallback case — bind DOM you did not render — did not hold either. Embeddable widgets
+inject their own container and custom elements own their shadow DOM, so neither needs it.
+Progressive enhancement over server HTML is real and is not this library's audience.
+
+**What replaced it.** `@kontsedal/olas-react` imports eight hooks and three types, all
+present in `preact/compat`, and never imports `react-dom`. Preact support is probably an
+alias plus a test matrix. `BACKLOG.md` carries that, a framework-agnostic `bindField`
+salvaged from the deleted `input.ts`, and a React-versus-preact parity test.
+
+**Kept from the work.** The `modules/signals.md` drift fix stands on its own: the page had
+documented `ReadSignal` without `subscribeChanges`, at `confidence: high`, since before
+2026-05-22.
+
+**Process.** Plan, review, build, review, measure — and the measurement came last and
+reversed the decision. Measuring the bundle against preact during planning would have
+stopped it. The cost of learning this was one uncommitted working tree; after
+`changeset publish` it would have been a published version number that can never be
+reused.
+
+---
+
+## [2026-09-20 19:20] ingest | core becomes tree-shakeable — ctx primitives are free functions
+
+Two breaking changes shipped together as one pre-1.0 major. A controllers-only bundle went
+from 20.1 KB gzipped to 4.8 KB. Full reasoning in
+`decisions/ctx-primitives-are-free-functions.md`.
+
+**What changed.** `ctx.field(x)` became `createField(ctx, x)`, and the same for `createForm`,
+`createFieldArray`, `createCache`, `createQuery` (was `ctx.use`), `createMutation` and
+`bindQuery`. `createRoot` now takes `queries: queryEngine()`. `ctx` keeps everything that
+binds to the controller's tree and lifetime.
+
+**Why the obvious fix does not work.** Constructing the `QueryClient` lazily on first use
+saves nothing, because the first-use site is `ctx.use`, which lives in `instance.ts`, which
+`createRoot` always reaches. The `new QueryClient(...)` expression had to leave that module
+graph entirely. Same argument for the forms subsystem: an object literal's methods are not
+droppable.
+
+**Why the engine is adopted eagerly.** `QueryClient`'s constructor runs plugin `init`, and
+`mutationQueuePlugin` replays mutations persisted by a *previous session* there. That is a
+startup obligation, and the "any app with the plugin touches a mutation somewhere" defence
+fails because that code can be route-gated. The bundle win comes from where the constructor
+lives, not from when it runs.
+
+**Measured** with `esbuild --bundle --minify --define:__DEV__=false`, gzipped, signals-core
+external: signals only 0.3 KB; `+ createRoot`/`defineController` 4.8 KB (was 20.1);
+`+ forms` 9.2 KB; `+ queries` 14.4 KB; everything 22.6 KB (was 21.8). Importing everything
+costs 0.8 KB more than before — the indirection, paid by the people who use the features.
+
+**Pinned by the import graph, not by bytes.** `tests/tree-shaking.test.ts` asserts that
+`instance.ts` has no value import from `forms/` or `query/{local,mutation,use,client,infinite}`
+and that `root.ts` contains no `new QueryClient(`. A byte-count assertion would drift with
+every unrelated change; this fails the moment the coupling returns.
+
+**SPEC was amended, not contradicted.** §3.2 recorded rejecting a `ctx` split. That rejection
+was about splitting `ctx` into three *parameters* and it still stands — `ctx` is still one
+parameter. What changed is that primitives which never needed to be methods stopped being
+methods, which §3.3 already endorsed for every composable outside core.
+
+Three codemod passes were needed. The first regex missed multiline calls; the paren-matching
+rewrite then picked trailing commas rather than the options object; and the `ctx.` pass ran
+over core's own `src`, rewriting docstrings and adding self-imports to five files. All
+repaired, and worth remembering: a codemod over a repo that documents its own API will edit
+the documentation of the thing it is changing.
+
+Also in this commit: `@kontsedal/olas-dom` was built, measured and dropped before commit —
+see `decisions/no-vanilla-adapter.md` and the earlier entry today.

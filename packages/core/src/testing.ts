@@ -1,5 +1,6 @@
 import { createRootWithProps } from './controller/root'
 import type { ControllerDef, Field, Root, RootOptions } from './controller/types'
+import { type QueryEngine, queryEngine } from './query/engine'
 import type { AsyncState, AsyncStatus } from './query/types'
 import { computed, type ReadSignal, type Signal, signal } from './signals'
 
@@ -31,12 +32,20 @@ export function createTestController<
      * retry counts) can be tested without hand-rolling a root wrapper.
      */
     defaultQueryOptions?: RootOptions<TDeps>['defaultQueryOptions']
+    /**
+     * The query engine. Unlike `createRoot`, this defaults to a live one:
+     * a test controller exists to exercise a controller's behavior, and
+     * making every test opt in to the cache would be noise. Pass `null` to
+     * assert the no-engine path.
+     */
+    queries?: QueryEngine | null
   },
 ): Root<Api> {
   return createRootWithProps<Props, Api, TDeps>(def, options.props, {
     deps: options.deps,
     onError: options.onError,
     defaultQueryOptions: options.defaultQueryOptions,
+    queries: options.queries === null ? undefined : (options.queries ?? queryEngine()),
   })
 }
 

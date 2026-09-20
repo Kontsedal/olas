@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 
 const emptyDeps = {}
@@ -20,8 +22,8 @@ describe('infinite query: error / retry paths', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.status.value).toBe('error'))
     expect((root.x.error.value as Error).message).toBe('boom')
@@ -44,8 +46,8 @@ describe('infinite query: error / retry paths', () => {
       retryDelay: 1,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.status.value).toBe('error'), { timeout: 2000 })
     expect(calls).toBe(3) // initial + 2 retries
@@ -66,8 +68,8 @@ describe('infinite query: error / retry paths', () => {
       retryDelay: () => 1,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.status.value).toBe('error'), { timeout: 2000 })
     expect(calls).toBe(2)
@@ -89,8 +91,8 @@ describe('infinite query: error / retry paths', () => {
       getNextPageParam: (page) => (page === 'p0' ? 1 : null),
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
 
@@ -118,8 +120,8 @@ describe('infinite query: error / retry paths', () => {
       getPreviousPageParam: (first) => (first === 'mid' ? -1 : null),
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['mid']))
 
@@ -143,8 +145,8 @@ describe('infinite query: short-circuit branches', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
     const before = calls
@@ -166,8 +168,8 @@ describe('infinite query: short-circuit branches', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
     const before = calls
@@ -188,9 +190,9 @@ describe('infinite query: short-circuit branches', () => {
     })
     const root = createRoot(
       defineController((ctx) => ({
-        x: ctx.use(q, { key: () => [], enabled: () => enabled.value }),
+        x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await flush()
     expect(root.x.pages.value).toEqual([])
@@ -215,8 +217,8 @@ describe('infinite query: short-circuit branches', () => {
       getNextPageParam: (page) => (page === 'p0' ? 1 : null),
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
     const callsBefore = calls
@@ -245,8 +247,8 @@ describe('infinite query: reset / firstValue', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.status.value).toBe('error'))
     root.x.reset()
@@ -271,8 +273,8 @@ describe('infinite query: reset / firstValue', () => {
       getNextPageParam: (page) => (page === 'p0' ? 1 : null),
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
     mode = 'fail'
@@ -294,8 +296,8 @@ describe('infinite query: reset / firstValue', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
     await expect(root.x.firstValue()).resolves.toEqual(['p0'])
@@ -312,8 +314,8 @@ describe('infinite query: reset / firstValue', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => expect(root.x.status.value).toBe('error'))
     await expect(root.x.firstValue()).rejects.toThrow('die')
@@ -332,8 +334,8 @@ describe('infinite query: reset / firstValue', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await flush()
     const promise = root.x.firstValue()
@@ -354,8 +356,8 @@ describe('infinite query: reset / firstValue', () => {
       getNextPageParam: () => null,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await flush()
     const promise = root.x.firstValue()
@@ -382,8 +384,8 @@ describe('infinite query: staleTime + invalidate', () => {
       staleTime: 1000,
     })
     const root = createRoot(
-      defineController((ctx) => ({ x: ctx.use(q) })),
-      { deps: emptyDeps },
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.advanceTimersByTimeAsync(0)
     expect(calls).toBe(1)

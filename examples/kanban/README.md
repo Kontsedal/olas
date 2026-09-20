@@ -10,10 +10,10 @@ of all features doubles as a coverage map for the library.
 | Visible feature | Library primitive |
 |---|---|
 | Multi-board sidebar with switching | `defineQuery({ crossTab: true })`, reactive key thunks |
-| Active board grid | `defineQuery` + `ctx.use(query, () => [...])` |
-| Drag-drop reorder *within* a column | `ctx.mutation({ concurrency: 'serial' })` |
-| Drag-drop *across* columns | `ctx.mutation({ concurrency: 'parallel' })` with optimistic snapshot |
-| Search bar (250 ms debounce → server) | `debounced()` + `ctx.mutation({ concurrency: 'latest-wins' })` |
+| Active board grid | `defineQuery` + `createQuery(ctx, query, () => [...])` |
+| Drag-drop reorder *within* a column | `createMutation(ctx, { concurrency: 'serial' })` |
+| Drag-drop *across* columns | `createMutation(ctx, { concurrency: 'parallel' })` with optimistic snapshot |
+| Search bar (250 ms debounce → server) | `debounced()` + `createMutation(ctx, { concurrency: 'latest-wins' })` |
 | Filter chips (priority / label / assignee) | `computed()` composition over signals |
 | Bulk move + multi-select | `selection<string>()` (handleClick range / meta) |
 | Detail panel | `<KeepAlive controller={cardDetail}>` (suspend/resume on unmount) |

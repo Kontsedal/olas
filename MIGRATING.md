@@ -6,6 +6,52 @@ Notes for users coming from TanStack Query, Redux Toolkit, or "hooks at the top 
 
 ---
 
+## Upgrading from 0.9 to 1.0
+
+Two breaking changes, both mechanical. A project-wide find-and-replace plus one edit per `createRoot` covers almost all of it.
+
+### 1. The lifetime-owned primitives take `ctx` as an argument
+
+| Was | Now |
+|---|---|
+| `ctx.field(...)` | `createField(ctx, ...)` |
+| `ctx.form(...)` | `createForm(ctx, ...)` |
+| `ctx.fieldArray(...)` | `createFieldArray(ctx, ...)` |
+| `ctx.cache(...)` | `createCache(ctx, ...)` |
+| `ctx.use(...)` | `createQuery(ctx, ...)` |
+| `ctx.mutation(...)` | `createMutation(ctx, ...)` |
+| `ctx.bindQuery(...)` | `bindQuery(ctx, ...)` |
+
+All seven come from `@kontsedal/olas-core`. Generic arguments move with the name: `ctx.field<string>('')` becomes `createField<string>(ctx, '')`.
+
+`ctx` is unchanged for everything else — `emitter`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `on`, `provide`, `inject`, `debug`, the lifecycle hooks, and `signal`/`computed`.
+
+Two cautions for a scripted rewrite. `root.bindQuery(...)` is a **different** method on the root and must not be touched. And a controller that renamed its parameter (`(c) => ...`) needs the receiver name adjusted.
+
+### 2. `createRoot` takes an explicit query engine
+
+```ts
+import { queryEngine } from '@kontsedal/olas-core'
+
+const root = createRoot(app, { deps, queries: queryEngine() })
+```
+
+Needed by any root whose controllers call `createQuery`, `createMutation` or `bindQuery`. Without it those throw a message naming the fix, so the compiler and the first test run find every site.
+
+`createCache` does **not** need an engine — a controller-local cache is not a client entry. Nor do forms, effects, children or emitters.
+
+Every other option stays on `createRoot` and means the same thing: `deps`, `onError`, `plugins`, `hydrate`, `defaultQueryOptions`, `refetchOnWindowFocus`, `refetchOnReconnect`, `scopes`. `queryEngine(...)` accepts the query-specific ones too if you prefer them next to the engine; a value passed there wins.
+
+`createTestController` supplies an engine by default, so tests using it need no change. Pass `queries: null` to assert the no-engine path.
+
+### Why
+
+`Ctx` was one object with every method wired eagerly, built in a module `createRoot` always reaches — so every consumer shipped the forms subsystem and the query engine whether or not they used them. A controllers-only bundle was 20.1 KB gzipped; it is now 4.8 KB. Importing everything costs about 0.8 KB more than before.
+
+The reasoning, including why lazy construction was not an option and what the naming alternatives were, is in `.wiki/decisions/ctx-primitives-are-free-functions.md`.
+
+---
+
 ## Upgrading from 0.8 to 0.9
 
 ### Select a root for imperative query operations
@@ -14,8 +60,8 @@ Use a bound handle in controllers and request handlers:
 
 ```ts
 const feature = defineController((ctx) => {
-  const users = ctx.bindQuery(userQuery)
-  const user = ctx.use(userQuery, () => ['me'])
+  const users = bindQuery(ctx, userQuery)
+  const user = createQuery(ctx, userQuery, () => ['me'])
   return {
     user,
     rename: (name: string) => users.write('me', (prev) => ({ ...prev!, name })),
@@ -26,7 +72,7 @@ const feature = defineController((ctx) => {
 await root.bindQuery(userQuery).prefetch('me')
 ```
 
-Binding does not subscribe or fetch. It works before the first subscription. The handle exposes the query's imperative methods, retains argument/result types, and remains tied to that root; operations fail after root disposal. Subscribe with the original definition via `ctx.use(userQuery)`.
+Binding does not subscribe or fetch. It works before the first subscription. The handle exposes the query's imperative methods, retains argument/result types, and remains tied to that root; operations fail after root disposal. Subscribe with the original definition via `createQuery(ctx, userQuery)`.
 
 Unbound helpers such as `userQuery.write`, `peek`, `cancel`, `invalidate`, and `prefetch` now throw or reject when multiple roots have touched the query. They no longer broadcast or pick the first root. With zero roots, the existing no-op/undefined behavior remains, except `prefetch` rejects. With one root they remain shortcuts. Prefer bound handles in reusable controllers and SSR code. For an intentional broadcast, explicitly iterate the roots and use their bound handles. Cross-tab plugin transport remains an explicit opt-in.
 
@@ -71,7 +117,7 @@ A `gcTime: Infinity` or a multi-week `gcTime` on 0.8 did the opposite of what it
 
 TanStack: each component calls `useQuery(['user', id], fetchUser)` at the top of its render and lets the QueryClient hash the key.
 
-Olas: each *controller* declares `ctx.use(userQuery, () => [id])`. The query is defined once at module scope (`defineQuery`), and consumers point at it. The QueryClient still hashes — it lives on the root.
+Olas: each *controller* declares `createQuery(ctx, userQuery, () => [id])`. The query is defined once at module scope (`defineQuery`), and consumers point at it. The QueryClient still hashes — it lives on the root.
 
 Why: in TanStack, the "subscriber" is a component; component lifetime drives subscription lifetime. In Olas, the "subscriber" is a controller; controller lifetime drives subscription lifetime. Components are just renderers. This separates "who's reading the data" from "who's drawing it on screen."
 
@@ -79,9 +125,9 @@ Why: in TanStack, the "subscriber" is a component; component lifetime drives sub
 
 | TanStack Query                            | Olas                                                                  |
 |-------------------------------------------|-----------------------------------------------------------------------|
-| `useQuery({ queryKey, queryFn })`         | `defineQuery({ key, fetcher })` once + `ctx.use(q, keyFn)` per subscriber |
-| `useInfiniteQuery`                        | `defineInfiniteQuery` + `ctx.use(infiniteQ)`                          |
-| `useMutation`                             | `ctx.mutation({ mutate, onMutate, onSuccess, onError, onSettled })`   |
+| `useQuery({ queryKey, queryFn })`         | `defineQuery({ key, fetcher })` once + `createQuery(ctx, q, keyFn)` per subscriber |
+| `useInfiniteQuery`                        | `defineInfiniteQuery` + `createQuery(ctx, infiniteQ)`                          |
+| `useMutation`                             | `createMutation(ctx, { mutate, onMutate, onSuccess, onError, onSettled })`   |
 | `queryClient.invalidateQueries({...})`    | `userQuery.invalidate(...args)` or `userQuery.invalidateAll()`         |
 | `queryClient.setQueryData(key, updater)`  | `userQuery.setData(...args, updater)`                                  |
 | `queryClient.prefetchQuery(...)`          | `userQuery.prefetch(...args)`                                          |
@@ -92,7 +138,7 @@ Why: in TanStack, the "subscriber" is a component; component lifetime drives sub
 | `staleTime` / `gcTime`                    | Same names — per query in `defineQuery`, or app-wide via `createRoot(…, { defaultQueryOptions })` |
 | `defaultOptions: { queries: {...} }`      | `createRoot(def, { deps, defaultQueryOptions: {...} })`                |
 | `refetchOnWindowFocus`                    | Per-query option in `defineQuery` (off by default)                    |
-| `useQueries` for parallel queries         | Multiple `ctx.use(...)` calls in the same controller                  |
+| `useQueries` for parallel queries         | Multiple `createQuery(ctx, ...)` calls in the same controller                  |
 | `useSuspenseQuery`                        | Not a built-in concept; use `subscription.firstValue()` then render   |
 
 ### The Provider story
@@ -115,7 +161,7 @@ The Olas root owns its own QueryClient (one per root). Two roots have isolated c
 ### Patterns that don't translate one-to-one
 
 - **The default values differ, not only the API.** TanStack defaults to `retry: 3` and `refetchOnWindowFocus: true`; Olas defaults to `retry: 0`, `refetchOnWindowFocus: false`, `staleTime: 0`. Porting a `QueryClient` config means restating your policy in `createRoot(…, { defaultQueryOptions })` — otherwise queries silently stop retrying and (with `staleTime: 0`) refetch on every subscribe. This is a behavior change that produces no type error, so do it first.
-- **TanStack `useQuery` returns the same `data | undefined` and you handle both.** Olas `ctx.use(q)` returns an `AsyncState<T>` with eight signals, plus `refetch`, `reset` and `firstValue`. The signals are `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt` and `hasPendingMutations`. In React, `useQuery(subscription)` bundles them into one render trigger.
+- **TanStack `useQuery` returns the same `data | undefined` and you handle both.** Olas `createQuery(ctx, q)` returns an `AsyncState<T>` with eight signals, plus `refetch`, `reset` and `firstValue`. The signals are `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt` and `hasPendingMutations`. In React, `useQuery(subscription)` bundles them into one render trigger.
 - **Suspense.** TanStack has `useSuspenseQuery`. Olas doesn't ship a Suspense integration — use `subscription.firstValue()` to await first data, or render `isLoading ? <Spinner /> : <View />`.
 - **`mutation.reset()` cancels; TanStack's doesn't.** rq's `reset()` detaches the observer and lets the in-flight request finish. Olas aborts every in-flight run and rejects queued `serial` runs (SPEC §6.2). Same name, same signature, no type error — but a write you expected to land won't. Audit every `reset()` you port.
 - **DevTools.** TanStack devtools is mature; Olas ships `@kontsedal/olas-devtools` — `<DevtoolsLauncher root={root} />` gives you a floating panel with controller-tree, cache timeline, and mutation log. No separate browser extension (yet — tracked in `BACKLOG.md`).
@@ -139,10 +185,10 @@ Why: actions and reducers are useful for time-travel debugging and replayable hi
 | `createSlice({ name, initialState, reducers })` | `defineController((ctx) => ({ signals + methods }))`            |
 | `useSelector(selectFoo)`                       | `use(api.foo)` (signal) or `computed(() => /* derive */)`        |
 | `useDispatch()` + `dispatch(slice.actions.x())` | Call methods on the controller api directly: `api.x()`         |
-| `createAsyncThunk`                             | `ctx.mutation({ mutate, onSuccess, onError })`                  |
+| `createAsyncThunk`                             | `createMutation(ctx, { mutate, onSuccess, onError })`                  |
 | `createSelector` (memoized derivation)         | `computed(() => …)` (memoized automatically by signals runtime) |
 | RTK Query `createApi({ endpoints })`           | `defineQuery({ key, fetcher })` per endpoint                    |
-| RTK Query `useGetXQuery(id)`                   | `ctx.use(getXQuery, () => [id])`                                |
+| RTK Query `useGetXQuery(id)`                   | `createQuery(ctx, getXQuery, () => [id])`                                |
 | Middleware (logger, thunk, etc.)               | `root.__debug.subscribe(handler)` for events; mutations replace thunks |
 | `combineReducers` / module separation          | Controller tree — each subtree is its own "slice"               |
 | `useStore()`                                   | `useRoot<Api>()` (returns the root's API)                       |
@@ -167,7 +213,7 @@ const count = use(visibleCount)
 
 ### Where actions help: they help less here
 
-If you need actions (replayable history, time-travel, action logs), you can fire devtools events from mutation `onSuccess` and `onError` and reconstruct externally. But for the typical "form submit fires a mutation, optimistic update, server confirms or rolls back" loop, RTK's `createAsyncThunk` is replaced by `ctx.mutation` with `onMutate` returning the rollback context — same data flow, less boilerplate.
+If you need actions (replayable history, time-travel, action logs), you can fire devtools events from mutation `onSuccess` and `onError` and reconstruct externally. But for the typical "form submit fires a mutation, optimistic update, server confirms or rolls back" loop, RTK's `createAsyncThunk` is replaced by `createMutation` with `onMutate` returning the rollback context — same data flow, less boilerplate.
 
 ---
 
@@ -195,7 +241,7 @@ function MyPage() {
 // After
 const myPageController = defineController((ctx) => {
   const editing = signal(false)
-  const user = ctx.use(userQuery)
+  const user = createQuery(ctx, userQuery)
   return { editing, user, toggleEdit: () => editing.update(v => !v) }
 })
 
@@ -223,7 +269,7 @@ Trade-offs: more files, more types, more setup. Payoff: lifecycle is explicit, t
 
 **"Where does state go?"** — In a controller, as a `Signal` or `Field`. Controllers compose via `ctx.child(...)`.
 
-**"Where does fetching go?"** — In `defineQuery` (shared across the tree) or `ctx.cache` (private to one controller).
+**"Where does fetching go?"** — In `defineQuery` (shared across the tree) or `createCache` (private to one controller).
 
 **"How do siblings talk?"** — Parent owns both, passes refs/signals down. No implicit lookups; spec §11.
 

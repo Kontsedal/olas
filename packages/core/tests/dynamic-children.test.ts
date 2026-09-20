@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 
 const emptyDeps = {}
@@ -23,7 +24,7 @@ describe('ctx.session', () => {
         session = ctx.session(editor, { initial: 'hello' })
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
 
     expect(session![0].draft.value).toBe('hello')
@@ -47,7 +48,7 @@ describe('ctx.session', () => {
         ctx.session(child, undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     root.dispose()
     expect(log).toEqual(['child:disposed'])
@@ -65,7 +66,7 @@ describe('ctx.session', () => {
         ctx.session(child, undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     root.suspend()
     root.resume()
@@ -85,7 +86,7 @@ describe('ctx.session', () => {
         ctx.session(child, undefined, { deps: { tag: 'override' } })
         return {}
       }),
-      { deps: { tag: 'parent' } },
+      { queries: queryEngine(), deps: { tag: 'parent' } },
     )
     expect(seen).toBe('override')
     root.dispose()
@@ -121,7 +122,7 @@ describe('ctx.collection — homogeneous', () => {
         })
         return { c }
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     expect(root.c.size.value).toBe(2)
     expect(root.c.items.value.map((x) => x.key)).toEqual(['a', 'b'])
@@ -160,7 +161,7 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id }),
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     expect(constructed).toEqual(['a', 'b'])
     expect(disposed).toEqual([])
@@ -191,7 +192,7 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id, name: i.name }),
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     expect(propsSeen).toEqual(['x/first'])
 
@@ -219,7 +220,7 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id }),
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     expect(constructed).toEqual(['a'])
 
@@ -258,7 +259,7 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id }),
         }),
       })),
-      { deps: emptyDeps, onError },
+      { queries: queryEngine(), deps: emptyDeps, onError },
     )
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError.mock.calls[0]![1].kind).toBe('construction')
@@ -302,7 +303,7 @@ describe('ctx.collection — factory (heterogeneous) form', () => {
           },
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
 
     expect(log).toEqual(['text:construct:hello'])
@@ -343,7 +344,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.resolve(loaded), { content: 'hi' })
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
 
     expect(lazy!.status.value).toBe('idle')
@@ -370,7 +371,7 @@ describe('ctx.lazyChild', () => {
         }, undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     const a = lazy!.load()
     const b = lazy!.load()
@@ -390,7 +391,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.reject(new Error('import failed')), undefined)
         return {}
       }),
-      { deps: emptyDeps, onError },
+      { queries: queryEngine(), deps: emptyDeps, onError },
     )
     await expect(lazy!.load()).rejects.toThrow('import failed')
     expect(lazy!.status.value).toBe('error')
@@ -411,7 +412,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.resolve(broken), undefined)
         return {}
       }),
-      { deps: emptyDeps, onError },
+      { queries: queryEngine(), deps: emptyDeps, onError },
     )
     await expect(lazy!.load()).rejects.toThrow('factory broken')
     expect(lazy!.status.value).toBe('error')
@@ -436,7 +437,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => loaderPromise as Promise<typeof def>, undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     const loadPromise = lazy!.load()
     root.dispose()
@@ -457,7 +458,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.resolve(def), undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await lazy!.load()
     expect(log).toEqual([])
@@ -487,7 +488,7 @@ describe('ctx.lazyChild', () => {
         }
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     for (const l of lazies) await l.load()
     for (const l of lazies) l.dispose()

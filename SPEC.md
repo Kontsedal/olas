@@ -96,14 +96,14 @@ If you're picking a tool for the next thing, ask one question. *Will this codeba
 | `signal`        | Mutable reactive value                     | None (just a value)    |
 | `computed`      | Derived reactive value                     | Tracked automatically  |
 | `effect`        | Reactive side effect                       | `ctx` (auto-disposed)  |
-| `ctx.cache`     | Anonymous local async cache (no args)      | Controller             |
+| `createCache`     | Anonymous local async cache (no args)      | Controller             |
 | `defineQuery`   | Keyed cache, shared via the root client    | Root query client      |
-| `ctx.use(q, k)` | Subscribe to a query from a controller     | Controller subscription |
-| `ctx.mutation`  | Async write with optimistic + invalidation | Controller             |
+| `createQuery(ctx, q, k)` | Subscribe to a query from a controller     | Controller subscription |
+| `createMutation`  | Async write with optimistic + invalidation | Controller             |
 | `ctx.emitter`   | One-shot event stream                      | Controller             |
-| `ctx.field`     | Form field (signal + validators)           | Controller             |
-| `ctx.form`      | Aggregate of fields/sub-forms/arrays       | Controller             |
-| `ctx.fieldArray`| Dynamic-length list of fields or sub-forms | Controller             |
+| `createField`     | Form field (signal + validators)           | Controller             |
+| `createForm`      | Aggregate of fields/sub-forms/arrays       | Controller             |
+| `createFieldArray`| Dynamic-length list of fields or sub-forms | Controller             |
 | `ctx.child`     | Construct a child controller (static)      | Parent                 |
 | `ctx.collection`| Keyed set of child controllers (homogeneous or per-item-typed) | Parent       |
 | `ctx.session`   | Ephemeral child controller, manually disposed | Parent                |
@@ -120,14 +120,14 @@ If you're picking a tool for the next thing, ask one question. *Will this codeba
 
 ```ts
 const userProfile = defineController((ctx, id: string) => {
-  const user = ctx.use(userQuery, () => [id])
+  const user = createQuery(ctx, userQuery, () => [id])
   const page = signal(1)
-  const posts = ctx.use(userPostsQuery, () => [id, page.value]) // userPostsQuery defined module-scope
+  const posts = createQuery(ctx, userPostsQuery, () => [id, page.value]) // userPostsQuery defined module-scope
 
   const isEditing = signal(false)
-  const draft = ctx.field('', [required(), maxLength(200)])
+  const draft = createField(ctx, '', [required(), maxLength(200)])
 
-  const save = ctx.mutation({
+  const save = createMutation(ctx, {
     mutate: (data: Draft, signal) => api.updateUser(id, data, { signal }),
     onMutate: (data) => userQuery.setData(id, (u) => ({ ...u, ...data })),
     onError: (_e, _vars, snap) => snap?.rollback(),
@@ -162,13 +162,22 @@ At a glance, the primitives split into these groups:
 - **Lifecycle & DI:** `onDispose`, `onSuspend`, `onResume`, `deps`.
 - **Devtools, dev-only:** `debug({ ... })` — expose named live values such as signals, computeds and fields to the devtools "Variables" view for this controller. A no-op in production; see §14.
 
-**On `ctx`'s breadth.** `ctx` is intentionally broad — it's the single source of "things bound to this controller's lifetime." That's a coherent responsibility, but the surface is large (~19 methods). Two consequences worth knowing upfront:
+**On `ctx`'s shape.** `ctx` carries what binds to a controller's *tree and lifetime*: children, effects, scopes, emitters, lifecycle hooks. The primitives that build lifetime-owned **things** — fields, forms, field arrays, queries, local caches, mutations — are standalone functions that take `ctx` as their first argument.
 
-1. **Helpers that take `ctx`.** Reusable composables that need lifecycle-bound primitives must take `ctx: Ctx` as their first parameter (`useUser(ctx, id)`, `useSubmit(ctx, form, mutate)`). That's "prop-drilling at the logic layer" — but it's explicit, grep-able, and surfaces exactly what binds to a lifecycle.
+```ts
+const email = createField(ctx, '')
+const user = createQuery(ctx, userQuery, () => [id.value])
+```
 
-2. **What's not on `ctx`.** Anything that doesn't need lifecycle binding is a standalone function: `signal`, `computed`, `effect` (standalone), `batch`, `createEmitter`, `defineQuery`, `defineInfiniteQuery`, `defineScope`, `selection`, `debounced`, `throttled`, `debouncedValidator`, `isAbortError`, `createTestController`. Most utility code never sees `ctx`.
+Three consequences worth knowing upfront:
 
-We considered splitting `ctx` into `CtxQuery`, `CtxForm` and `CtxLifecycle` and rejected it: most helpers mix concerns, three parameters is worse than one, and there's no clean axis to split along. The trade-off is intentional.
+1. **Helpers that take `ctx`.** Reusable composables that need lifecycle-bound primitives take `ctx: Ctx` as their first parameter (`useUser(ctx, id)`, `useSubmit(ctx, form, mutate)`). That's "prop-drilling at the logic layer" — but it's explicit, grep-able, and surfaces exactly what binds to a lifecycle. The built-in primitives now follow the same rule the composables always did.
+
+2. **You pay for what you import.** A `ctx` method is reachable from `createRoot`, so a `ctx.field` forced every consumer to ship the forms subsystem and a `ctx.use` forced the query engine — used or not. As free functions they are ordinary named exports, and a controller that builds no form ships no form code. Measured: a controllers-only bundle went from 20.1 KB to 4.8 KB gzipped.
+
+3. **What's not on `ctx` at all.** Anything that needs no lifecycle binding is standalone and takes no `ctx`: `signal`, `computed`, `effect` (standalone), `batch`, `createEmitter`, `defineQuery`, `defineInfiniteQuery`, `defineScope`, `selection`, `debounced`, `throttled`, `debouncedValidator`, `isAbortError`, `createTestController`. Most utility code never sees `ctx`.
+
+An earlier draft considered splitting `ctx` into three *parameters* — `CtxQuery`, `CtxForm`, `CtxLifecycle` — and rejected it: most helpers mix concerns, three parameters is worse than one, and there is no clean axis. That rejection stands. What changed is different: `ctx` remains a single parameter, and the primitives that never needed to be methods moved off it. See `.wiki/decisions/ctx-primitives-are-free-functions.md`.
 
 ### 3.3 Reusable composables
 
@@ -183,7 +192,7 @@ function usePagination(ctx: Ctx, opts: { pageSize: number }) {
 }
 
 function useUser(ctx: Ctx, id: () => string) {
-  const user = ctx.use(userQuery, () => [id()])
+  const user = createQuery(ctx, userQuery, () => [id()])
   const isMe = computed(() => user.data.value?.id === ctx.deps.session.userId)
   return { ...user, isMe }
 }
@@ -191,13 +200,19 @@ function useUser(ctx: Ctx, id: () => string) {
 
 ### 3.4 When can `ctx.*` be called?
 
-Every `ctx` primitive is callable **any time during the controller's active lifetime**, not only during the initial factory run. The full set: `cache`, `mutation`, `emitter`, `field`, `form`, `fieldArray`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `use`, `on`, `provide`. Everything you create through `ctx` is owned by that controller and disposed when it disposes.
+Every primitive is callable **any time during the controller's active lifetime**, not only during the initial factory run. Calling one after disposal throws.
+
+On `ctx`: `emitter`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `on`, `provide`, `inject`, `debug`, `onDispose`, `onSuspend`, `onResume`, plus `signal` and `computed` for discoverability.
+
+Taking `ctx` as their first argument: `createField`, `createForm`, `createFieldArray`, `createCache`, `createQuery`, `createMutation`, `bindQuery`.
+
+Either way, everything you create is owned by that controller and disposed when it disposes.
 
 This makes runtime-driven shapes natural:
 
 ```ts
 const dynamicFormController = defineController((ctx) => {
-  const schema = ctx.use(schemaQuery)
+  const schema = createQuery(ctx, schemaQuery)
   const fields = new Map<string, Field<string>>()
 
   ctx.effect(() => {
@@ -214,7 +229,7 @@ const dynamicFormController = defineController((ctx) => {
     // create fields for new schema entries
     for (const def of schema.data.value ?? []) {
       if (!fields.has(def.name)) {
-        fields.set(def.name, ctx.field(def.default ?? '', def.validators))
+        fields.set(def.name, createField(ctx, def.default ?? '', def.validators))
       }
     }
   })
@@ -251,7 +266,7 @@ This matters when a hook needs a collaborator to still be alive. Flushing a pend
 
 ```ts
 defineController((ctx) => {
-  const width = ctx.field(240)
+  const width = createField(ctx, 240)
   const settled = debounced(width.signal, 500)
   ctx.effect(() => void save({ width: settled.value }))  // registered first…
 
@@ -266,7 +281,7 @@ Register the hook before the effect and `flush()` emits into nothing.
 
 **Memory.** Disposal is always recursive and synchronous. After dispose, all signals owned by the controller are dropped; subscribers receive a final `disposed` notification and unsubscribe.
 
-**After dispose, `ctx` is dead.** Calling any `ctx.*` factory (`ctx.effect`, `ctx.use`, `ctx.child`, `ctx.session`, `ctx.collection`, `ctx.mutation`, `ctx.form`, `ctx.onDispose`, …) after the owning controller has been disposed **throws** `[olas] ctx.<name>() called after the controller was disposed`. A captured `ctx` used past its owner's lifetime is a programming error; silently pushing into a torn-down lifecycle list would leak a live child or subscription. (Reads — `ctx.deps`, `ctx.inject` — do not throw.)
+**After dispose, `ctx` is dead.** Calling any `ctx.*` factory (`ctx.effect`, `createQuery`, `ctx.child`, `ctx.session`, `ctx.collection`, `createMutation`, `createForm`, `ctx.onDispose`, …) after the owning controller has been disposed **throws** `[olas] ctx.<name>() called after the controller was disposed`. A captured `ctx` used past its owner's lifetime is a programming error; silently pushing into a torn-down lifecycle list would leak a live child or subscription. (Reads — `ctx.deps`, `ctx.inject` — do not throw.)
 
 **For "user navigated away, might come back."** Dispose. The query client's `gcTime` retains shared data for ~5 min by default; re-construction finds it warm and skips the network. This is the right tool for route caches, closed tabs, hidden panels you might re-open.
 
@@ -325,12 +340,12 @@ Use this for back/forward navigation caches, hidden tabs that *might* be reopene
 
 ### 5.1 Two flavors, one engine
 
-- **Local cache** (`ctx.cache`): anonymous, scoped to controller. Disposed with the controller.
-- **Query** (`defineQuery` + `ctx.use`): named, keyed, shared across the tree, lives on the root's query client.
+- **Local cache** (`createCache`): anonymous, scoped to controller. Disposed with the controller.
+- **Query** (`defineQuery` + `createQuery`): named, keyed, shared across the tree, lives on the root's query client.
 
 Both go through the same internal machinery. Local caches get an opaque internal key.
 
-**Request deduplication.** Two (or twenty) subscribers to the same query key share **one** cache entry and **one** in-flight fetch. The fetcher runs once per distinct key, regardless of how many `ctx.use(...)` subscriptions exist. This is implicit from the keyed-entry design and applies equally to `Query`, `ParamCache`, and `InfiniteQuery`.
+**Request deduplication.** Two (or twenty) subscribers to the same query key share **one** cache entry and **one** in-flight fetch. The fetcher runs once per distinct key, regardless of how many `createQuery(ctx, ...)` subscriptions exist. This is implicit from the keyed-entry design and applies equally to `Query`, `ParamCache`, and `InfiniteQuery`.
 
 ### 5.2 Query definition
 
@@ -365,12 +380,12 @@ export const userQuery = defineQuery({
 
 When `keepPreviousData: true` and the key changes (e.g. id signal flips from `'a'` to `'b'`), the subscription keeps showing the previous entry's `data` until the new entry's first fetch resolves. `isFetching` is true, `isLoading` is false (we already have *some* data). Without this, key transitions briefly show `data === undefined`, causing UI flashes in tab and pagination UIs.
 
-**Conditional and disabled queries.** Bootstrap flows often need "fetch X only once Y is available" (e.g. fetch the news feed once `session.currentUser` resolves). `ctx.use` accepts an `enabled` thunk that runs in a tracking scope:
+**Conditional and disabled queries.** Bootstrap flows often need "fetch X only once Y is available" (e.g. fetch the news feed once `session.currentUser` resolves). `createQuery` accepts an `enabled` thunk that runs in a tracking scope:
 
 ```ts
-const session = ctx.use(sessionQuery)
+const session = createQuery(ctx, sessionQuery)
 
-const feed = ctx.use(newsfeedQuery, {
+const feed = createQuery(ctx, newsfeedQuery, {
   key: () => [session.data.value!.id, 'top-stories'],
   enabled: () => session.data.value !== undefined,
 })
@@ -378,9 +393,9 @@ const feed = ctx.use(newsfeedQuery, {
 
 While `enabled` returns `false`, the subscription holds `status: 'idle'`, `data: undefined`, no network fetch fires, and `isLoading` stays `false`. When `enabled` flips to `true`, the key is evaluated and fetching starts normally. Flipping back to `false` does **not** dispose the entry — subsequent re-enables reuse the cached data subject to `staleTime`.
 
-**`keepDataWhileDisabled` (opt-in).** Pass `ctx.use(query, { enabled, keepDataWhileDisabled: true })` to keep the subscription reporting its **last `data`**, snapshotted at the moment `enabled` went false, instead of blanking to `undefined`. This is the react-query "a disabled observer still reads the cache" shape, for porting flows that flash empty otherwise. The entry is still released, so refcount and GC are unchanged, and `status` stays `'idle'`. Only `data` survives. `error` is not retained. On re-enable the live entry's data takes over. Default `false`.
+**`keepDataWhileDisabled` (opt-in).** Pass `createQuery(ctx, query, { enabled, keepDataWhileDisabled: true })` to keep the subscription reporting its **last `data`**, snapshotted at the moment `enabled` went false, instead of blanking to `undefined`. This is the react-query "a disabled observer still reads the cache" shape, for porting flows that flash empty otherwise. The entry is still released, so refcount and GC are unchanged, and `status` stays `'idle'`. Only `data` survives. `error` is not retained. On re-enable the live entry's data takes over. Default `false`.
 
-For the common case (no `enabled`), continue to pass a bare thunk: `ctx.use(query, () => [id])`. The options object form is only needed when you want `enabled`.
+For the common case (no `enabled`), continue to pass a bare thunk: `createQuery(ctx, query, () => [id])`. The options object form is only needed when you want `enabled`.
 
 ### 5.3 Subscription state shape
 
@@ -411,29 +426,29 @@ The `isLoading` vs `isFetching` split is intentional: spinners typically gate on
 
 ### 5.4 Keys — a single thunk returning an array
 
-`ctx.use` takes **one function that returns the args tuple**. Earlier drafts used variadic functions (one per arg), but that broke spread, dynamic-length keys, and conditional args. A single thunk is uniform across all cases.
+`createQuery` takes **one function that returns the args tuple**. Earlier drafts used variadic functions (one per arg), but that broke spread, dynamic-length keys, and conditional args. A single thunk is uniform across all cases.
 
 ```ts
 // arity 1
-const user = ctx.use(userQuery, () => [idSignal.value])
+const user = createQuery(ctx, userQuery, () => [idSignal.value])
 
 // arity 2+
-const reviews = ctx.use(reviewsQuery, () => [productId, page.value])
+const reviews = createQuery(ctx, reviewsQuery, () => [productId, page.value])
 
 // arity 0
-const todos = ctx.use(todosQuery)                       // no key function needed
+const todos = createQuery(ctx, todosQuery)                       // no key function needed
 
 // dynamic / spread
-const tagged = ctx.use(taggedQuery, () => [...tags.value])
+const tagged = createQuery(ctx, taggedQuery, () => [...tags.value])
 
 // conditional
-const maybeUser = ctx.use(userQuery, () => [enabled.value ? id : 'guest'])
+const maybeUser = createQuery(ctx, userQuery, () => [enabled.value ? id : 'guest'])
 ```
 
 **No `as const` ceremony.** The signature uses TypeScript's `<const Args>` generic so `() => [id]` infers as `[string]` rather than `string[]`:
 
 ```ts
-ctx.use<const Args extends readonly unknown[], T>(
+createQuery<const Args extends readonly unknown[], T>(ctx, 
   source: Query<Args, T> | ParamCache<Args, T>,
   key?: () => Args,
 ): QuerySubscription<T>
@@ -456,7 +471,7 @@ Fetchers are responsible for passing the signal to their I/O (`fetch(url, { sign
 
 **"Nothing invalidates this query" does not mean "no fetch is in flight".** The cancel-before-*optimistic*-write step is not only for queries something else invalidates. An entry fetches on its own whenever a subscription **acquires it while stale**. That covers a first subscriber, a second root binding the same key, and a `resume()` after a suspend (§4.1). All three are `staleTime`-driven, with no invalidator anywhere in the program. Skipping `cancel(...)` because a grep found no `invalidate(...)` call is therefore unsound: the refetch lands after the optimistic write and overwrites it. The failure is transient and self-healing, which is exactly why it survives review.
 
-**Reading without subscribing.** `query.peek(...keyArgs)` returns the entry's current data synchronously. It returns `undefined` when there is nothing to read: no entry, because it was never fetched or has been gc'd, or an entry that has not settled. It never creates an entry, because asking cannot change the answer, and it never fetches. It also **registers no reactive dependency**, so a `peek` inside a `computed` or an effect will not re-run it when the data changes. Reactive reads are `ctx.use(...)`'s job. `peek` is for imperative moments: an event handler that needs the current value, or a guard before a canonical write (§6.4). It is also the read side of the imperative surface, whose write side of `setData` and `cancel` could already reach a keyed entry from outside a subscription.
+**Reading without subscribing.** `query.peek(...keyArgs)` returns the entry's current data synchronously. It returns `undefined` when there is nothing to read: no entry, because it was never fetched or has been gc'd, or an entry that has not settled. It never creates an entry, because asking cannot change the answer, and it never fetches. It also **registers no reactive dependency**, so a `peek` inside a `computed` or an effect will not re-run it when the data changes. Reactive reads are `createQuery(ctx, ...)`'s job. `peek` is for imperative moments: an event handler that needs the current value, or a guard before a canonical write (§6.4). It is also the read side of the imperative surface, whose write side of `setData` and `cancel` could already reach a keyed entry from outside a subscription.
 
 **Network mode & `isPaused`.** A query's `networkMode` (spec'd on `QuerySpec`) controls how fetches interact with `navigator.onLine`:
 
@@ -491,7 +506,7 @@ Internally these all dispatch to the root's query client.
 
 **Invalidate semantics.** `invalidate` and `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry is marked stale and *not* refetched, and the next subscriber triggers the fetch. An entry is subscriber-less when `gcTime` kept it warm after its last subscriber left, or when `prefetch` created it. This matches TanStack and avoids waking data no subscriber is watching.
 
-Both return a `Promise<void>` that resolves when the refetches they trigger settle or are discarded, or immediately for entries without subscribers (which are marked stale only). Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `ctx.bindQuery(query)` or `root.bindQuery(query)` to select a root (§21.5). Resolution alone does not guarantee reconciliation if a request was superseded (§6.4).
+Both return a `Promise<void>` that resolves when the refetches they trigger settle or are discarded, or immediately for entries without subscribers (which are marked stale only). Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `bindQuery(ctx, query)` or `root.bindQuery(query)` to select a root (§21.5). Resolution alone does not guarantee reconciliation if a request was superseded (§6.4).
 
 **Deep updates.** `setData` returns the new value; you build it however you want. Two canonical patterns:
 
@@ -561,7 +576,7 @@ The contract:
 - **The data is read without subscribing**, so resolving a gap never marks the entry as accessed or perturbs staleness.
 - **It is per entry, not per subscriber.** The timer belongs to the shared cache entry, so ten controllers subscribed to one key share one interval. This is why `UseOptions` (§20.4) carries no `refetchInterval`: per-subscriber intervals would need a "whose interval wins" rule, and every answer to that question surprises somebody. It's also why the field isn't defaultable (below).
 - For infinite queries the argument is the entry's **pages array** (`TPage[] | undefined`) — what the entry stores. A tick re-fetches every loaded page (§5.11).
-- **`ctx.cache` (`LocalCache`, §5.1 / §5.10) has no interval of any kind** and does not gain one from this. A controller-local cache that wants polling should use `ctx.effect` + a timer, or graduate to `defineQuery`.
+- **`createCache` (`LocalCache`, §5.1 / §5.10) has no interval of any kind** and does not gain one from this. A controller-local cache that wants polling should use `ctx.effect` + a timer, or graduate to `defineQuery`.
 
 #### Root-wide query defaults
 
@@ -573,7 +588,7 @@ createRoot(app, { deps, defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 }
 
 Why this exists: the built-in `staleTime: 0` and `retry: 0` are the right *quiet* choice for a single query. An app that wants different ones had to restate them on all N `defineQuery` calls. Forgetting one doesn't error. It presents as "why is this refetching on every subscribe?", a bad failure mode for a value with no local justification.
 
-Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (for the fields `LocalCacheOptions` carries — `staleTime`, `keepPreviousData`).
+Applies to `defineQuery`, `defineInfiniteQuery`, and `createCache` (for the fields `LocalCacheOptions` carries — `staleTime`, `keepPreviousData`).
 
 Two deliberate exclusions:
 
@@ -586,7 +601,7 @@ The pre-existing flat `RootOptions.refetchOnWindowFocus` and `refetchOnReconnect
 
 | Use case | Primitive |
 |---|---|
-| One-off async load, no args (only this controller cares) | `ctx.cache(fetcher)` |
+| One-off async load, no args (only this controller cares) | `createCache(ctx, fetcher)` |
 | Keyed cache (args vary), used by one or many controllers | `defineQuery({ key, fetcher })` |
 | Paginated / cursored accumulation | `defineInfiniteQuery({...})` |
 
@@ -763,7 +778,7 @@ This is a correctness distinction, not a stylistic one. A `setData` snapshot exi
 `detached: true` stops `dispose()` from cancelling. In-flight runs finish, queued `serial` runs still drain, `run(...)` still works after dispose, and `onSuccess`, `onError` and `onSettled` still fire.
 
 ```ts
-const activate = ctx.mutation({
+const activate = createMutation(ctx, {
   mutate: (key: string) => api.activateLicense(key),
   detached: true,
   onSuccess: () => licenseQuery.invalidate()
@@ -810,7 +825,7 @@ Three primitives cover the entire form story. `Field<T>` holds one value, `Form<
 ### 8.1 Field
 
 ```ts
-const draft = ctx.field('', [required(), maxLength(200)])
+const draft = createField(ctx, '', [required(), maxLength(200)])
 
 draft.value          // T — current value (Field<T> IS a ReadSignal<T>; .value is unwrapped)
 draft.errors         // ReadSignal<string[]>
@@ -846,8 +861,8 @@ A validator may return a `string`, which is an error on the node it is attached 
 **Validators run in a tracking scope.** Reading any signal inside a validator causes the validator to re-run automatically when that signal changes:
 
 ```ts
-const password = ctx.field('', [minLength(8)])
-const confirm = ctx.field('', [
+const password = createField(ctx, '', [minLength(8)])
+const confirm = createField(ctx, '', [
   (v) => (v === password.value ? null : 'Passwords must match'),
 ])
 // editing password re-runs confirm's validator
@@ -864,7 +879,7 @@ For server-side checks (username taken, email exists), use `debouncedValidator`:
 ```ts
 import { debouncedValidator } from '@kontsedal/olas-core'
 
-const username = ctx.field('', [
+const username = createField(ctx, '', [
   required(),
   debouncedValidator(async (v, signal) => {
     const taken = await ctx.deps.api.checkUsername(v, { signal })
@@ -877,7 +892,7 @@ While debouncing, or while the request is in flight, `isValidating` is `true` an
 
 ### 8.3 Form — aggregate of fields & nested forms
 
-`ctx.form(schema, options?)` builds a `Form<S>` whose fields are addressable, whose aggregate value/errors/isValid/touched/dirty are signals, and whose schema can nest arbitrarily.
+`createForm(ctx, schema, options?)` builds a `Form<S>` whose fields are addressable, whose aggregate value/errors/isValid/touched/dirty are signals, and whose schema can nest arbitrarily.
 
 ```ts
 type UserProfile = {
@@ -886,14 +901,14 @@ type UserProfile = {
   preferences: { theme: 'light' | 'dark' }
 }
 
-const form = ctx.form({
-  name: ctx.field('', [required()]),
-  address: ctx.form({
-    street: ctx.field('', [required()]),
-    city: ctx.field('', [required()]),
+const form = createForm(ctx, {
+  name: createField(ctx, '', [required()]),
+  address: createForm(ctx, {
+    street: createField(ctx, '', [required()]),
+    city: createField(ctx, '', [required()]),
   }),
-  preferences: ctx.form({
-    theme: ctx.field<'light' | 'dark'>('light'),
+  preferences: createForm(ctx, {
+    theme: createField<'light' | 'dark'>(ctx, 'light'),
   }),
 })
 
@@ -922,9 +937,9 @@ await form.validate()  // run everything; returns overall isValid
 **Form-level validators.** Cross-field rules ("endDate > startDate", "password === confirm") that don't belong to any one field go in `options.validators`:
 
 ```ts
-const form = ctx.form({
-  password: ctx.field('', [minLength(8)]),
-  confirm: ctx.field(''),
+const form = createForm(ctx, {
+  password: createField(ctx, '', [minLength(8)]),
+  confirm: createField(ctx, ''),
 }, {
   validators: [
     (value) => value.password === value.confirm ? null : 'Passwords must match',
@@ -940,9 +955,9 @@ form.isValid    // false when ANY leaf is invalid OR topLevelErrors is non-empty
 **Targeting a specific field from a form-level validator.** A cross-field rule often belongs on one field, not at the top ("passwords must match" reads best on the confirm input). Return a `FormIssue[]` instead of a `string`:
 
 ```ts
-const form = ctx.form({
-  password: ctx.field('', [minLength(8)]),
-  confirm: ctx.field(''),
+const form = createForm(ctx, {
+  password: createField(ctx, '', [minLength(8)]),
+  confirm: createField(ctx, ''),
 }, {
   validators: [
     (value) =>
@@ -976,11 +991,11 @@ form.flatErrors // ReadSignal<Array<{ path: string; errors: string[] }>>
 The standard pattern of "fetch user, edit a copy of it" gets a first-class option:
 
 ```ts
-const profile = ctx.use(profileQuery, () => props.id)
+const profile = createQuery(ctx, profileQuery, () => props.id)
 
-const form = ctx.form({
-  name: ctx.field('', [required()]),
-  email: ctx.field('', [required(), email()]),
+const form = createForm(ctx, {
+  name: createField(ctx, '', [required()]),
+  email: createField(ctx, '', [required(), email()]),
 }, {
   initial: () => profile.data.value, // DeepPartial of form value, or undefined
 })
@@ -995,13 +1010,13 @@ Semantics:
 ### 8.5 FieldArray — dynamic lists
 
 ```ts
-const order = ctx.form({
-  customer: ctx.field('', [required()]),
-  items: ctx.fieldArray(
-    () => ctx.form({
-      sku: ctx.field('', [required()]),
-      qty: ctx.field(1, [min(1)]),
-      price: ctx.field(0, [min(0)]),
+const order = createForm(ctx, {
+  customer: createField(ctx, '', [required()]),
+  items: createFieldArray(ctx, 
+    () => createForm(ctx, {
+      sku: createField(ctx, '', [required()]),
+      qty: createField(ctx, 1, [min(1)]),
+      price: createField(ctx, 0, [min(0)]),
     }),
     { initial: [{ sku: '', qty: 1, price: 0 }] },
   ),
@@ -1030,7 +1045,7 @@ The factory passed to `fieldArray` runs once per `add()` and `insert()` to const
 For arrays of simple fields (no sub-form), the factory returns a single field:
 
 ```ts
-const tags = ctx.fieldArray(() => ctx.field('', [required()]))
+const tags = createFieldArray(ctx, () => createField(ctx, '', [required()]))
 tags.add('hello')
 tags.value.value  // string[]
 ```
@@ -1038,7 +1053,7 @@ tags.value.value  // string[]
 **Array-level validators** ("min 1 item", "max 5 tags", "unique skus") go in `options.validators`:
 
 ```ts
-const tags = ctx.fieldArray(() => ctx.field('', [required()]), {
+const tags = createFieldArray(ctx, () => createField(ctx, '', [required()]), {
   validators: [
     (items) => items.length >= 1 ? null : 'At least one tag',
     (items) => new Set(items).size === items.length ? null : 'Tags must be unique',
@@ -1060,7 +1075,7 @@ function useSubmit<T, R>(
   form: Form<any> & { value: ReadSignal<T> },
   mutate: (data: T, signal: AbortSignal) => Promise<R>,
 ) {
-  return ctx.mutation({
+  return createMutation(ctx, {
     mutate: async (_: void, signal) => {
       form.markAllTouched()
       const valid = await form.validate()
@@ -1083,7 +1098,7 @@ import { z } from 'zod'
 import { zodValidator, formFromZod } from '@kontsedal/olas-zod'
 
 // 1. Single-field validator
-const email = ctx.field('', [zodValidator(z.string().email())])
+const email = createField(ctx, '', [zodValidator(z.string().email())])
 
 // 2. Whole form inferred from schema — types, structure, validators all from one source
 const form = formFromZod(ctx, z.object({
@@ -1570,7 +1585,7 @@ Each serialized entry carries the query's **explicit stable identity** (`id = qu
 
 ## 16. UI adapter contract
 
-Adapters live in tiny separate packages (`@kontsedal/olas-react`, `@kontsedal/olas-vue`, `@kontsedal/olas-svelte`, vanilla). Roots are created **once** outside the UI (typically near `main.tsx`); the adapter resolves the root via context and exposes hooks for reading signals.
+Adapters live in tiny separate packages (`@kontsedal/olas-react`, `@kontsedal/olas-vue`, `@kontsedal/olas-svelte`). Roots are created **once** outside the UI (typically near `main.tsx`); the adapter resolves the root via context and exposes hooks for reading signals.
 
 ```tsx
 // main.tsx
@@ -1591,7 +1606,9 @@ function UserProfile({ id }: { id: string }) {
 }
 ```
 
-In React, hooks build on `useSyncExternalStore`. In Vue, signals interop with `ref` natively. In Svelte, signals become stores via `$signal`. In vanilla, call `.subscribe()`.
+In React, hooks build on `useSyncExternalStore`. In Vue, signals interop with `ref` natively. In Svelte, signals become stores via `$signal`.
+
+There is no vanilla DOM adapter. One was specced here, built, measured and dropped: any consumer shipping `@kontsedal/olas-core` has already spent the bundle budget a hand-rolled binder was meant to save, so a real framework costs nothing extra. A consumer who wants a smaller runtime uses the React adapter through `preact/compat`. See `.wiki/decisions/no-vanilla-adapter.md`.
 
 The adapter is the **only** code that knows about a UI framework. Everything else is pure TS.
 
@@ -1645,8 +1662,8 @@ function useRealtimePatcher<TEvent>(
 }
 
 // usage
-const newsfeed = ctx.bindQuery(newsfeedQuery)
-const comments = ctx.bindQuery(commentsQuery)
+const newsfeed = bindQuery(ctx, newsfeedQuery)
+const comments = bindQuery(ctx, commentsQuery)
 
 useRealtimePatcher(ctx, `feed-events`, {
   'like-added': (ev) => newsfeed.write('top-stories', (pages) => /* patch */),
@@ -1655,7 +1672,7 @@ useRealtimePatcher(ctx, `feed-events`, {
 })
 ```
 
-Ship this composable in user code. The framework primitive is `ctx.effect` + `write`; this wraps the typical dispatching boilerplate. Note both halves. `ctx.bindQuery` scopes the writes to this root, per §21.5. `write` rather than `setData`, because a realtime event is server truth with nothing to roll back. A fire-and-forget `setData` would leave a live snapshot per event (§6.4).
+Ship this composable in user code. The framework primitive is `ctx.effect` + `write`; this wraps the typical dispatching boilerplate. Note both halves. `bindQuery` scopes the writes to this root, per §21.5. `write` rather than `setData`, because a realtime event is server truth with nothing to roll back. A fire-and-forget `setData` would leave a live snapshot per event (§6.4).
 
 ### Gesture / transient UI state
 
@@ -1728,10 +1745,10 @@ Selection state (which items are selected, the "anchor" for shift-click range se
 import { selection } from '@kontsedal/olas-core'
 
 const issuesController = defineController((ctx) => {
-  const issues = ctx.use(issuesQuery)
+  const issues = createQuery(ctx, issuesQuery)
   const sel = selection<string>() // returns the Selection object below
 
-  const bulkArchive = ctx.mutation({
+  const bulkArchive = createMutation(ctx, {
     mutate: (_: void, signal) =>
       ctx.deps.api.archiveMany([...sel.selectedIds.value], { signal }),
     onSuccess: () => sel.clear(),
@@ -1792,7 +1809,7 @@ function useInlineEdit<T>(
     isEditing.set(false)
   }
 
-  const commit = ctx.mutation({
+  const commit = createMutation(ctx, {
     mutate: (_: void, signal) => save(draft.value as T, signal),
     onSuccess: () => {
       draft.set(undefined)
@@ -1859,7 +1876,7 @@ Key points:
 - `flushMs` coalesces N events into one UI update — prevents 1000 renders/sec.
 - `capacity` caps memory; oldest entries drop.
 - Pause/resume controls the subscription, not the buffer (buffer is preserved when paused).
-- For "merge with historical query" (load page-1 history then tail forward), compose with a `ctx.cache` and a `computed(() => [...history.data.value ?? [], ...buffer.value])`.
+- For "merge with historical query" (load page-1 history then tail forward), compose with a `createCache` and a `computed(() => [...history.data.value ?? [], ...buffer.value])`.
 
 Ship as a user composable.
 
@@ -1989,7 +2006,7 @@ The following are deliberately out of scope. They aren't "we'll do them later" �
 - **Built-in router.** Routing belongs in deps as a service (§16.5). Plug in `react-router`, TanStack Router, or your own.
 - **Gesture and transient UI state.** State whose lifetime equals a single interaction (in-progress drag rectangle, hover, focus) belongs in components, not controllers. See §16.5.
 - **Multi-item mutation orchestration.** The `Mutation` primitive tracks one logical operation. For "fire N mutations and track each result," compose them in a controller (§16.5).
-- **Offline-first sync and mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network. If you need the queue-then-sync model that Notion and Linear use, build it as a layer over `ctx.mutation` that queues locally and retries on reconnect, and persist via `@kontsedal/olas-persist`.
+- **Offline-first sync and mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network. If you need the queue-then-sync model that Notion and Linear use, build it as a layer over `createMutation` that queues locally and retries on reconnect, and persist via `@kontsedal/olas-persist`.
 
 ### 18.1 Entity normalization
 
@@ -2001,10 +2018,10 @@ Two equally-supported patterns:
 
 ```ts
 const patchPostEverywhere = (ctx: Ctx, id: string, patch: Partial<Post>) => {
-  const newsfeed = ctx.bindQuery(newsfeedQuery)
+  const newsfeed = bindQuery(ctx, newsfeedQuery)
   newsfeed.write('top-stories', (pages) => /* patch */)
   newsfeed.write('most-recent', (pages) => /* patch */)
-  ctx.bindQuery(userProfileQuery).write(authorId, (u) => /* patch */)
+  bindQuery(ctx, userProfileQuery).write(authorId, (u) => /* patch */)
   // ... explicit list of touch sites
 }
 ```
@@ -2435,7 +2452,7 @@ function defineQuery<Args extends unknown[], T>(
   spec: QuerySpec<Args, T>,
 ): Query<Args, T>
 
-// subscription returned by ctx.use(...) — same shape regardless of source
+// subscription returned by createQuery(ctx, ...) — same shape regardless of source
 type QuerySubscription<T> = AsyncState<T>
 
 // Options form of ctx.use's second argument. The thunk form is shorthand for { key }.
@@ -3099,7 +3116,7 @@ ssr.ts ─► query/client.ts
 
 Rules:
 
-- **`query/*` does not import `controller/`.** The query client only knows about abstract subscribers (objects with `notify()` and `dispose()`). The controller container is the one that creates subscriber objects when `ctx.use(...)` or `ctx.cache(...)` runs.
+- **`query/*` does not import `controller/`.** The query client only knows about abstract subscribers (objects with `notify()` and `dispose()`). The controller container is the one that creates subscriber objects when `createQuery(ctx, ...)` or `createCache(ctx, ...)` runs.
 - **`controller/` may import `query/`.** The `Ctx` factory needs to construct caches and subscriptions.
 - **`signals/` imports nothing else.** Swappable runtime.
 - **`emitter.ts` imports nothing.** Pure data structure.
@@ -3120,7 +3137,7 @@ Root
         ├── children: ControllerInstance[]
         ├── effects: Disposable[]
         ├── caches: Entry[]                   (anonymous local caches)
-        ├── subscriptions: Subscription[]     (from ctx.use(...))
+        ├── subscriptions: Subscription[]     (from createQuery(ctx, ...))
         ├── mutations: Mutation[]
         ├── emitters: Emitter[]
         ├── fields: Field[]
@@ -3132,7 +3149,7 @@ Each child `ControllerInstance` inherits a *reference* to the root's `QueryClien
 
 ### 21.5 The query-client / query-value binding
 
-Queries are module-scoped definitions. Each root owns its cache entries. `ctx.bindQuery(query)` and `root.bindQuery(query)` return a typed imperative handle for only that root, without subscribing or fetching. Regular handles expose `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `setData`, `write`, `replace`, `peek`, and `prefetch`; infinite handles expose their existing paginated equivalents. Bound prefetch can run before the first subscription. Bound handles fail after root disposal. `bindQuery` is a reserved root-control name.
+Queries are module-scoped definitions. Each root owns its cache entries. `bindQuery(ctx, query)` and `root.bindQuery(query)` return a typed imperative handle for only that root, without subscribing or fetching. Regular handles expose `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `setData`, `write`, `replace`, `peek`, and `prefetch`; infinite handles expose their existing paginated equivalents. Bound prefetch can run before the first subscription. Bound handles fail after root disposal. `bindQuery` is a reserved root-control name.
 
 Each definition carries a `Set<QueryClient>`. Binding a handle or an entry registers its client; disposal unregisters it. Unbound methods resolve only when at most one client is registered. With multiple clients a synchronous method throws and a promise method rejects, before reading data, running an updater, or starting work. With no clients, reads return undefined and writes, cancellation and invalidation do nothing, while prefetch rejects. An intentional broadcast requires explicitly iterating bound root handles.
 
@@ -3249,7 +3266,7 @@ Honest estimates so users know what they're paying for. All numbers are order-of
 
 For a "kitchen sink" app: `core + react + persist + zod = ~15 kB + Zod = ~28 kB` over the wire. Comparable to TanStack Query at ~13 kB, react-hook-form at ~10 kB and Zod at ~13 kB, which total ~36 kB.
 
-Tree-shaking removes unused parts of core: if you don't use `defineInfiniteQuery`, the infinite-query machinery is dropped (~2 kB saved). Forms are the largest single category (~4 kB) and are dropped if no controller calls `ctx.form`, `ctx.field`, or `ctx.fieldArray`.
+Tree-shaking removes unused parts of core: if you don't use `defineInfiniteQuery`, the infinite-query machinery is dropped (~2 kB saved). Forms are the largest single category (~4 kB) and are dropped if no controller calls `createForm`, `createField`, or `createFieldArray`.
 
 ### Per-primitive overhead
 
@@ -3259,11 +3276,11 @@ Tree-shaking removes unused parts of core: if you don't use `defineInfiniteQuery
 | `signal()` | ~80 B + boxed value | 1 |
 | `computed()` | ~120 B + dep-tracking node | 1 |
 | `effect()` | ~150 B + dep-tracking + closure | 0 (it consumes signals) |
-| `ctx.cache()` | ~400 B (Entry state machine) | 8 |
-| `ctx.use(query)` | ~80 B (subscription record) | 0 (shares Entry's signals) |
-| `ctx.mutation()` | ~250 B (runner) | 4 |
-| `ctx.field()` | ~300 B | 6 |
-| `ctx.form({ a, b, c })` | ~500 B + leaf cost | 6 + child signals (computed) |
+| `createCache(ctx, )` | ~400 B (Entry state machine) | 8 |
+| `createQuery(ctx, query)` | ~80 B (subscription record) | 0 (shares Entry's signals) |
+| `createMutation(ctx, )` | ~250 B (runner) | 4 |
+| `createField(ctx, )` | ~300 B | 6 |
+| `createForm(ctx, { a, b, c })` | ~500 B + leaf cost | 6 + child signals (computed) |
 | `ctx.emitter()` | ~100 B + handlers Set | 0 |
 
 These add up. A controller with 5 fields, 2 mutations, and 3 cache subscriptions is roughly `500 + 5×300 + 2×250 + 3×80 = 2,740 B` plus ~40 signals. For 1,000 such controllers, that's ~3 MB and 40,000 signals — workable but not free. **Per §11.2, prefer plain signals/maps for high-cardinality homogeneous items.**

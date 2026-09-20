@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createCache, createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { type ReadSignal, signal } from '../src/signals'
 import { createTestController } from '../src/testing'
 
@@ -19,7 +21,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
 
   test('root staleTime reaches the entry — freshness is timer-driven', async () => {
     const q = defineQuery({ key: () => ['s'], fetcher: async () => 1 })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createTestController(def, {
       deps: emptyDeps,
       props: undefined,
@@ -44,8 +46,9 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { staleTime: 60_000 },
     })
@@ -71,7 +74,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
       fetcher: async () => 1,
       staleTime: 0,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createTestController(def, {
       deps: emptyDeps,
       props: undefined,
@@ -86,8 +89,8 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
 
   test('no defaultQueryOptions keeps the built-in staleTime: 0', async () => {
     const q = defineQuery({ key: () => ['s-builtin'], fetcher: async () => 1 })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(root.x.isStale.value).toBe(true)
     root.dispose()
@@ -107,8 +110,9 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
         throw new Error(`fail-${attempts}`)
       },
     })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { retry: 2, retryDelay: 10 },
     })
@@ -132,8 +136,9 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
       },
       retry: 0,
     })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { retry: 5, retryDelay: 10 },
     })
@@ -154,7 +159,7 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
   // to come and go within a single root — two `createTestController` calls
   // would be two clients and two caches, and would "pass" for the wrong reason.
   function openCloseRoot(q: ReturnType<typeof defineQuery<[], number>>) {
-    const sub = defineController((ctx) => ({ x: ctx.use(q) }))
+    const sub = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     return defineController((ctx) => {
       let handle: readonly [{ x: unknown }, () => void] | null = null
       return {
@@ -173,6 +178,7 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
     let fetchCount = 0
     const q = defineQuery({ key: () => [], fetcher: async () => ++fetchCount })
     const root = createRoot(openCloseRoot(q), {
+      queries: queryEngine(),
       deps: emptyDeps,
       // Long staleTime so a refetch can only be explained by a dropped entry.
       defaultQueryOptions: { gcTime: 100, staleTime: 60_000 },
@@ -194,6 +200,7 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
     let fetchCount = 0
     const q = defineQuery({ key: () => [], fetcher: async () => ++fetchCount })
     const root = createRoot(openCloseRoot(q), {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { gcTime: 60_000, staleTime: 60_000 },
     })
@@ -216,7 +223,7 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
       fetcher: async (_ctx, id: string) => `data-${id}`,
     })
     const def = defineController((ctx, props: { id: ReadSignal<string> }) => ({
-      x: ctx.use(q, () => [props.id.value] as [string]),
+      x: createQuery(ctx, q, () => [props.id.value] as [string]),
     }))
     const id = signal('a')
     const root = createTestController(def, {
@@ -243,8 +250,9 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
   test('refetchOnWindowFocus via defaultQueryOptions applies', async () => {
     let count = 0
     const q = defineQuery({ key: () => ['rf'], fetcher: async () => ++count })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { refetchOnWindowFocus: true },
     })
@@ -260,8 +268,9 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
   test('defaultQueryOptions wins over the flat refetchOnWindowFocus shorthand', async () => {
     let count = 0
     const q = defineQuery({ key: () => ['rf-precedence'], fetcher: async () => ++count })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       refetchOnWindowFocus: true,
       defaultQueryOptions: { refetchOnWindowFocus: false },
@@ -282,8 +291,9 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { refetchOnWindowFocus: false },
     })
@@ -301,9 +311,10 @@ describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
 
   test('root staleTime applies to a controller-local ctx.cache', async () => {
     const def = defineController((ctx) => ({
-      user: ctx.cache(async () => 'u1'),
+      user: createCache(ctx, async () => 'u1'),
     }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { staleTime: 60_000 },
     })
@@ -315,9 +326,10 @@ describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
 
   test('explicit ctx.cache staleTime overrides the root default', async () => {
     const def = defineController((ctx) => ({
-      user: ctx.cache(async () => 'u1', { staleTime: 0 }),
+      user: createCache(ctx, async () => 'u1', { staleTime: 0 }),
     }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { staleTime: 60_000 },
     })
@@ -342,8 +354,9 @@ describe('RootOptions.defaultQueryOptions — infinite queries', () => {
       initialPageParam: 0,
       getNextPageParam: () => null,
     })
-    const def = defineController((ctx) => ({ f: ctx.use(q) }))
+    const def = defineController((ctx) => ({ f: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       defaultQueryOptions: { retry: 1, retryDelay: 10 },
     })
@@ -362,7 +375,7 @@ describe('RootOptions.defaultQueryOptions — infinite queries', () => {
       getNextPageParam: (last) => last.next,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ f: ctx.use(q) }))
+    const def = defineController((ctx) => ({ f: createQuery(ctx, q) }))
     const root = createTestController(def, {
       deps: emptyDeps,
       props: undefined,

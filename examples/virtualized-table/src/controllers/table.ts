@@ -12,6 +12,7 @@
 import {
   type Ctx,
   computed,
+  createMutation,
   defineController,
   type ReadSignal,
   type Signal,
@@ -28,7 +29,7 @@ export const tableController = defineController(
   (ctx: Ctx, props: TableProps) => {
     // Seed once at construction. Generation is sync (no fetch) so we can
     // populate the map without an AsyncState dance. In a real app this would
-    // be `ctx.use(issuesQuery)` over an infinite/paginated query.
+    // be `createQuery(ctx, issuesQuery)` over an infinite/paginated query.
     const initial = ctx.deps.api.generateIssues(props.rowCount)
     const rowMap = new Map<string, Signal<Issue>>(
       initial.map((row) => [row.id, signal<Issue>(row)]),
@@ -59,7 +60,7 @@ export const tableController = defineController(
     // `onMutate` so the framework's auto-rollback fires on non-abort errors
     // (spec §6.4). The snapshot closure captures `slot` + `prev`, so
     // rollback restores exactly the row that was edited.
-    const updateStatus = ctx.mutation<{ id: string; status: Status }, void>({
+    const updateStatus = createMutation<{ id: string; status: Status }, void>(ctx, {
       name: 'updateStatus',
       concurrency: 'parallel',
       onMutate: ({ id, status }) => {

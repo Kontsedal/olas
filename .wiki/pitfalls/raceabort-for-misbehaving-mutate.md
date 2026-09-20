@@ -19,7 +19,7 @@ confidence: high
 `AbortSignal` is cooperative — the holder of the signal must check and honor it. If a user's `mutate` function ignores its signal:
 
 ```ts
-ctx.mutation({
+createMutation(ctx, {
   mutate: async (vars) => {
     return externalLibrary.doStuff(vars)   # does not pass the AbortSignal through
   },

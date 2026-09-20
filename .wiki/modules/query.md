@@ -49,7 +49,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 |------|------|
 | `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QuerySpec`, `DefaultQueryOptions`, `QuerySubscription`, `UseOptions`, `DehydratedState`, `RetryPolicy`, `RetryDelay`, `RefetchInterval`, `NetworkMode`, `FetchCtx` |
 | `entry.ts` | `Entry<T>` — race-protected state machine for one cache key. Retry loop. Snapshot stack. Staleness timer. |
-| `local.ts` | `LocalCache<T>` wrapper + `createLocalCache(fetcher, options)`. Backs `ctx.cache`. |
+| `local.ts` | `LocalCache<T>` wrapper + `createLocalCache(fetcher, options)`. Backs `createCache`. |
 | `keys.ts` | `stableHash(args)` — deterministic JSON-based hashing. Sorted object keys. Handles `Date` and `undefined`. Throws on functions / symbols. |
 | `client.ts` | `QueryClient`, `ClientEntry<T>`, `InfiniteClientEntry`. Per-root entry registry, gcTime, the refetch-interval chain (`resolveRefetchInterval` + `armIntervalTick`, `client.ts:30-82`), `mutationsInflight$`, dehydrate/hydrate/waitForIdle. |
 | `define.ts` | `defineQuery`, `defineInfiniteQuery`. Module-scoped values branded `__olas`. Carry a `__clients: Set<QueryClient>` for multi-root operation. |
@@ -62,7 +62,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 ## How a subscription is wired
 
 ```
-ctx.use(query, () => [id])
+createQuery(ctx, query, () => [id])
    ↓
 createUse / createInfiniteUse           (dispatch on query.__olas brand)
    ↓
@@ -87,7 +87,7 @@ A `Query` is module-scoped. Binding a handle or entry registers its client in `q
 
 ## The imperative surface: read, and two kinds of write
 
-Beyond `ctx.use`, the handle carries the operations that reach a keyed entry from outside a subscription — `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `prefetch` and `setData`, and since 0.6.0 also:
+Beyond `createQuery`, the handle carries the operations that reach a keyed entry from outside a subscription — `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `prefetch` and `setData`, and since 0.6.0 also:
 
 - **`peek(...keyArgs): T | undefined`** (`client.peekData`, `client.ts`) — synchronous read. Looks the entry up in `maps` **without** `bindEntry`, so a peek cannot mint the entry it is asking about, and reads through `.peek()` so it registers no reactive dependency. `undefined` conflates "no entry" with "not settled", deliberately: the caller that cares is guarding a write, and both answers mean *don't*. The bound handle reads only its selected root. An unbound peek returns undefined for zero clients and throws on multiple clients.
 - **`write(...keyArgs, updater): void`** (`client.writeData`) — canonical write: `Entry.setData(updater, { track: false })`, so no snapshot record and no `hasPendingMutations` flip. Same entry-binding and the same `source: 'set'` event as `setData`; the devtools `source` is pinned to `'set'` rather than inheriting `'mutate'` from an ambient cause. Why this is a separate method rather than an option: `decisions/canonical-vs-optimistic-writes.md`.

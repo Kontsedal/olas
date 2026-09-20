@@ -20,7 +20,7 @@ import { zodValidator } from '@kontsedal/olas-zod'
 import { z } from 'zod'
 
 const signup = defineController((ctx) => ({
-  email: ctx.field('', [zodValidator(z.string().email())]),
+  email: createField(ctx, '', [zodValidator(z.string().email())]),
 }))
 ```
 
@@ -80,7 +80,7 @@ function formFromZod<S extends z.ZodObject<z.ZodRawShape>>(
 
 Leaf and nested-object rules walk correctly in every case. Two outer-schema rules aren't auto-promoted yet (both tracked in [`../../BACKLOG.md`](../../BACKLOG.md)):
 
-- **Root-level `.refine(...)` on `z.object(...)`** → no form-level validator. Wire one manually with `ctx.form(fields, { validators: [zodValidator(schema)] })`, or assert on `form.isValid`.
+- **Root-level `.refine(...)` on `z.object(...)`** → no form-level validator. Wire one manually with `createForm(ctx, fields, { validators: [zodValidator(schema)] })`, or assert on `form.isValid`.
 - **Array-level `.min(N)`** → no `FieldArray`-level validator. Write a manual `FieldArrayValidator`, or assert on `form.isValid`.
 
 ## Further reading

@@ -1,4 +1,4 @@
-import { createRoot, defineController } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import { crossTabPlugin } from '../src/plugin'
 
@@ -18,6 +18,7 @@ describe('crossTabPlugin SSR', () => {
     const def = defineController(() => ({}))
     expect(() =>
       createRoot(def, {
+        queries: queryEngine(),
         deps: {},
         plugins: [crossTabPlugin({ channelName: 'unused', channelFactory: () => undefined })],
       }).dispose(),
@@ -28,6 +29,7 @@ describe('crossTabPlugin SSR', () => {
     const onWarn = vi.fn()
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         crossTabPlugin({

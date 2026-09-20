@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import {
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { Component, type ErrorInfo, type ReactNode, Suspense } from 'react'
 import { afterEach, describe, expect, test } from 'vitest'
@@ -57,9 +63,9 @@ describe('useQuery({ suspense: true })', () => {
     })
 
     const def = defineController((ctx) => ({
-      user: ctx.use(userQuery, () => []),
+      user: createQuery(ctx, userQuery, () => []),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function UserView() {
       // With suspense: true, `data` is narrowed to T (string).
@@ -104,9 +110,9 @@ describe('useQuery({ suspense: true })', () => {
       })
 
       const def = defineController((ctx) => ({
-        user: ctx.use(userQuery, () => []),
+        user: createQuery(ctx, userQuery, () => []),
       }))
-      const root = createRoot(def, { deps: {}, onError: () => {} })
+      const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
       function UserView() {
         const { data } = useQuery(root.user, { suspense: true })
@@ -150,9 +156,9 @@ describe('useQuery({ suspense: true })', () => {
     })
 
     const def = defineController((ctx) => ({
-      greeting: ctx.use(greetingQuery, () => []),
+      greeting: createQuery(ctx, greetingQuery, () => []),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function View() {
       const { data } = useQuery(root.greeting, { suspense: true })
@@ -201,8 +207,8 @@ describe('useQuery({ suspense: true })', () => {
         retry: 0,
         staleTime: 60_000,
       })
-      const def = defineController((ctx) => ({ g: ctx.use(q, () => []) }))
-      const root = createRoot(def, { deps: {}, onError: () => {} })
+      const def = defineController((ctx) => ({ g: createQuery(ctx, q, () => []) }))
+      const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
       function View() {
         const { data } = useQuery(root.g, { suspense: true })
@@ -256,9 +262,9 @@ describe('useQuery({ suspense: true })', () => {
     })
 
     const def = defineController((ctx) => ({
-      greeting: ctx.use(greetingQuery, () => []),
+      greeting: createQuery(ctx, greetingQuery, () => []),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     let observed: string | undefined = 'never-set'
     function View() {
@@ -294,8 +300,8 @@ describe('subscription.promise()', () => {
       fetcher: async () => ({ id: 1 }),
       staleTime: 60_000,
     })
-    const def = defineController((ctx) => ({ sub: ctx.use(q, () => []) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, q, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     const value = await root.sub.promise()
     expect(value).toEqual({ id: 1 })
@@ -313,8 +319,8 @@ describe('subscription.promise()', () => {
       retry: 0,
       staleTime: 60_000,
     })
-    const def = defineController((ctx) => ({ sub: ctx.use(q, () => []) }))
-    const root = createRoot(def, { deps: {}, onError: () => {} })
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, q, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
     await expect(root.sub.promise()).rejects.toBe(boom)
     root.dispose()

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { Entry } from '../src/query/entry'
 import { signal } from '../src/signals'
 import { abortableSleep } from '../src/utils'
@@ -45,8 +47,8 @@ describe('stale timers', () => {
       staleTime: Infinity,
     })
     const root = createRoot(
-      defineController((ctx) => ({ sub: ctx.use(q) })),
-      { deps: {} },
+      defineController((ctx) => ({ sub: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: {} },
     )
     try {
       await root.waitForIdle()
@@ -121,8 +123,8 @@ describe('gc timers', () => {
     })
     const id = signal('a')
     const root = createRoot(
-      defineController((ctx) => ({ sub: ctx.use(q, () => [id.value]) })),
-      { deps: {} },
+      defineController((ctx) => ({ sub: createQuery(ctx, q, () => [id.value]) })),
+      { queries: queryEngine(), deps: {} },
     )
     try {
       await vi.advanceTimersByTimeAsync(0)
@@ -155,7 +157,7 @@ describe('gc timers', () => {
     const q = defineQuery({ key: () => [], fetcher, staleTime: Infinity, gcTime: Infinity })
     const root = createRoot(
       defineController(() => ({})),
-      { deps: {} },
+      { queries: queryEngine(), deps: {} },
     )
     try {
       const bound = root.bindQuery(q)
@@ -183,8 +185,8 @@ describe('gc timers', () => {
     })
     const id = signal('a')
     const root = createRoot(
-      defineController((ctx) => ({ sub: ctx.use(q, () => [id.value]) })),
-      { deps: {} },
+      defineController((ctx) => ({ sub: createQuery(ctx, q, () => [id.value]) })),
+      { queries: queryEngine(), deps: {} },
     )
     try {
       await vi.advanceTimersByTimeAsync(0)
@@ -206,8 +208,8 @@ describe('every user-supplied duration is chunked, not clamped', () => {
     const fetcher = vi.fn(async () => 'v')
     const q = defineQuery({ key: () => [], fetcher, staleTime: 0, refetchInterval: OVERFLOW })
     const root = createRoot(
-      defineController((ctx) => ({ sub: ctx.use(q) })),
-      { deps: {} },
+      defineController((ctx) => ({ sub: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: {} },
     )
     try {
       await vi.advanceTimersByTimeAsync(0)
@@ -255,7 +257,7 @@ describe('every user-supplied duration is chunked, not clamped', () => {
         ctx.onDispose(() => disposed.push('root'))
         return {}
       }),
-      { deps: {} },
+      { queries: queryEngine(), deps: {} },
     )
     root.suspend({ maxIdle: OVERFLOW })
     await vi.advanceTimersByTimeAsync(2_147_483_647)
@@ -271,7 +273,7 @@ describe('every user-supplied duration is chunked, not clamped', () => {
         ctx.onDispose(() => disposed.push('root'))
         return {}
       }),
-      { deps: {} },
+      { queries: queryEngine(), deps: {} },
     )
     try {
       root.suspend({ maxIdle: Number.POSITIVE_INFINITY })

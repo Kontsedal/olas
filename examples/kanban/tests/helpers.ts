@@ -6,7 +6,7 @@
  * isolation) and storage adapter (for usePersisted).
  */
 
-import { createRoot } from '@kontsedal/olas-core'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import {
@@ -100,6 +100,7 @@ export function createKanbanRoot(opts?: {
   const entities = createEntitiesPlugin()
   const notifyRef: NotifyRef = { current: () => {} }
   const root = createRoot(appController, {
+    queries: queryEngine(),
     deps: {
       api,
       broadcaster,

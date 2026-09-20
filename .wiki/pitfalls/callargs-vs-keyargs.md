@@ -28,7 +28,7 @@ defineQuery({
 
 Inside `ClientEntry` we store two different arrays:
 
-- **`callArgs`** — what `ctx.use(query, () => ['u1'])` passed: `['u1']`. This is what the fetcher needs.
+- **`callArgs`** — what `createQuery(ctx, query, () => ['u1'])` passed: `['u1']`. This is what the fetcher needs.
 - **`keyArgs`** — what `spec.key('u1')` returned: `['user', 'u1']`. This is what we hash for identity.
 
 If you pass `keyArgs` to the fetcher, you'll call `getUser('user', { signal })` — wrong `id`, broken request.

@@ -1,5 +1,8 @@
 import {
   type Ctx,
+  createField,
+  createFieldArray,
+  createForm,
   type Field,
   type FieldArray,
   type Form,
@@ -291,11 +294,11 @@ function buildForm(
   // `zodValidator(propSchema)`; `rootOnlyZodValidator` filters to issues
   // whose `path` is empty so leaf issues are not double-reported.
   if (rootSchema !== undefined) {
-    return ctx.form(fields, {
+    return createForm(ctx, fields, {
       validators: [rootOnlyZodValidator(rootSchema as z.ZodType<unknown>) as never],
     }) as AnyForm
   }
-  return ctx.form(fields) as AnyForm
+  return createForm(ctx, fields) as AnyForm
 }
 
 function buildLeaf(
@@ -319,7 +322,8 @@ function buildLeaf(
 
   if (inner instanceof z.ZodArray) {
     const elementSchema = (inner as z.ZodArray<AnyZodType>).element as AnyZodType
-    return ctx.fieldArray(
+    return createFieldArray(
+      ctx,
       // Array items aren't enumerable at schema-build time; we don't extend
       // the dotted path with an index here. Per-item validators belong on
       // the Zod element schema (which `buildLeaf` already wraps via
@@ -339,5 +343,5 @@ function buildLeaf(
   const validators: Array<Validator<unknown>> = [zodValidator(schema as z.ZodType<unknown>)]
   const extra = extras?.[path]
   if (extra !== undefined) validators.push(extra as Validator<unknown>)
-  return ctx.field(ini, validators)
+  return createField(ctx, ini, validators)
 }

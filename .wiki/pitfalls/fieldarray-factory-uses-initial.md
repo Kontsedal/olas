@@ -19,12 +19,12 @@ confidence: high
 Spec §8.5 example reads naturally:
 
 ```ts
-const tags = ctx.fieldArray(() => ctx.field('', [required()]))
+const tags = createFieldArray(ctx, () => createField(ctx, '', [required()]))
 tags.add('hello')
 tags.value.value   // string[]
 ```
 
-If you write the factory as `() => ctx.field('')`, the factory ignores its `initial` parameter — every `add(x)` call creates a field initialized to `''`, regardless of `x`. The array's `value` ends up `['', '', '']`, not `['hello', 'world', ...]`.
+If you write the factory as `() => createField(ctx, '')`, the factory ignores its `initial` parameter — every `add(x)` call creates a field initialized to `''`, regardless of `x`. The array's `value` ends up `['', '', '']`, not `['hello', 'world', ...]`.
 
 `FieldArrayImpl.add(initial)` calls `this.itemFactory(initial)` and trusts the factory to use the argument:
 
@@ -37,7 +37,7 @@ add(initial?: ItemInitial<I>): void {
 ```
 
 There's no auto-set fallback — by design, because:
-- For Form items, "use initial" means `ctx.form(schema, { initial })`, not `form.set(initial)`.
+- For Form items, "use initial" means `createForm(ctx, schema, { initial })`, not `form.set(initial)`.
 - For Field items with validators, the user might want to construct with the initial AND a different set of validators per item.
 
 ## The fix in user code
@@ -45,20 +45,20 @@ There's no auto-set fallback — by design, because:
 Canonical patterns:
 
 ```ts
-ctx.fieldArray((initial) => ctx.field(initial ?? ''))                   # field
-ctx.fieldArray((initial) => ctx.form(schema, { initial }))              # form
-ctx.fieldArray((initial: { sku?: string }) =>                           # form with typed initial
-  ctx.form({ sku: ctx.field<string>('', [required()]) }, { initial }))
+createFieldArray(ctx, (initial) => createField(ctx, initial ?? ''))                   # field
+createFieldArray(ctx, (initial) => createForm(ctx, schema, { initial }))              # form
+createFieldArray(ctx, (initial: { sku?: string }) =>                           # form with typed initial
+  createForm(ctx, { sku: createField<string>(ctx, '', [required()]) }, { initial }))
 ```
 
 ## The bug we hit
 
-Phase 8 test `add/remove/insert/move/clear` initially used `() => ctx.field('')`. Every `add('a')`, `add('b')`, `add('c')` produced an empty-string field; the test expected `['a', 'b', 'c']` but got `['', '', '']`.
+Phase 8 test `add/remove/insert/move/clear` initially used `() => createField(ctx, '')`. Every `add('a')`, `add('b')`, `add('c')` produced an empty-string field; the test expected `['a', 'b', 'c']` but got `['', '', '']`.
 
 Fix: use `initial` in the factory:
 
 ```ts
-tags: ctx.fieldArray((initial) => ctx.field(initial ?? '')),
+tags: createFieldArray(ctx, (initial) => createField(ctx, initial ?? '')),
 ```
 
 The spec's own example (cited above) is misleading about this — it shows the factory ignoring `initial` but expects the values to land anyway. The implementation deliberately doesn't auto-set; the test we wrote reflects what the code does.
@@ -74,4 +74,4 @@ In both cases, the factory wasn't threading `initial` through to the leaf primit
 
 ## Where this is verified
 
-`packages/core/tests/form.test.ts > ctx.fieldArray > add/remove/insert/move/clear` and `> arrays of sub-forms aggregate value/errors`. Both use the `(initial) => ctx.field(initial ?? '')` pattern.
+`packages/core/tests/form.test.ts > ctx.fieldArray > add/remove/insert/move/clear` and `> arrays of sub-forms aggregate value/errors`. Both use the `(initial) => createField(ctx, initial ?? '')` pattern.

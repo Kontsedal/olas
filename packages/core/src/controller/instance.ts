@@ -1,32 +1,14 @@
 import type { DevtoolsEmitter } from '../devtools'
 import { createEmitter, type Emitter } from '../emitter'
 import { dispatchError, type ErrorHandler } from '../errors'
-import { bindFieldDevtoolsOwner, createField } from '../forms/field'
-import {
-  bindTreeToDevtools,
-  bindTreeValidatorErrorReporter,
-  createFieldArray,
-  createForm,
-} from '../forms/form'
-import type {
-  FieldArray,
-  FieldArrayOptions,
-  Form,
-  FormOptions,
-  FormSchema,
-  ItemInitial,
-} from '../forms/form-types'
-import type { Validator } from '../forms/types'
 import type { QueryClient } from '../query/client'
-import type { InfiniteQuery } from '../query/infinite'
-import { createLocalCache, type LocalCacheOptions } from '../query/local'
-import { createMutation, type Mutation, type MutationSpec } from '../query/mutation'
-import type { LocalCache, Query } from '../query/types'
-import { createInfiniteUse, createUse } from '../query/use'
+import { missingQueryEngine } from '../query/engine'
+import type { DefaultQueryOptions } from '../query/types'
 import type { Scope } from '../scope'
 import { computed, signal, effect as standaloneEffect, untracked } from '../signals'
 import { readOnly } from '../signals/readonly'
 import { getFactory, getName } from './define'
+import { CTX_INTERNALS, type CtxInternals } from './internals'
 import type {
   Collection,
   CollectionFactoryApi,
@@ -35,14 +17,24 @@ import type {
   CollectionHomogeneousOptions,
   ControllerDef,
   Ctx,
-  Field,
   LazyChild,
 } from './types'
 
 export type RootShared = {
   readonly devtools: DevtoolsEmitter
   readonly onError: ErrorHandler | undefined
-  readonly queryClient: QueryClient
+  /**
+   * `null` when the root was built without `queries: queryEngine()`. Every
+   * read goes through `requireClient`, which names the fix.
+   */
+  readonly queryClient: QueryClient | null
+  /**
+   * Root-wide query defaults, held here rather than read off the client.
+   * `ctx.cache` is a controller-local cache that still honours them (§5.9),
+   * and it must not drag the whole query engine into the bundle to read two
+   * fields.
+   */
+  readonly queryDefaults: DefaultQueryOptions
   /**
    * Monotonic counter bumped by every `ctx.provide(...)` call inside this
    * root's tree. `ctx.inject(...)` caches its scope-walk result alongside
@@ -422,7 +414,36 @@ export class ControllerInstance {
         throw new Error(`[olas] ctx.${method}() called after the controller was disposed`)
       }
     }
+    const requireClient = (operation: string): QueryClient => {
+      const client = self.rootShared.queryClient
+      if (client === null) throw missingQueryEngine(operation)
+      return client
+    }
+    const internals: CtxInternals = {
+      assertLive,
+      register: (entry) => {
+        self.entries.push(entry as LifecycleEntry)
+      },
+      requireClient,
+      get queryDefaults() {
+        return self.rootShared.queryDefaults as CtxInternals['queryDefaults']
+      },
+      get path() {
+        return self.path
+      },
+      report: (err, kind) => {
+        dispatchError(self.rootShared.onError, err, { kind, controllerPath: self.path })
+      },
+      get onError() {
+        return self.rootShared.onError
+      },
+      get devtools() {
+        return self.rootShared.devtools
+      },
+    }
     const ctx: Ctx = {
+      [CTX_INTERNALS]: internals,
+
       get deps() {
         return self.deps
       },
@@ -491,85 +512,6 @@ export class ControllerInstance {
         }
       },
 
-      cache<T>(
-        fetcher: (signal: AbortSignal) => Promise<T>,
-        options?: LocalCacheOptions<T>,
-      ): LocalCache<T> {
-        assertLive('cache')
-        // Root-wide defaults apply to `ctx.cache` too — a root that declares
-        // `staleTime: 5min` shouldn't have controller-local caches silently
-        // fall back to 0. Only the fields `LocalCacheOptions` actually carries
-        // are merged; `retry`/`gcTime`/`networkMode` aren't part of its
-        // surface, so there is nothing to default them into.
-        const rootDefaults = self.rootShared.queryClient.defaults
-        const cache = createLocalCache<T>(fetcher, {
-          ...options,
-          staleTime: options?.staleTime ?? rootDefaults.staleTime,
-          keepPreviousData: options?.keepPreviousData ?? rootDefaults.keepPreviousData,
-        })
-        self.entries.push({ kind: 'cleanup', dispose: () => cache.dispose() })
-        return cache
-      },
-
-      bindQuery(query: any): any {
-        assertLive('bindQuery')
-        return self.rootShared.queryClient.bindQuery(query)
-      },
-
-      use(query: any, keyOrOptions?: any): any {
-        assertLive('use')
-        const brand = (query as { __olas?: string }).__olas
-        if (brand === 'infiniteQuery') {
-          const handle = createInfiniteUse(
-            self.rootShared.queryClient,
-            query as InfiniteQuery<unknown[], unknown, unknown>,
-            keyOrOptions,
-          )
-          self.entries.push({
-            kind: 'subscription-cache',
-            dispose: handle.dispose,
-            suspend: handle.suspend,
-            resume: handle.resume,
-          })
-          return handle.subscription
-        }
-        const handle = createUse(
-          self.rootShared.queryClient,
-          query as Query<unknown[], unknown>,
-          keyOrOptions,
-        )
-        self.entries.push({
-          kind: 'subscription-cache',
-          dispose: handle.dispose,
-          suspend: handle.suspend,
-          resume: handle.resume,
-        })
-        return handle.subscription
-      },
-
-      mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R> {
-        assertLive('mutation')
-        const queryClient = self.rootShared.queryClient
-        const m = createMutation<V, R>(
-          spec,
-          self.rootShared.onError,
-          self.path,
-          queryClient.mutationsInflight$,
-          self.rootShared.devtools,
-          // Lifecycle hooks for persistable mutations — only wired when
-          // `spec.persist === true`. `createMutation` validates the
-          // `mutationId` requirement before construction.
-          spec.persist === true
-            ? {
-                emitEnqueue: (ev) => queryClient.emitMutationEnqueue(ev),
-                emitSettle: (ev) => queryClient.emitMutationSettle(ev),
-              }
-            : undefined,
-        )
-        self.entries.push({ kind: 'cleanup', dispose: () => m.dispose() })
-        return m
-      },
-
       emitter<T>(): Emitter<T> {
         assertLive('emitter')
         const e = createEmitter<T>({
@@ -589,91 +531,6 @@ export class ControllerInstance {
 
       signal,
       computed,
-
-      field<T>(
-        initial: T,
-        validators?: ReadonlyArray<Validator<T>>,
-        options?: { validateOn?: 'change' | 'blur' | 'submit' },
-      ): Field<T> {
-        assertLive('field')
-        // Pass the reporter at construct time so the FIRST validator pass
-        // (which runs synchronously in the FieldImpl constructor's
-        // validator-effect) is covered.
-        const f = createField(initial, validators, {
-          onValidatorError: (err) => {
-            dispatchError(self.rootShared.onError, err, {
-              kind: 'effect',
-              controllerPath: self.path,
-            })
-          },
-          validateOn: options?.validateOn,
-        })
-        self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
-        // Standalone fields (not inside a form) still publish field:validated
-        // events. Use the controller path with field name "(field)" — the
-        // devtools panel groups by path so this is fine.
-        bindFieldDevtoolsOwner(f, {
-          controllerPath: self.path,
-          fieldName: '(field)',
-          emitter: self.rootShared.devtools,
-        })
-        return f
-      },
-
-      form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S> {
-        assertLive('form')
-        const reporter = (err: unknown): void => {
-          dispatchError(self.rootShared.onError, err, {
-            kind: 'effect',
-            controllerPath: self.path,
-          })
-        }
-        const f = createForm(schema, options, { onValidatorError: reporter })
-        self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
-        // Make every leaf field publish `field:validated` to the devtools bus
-        // with its key path inside the form. See spec §20.9.
-        const stop = bindTreeToDevtools(
-          f as unknown as Form<FormSchema>,
-          '',
-          self.path,
-          self.rootShared.devtools,
-        )
-        self.entries.push({ kind: 'cleanup', dispose: stop })
-        // Bind the reporter onto every leaf in the tree too (the form itself
-        // got it via the constructor option; nested forms/arrays inside the
-        // schema didn't, since they were constructed by the caller before
-        // ctx.form ran). Idempotent — leaves that already got the reporter
-        // via ctx.field get the same one set again.
-        bindTreeValidatorErrorReporter(f as unknown as Form<FormSchema>, reporter)
-        return f
-      },
-
-      fieldArray<I extends Field<any> | Form<any>>(
-        itemFactory: (initial?: ItemInitial<I>) => I,
-        options?: FieldArrayOptions<I>,
-      ): FieldArray<I> {
-        assertLive('fieldArray')
-        const reporter = (err: unknown): void => {
-          dispatchError(self.rootShared.onError, err, {
-            kind: 'effect',
-            controllerPath: self.path,
-          })
-        }
-        const fa = createFieldArray<I>(itemFactory, options, { onValidatorError: reporter })
-        self.entries.push({ kind: 'cleanup', dispose: () => fa.dispose() })
-        const stop = bindTreeToDevtools(
-          fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
-          '',
-          self.path,
-          self.rootShared.devtools,
-        )
-        self.entries.push({ kind: 'cleanup', dispose: stop })
-        bindTreeValidatorErrorReporter(
-          fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
-          reporter,
-        )
-        return fa
-      },
 
       provide<T>(scope: Scope<T>, value: T): void {
         if (self.scopes === null) self.scopes = new Map()

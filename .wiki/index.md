@@ -41,7 +41,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 
 ## Flows
 
-- [flows/query-subscription.md](flows/query-subscription.md) — `ctx.use(query, key)` → bind → fetch → React
+- [flows/query-subscription.md](flows/query-subscription.md) — `createQuery(ctx, query, key)` → bind → fetch → React
 - [flows/mutation-concurrency.md](flows/mutation-concurrency.md) — parallel, latest-wins and serial paths
 - [flows/ssr.md](flows/ssr.md) — `waitForIdle → dehydrate` (server) → `hydrate` (client)
 - [flows/construction-rollback.md](flows/construction-rollback.md) — factory throws → partial state torn down
@@ -56,6 +56,8 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/brand-markers-not-classes.md](decisions/brand-markers-not-classes.md) — why `Symbol.for(...)` over `instanceof`
 - [decisions/no-react-adapter-yet.md](decisions/no-react-adapter-yet.md) — why `@kontsedal/olas-react` is an empty shell
 - [decisions/canonical-vs-optimistic-writes.md](decisions/canonical-vs-optimistic-writes.md) — why `Query` has two write methods (`setData` optimistic, `write` canonical) rather than one with an options bag
+- [decisions/no-vanilla-adapter.md](decisions/no-vanilla-adapter.md) — why olas ships no vanilla DOM adapter: one was built, measured and dropped
+- [decisions/ctx-primitives-are-free-functions.md](decisions/ctx-primitives-are-free-functions.md) — why `createField`/`createQuery` take `ctx` instead of hanging off it, and why `createRoot` takes an explicit query engine
 - [decisions/prose-rules.md](decisions/prose-rules.md) — the writing rules every `.md` follows, what `pnpm prose:lint` enforces, and what it flags that we leave alone
 - [decisions/ui-rules.md](decisions/ui-rules.md) — the ten rules every interface follows, the scales they are picked from, what makes a screen read as generated, and which of the ten anything checks
 
@@ -66,7 +68,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/latest-wins-rollback-order.md](pitfalls/latest-wins-rollback-order.md) — rollback BEFORE new `onMutate`
 - [pitfalls/isstale-needs-timer.md](pitfalls/isstale-needs-timer.md) — `Date.now()` doesn't trigger re-derivation
 - [pitfalls/raceabort-for-misbehaving-mutate.md](pitfalls/raceabort-for-misbehaving-mutate.md) — wrap mutate in `raceAbort`
-- [pitfalls/literal-type-narrowing.md](pitfalls/literal-type-narrowing.md) — `ctx.field('')` infers `Field<''>`
+- [pitfalls/literal-type-narrowing.md](pitfalls/literal-type-narrowing.md) — `createField(ctx, '')` infers `Field<''>`
 - [pitfalls/preact-signals-overload-return.md](pitfalls/preact-signals-overload-return.md) — `ReturnType<typeof signal<T>>` is wrong
 - [pitfalls/fieldarray-factory-uses-initial.md](pitfalls/fieldarray-factory-uses-initial.md) — `add(x)` only works if factory uses it
 - [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert

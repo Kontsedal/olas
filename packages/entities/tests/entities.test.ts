@@ -1,4 +1,5 @@
 import {
+  createQuery,
   createRoot,
   defineController,
   defineInfiniteQuery,
@@ -6,6 +7,7 @@ import {
   type InfiniteQuerySubscription,
   type Query,
   type QuerySubscription,
+  queryEngine,
 } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import { defineEntity, entitiesPlugin } from '../src'
@@ -76,8 +78,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post, User])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await settle()
 
     expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
@@ -95,8 +97,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     const sig = plugin.signal(Post, 'p1')
     expect(sig.peek()).toBeUndefined()
@@ -119,7 +121,7 @@ describe('entitiesPlugin', () => {
   test('explicit upsert populates the store for non-query sources', () => {
     const plugin = entitiesPlugin([Post])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     expect(plugin.get(Post, 'p1')).toBeUndefined()
     plugin.upsert(Post, { id: 'p1', title: 'Direct', likes: 0 })
@@ -141,9 +143,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     type Api = { feed: QuerySubscription<{ posts: Post[] }> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -180,14 +186,18 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post, User])
     const def = defineController((ctx) => ({
-      feed: ctx.use(feedQuery, () => []),
-      profile: ctx.use(profileQuery, () => []),
+      feed: createQuery(ctx, feedQuery, () => []),
+      profile: createQuery(ctx, profileQuery, () => []),
     }))
     type Api = {
       feed: QuerySubscription<{ posts: Post[] }>
       profile: QuerySubscription<{ user: User; latestPosts: Post[] }>
     }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -225,9 +235,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -247,7 +261,7 @@ describe('entitiesPlugin', () => {
   test('update is a no-op when the entity is not in the store', () => {
     const plugin = entitiesPlugin([Post])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     plugin.update(Post, 'never-seen', { likes: 999 })
     expect(plugin.get(Post, 'never-seen')).toBeUndefined()
@@ -270,7 +284,7 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([SmallEntity])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     plugin.upsert(SmallEntity, { id: 'a', n: 1 })
     plugin.upsert(SmallEntity, { id: 'b', n: 2 })
@@ -299,14 +313,18 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({
-      feed: ctx.use(feedQuery, () => []),
-      sidebar: ctx.use(sidebarQuery, () => []),
+      feed: createQuery(ctx, feedQuery, () => []),
+      sidebar: createQuery(ctx, sidebarQuery, () => []),
     }))
     type Api = {
       feed: QuerySubscription<{ posts: Post[] }>
       sidebar: QuerySubscription<{ recent: Post[] }>
     }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -337,11 +355,21 @@ describe('entitiesPlugin', () => {
     const plugin = entitiesPlugin([Post])
     const def = defineController(() => ({}))
     const onError1 = vi.fn()
-    const root1 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError1 })
+    const root1 = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+      onError: onError1,
+    })
     expect(onError1).not.toHaveBeenCalled()
 
     const onError2 = vi.fn()
-    const root2 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError2 })
+    const root2 = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+      onError: onError2,
+    })
     const pluginErr = onError2.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'plugin')
     expect(pluginErr).toBeTruthy()
     expect((pluginErr?.[0] as Error).message).toMatch(/reused across multiple roots/)
@@ -364,9 +392,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     type Api = { feed: QuerySubscription<{ posts: Post[] }> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -390,7 +422,7 @@ describe('entitiesPlugin', () => {
   test('signal handle is stable across calls (same id → same signal)', () => {
     const plugin = entitiesPlugin([Post])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     const s1 = plugin.signal(Post, 'p1')
     const s2 = plugin.signal(Post, 'p1')
@@ -410,9 +442,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     type Api = { feed: QuerySubscription<{ posts: Post[] }> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -432,7 +468,7 @@ describe('entitiesPlugin', () => {
     // — this just pins the "no exception, no surprising store entry" contract.
     const plugin = entitiesPlugin([Post])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     // Construct + dispose with no infinite query bound — nothing to walk.
     expect(plugin.get(Post, 'p1')).toBeUndefined()
@@ -453,8 +489,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ q: ctx.use(cyclicQuery, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ q: createQuery(ctx, cyclicQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await settle()
 
     expect(plugin.get(Post, 'p1')).toMatchObject({ id: 'p1', title: 'A', likes: 0 })
@@ -471,8 +507,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post, User])
-    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await settle()
 
     expect(plugin.get(Post, 'x1')).toBeUndefined()
@@ -497,9 +533,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(sharedQuery, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, sharedQuery, () => []) }))
     type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -532,8 +572,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ q: ctx.use(cyclicQuery, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ q: createQuery(ctx, cyclicQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await settle()
 
     // The cycle short-circuits at the second `.self` re-entry. We still
@@ -551,7 +591,7 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     const expectErr = /entity "Unrelated" was not registered/
     expect(() => plugin.signal(Unrelated, 'x')).toThrow(expectErr)
@@ -582,9 +622,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ daily: ctx.use(dailyQuery, () => [t]) }))
+    const def = defineController((ctx) => ({ daily: createQuery(ctx, dailyQuery, () => [t]) }))
     type Api = { daily: QuerySubscription<WithDate> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -603,9 +647,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     type Api = { feed: QuerySubscription<{ posts: Post[] }> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -624,7 +672,7 @@ describe('entitiesPlugin', () => {
   test('update on a missing entity warns in dev and is a no-op', () => {
     const plugin = entitiesPlugin([Post])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     plugin.update(Post, 'never-seen', { likes: 999 })
@@ -649,8 +697,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await settle()
 
     const snap = plugin.entries(Post)
@@ -706,9 +754,10 @@ describe('entitiesPlugin', () => {
     }
 
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [plugin],
       hydrate: hydrated,
@@ -737,8 +786,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await settle()
 
     const snap = plugin.entries(Post)
@@ -771,8 +820,8 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Post])
-    const def = defineController((ctx) => ({ feed: ctx.use(feedQuery, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await settle()
 
     const bindings = plugin.bindings(Post, 'p1')
@@ -847,9 +896,13 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([NestedPost])
-    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
     type Api = { q: QuerySubscription<{ post: NestedPost }> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -894,8 +947,12 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([WithTags])
-    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as {
       dispose(): void
     }
     await settle()
@@ -918,7 +975,11 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Item])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as {
       dispose(): void
     }
 
@@ -957,8 +1018,12 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Item])
-    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as {
       dispose(): void
     }
     await settle()
@@ -990,7 +1055,11 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Item])
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as {
       dispose(): void
     }
 
@@ -1041,9 +1110,13 @@ describe('entitiesPlugin', () => {
     })
 
     const plugin = entitiesPlugin([FeedItem])
-    const def = defineController((ctx) => ({ feed: ctx.use(feed, () => []) }))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, feed, () => []) }))
     type Api = { feed: InfiniteQuerySubscription<FeedItem[], FeedItem> }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & {
       dispose(): void
     }
     await settle()
@@ -1086,8 +1159,12 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const plugin = entitiesPlugin([Nested])
-    const def = defineController((ctx) => ({ q: ctx.use(q, () => []) }))
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as {
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as {
       dispose(): void
     }
     await settle()

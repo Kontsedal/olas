@@ -19,7 +19,14 @@
 // SSR-ready entries (one per cursor) while still demonstrating accumulation.
 
 import type { Ctx, DehydratedState, ErrorContext } from '@kontsedal/olas-core'
-import { computed, createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
+import {
+  computed,
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  signal,
+} from '@kontsedal/olas-core'
 import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
 import type { Api, Article, Page } from './api'
 import { composerController } from './composer-controller'
@@ -73,7 +80,7 @@ export const readerController = defineController(
     // the subscription re-keys when this signal changes — i.e. the cache
     // entry being read switches transparently.
     const currentCursor = signal<number>(0)
-    const currentPage = ctx.use(pageQuery, () => [currentCursor.value])
+    const currentPage = createQuery(ctx, pageQuery, () => [currentCursor.value])
 
     // Accumulator: every successful page lands here. After SSR hydration the
     // effect immediately observes the cached cursor-0 page and pushes it.

@@ -13,7 +13,7 @@
  * between olas-core forms and olas-zod's `formFromZod` helper.
  */
 
-import { createRoot, defineController } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
 import { formFromZod } from '@kontsedal/olas-zod'
 import { describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
@@ -44,7 +44,7 @@ describe('integration: forms + zod end-to-end', () => {
       }),
     }))
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type Fields = {
@@ -95,7 +95,7 @@ describe('integration: forms + zod end-to-end', () => {
       }),
     }))
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type FormApi = {
@@ -138,7 +138,7 @@ describe('integration: forms + zod end-to-end', () => {
       }),
     }))
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type FormApi = {
@@ -173,7 +173,7 @@ describe('integration: forms + zod end-to-end', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type FormApi = {

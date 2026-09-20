@@ -1,11 +1,13 @@
 import { describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import type { QuerySubscription } from '../src/query/types'
 
 const emptyDeps = {}
 
-describe('ctx.use(query, { select })', () => {
+describe('createQuery(ctx, query, { select })', () => {
   test('select projects T → U on data', async () => {
     type User = { id: string; name: string; email: string }
     const userQuery = defineQuery({
@@ -20,13 +22,15 @@ describe('ctx.use(query, { select })', () => {
     })
 
     const def = defineController((ctx) => ({
-      name: ctx.use(userQuery, {
+      name: createQuery(ctx, userQuery, {
         key: () => ['u1'],
         select: (u) => u.name,
       }),
     }))
     type Api = { name: QuerySubscription<string> }
-    const root = createRoot(def, { deps: emptyDeps }) as unknown as Api & { dispose(): void }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
+      dispose(): void
+    }
 
     await vi.waitFor(() => expect(root.name.data.value).toBe('Alice'))
     root.dispose()
@@ -47,12 +51,12 @@ describe('ctx.use(query, { select })', () => {
     })
 
     const def = defineController((ctx) => ({
-      tags: ctx.use(userQuery, {
+      tags: createQuery(ctx, userQuery, {
         select: (u) => u.tags,
       }),
     }))
     type Api = { tags: QuerySubscription<readonly string[]> }
-    const root = createRoot(def, { deps: emptyDeps }) as unknown as Api & {
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
       dispose(): void
     }
 
@@ -83,10 +87,12 @@ describe('ctx.use(query, { select })', () => {
     const def = defineController((ctx) => ({
       // Project a constant — `select` always returns `'static'`, so the
       // computed result NEVER changes regardless of how many refetches we run.
-      label: ctx.use(rowQuery, { select: (_r) => 'static' as const }),
+      label: createQuery(ctx, rowQuery, { select: (_r) => 'static' as const }),
     }))
     type Api = { label: QuerySubscription<'static'> }
-    const root = createRoot(def, { deps: emptyDeps }) as unknown as Api & { dispose(): void }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
+      dispose(): void
+    }
 
     await vi.waitFor(() => expect(root.label.data.value).toBe('static'))
 
@@ -119,12 +125,14 @@ describe('ctx.use(query, { select })', () => {
     })
 
     const def = defineController((ctx) => ({
-      itemIds: ctx.use(payloadQuery, {
+      itemIds: createQuery(ctx, payloadQuery, {
         select: (p) => p.items.map((i) => i.id),
       }),
     }))
     type Api = { itemIds: QuerySubscription<string[]> }
-    const root = createRoot(def, { deps: emptyDeps }) as unknown as Api & { dispose(): void }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
+      dispose(): void
+    }
 
     await vi.waitFor(() => expect(root.itemIds.data.value).toEqual(['a', 'b']))
 
@@ -161,10 +169,12 @@ describe('ctx.use(query, { select })', () => {
     })
 
     const def = defineController((ctx) => ({
-      sub: ctx.use(rowQuery, { select: (r) => r.id }),
+      sub: createQuery(ctx, rowQuery, { select: (r) => r.id }),
     }))
     type Api = { sub: QuerySubscription<string> }
-    const root = createRoot(def, { deps: emptyDeps }) as unknown as Api & { dispose(): void }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
+      dispose(): void
+    }
 
     await vi.waitFor(() => expect(root.sub.status.value).toBe('error'))
     expect(root.sub.error.value).toBeInstanceOf(Error)

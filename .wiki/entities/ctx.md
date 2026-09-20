@@ -1,6 +1,6 @@
 ---
 name: ctx
-description: The lifecycle-bound primitive factory passed to every controller factory.
+description: The tree-and-lifetime handle passed to every controller factory; the primitives that build lifetime-owned things take it as an argument instead.
 type: entity
 covers:
   - packages/core/src/controller/types.ts:90-166
@@ -9,13 +9,18 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-07-28
-confidence: high
+  - { type: documented-in, target: ../decisions/ctx-primitives-are-free-functions.md }
+last_verified: 2026-09-20
+confidence: medium
 ---
 
 # `Ctx`
 
-The single argument to every controller factory: `(ctx, props) => api`. Every primitive constructed through `ctx` is owned by the controller and disposed when the controller disposes. Spec §3.2.
+The single argument to every controller factory: `(ctx, props) => api`. Everything created through it, or with it, is owned by the controller and disposed when the controller disposes. Spec §3.2.
+
+**`ctx` carries the tree and the lifetime.** Children, effects, scopes, emitters and the lifecycle hooks are methods on it. The primitives that build lifetime-owned *things* — fields, forms, field arrays, queries, local caches, mutations — are standalone functions taking `ctx` first: `createField(ctx, '')`, `createQuery(ctx, userQuery, key)`. They reach the controller through a symbol-keyed internals handle (`controller/internals.ts`).
+
+That split is what lets a bundler drop the forms subsystem and the query engine from a controller that never uses them. A controllers-only bundle is 4.8 KB gzipped rather than 20.1 KB. See [`../decisions/ctx-primitives-are-free-functions.md`](../decisions/ctx-primitives-are-free-functions.md).
 
 ## Surface (Phases 0–12)
 
@@ -66,9 +71,9 @@ Individual primitives also expose `.dispose()` — idempotent, safe to call earl
 
 Read-only getter on `ctx`. Returns the merged deps object (parent's deps + any overrides from `ctx.child(def, props, { deps })`). The override case spreads into a fresh object; without override, the parent's deps reference is reused (preserves identity equality for tests).
 
-## `ctx.use` overload dispatch
+## `createQuery` overload dispatch
 
-`ctx.use(query, keyOrOptions?)` is implemented as a single function that switches on `query.__olas`:
+`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on `query.__olas`:
 
 ```ts
 const brand = (query as { __olas?: string }).__olas

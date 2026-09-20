@@ -1,6 +1,15 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
+import {
+  createField,
+  createMutation,
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+  signal,
+} from '@kontsedal/olas-core'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode, useEffect, useLayoutEffect } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -16,7 +25,7 @@ describe('use(signal)', () => {
       const count = signal(0)
       return { count, inc: () => count.set(count.peek() + 1) }
     })
-    const root = createRoot(counterDef, { deps: {} })
+    const root = createRoot(counterDef, { queries: queryEngine(), deps: {} })
 
     function Counter() {
       const value = use(root.count)
@@ -41,7 +50,7 @@ describe('use(signal)', () => {
 
   test('useRoot resolves the root from <OlasProvider>', () => {
     const def = defineController(() => ({ label: 'hello' }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function Greeting() {
       const api = useRoot<{ label: string }>()
@@ -73,7 +82,7 @@ describe('use(signal)', () => {
 
   test('useController is a back-compat passthrough', () => {
     const def = defineController(() => ({ greeting: 'hi' }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function Greet() {
       const api = useController(root)
@@ -95,13 +104,13 @@ describe('useQuery(subscription)', () => {
     })
 
     const def = defineController((ctx) => {
-      const greeting = ctx.use(greetingQuery)
+      const greeting = createQuery(ctx, greetingQuery)
       return { greeting }
     })
     // Silence the expected abort noise that invalidation can produce when a
     // superseded fetch rejects with AbortError — `onError` swallows it for
     // this test.
-    const root = createRoot(def, { deps: {}, onError: () => {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
     function GreetingView() {
       const { data, isLoading } = useQuery(root.greeting)
@@ -146,7 +155,7 @@ describe('StrictMode safety', () => {
       return { count: signal(0) }
     })
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     expect(constructions).toHaveBeenCalledTimes(1)
 
     function View() {
@@ -178,9 +187,9 @@ describe('StrictMode safety', () => {
 describe('useField <input> round-trip', () => {
   test('typing into an input updates the field and re-renders', () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('init'),
+      name: createField<string>(ctx, 'init'),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function NameInput() {
       const { value, set, touched, markTouched } = useField(root.name)
@@ -224,8 +233,10 @@ describe('useField <input> round-trip', () => {
 
 describe('useMutation status (R4.2)', () => {
   test('a void mutation reports isSuccess after it resolves', async () => {
-    const def = defineController((ctx) => ({ save: ctx.mutation({ mutate: async () => {} }) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({
+      save: createMutation(ctx, { mutate: async () => {} }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function View() {
       const m = useMutation(root.save)
@@ -293,8 +304,8 @@ describe('use(signal, { select, isEqual }) (R4.4)', () => {
 
 describe('useSyncExternalStore consistency (R4.5)', () => {
   test('a field write between render and subscription is reflected (no stale snapshot)', () => {
-    const def = defineController((ctx) => ({ name: ctx.field<string>('initial') }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ name: createField<string>(ctx, 'initial') }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function Reader() {
       const { value } = useField(root.name)

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { stableHash } from '../src/query/keys'
 
 const roots: Array<{ dispose(): void }> = []
@@ -55,10 +57,10 @@ describe('cache key identities', () => {
     const root = keep(
       createRoot(
         defineController((ctx) => ({
-          absent: ctx.use(q, () => [undefined] as const),
-          text: ctx.use(q, () => ['__undefined__'] as const),
+          absent: createQuery(ctx, q, () => [undefined] as const),
+          text: createQuery(ctx, q, () => ['__undefined__'] as const),
         })),
-        { deps: {} },
+        { queries: queryEngine(), deps: {} },
       ),
     )
     await root.waitForIdle()
@@ -85,10 +87,10 @@ describe('SSR identity across separately evaluated bundles', () => {
     const server = keep(
       createRoot(
         defineController((ctx) => ({
-          users: ctx.use(serverUsers),
-          settings: ctx.use(serverSettings),
+          users: createQuery(ctx, serverUsers),
+          settings: createQuery(ctx, serverSettings),
         })),
-        { deps: {} },
+        { queries: queryEngine(), deps: {} },
       ),
     )
     await server.waitForIdle()
@@ -105,10 +107,10 @@ describe('SSR identity across separately evaluated bundles', () => {
     const client = keep(
       createRoot(
         defineController((ctx) => ({
-          users: ctx.use(clientUsers),
-          settings: ctx.use(clientSettings),
+          users: createQuery(ctx, clientUsers),
+          settings: createQuery(ctx, clientSettings),
         })),
-        { deps: {}, hydrate: state },
+        { queries: queryEngine(), deps: {}, hydrate: state },
       ),
     )
     await client.waitForIdle()
@@ -130,11 +132,11 @@ describe('SSR identity across separately evaluated bundles', () => {
       const root = keep(
         createRoot(
           defineController((ctx) => ({
-            a: ctx.use(anon, () => ['a'] as const),
-            b: ctx.use(anon, () => ['b'] as const),
-            named: ctx.use(named),
+            a: createQuery(ctx, anon, () => ['a'] as const),
+            b: createQuery(ctx, anon, () => ['b'] as const),
+            named: createQuery(ctx, named),
           })),
-          { deps: {} },
+          { queries: queryEngine(), deps: {} },
         ),
       )
       await root.waitForIdle()
@@ -158,8 +160,8 @@ describe('SSR identity across separately evaluated bundles', () => {
       })
       const root = keep(
         createRoot(
-          defineController((ctx) => ({ sub: ctx.use(q) })),
-          { deps: {} },
+          defineController((ctx) => ({ sub: createQuery(ctx, q) })),
+          { queries: queryEngine(), deps: {} },
         ),
       )
       await root.waitForIdle()
@@ -174,8 +176,9 @@ describe('SSR identity across separately evaluated bundles', () => {
     const q = defineQuery({ key: () => [], fetcher: async () => 'own data', staleTime: Infinity })
     const root = keep(
       createRoot(
-        defineController((ctx) => ({ sub: ctx.use(q) })),
+        defineController((ctx) => ({ sub: createQuery(ctx, q) })),
         {
+          queries: queryEngine(),
           deps: {},
           hydrate: {
             version: 1,

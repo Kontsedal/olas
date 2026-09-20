@@ -28,7 +28,7 @@ structural before/after diff on each cache write. Spec §14 (Timeline overhaul T
 An optimistic mutation whose `mutate` fails and rolls back:
 
 ```ts
-save: ctx.mutation({
+save: createMutation(ctx, {
   name: 'save',
   mutate: async () => { throw new Error('boom') },
   onMutate: () => q.setData('1', () => 'optimistic'), // server was 'server-1'

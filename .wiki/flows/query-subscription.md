@@ -1,6 +1,6 @@
 ---
 name: query-subscription
-description: ctx.use(query, keyFn) — from call site to reactive AsyncState. The hottest path in the library.
+description: createQuery(ctx, query, keyFn) — from call site to reactive AsyncState. The hottest path in the library.
 type: flow
 covers:
   - packages/core/src/query/use.ts
@@ -19,13 +19,13 @@ confidence: high
 
 # Flow: query subscription
 
-End-to-end walkthrough of `ctx.use(query, keyFn)` from call site to reactive AsyncState. Spec §5.4–5.6, §21.
+End-to-end walkthrough of `createQuery(ctx, query, keyFn)` from call site to reactive AsyncState. Spec §5.4–5.6, §21.
 
 ## The call site
 
 ```ts
 const userController = defineController((ctx, props: { id: string }) => {
-  const user = ctx.use(userQuery, () => [props.id])
+  const user = createQuery(ctx, userQuery, () => [props.id])
   return { user }
 })
 ```
@@ -34,7 +34,7 @@ const userController = defineController((ctx, props: { id: string }) => {
 
 ### 1. Dispatch on brand — `instance.ts:303`
 
-`ctx.use(query, keyOrOptions)`:
+`createQuery(ctx, query, keyOrOptions)`:
 
 ```ts
 const brand = query.__olas
@@ -126,7 +126,7 @@ Subscribers downstream see one notification pass.
 
 ## On disposal
 
-The `LifecycleEntry` recorded by `ctx.use` (kind `cleanup`, dispose = the `dispose` returned by `createUse`) fires:
+The `LifecycleEntry` recorded by `createQuery` (kind `cleanup`, dispose = the `dispose` returned by `createUse`) fires:
 
 ```ts
 const dispose = () => {

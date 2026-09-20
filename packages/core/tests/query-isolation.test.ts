@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, expectTypeOf, test, vi } from 'vitest'
+import { bindQuery, createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import type { QueryActions } from '../src/query/types'
 
 const roots: Array<{ dispose(): void }> = []
@@ -20,11 +22,11 @@ describe('query operations are scoped to one root', () => {
       staleTime: Infinity,
     })
     const def = defineController((ctx) => ({
-      sub: ctx.use(q, () => ['me']),
-      actions: ctx.bindQuery(q),
+      sub: createQuery(ctx, q, () => ['me']),
+      actions: bindQuery(ctx, q),
     }))
-    const alice = keep(createRoot(def, { deps: { user: 'Alice' } }))
-    const bob = keep(createRoot(def, { deps: { user: 'Bob' } }))
+    const alice = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Alice' } }))
+    const bob = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Bob' } }))
     await Promise.all([alice.waitForIdle(), bob.waitForIdle()])
     expectTypeOf(alice.actions).toEqualTypeOf<QueryActions<[id: string], string>>()
     expect(alice.actions.peek('me')).toBe('Alice')
@@ -45,9 +47,9 @@ describe('query operations are scoped to one root', () => {
   test('all ambiguous unbound operations fail before fetching or changing data', async () => {
     const fetcher = vi.fn(async () => 'original')
     const q = defineQuery({ key: () => [], fetcher, staleTime: Infinity })
-    const def = defineController((ctx) => ({ sub: ctx.use(q) }))
-    const a = keep(createRoot(def, { deps: {} }))
-    const b = keep(createRoot(def, { deps: {} }))
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, q) }))
+    const a = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
+    const b = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
     await Promise.all([a.waitForIdle(), b.waitForIdle()])
     const updater = vi.fn(() => 'changed')
     for (const operation of [
@@ -79,8 +81,8 @@ describe('query operations are scoped to one root', () => {
       staleTime: Infinity,
     })
     const def = defineController(() => ({}))
-    const a = keep(createRoot(def, { deps: { user: 'Alice' } }))
-    const b = keep(createRoot(def, { deps: { user: 'Bob' } }))
+    const a = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Alice' } }))
+    const b = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Bob' } }))
     const qa = a.bindQuery(q)
     const qb = b.bindQuery(q)
     expect(qa.peek(1)).toBeUndefined()
@@ -105,11 +107,11 @@ describe('query operations are scoped to one root', () => {
       staleTime: Infinity,
     })
     const def = defineController((ctx) => ({
-      first: ctx.use(q, () => [1]),
-      second: ctx.use(q, () => [2]),
+      first: createQuery(ctx, q, () => [1]),
+      second: createQuery(ctx, q, () => [2]),
     }))
-    const a = keep(createRoot(def, { deps: { user: 'Alice' } }))
-    const b = keep(createRoot(def, { deps: { user: 'Bob' } }))
+    const a = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Alice' } }))
+    const b = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Bob' } }))
     await Promise.all([a.waitForIdle(), b.waitForIdle()])
     calls.length = 0
     await a.bindQuery(q).invalidateAll()
@@ -131,9 +133,9 @@ describe('query operations are scoped to one root', () => {
         return new Promise<string>(() => {})
       },
     })
-    const def = defineController((ctx) => ({ sub: ctx.use(q) }))
-    const a = keep(createRoot(def, { deps: {} }))
-    const b = keep(createRoot(def, { deps: {} }))
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, q) }))
+    const a = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
+    const b = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
     expect(signals).toHaveLength(2)
     a.bindQuery(q)[method]()
     expect(signals[0]?.aborted).toBe(true)
@@ -153,9 +155,12 @@ describe('query operations are scoped to one root', () => {
       getNextPageParam: () => null,
       staleTime: Infinity,
     })
-    const def = defineController((ctx) => ({ sub: ctx.use(q), actions: ctx.bindQuery(q) }))
-    const a = keep(createRoot(def, { deps: { user: 'Alice' } }))
-    const b = keep(createRoot(def, { deps: { user: 'Bob' } }))
+    const def = defineController((ctx) => ({
+      sub: createQuery(ctx, q),
+      actions: bindQuery(ctx, q),
+    }))
+    const a = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Alice' } }))
+    const b = keep(createRoot(def, { queries: queryEngine(), deps: { user: 'Bob' } }))
     await Promise.all([a.waitForIdle(), b.waitForIdle()])
     expect(() => q.setData(() => ['bad'])).toThrow(/ambiguous/)
     expect(() => q.cancel()).toThrow(/ambiguous/)

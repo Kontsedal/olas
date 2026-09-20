@@ -1,4 +1,4 @@
-import { createRoot, defineController, signal } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import {
   type RealtimeHandler,
@@ -61,7 +61,7 @@ describe('useRealtimePatcher', () => {
       useRealtimePatcher<FeedEvent>(ctx, 'feed', {})
       return {}
     })
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     expect(realtime.subscriberCount('feed')).toBe(1)
     root.dispose()
   })
@@ -77,7 +77,7 @@ describe('useRealtimePatcher', () => {
       })
       return {}
     })
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
     const ev: FeedEvent = { type: 'like-added', postId: 'p1' }
     realtime.emit('feed', ev)
@@ -97,7 +97,7 @@ describe('useRealtimePatcher', () => {
       })
       return {}
     })
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
     expect(() => realtime.emit('feed', { type: 'never-registered' })).not.toThrow()
     expect(onLike).not.toHaveBeenCalled()
@@ -112,7 +112,7 @@ describe('useRealtimePatcher', () => {
       useRealtimePatcher<FeedEvent>(ctx, 'feed', { 'like-added': onLike })
       return {}
     })
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     expect(realtime.subscriberCount('feed')).toBe(1)
 
     root.dispose()
@@ -140,7 +140,7 @@ describe('useRealtimePatcher', () => {
       })
       return {}
     })
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
     expect(subscribeSpy).toHaveBeenCalledTimes(1)
     realtime.emit('feed', { type: 'like-added', postId: 'p1' })

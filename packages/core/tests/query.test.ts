@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createCache, createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { stableHash } from '../src/query/keys'
 import { computed, signal } from '../src/signals'
 import { createTestController } from '../src/testing'
@@ -87,9 +89,9 @@ describe('defineQuery + ctx.use', () => {
       fetcher: async (_ctx, id: string) => ({ id, name: `User ${id}` }),
     })
     const def = defineController((ctx) => ({
-      user: ctx.use(userQuery, () => ['u1']),
+      user: createQuery(ctx, userQuery, () => ['u1']),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.user.isLoading.value).toBe(true)
     await flush()
     expect(root.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
@@ -106,13 +108,13 @@ describe('defineQuery + ctx.use', () => {
         return ['a', 'b', 'c']
       },
     })
-    const a = defineController((ctx) => ({ list: ctx.use(todoQuery) }))
-    const b = defineController((ctx) => ({ list: ctx.use(todoQuery) }))
+    const a = defineController((ctx) => ({ list: createQuery(ctx, todoQuery) }))
+    const b = defineController((ctx) => ({ list: createQuery(ctx, todoQuery) }))
     const root = defineController((ctx) => ({
       a: ctx.child(a, undefined),
       b: ctx.child(b, undefined),
     }))
-    const r = createRoot(root, { deps: emptyDeps })
+    const r = createRoot(root, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetchCount).toBe(1)
     expect(r.a.list.data.value).toEqual(['a', 'b', 'c'])
@@ -131,9 +133,9 @@ describe('defineQuery + ctx.use', () => {
     })
     const id = signal('a')
     const def = defineController((ctx) => ({
-      user: ctx.use(userQuery, () => [id.value]),
+      user: createQuery(ctx, userQuery, () => [id.value]),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.user.data.value).toEqual({ id: 'a', name: 'a' })
 
@@ -150,8 +152,8 @@ describe('defineQuery + ctx.use', () => {
       key: () => ['c'],
       fetcher: async () => ++counter,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.x.data.value).toBe(1)
 
@@ -172,8 +174,8 @@ describe('defineQuery + ctx.use', () => {
         return calls
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.x.data.value).toBe(1)
 
@@ -205,10 +207,10 @@ describe('defineQuery + ctx.use', () => {
       },
     })
     const def = defineController((ctx) => ({
-      a: ctx.use(q, () => ['a']),
-      b: ctx.use(q, () => ['b']),
+      a: createQuery(ctx, q, () => ['a']),
+      b: createQuery(ctx, q, () => ['b']),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(calls.a).toBe(1)
     expect(calls.b).toBe(1)
@@ -231,8 +233,8 @@ describe('defineQuery + ctx.use', () => {
       staleTime: 60_000,
     })
     const idSig = signal('a')
-    const def = defineController((ctx) => ({ x: ctx.use(q, () => [idSig.value]) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => [idSig.value]) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(calls.a).toBe(1))
     idSig.set('b') // entry 'a' released, kept warm by gcTime
     await vi.waitFor(() => expect(calls.b).toBe(1))
@@ -256,8 +258,8 @@ describe('defineQuery + ctx.use', () => {
       retry: 0, // fail the refetch immediately
     })
     const onError = vi.fn()
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps, onError })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, onError })
     await flush()
     expect(root.x.data.value).toBe(1)
 
@@ -268,8 +270,8 @@ describe('defineQuery + ctx.use', () => {
 
   test('LocalCache.invalidate() resolves after its refetch settles', async () => {
     let counter = 0
-    const def = defineController((ctx) => ({ c: ctx.cache(async () => ++counter) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ c: createCache(ctx, async () => ++counter) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.c.data.value).toBe(1)
 
@@ -283,9 +285,9 @@ describe('defineQuery + ctx.use', () => {
     const q = defineQuery({ key: () => ['kd'], fetcher: async () => ++counter })
     const enabled = signal(true)
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
+      x: createQuery(ctx, q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.x.data.value).toBe(1)
 
@@ -304,9 +306,9 @@ describe('defineQuery + ctx.use', () => {
     const q = defineQuery({ key: () => ['kd2'], fetcher: async () => ++counter })
     const enabled = signal(true)
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { enabled: () => enabled.value }),
+      x: createQuery(ctx, q, { enabled: () => enabled.value }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.x.data.value).toBe(1)
 
@@ -321,9 +323,9 @@ describe('defineQuery + ctx.use', () => {
     const q = defineQuery({ key: () => ['kd3'], fetcher: async () => ++counter, staleTime: 0 })
     const enabled = signal(true)
     const def = defineController((ctx) => ({
-      x: ctx.use(q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
+      x: createQuery(ctx, q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.x.data.value).toBe(1)
 
@@ -344,7 +346,7 @@ describe('defineQuery + ctx.use', () => {
       key: () => ['c'],
       fetcher: async () => `R${counterA + counterB}-${counterA}-${counterB}`,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
 
     const a = createTestController(def, { deps: emptyDeps, props: undefined })
     counterA++
@@ -366,8 +368,8 @@ describe('defineQuery + ctx.use', () => {
       key: () => ['n'],
       fetcher: async () => 1,
     })
-    const def = defineController((ctx) => ({ n: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ n: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.n.data.value).toBe(1)
 
@@ -392,8 +394,8 @@ describe('defineQuery + ctx.use', () => {
       staleTime: 60_000,
     })
     // First subscribe — registers the client with the query.
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetchCount).toBe(1)
     expect(root.x.data.value).toBe('value')
@@ -415,12 +417,12 @@ describe('defineQuery + ctx.use', () => {
       },
     })
     const def = defineController((ctx) => ({
-      feed: ctx.use(q, {
+      feed: createQuery(ctx, q, {
         key: () => [session.value?.id ?? ''],
         enabled: () => session.value !== undefined,
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetchCount).toBe(0)
     expect(root.feed.status.value).toBe('idle')
@@ -447,7 +449,7 @@ describe('gc — entries are dropped after gcTime expires with no subscribers', 
       },
       gcTime: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const a = createTestController(def, { deps: emptyDeps, props: undefined })
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchCount).toBe(1)
@@ -474,7 +476,7 @@ describe('gc — entries are dropped after gcTime expires with no subscribers', 
       },
       gcTime: 0,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const a = createTestController(def, { deps: emptyDeps, props: undefined })
     await vi.advanceTimersByTimeAsync(0)
     a.dispose()
@@ -498,7 +500,7 @@ describe('gc — entries are dropped after gcTime expires with no subscribers', 
     })
     // Register the query with at least one client by subscribing to a different
     // key (prefetch refuses to run before any client has touched the query).
-    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
+    const def = defineController((ctx) => ({ live: createQuery(ctx, q, () => ['live']) }))
     const root = createTestController(def, { deps: emptyDeps, props: undefined })
     await vi.advanceTimersByTimeAsync(0)
     expect(root.__debug.queryEntries().length).toBe(1)
@@ -522,7 +524,7 @@ describe('gc — entries are dropped after gcTime expires with no subscribers', 
       fetcher: async () => 0,
       gcTime: 1000,
     })
-    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
+    const def = defineController((ctx) => ({ live: createQuery(ctx, q, () => ['live']) }))
     const root = createTestController(def, { deps: emptyDeps, props: undefined })
     await vi.advanceTimersByTimeAsync(0)
 
@@ -548,9 +550,9 @@ describe('keepPreviousData (§5.2)', () => {
     })
     const id = signal('a')
     const def = defineController((ctx) => ({
-      x: ctx.use(q, () => [id.value]),
+      x: createQuery(ctx, q, () => [id.value]),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     fetchers[0]!.resolve('A')
     await flush()
     expect(root.x.data.value).toBe('A')
@@ -584,8 +586,8 @@ describe('retry (§5.2)', () => {
       retry: 2,
       retryDelay: 10,
     })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // First attempt + 2 retries with 10ms between.
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(10)
@@ -607,8 +609,8 @@ describe('retry (§5.2)', () => {
       retry: (_attempt, err) => (err as { code: number }).code >= 500,
       retryDelay: 10,
     })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(10)
     expect(attempts).toBe(2) // initial 500 → retry; 400 → stop
@@ -625,7 +627,7 @@ describe('refetchInterval', () => {
   // pass for the wrong reason. `ctx.session` gives an open/close handle on the
   // same entry (same trick as `query-default-options.test.ts`).
   function openCloseRoot(q: ReturnType<typeof defineQuery<[], number>>) {
-    const sub = defineController((ctx) => ({ x: ctx.use(q) }))
+    const sub = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     return defineController((ctx) => {
       let handle: readonly [{ x: unknown }, () => void] | null = null
       return {
@@ -647,8 +649,8 @@ describe('refetchInterval', () => {
       fetcher: async () => ++count,
       refetchInterval: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -668,8 +670,8 @@ describe('refetchInterval', () => {
       fetcher: async () => script[count++] ?? [],
       refetchInterval: (tasks) => (tasks !== undefined && tasks.length > 0 ? 500 : 3000),
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1) // → []
@@ -707,8 +709,8 @@ describe('refetchInterval', () => {
         return 1000
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // Armed by the first subscriber — the initial fetch is in flight, so there
     // is no data to hand the thunk yet.
@@ -739,8 +741,8 @@ describe('refetchInterval', () => {
           // takes (a thunk that divides by an empty list, say).
           refetchInterval: (data) => (data === undefined ? 1000 : bad),
         })
-        const def = defineController((ctx) => ({ x: ctx.use(q) }))
-        const root = createRoot(def, { deps: emptyDeps })
+        const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+        const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
         await vi.advanceTimersByTimeAsync(0)
         expect(count).toBe(1)
 
@@ -775,8 +777,8 @@ describe('refetchInterval', () => {
         fetcher: async () => ++count,
         refetchInterval: 0,
       })
-      const def = defineController((ctx) => ({ x: ctx.use(q) }))
-      const root = createRoot(def, { deps: emptyDeps })
+      const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+      const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
       // Warned at acquire, when the chain tried to arm.
       expect(warn).toHaveBeenCalledTimes(1)
@@ -809,8 +811,8 @@ describe('refetchInterval', () => {
           return 1000
         },
       })
-      const def = defineController((ctx) => ({ x: ctx.use(q) }))
-      const root = createRoot(def, { deps: emptyDeps })
+      const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+      const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       await vi.advanceTimersByTimeAsync(0)
       expect(count).toBe(1)
 
@@ -844,7 +846,7 @@ describe('refetchInterval', () => {
       gcTime: 60_000,
       refetchInterval: 1000,
     })
-    const root = createRoot(openCloseRoot(q), { deps: emptyDeps })
+    const root = createRoot(openCloseRoot(q), { queries: queryEngine(), deps: emptyDeps })
 
     root.open()
     await vi.advanceTimersByTimeAsync(0)
@@ -876,8 +878,8 @@ describe('q.prefetch — public surface', () => {
         return d.promise
       },
     })
-    const def = defineController((ctx) => ({ s: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ s: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(starts).toBe(1)
 
     const p = q.prefetch()
@@ -895,8 +897,8 @@ describe('q.peek — synchronous, non-creating cache read (§5.5)', () => {
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string) => ({ id, name: `User ${id}` }),
     })
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['u1']) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['u1']) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // The fetch is in flight, so there is nothing settled to read yet.
     expect(q.peek('u1')).toBeUndefined()
@@ -918,8 +920,8 @@ describe('q.peek — synchronous, non-creating cache read (§5.5)', () => {
         return 'value'
       },
     })
-    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ live: createQuery(ctx, q, () => ['live']) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetches).toBe(1)
     expect(root.__debug.queryEntries().length).toBe(1)
@@ -935,8 +937,8 @@ describe('q.peek — synchronous, non-creating cache read (§5.5)', () => {
       key: () => ['n'],
       fetcher: async () => 1,
     })
-    const def = defineController((ctx) => ({ n: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ n: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     let recomputes = 0
@@ -962,8 +964,8 @@ describe('q.peek — synchronous, non-creating cache read (§5.5)', () => {
       fetcher: async () => 'cached',
       gcTime: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(q.peek()).toBe('cached')
 
@@ -986,8 +988,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
       key: () => ['n'],
       fetcher: async () => 1,
     })
-    const def = defineController((ctx) => ({ n: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ n: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.n.data.value).toBe(1)
 
@@ -1003,8 +1005,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
       key: () => ['n'],
       fetcher: async () => 0,
     })
-    const def = defineController((ctx) => ({ n: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ n: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     for (let i = 1; i <= 5; i++) q.write(() => i)
@@ -1024,8 +1026,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
       key: (k: string) => [k],
       fetcher: async () => 'fetched',
     })
-    const def = defineController((ctx) => ({ live: ctx.use(q, () => ['live']) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ live: createQuery(ctx, q, () => ['live']) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.__debug.queryEntries().length).toBe(1)
 
@@ -1042,8 +1044,9 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
       key: () => ['p'],
       fetcher: async () => 'initial',
     })
-    const def = defineController((ctx) => ({ p: ctx.use(q) }))
+    const def = defineController((ctx) => ({ p: createQuery(ctx, q) }))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: emptyDeps,
       plugins: [
         {
@@ -1070,8 +1073,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const answers = [deferred<string>(), deferred<string>()]
     let call = 0
     const q = defineQuery({ key: () => ['race'], fetcher: () => answers[call++]!.promise })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     answers[0]!.resolve('v1')
     await flush()
@@ -1104,8 +1107,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     // the fetch would have.
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['first-load'], fetcher: () => d.promise })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.r.isFetching.value).toBe(true)
 
@@ -1127,8 +1130,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     // `status: 'success'` over `undefined` with nothing to refetch it.
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['merge-absent'], fetcher: () => d.promise })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.r.isFetching.value).toBe(true)
 
@@ -1153,8 +1156,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     // restores the WRITE, which is canonical and was never the mutation's to undo.
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['masked'], fetcher: () => d.promise, staleTime: 60_000 })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.r.isFetching.value).toBe(true)
 
@@ -1178,8 +1181,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const answers = [deferred<string>(), deferred<string>()]
     let call = 0
     const q = defineQuery({ key: () => ['rebase'], fetcher: () => answers[call++]!.promise })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     answers[0]!.resolve('v0')
     await flush()
 
@@ -1203,8 +1206,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const answers = [deferred<string>(), deferred<string>()]
     let call = 0
     const q = defineQuery({ key: () => ['pf'], fetcher: () => answers[call++]!.promise })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     answers[0]!.resolve('v0')
     await flush()
 
@@ -1235,8 +1238,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const answers = [deferred<Record<string, string>>(), deferred<Record<string, string>>()]
     let call = 0
     const q = defineQuery({ key: () => ['patch'], fetcher: () => answers[call++]!.promise })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     answers[0]!.resolve({ title: 'old', code: 'old' })
     await flush()
 
@@ -1260,8 +1263,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     // `cancel()` is unconditional — it is the caller saying "I know what I am doing".
     const d = deferred<string>()
     const q = defineQuery({ key: () => ['race2'], fetcher: () => d.promise })
-    const def = defineController((ctx) => ({ r: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     q.cancel()
     q.write(() => 'local')

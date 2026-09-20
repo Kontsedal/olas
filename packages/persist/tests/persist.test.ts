@@ -1,4 +1,4 @@
-import { createRoot, defineController, signal } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import { type StorageAdapter, usePersisted } from '../src'
 
@@ -45,7 +45,7 @@ describe('usePersisted', () => {
       const persisted = usePersisted(ctx, 'draft', s, { storage: store })
       return { s, ready: persisted.ready }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('hello')
     expect(root.ready.value).toBe(true)
@@ -59,7 +59,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'counter', s, { storage: store })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.s.set(42)
     expect(store.store.get('counter')).toBe('42')
@@ -81,7 +81,7 @@ describe('usePersisted', () => {
       const p = usePersisted(ctx, 'x', s, { storage: adapter })
       return { s, ready: p.ready }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.ready.value).toBe(false)
 
@@ -99,7 +99,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('initial')
 
@@ -115,7 +115,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'n', s, { storage: store })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.dispose()
     // After dispose, source changes should NOT write to storage.
@@ -133,7 +133,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'x', s, { storage: trackingStore })
       return {}
     })
-    const r2 = createRoot(def2, { deps: emptyDeps })
+    const r2 = createRoot(def2, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     s.set(10)
     expect(writeCount).toBe(1)
@@ -149,7 +149,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'broken', s, { storage: store })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('default')
     root.dispose()
@@ -166,7 +166,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'k', s, { storage: adapter })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.s.set('payload')
     await flush()
@@ -186,7 +186,7 @@ describe('usePersisted', () => {
       })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.s.set({ cycles: 'pretend this loops back to itself' })
     expect(store.store.has('k')).toBe(false)
@@ -200,7 +200,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('keep me')
 
@@ -217,7 +217,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     store.emitChange('other-key', JSON.stringify('not mine'))
@@ -232,7 +232,7 @@ describe('usePersisted', () => {
       usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     store.emitChange('k', '{not json}')
     expect(root.s.value).toBe('start')
@@ -283,7 +283,7 @@ describe('usePersisted — version + migrate', () => {
       const p = usePersisted(ctx, 'k', s, { storage: store, version: 2 })
       return { s, ready: p.ready }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.s.set('hello')
     expect(store.store.get('k')).toBe(JSON.stringify({ v: 2, d: JSON.stringify('hello') }))
@@ -295,7 +295,7 @@ describe('usePersisted — version + migrate', () => {
       const p = usePersisted(ctx, 'k', s, { storage: store, version: 2 })
       return { s, ready: p.ready }
     })
-    const r2 = createRoot(def2, { deps: emptyDeps })
+    const r2 = createRoot(def2, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(r2.s.value).toBe('hello')
     r2.dispose()
@@ -316,7 +316,7 @@ describe('usePersisted — version + migrate', () => {
       })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('migrated:v0-value')
     // Legacy raw shape → migrator sees fromVersion `undefined`.
@@ -339,7 +339,7 @@ describe('usePersisted — version + migrate', () => {
       })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('up:old')
     root.dispose()
@@ -352,7 +352,7 @@ describe('usePersisted — version + migrate', () => {
       const p = usePersisted(ctx, 'k', s, { storage: store, version: 2, migrate: () => undefined })
       return { s, ready: p.ready }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('default')
     expect(root.ready.value).toBe(true)
@@ -366,7 +366,7 @@ describe('usePersisted — version + migrate', () => {
       usePersisted(ctx, 'k', s, { storage: store, version: 2 })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.s.value).toBe('default')
     root.dispose()
@@ -387,7 +387,7 @@ describe('usePersisted — version + migrate', () => {
       })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(ops).toContain('migrate')
     expect(root.s.value).toBe('default')
@@ -405,7 +405,7 @@ describe('usePersisted — throttleMs', () => {
         usePersisted(ctx, 'k', s, { storage: store, throttleMs: 100 })
         return { s }
       })
-      const root = createRoot(def, { deps: emptyDeps })
+      const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       // Sync (memory) load → ready synchronously; no flush needed.
       root.s.set(1)
       root.s.set(2)
@@ -428,7 +428,7 @@ describe('usePersisted — throttleMs', () => {
         usePersisted(ctx, 'k', s, { storage: store, throttleMs: 1000 })
         return { s }
       })
-      const root = createRoot(def, { deps: emptyDeps })
+      const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       root.s.set(7)
       expect(store.store.get('k')).toBeUndefined()
       root.dispose() // flushes the pending write
@@ -456,7 +456,7 @@ describe('usePersisted — onError routing', () => {
       usePersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.s.set('x')
     await flush()
@@ -479,7 +479,7 @@ describe('usePersisted — onError routing', () => {
       })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.s.set({ x: 1 })
     await flush()
@@ -500,7 +500,7 @@ describe('usePersisted — onError routing', () => {
       usePersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.s.set('x')
     await flush()
@@ -520,7 +520,7 @@ describe('usePersisted — onError routing', () => {
       })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     store.emitChange('k', '{not json}')
     expect(ops).toContain('remoteChange')
@@ -540,7 +540,7 @@ describe('usePersisted — onError routing', () => {
       const p = usePersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s, ready: p.ready }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(ops).toContain('load')
     expect(root.ready.value).toBe(true) // still settles ready
@@ -568,7 +568,7 @@ describe('usePersisted — ready-gate races (T6.1)', () => {
       const p = usePersisted(ctx, 'k', s, { storage: adapter })
       return { s, ready: p.ready }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.ready.value).toBe(false)
     // User types BEFORE the load resolves.
@@ -602,7 +602,7 @@ describe('usePersisted — ready-gate races (T6.1)', () => {
       usePersisted(ctx, 'k', s, { storage: adapter, crossTab: true })
       return { s }
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     // Remote change arrives before load settles → buffered, not applied.
     for (const l of listeners) l('k', JSON.stringify('from-peer'))

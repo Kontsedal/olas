@@ -16,12 +16,15 @@
  */
 
 import {
+  createMutation,
+  createQuery,
   createRoot,
   type DehydratedState,
   defineController,
   defineQuery,
   type Mutation,
   type QuerySubscription,
+  queryEngine,
 } from '@kontsedal/olas-core'
 import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
 import { describe, expect, test, vi } from 'vitest'
@@ -55,11 +58,11 @@ describe('integration: SSR roundtrip', () => {
     })
 
     const def = defineController((ctx) => ({
-      user: ctx.use(userQuery, () => ['u1']),
+      user: createQuery(ctx, userQuery, () => ['u1']),
     }))
 
     // --- Server ----------------------------------------------------------
-    const server = createRoot(def, { deps: {} })
+    const server = createRoot(def, { queries: queryEngine(), deps: {} })
     await server.waitForIdle()
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     const dehydrated = server.dehydrate()
@@ -73,7 +76,7 @@ describe('integration: SSR roundtrip', () => {
     expect(onWire.entries[0]?.data).toEqual({ id: 'u1', name: 'User u1' })
 
     // --- Client ----------------------------------------------------------
-    const client = createRoot(def, { deps: {}, hydrate: onWire })
+    const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: onWire })
     await settle()
     type Api = { user: QuerySubscription<{ id: string; name: string }> }
     const c = client as unknown as Api & { dispose: () => void }
@@ -118,10 +121,11 @@ describe('integration: SSR roundtrip', () => {
 
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({
-      feed: ctx.use(feedQuery, () => []),
+      feed: createQuery(ctx, feedQuery, () => []),
     }))
     type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
     const client = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [plugin],
       hydrate: dehydrated,
@@ -153,8 +157,8 @@ describe('integration: SSR roundtrip', () => {
       staleTime: 60_000,
     })
 
-    const def = defineController((ctx) => ({ flaky: ctx.use(flaky, () => []) }))
-    const server = createRoot(def, { deps: {}, onError: () => {} })
+    const def = defineController((ctx) => ({ flaky: createQuery(ctx, flaky, () => []) }))
+    const server = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
     await server.waitForIdle()
     const dehydrated = server.dehydrate()
     // Failed fetch produced no entry.
@@ -162,7 +166,7 @@ describe('integration: SSR roundtrip', () => {
     server.dispose()
 
     // Client mounts fresh; the fetcher runs again and now succeeds.
-    const client = createRoot(def, { deps: {}, hydrate: dehydrated })
+    const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: dehydrated })
     await settle()
     type Api = { flaky: QuerySubscription<{ ok: boolean }> }
     const c = client as unknown as Api & { dispose: () => void }
@@ -201,8 +205,8 @@ describe('integration: SSR roundtrip', () => {
     }
 
     const def = defineController((ctx) => {
-      const cards = ctx.use(cardsQuery, () => [])
-      const like = ctx.mutation<string, void>({
+      const cards = createQuery(ctx, cardsQuery, () => [])
+      const like = createMutation<string, void>(ctx, {
         mutate: async (id) => {
           cardsQuery.setData(() => {
             const prev = cards.data.peek() ?? []
@@ -217,7 +221,11 @@ describe('integration: SSR roundtrip', () => {
       cards: QuerySubscription<Array<{ id: string; title: string; likes: number }>>
       like: Mutation<string, void>
     }
-    const client = createRoot(def, { deps: {}, hydrate: dehydrated }) as unknown as Api & {
+    const client = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      hydrate: dehydrated,
+    }) as unknown as Api & {
       dispose: () => void
     }
 
@@ -242,14 +250,14 @@ describe('integration: SSR roundtrip', () => {
       // No staleTime — default 0.
     })
 
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const server = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const server = createRoot(def, { queries: queryEngine(), deps: {} })
     await server.waitForIdle()
     expect(fetches).toBe(1)
     const dehydrated = wireTransport(server.dehydrate())
     server.dispose()
 
-    const client = createRoot(def, { deps: {}, hydrate: dehydrated })
+    const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: dehydrated })
     await settle()
     // staleTime: 0 → subscribe triggers refetch; we end up at 2.
     expect(fetches).toBe(2)

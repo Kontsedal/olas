@@ -12,6 +12,8 @@
 import {
   type Ctx,
   computed,
+  createField,
+  createQuery,
   createRoot,
   debounced,
   defineController,
@@ -73,7 +75,7 @@ export const tickerController = defineController(
     const searchDebounceMs = props.searchDebounceMs ?? DEFAULTS.searchDebounceMs
     const historyCap = props.historyCap ?? DEFAULTS.historyCap
 
-    const symbols = ctx.use(symbolsQuery)
+    const symbols = createQuery(ctx, symbolsQuery)
 
     // Persisted state. `usePersisted` accepts `storage: undefined` and falls
     // back to localStorage — so tests passing `deps.storage = memoryStorage()`
@@ -147,7 +149,7 @@ export const tickerController = defineController(
     })
 
     // Search input + debounced read for filtering.
-    const searchInput = ctx.field<string>('')
+    const searchInput = createField<string>(ctx, '')
     const searchDebounced = debounced(searchInput, searchDebounceMs)
     const filteredSymbols = computed(() => {
       const q = searchDebounced.value.trim().toLowerCase()

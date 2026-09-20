@@ -19,7 +19,7 @@ Every root owns a QueryClient and its cache entries. Definitions are module-scop
 
 ## Selecting a root
 
-As of 0.9, use `ctx.bindQuery(query)` or `root.bindQuery(query)` for imperative operations. The handle routes directly to its client (`packages/core/src/query/client.ts`, `bindQuery`; shared methods in `packages/core/src/query/actions.ts`). Binding does not fetch or subscribe. It registers the client so an unbound call can detect ambiguity. Bound prefetch works before subscriptions; retained handles fail after root disposal.
+As of 0.9, use `bindQuery(ctx, query)` or `root.bindQuery(query)` for imperative operations. The handle routes directly to its client (`packages/core/src/query/client.ts`, `bindQuery`; shared methods in `packages/core/src/query/actions.ts`). Binding does not fetch or subscribe. It registers the client so an unbound call can detect ambiguity. Bound prefetch works before subscriptions; retained handles fail after root disposal.
 
 Unbound helpers remain single-root shortcuts. More than one registered root causes an error before any read, write, cancellation or fetch. Previously, writes/invalidation fanned out while reads/prefetch chose the first root. That behavior could cross SSR request boundaries even though storage was per root. The new guard and bound handles prevent the reproduced cross-root writes. An intentional broadcast must select each root explicitly. Cross-tab transport remains an opt-in plugin concern.
 

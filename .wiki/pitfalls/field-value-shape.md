@@ -17,8 +17,8 @@ confidence: high
 ## The trap
 
 ```ts
-const field = ctx.field('hello')                # Field<string>
-const form  = ctx.form({ name: field })         # Form<{ name: Field<string> }>
+const field = createField(ctx, 'hello')                # Field<string>
+const form  = createForm(ctx, { name: field })         # Form<{ name: Field<string> }>
 
 field.value         // 'hello'   — direct value
 form.value          // Signal-ish; the value is at form.value.value

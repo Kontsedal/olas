@@ -1,9 +1,11 @@
 import {
+  createQuery,
   createRoot,
   defineController,
   defineQuery,
   type Query,
   type QuerySubscription,
+  queryEngine,
 } from '@kontsedal/olas-core'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ChannelLike } from '../src/channel'
@@ -119,15 +121,16 @@ function mountTabs(opts: {
   const factory = busChannelFactory()
 
   const defA = defineController((ctx) => {
-    const user = ctx.use(opts.queryA, () => ['1' as string])
+    const user = createQuery(ctx, opts.queryA, () => ['1' as string])
     return { user } as { user: QuerySubscription<unknown> }
   })
   const defB = defineController((ctx) => {
-    const user = ctx.use(opts.queryB, () => ['1' as string])
+    const user = createQuery(ctx, opts.queryB, () => ['1' as string])
     return { user } as { user: QuerySubscription<unknown> }
   })
 
   const tabA = createRoot(defA, {
+    queries: queryEngine(),
     deps: {},
     plugins: [
       crossTabPlugin({
@@ -138,6 +141,7 @@ function mountTabs(opts: {
     ],
   })
   const tabB = createRoot(defB, {
+    queries: queryEngine(),
     deps: {},
     plugins: [
       crossTabPlugin({
@@ -225,10 +229,11 @@ describe('crossTabPlugin', () => {
 
     const factory = busChannelFactory()
     const def = defineController((ctx) => {
-      const u = ctx.use(noIdQuery, () => ['1' as string])
+      const u = createQuery(ctx, noIdQuery, () => ['1' as string])
       return { user: u }
     })
     const a = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'noid-chan', channelFactory: factory })],
     })
@@ -298,14 +303,15 @@ describe('crossTabPlugin', () => {
     }
 
     const defA = defineController((ctx) => {
-      const u = ctx.use(queryA, () => ['1' as string])
+      const u = createQuery(ctx, queryA, () => ['1' as string])
       return { user: u }
     })
     const defB = defineController((ctx) => {
-      const u = ctx.use(queryB, () => ['1' as string])
+      const u = createQuery(ctx, queryB, () => ['1' as string])
       return { user: u }
     })
     const tabA = createRoot(defA, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         crossTabPlugin({
@@ -316,6 +322,7 @@ describe('crossTabPlugin', () => {
       ],
     })
     const tabB = createRoot(defB, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'nc-chan', channelFactory: factory })],
     })
@@ -347,6 +354,7 @@ describe('crossTabPlugin', () => {
     const def = defineController(() => ({}))
     expect(() =>
       createRoot(def, {
+        queries: queryEngine(),
         deps: {},
         plugins: [crossTabPlugin({ channelName: 'unused', channelFactory: () => undefined })],
       }).dispose(),
@@ -358,18 +366,20 @@ describe('crossTabPlugin', () => {
     const queryB = makeUsersQuery('xtab-test/8')
     const factory = busChannelFactory()
     const defA = defineController((ctx) => {
-      const u = ctx.use(queryA, () => ['1' as string])
+      const u = createQuery(ctx, queryA, () => ['1' as string])
       return { user: u }
     })
     const defB = defineController((ctx) => {
-      const u = ctx.use(queryB, () => ['1' as string])
+      const u = createQuery(ctx, queryB, () => ['1' as string])
       return { user: u }
     })
     const a = createRoot(defA, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'dispose-test', channelFactory: factory })],
     })
     const b = createRoot(defB, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'dispose-test', channelFactory: factory })],
     })
@@ -432,10 +442,11 @@ describe('crossTabPlugin', () => {
 
     const queryA = makeUsersQuery('xtab-test/10')
     const def = defineController((ctx) => {
-      const u = ctx.use(queryA, () => ['1' as string])
+      const u = createQuery(ctx, queryA, () => ['1' as string])
       return { user: u }
     })
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'dedup', channelFactory: factory })],
     })
@@ -509,15 +520,25 @@ describe('crossTabPlugin', () => {
     const plugin = crossTabPlugin({ channelName: 'reuse', channelFactory: factory })
 
     const q = makeUsersQuery('xtab-test/11')
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1' as string]) }))
+    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1' as string]) }))
 
     const onError1 = vi.fn()
-    const root1 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError1 })
+    const root1 = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+      onError: onError1,
+    })
     // First root: clean — no plugin error.
     expect(onError1).not.toHaveBeenCalled()
 
     const onError2 = vi.fn()
-    const root2 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError2 })
+    const root2 = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+      onError: onError2,
+    })
     // Second root: plugin init throws → dispatched as kind:'plugin'.
     const pluginErr = onError2.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'plugin')
     expect(pluginErr).toBeTruthy()
@@ -551,8 +572,9 @@ describe('crossTabPlugin', () => {
     // gate), not blindly apply it.
     const q = makeUsersQuery('xtab-test/recv', { crossTab: false })
     const factory = busChannelFactory()
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1' as string]) }))
+    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1' as string]) }))
     const tab = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'recv-chan', channelFactory: factory })],
     })

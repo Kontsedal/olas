@@ -19,10 +19,10 @@ pnpm add @kontsedal/olas-core @preact/signals-core
 | Reactive primitives | `signal`, `computed`, `effect`, `batch`, `untracked` |
 | Time-based signals | `debounced`, `throttled` |
 | Controllers | `defineController`, `createRoot`, `Ctx` |
-| Async data — shared | `defineQuery`, `defineInfiniteQuery`, `ctx.use` |
-| Async data — local | `ctx.cache` |
-| Mutations | `ctx.mutation` with `parallel` / `latest-wins` / `serial` modes |
-| Forms | `ctx.field`, `ctx.form`, `ctx.fieldArray`, stdlib validators |
+| Async data — shared | `defineQuery`, `defineInfiniteQuery`, `createQuery` |
+| Async data — local | `createCache` |
+| Mutations | `createMutation` with `parallel` / `latest-wins` / `serial` modes |
+| Forms | `createField`, `createForm`, `createFieldArray`, stdlib validators |
 | Cross-tree data | `defineScope`, `ctx.provide`, `ctx.inject` |
 | Events | `createEmitter`, `ctx.emitter`, `ctx.on` |
 | Lifecycle | `ctx.effect`, `ctx.child`, `ctx.attach`, `ctx.onDispose`, `ctx.onSuspend`, `ctx.onResume` |
@@ -79,6 +79,6 @@ import { createTestController, fakeField, fakeAsyncState } from '@kontsedal/olas
 
 ## Root-scoped operations and SSR (0.9)
 
-Use `ctx.bindQuery(query)` or `root.bindQuery(query)` to obtain imperative operations for one root. The handle supports the same cache actions as the definition, without subscribing or fetching. Unbound methods fail when multiple roots have touched the query. Bound prefetch works before the first subscription, and bound operations fail after root disposal.
+Use `bindQuery(ctx, query)` or `root.bindQuery(query)` to obtain imperative operations for one root. The handle supports the same cache actions as the definition, without subscribing or fetching. Unbound methods fail when multiple roots have touched the query. Bound prefetch works before the first subscription, and bound operations fail after root disposal.
 
 SSR serialization requires a stable, unique `queryId`. Anonymous queries are omitted from `dehydrate()` and fetch on the client. See [the migration guide](../../MIGRATING.md#upgrading-from-08-to-09).

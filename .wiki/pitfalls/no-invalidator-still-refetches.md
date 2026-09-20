@@ -26,7 +26,7 @@ That reason invites an optimisation which is **wrong**:
 ```ts
 // "This query has exactly one reader and nothing anywhere calls
 //  uiState.invalidate(). So no fetch can be outstanding. Skip the cancel."
-const uiState = ctx.bindQuery(uiStateQuery)
+const uiState = bindQuery(ctx, uiStateQuery)
 onMutate: (vars) => uiState.setData((prev) => patch(prev, vars)),
 ```
 
@@ -47,7 +47,7 @@ An optimistic toggle that visibly reverts a moment later, only if the user had h
 Call `cancel(...)` before an optimistic `setData(...)` **unconditionally**. It is synchronous, so it fits a sync `onMutate`. It is a no-op when nothing is in flight. It costs one line against a class of bug whose defining property is that it does not reproduce.
 
 ```ts
-const uiState = ctx.bindQuery(uiStateQuery)  // root-scoped; see §21.5
+const uiState = bindQuery(ctx, uiStateQuery)  // root-scoped; see §21.5
 
 onMutate: (vars) => {
   const prev = uiState.peek()             // guard: nothing cached ⇒ nothing to patch

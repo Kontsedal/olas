@@ -26,7 +26,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Ctx.** The lifecycle-bound primitive factory passed to every controller's factory function. Surface includes `effect`, `emitter`, `field`, `form`, `fieldArray`, `cache`, `use`, `mutation`, `child`, `on`, `onDispose/Suspend/Resume`, `deps`. Each primitive registers cleanup with the owning controller.
 
-**Entry.** The state machine for one cache slot, race-protected via a `currentFetchId` and carrying the snapshot stack for optimistic updates. Local `ctx.cache` uses it directly, and shared queries reach it through `ClientEntry`. `InfiniteEntry` is the paginated variant.
+**Entry.** The state machine for one cache slot, race-protected via a `currentFetchId` and carrying the snapshot stack for optimistic updates. Local `createCache` uses it directly, and shared queries reach it through `ClientEntry`. `InfiniteEntry` is the paginated variant.
 
 **Field.** A primitive form input — `ReadSignal<T>` plus errors, isValid, isDirty, touched, isValidating, plus methods (`set`, `reset`, `markTouched`, `revalidate`). Field IS a ReadSignal, so `field.value` returns `T` directly.
 
@@ -34,7 +34,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **isFetching and isLoading.** isFetching = any fetch in flight (including background refetch). isLoading = first load, no data yet. Spinners use isLoading; progress bars use isFetching.
 
-**LocalCache.** Anonymous cache owned by one controller (`ctx.cache(fetcher, options)`). Not shared. Disposed with the controller.
+**LocalCache.** Anonymous cache owned by one controller (`createCache(ctx, fetcher, options)`). Not shared. Disposed with the controller.
 
 **Mutation.** A controller-scoped async write. It carries a concurrency policy of parallel, latest-wins or serial, optimistic updates, and the lifecycle callbacks `onMutate`, `onSuccess`, `onError` and `onSettled`.
 
@@ -54,4 +54,4 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Validators.** Functions `(value, signal) => string | null | Promise<string | null>`. Run in a tracking scope so reading signals inside re-runs the validator when those signals change. Sync validators short-circuit; async only runs if sync passed.
 
-**`__olas` brand.** Runtime discriminator used for dispatch in `ctx.use`. A `ControllerDef` carries `'controller'`, a `Query` carries `'query'`, and an `InfiniteQuery` carries `'infiniteQuery'`.
+**`__olas` brand.** Runtime discriminator used for dispatch in `createQuery`. A `ControllerDef` carries `'controller'`, a `Query` carries `'query'`, and an `InfiniteQuery` carries `'infiniteQuery'`.

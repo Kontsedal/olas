@@ -1,4 +1,4 @@
-import { createRoot, defineController, effect } from '@kontsedal/olas-core'
+import { createRoot, defineController, effect, queryEngine } from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   type ConnectionState,
@@ -62,7 +62,7 @@ describe('useLiveStream', () => {
       })
       return { stream }
     })
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
     for (const ch of ['a', 'b', 'c', 'd', 'e']) {
       realtime.emit('logs', ch)
@@ -91,7 +91,7 @@ describe('useLiveStream', () => {
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       // Count writes to events$ via an effect that observes the value.
       let writes = 0
@@ -127,7 +127,7 @@ describe('useLiveStream', () => {
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'queued')
       // Pause BEFORE flushMs elapses — the trailing timer is canceled.
@@ -156,7 +156,7 @@ describe('useLiveStream', () => {
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'a')
       vi.advanceTimersByTime(16)
@@ -187,7 +187,7 @@ describe('useLiveStream', () => {
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'a')
       // Pending flush scheduled but not yet fired.
@@ -215,7 +215,7 @@ describe('useLiveStream', () => {
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'a')
       vi.advanceTimersByTime(16)
@@ -239,7 +239,7 @@ describe('useRealtimeConnection (T6.7)', () => {
   test("reports 'unknown' when the transport can't report connection state", () => {
     const realtime = fakeRealtime() // no onConnectionChange
     const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     // Old behavior lied with 'connected'; a transport with no
     // onConnectionChange genuinely can't know → 'unknown'.
     expect(root.conn.value).toBe('unknown')
@@ -260,7 +260,7 @@ describe('useRealtimeConnection (T6.7)', () => {
       },
     }
     const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     expect(root.conn.value).toBe('connected') // optimistic initial (has a reporter)
     conn.handler?.('offline')
     expect(root.conn.value).toBe('offline')

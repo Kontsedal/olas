@@ -47,7 +47,7 @@ type LifecycleEntry =
   | { kind: 'onResume',           fn: () => void }
 ```
 
-`subscription-cache` is `ctx.use(...)`'s entry — distinct from `cleanup` because `suspend()` and `resume()` need to pause/restart the underlying `ClientEntry` (refetchInterval + focus/online listeners + release of the entry from this subscriber). Spec §4.1.
+`subscription-cache` is `createQuery(ctx, ...)`'s entry — distinct from `cleanup` because `suspend()` and `resume()` need to pause/restart the underlying `ClientEntry` (refetchInterval + focus/online listeners + release of the entry from this subscriber). Spec §4.1.
 
 `factory` on the `effect` variant is the user's effect function (wrapped with `dispatchError`). We retain it so suspend → resume can re-instantiate the effect via `standaloneEffect(factory)`.
 

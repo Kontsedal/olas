@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'vitest'
+import { createMutation, createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 
 const emptyDeps = {}
 
@@ -22,11 +24,11 @@ describe('dehydrate / hydrate', () => {
     })
 
     const def = defineController((ctx) => ({
-      user: ctx.use(userQuery, () => ['u1']),
+      user: createQuery(ctx, userQuery, () => ['u1']),
     }))
 
     // Server side: fetch + dehydrate.
-    const server = createRoot(def, { deps: emptyDeps })
+    const server = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await server.waitForIdle()
     expect(fetchCount).toBe(1)
     const state = server.dehydrate()
@@ -35,7 +37,7 @@ describe('dehydrate / hydrate', () => {
     server.dispose()
 
     // Client side: hydrate before subscribing.
-    const client = createRoot(def, { deps: emptyDeps, hydrate: state })
+    const client = createRoot(def, { queries: queryEngine(), deps: emptyDeps, hydrate: state })
     await flush()
     expect(client.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
     // staleTime: 60_000 — no refetch.
@@ -54,13 +56,13 @@ describe('dehydrate / hydrate', () => {
       },
     })
 
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const server = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const server = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await server.waitForIdle()
     const state = server.dehydrate()
     server.dispose()
 
-    const client = createRoot(def, { deps: emptyDeps, hydrate: state })
+    const client = createRoot(def, { queries: queryEngine(), deps: emptyDeps, hydrate: state })
     await flush()
     // staleTime is 0 (default), so subscribe sees stale and refetches.
     expect(fetchCount).toBe(2)
@@ -75,8 +77,8 @@ describe('dehydrate / hydrate', () => {
         throw new Error('nope')
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await root.waitForIdle()
     const state = root.dehydrate()
     expect(state.entries.length).toBe(0)
@@ -87,7 +89,7 @@ describe('dehydrate / hydrate', () => {
 describe('waitForIdle', () => {
   test('resolves when no fetches are in flight', async () => {
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await expect(root.waitForIdle()).resolves.toBeUndefined()
     root.dispose()
   })
@@ -102,8 +104,8 @@ describe('waitForIdle', () => {
           resolveFetch = () => r(42)
         }),
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     let resolved = false
     const idlePromise = root.waitForIdle().then(() => {
       resolved = true
@@ -119,14 +121,14 @@ describe('waitForIdle', () => {
   test('blocks until in-flight mutations settle', async () => {
     let resolveMutate: (() => void) | null = null
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         mutate: () =>
           new Promise<void>((r) => {
             resolveMutate = () => r()
           }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const runPromise = root.save.run(undefined)
     await flush()
     let idle = false

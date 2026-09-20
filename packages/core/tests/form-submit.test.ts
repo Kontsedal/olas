@@ -1,6 +1,8 @@
 import { describe, expect, test, vi } from 'vitest'
+import { createField, createFieldArray, createForm } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { required } from '../src/forms'
+import { queryEngine } from '../src/query/engine'
 
 const emptyDeps = {}
 
@@ -8,11 +10,11 @@ describe('form.submit lifecycle', () => {
   test('happy path: validates, calls handler, bumps submitCount, clears isSubmitting', async () => {
     const handler = vi.fn(async (value: { name: string }) => ({ id: 'srv-1', ...value }))
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('Alice', [required()]),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, 'Alice', [required()]),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     expect(root.form.submitCount.value).toBe(0)
     expect(root.form.isSubmitting.value).toBe(false)
@@ -35,11 +37,11 @@ describe('form.submit lifecycle', () => {
   test('skips handler when form is invalid; marks all touched and returns ok:false', async () => {
     const handler = vi.fn()
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('', [required()]),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, '', [required()]),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     expect(root.form.fields.name.touched.value).toBe(false)
     const result = await root.form.submit(handler)
@@ -55,11 +57,11 @@ describe('form.submit lifecycle', () => {
   test('skipping pre-submit validation runs the handler even when invalid', async () => {
     const handler = vi.fn(async () => 'sent')
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('', [required()]),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, '', [required()]),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     const result = await root.form.submit(handler, { validateBeforeSubmit: false })
     expect(result.ok).toBe(true)
@@ -71,9 +73,9 @@ describe('form.submit lifecycle', () => {
 
   test('captures thrown handler errors into submitError', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('Alice') }),
+      form: createForm(ctx, { name: createField<string>(ctx, 'Alice') }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     const boom = new Error('server 500')
     const result = await root.form.submit(async () => {
@@ -89,9 +91,9 @@ describe('form.submit lifecycle', () => {
 
   test('onError: "rethrow" propagates the throw to the caller', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('Alice') }),
+      form: createForm(ctx, { name: createField<string>(ctx, 'Alice') }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     const boom = new Error('boom')
     await expect(
@@ -111,9 +113,9 @@ describe('form.submit lifecycle', () => {
 
   test('resetOnSuccess clears the form after the handler resolves', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('') }),
+      form: createForm(ctx, { name: createField<string>(ctx, '') }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     root.form.fields.name.set('Alice')
     expect(root.form.fields.name.isDirty.value).toBe(true)
@@ -130,9 +132,9 @@ describe('form.submit lifecycle', () => {
   test('double-submit guard: parallel submit() returns ok:false with an error', async () => {
     let releaseFirst!: () => void
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('Alice') }),
+      form: createForm(ctx, { name: createField<string>(ctx, 'Alice') }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // Skip validation so the handler runs as soon as the submit body kicks
     // off — without this, the handler awaits validate() and `releaseFirst`
@@ -161,9 +163,9 @@ describe('form.submit lifecycle', () => {
 
   test('submitError clears at the start of each new submit', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('Alice') }),
+      form: createForm(ctx, { name: createField<string>(ctx, 'Alice') }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     await root.form.submit(async () => {
       throw new Error('first failure')
@@ -188,9 +190,9 @@ describe('form.submit lifecycle', () => {
 describe('form.setErrors / field.setErrors', () => {
   test('field.setErrors pins server errors that survive validator re-runs', () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('Alice', [required()]),
+      name: createField<string>(ctx, 'Alice', [required()]),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     root.name.setErrors(['Username already taken'])
     expect(root.name.errors.value).toContain('Username already taken')
@@ -205,9 +207,9 @@ describe('form.setErrors / field.setErrors', () => {
 
   test('field.setErrors merges with validator errors (validator first)', () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('', [required('Required')]),
+      name: createField<string>(ctx, '', [required('Required')]),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // Validator error from `required` on empty + server error.
     root.name.setErrors(['Server says no'])
@@ -221,9 +223,9 @@ describe('form.setErrors / field.setErrors', () => {
 
   test('field.setErrors([]) clears the server-error channel without touching validators', () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('', [required('Required')]),
+      name: createField<string>(ctx, '', [required('Required')]),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     root.name.setErrors(['Pinned'])
     expect(root.name.errors.value).toContain('Pinned')
@@ -237,13 +239,13 @@ describe('form.setErrors / field.setErrors', () => {
 
   test('form.setErrors routes by dot-separated path through nested forms', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        user: ctx.form({
-          email: ctx.field<string>('e@x.com'),
+      form: createForm(ctx, {
+        user: createForm(ctx, {
+          email: createField<string>(ctx, 'e@x.com'),
         }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     root.form.setErrors({ 'user.email': ['Already in use'] })
     expect(root.form.fields.user.fields.email.errors.value).toContain('Already in use')
@@ -253,11 +255,13 @@ describe('form.setErrors / field.setErrors', () => {
 
   test('form.setErrors routes by numeric index into field arrays', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        tags: ctx.fieldArray((initial: string | undefined) => ctx.field(initial ?? '')),
+      form: createForm(ctx, {
+        tags: createFieldArray(ctx, (initial: string | undefined) =>
+          createField(ctx, initial ?? ''),
+        ),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     root.form.fields.tags.add('first')
     root.form.fields.tags.add('second')
@@ -274,9 +278,9 @@ describe('form.setErrors / field.setErrors', () => {
 
   test('reset() clears server errors too', () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('Alice'),
+      name: createField<string>(ctx, 'Alice'),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     root.name.setErrors(['Pinned'])
     expect(root.name.errors.value).toContain('Pinned')

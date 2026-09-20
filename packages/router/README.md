@@ -150,7 +150,7 @@ const root = createRoot(appController, { deps, scopes: adapter.scopes })
 
 ```ts
 const params = ctx.inject(RouteParamsScope)
-const user = ctx.use(userQuery, () => [params.value.id], {
+const user = createQuery(ctx, userQuery, () => [params.value.id], {
   enabled: () => params.value.id !== undefined, // don't fetch until the id lands
 })
 ```
@@ -164,7 +164,7 @@ Since `params` values are now `string | undefined`, the `enabled` guard is also 
 ```ts
 const params = ctx.inject(RouteParamsScope)
 const userId = computed(() => params.value.userId)
-const user = ctx.use(userQuery, () => [userId.value])
+const user = createQuery(ctx, userQuery, () => [userId.value])
 ```
 
 `computed` collapses param objects to the field you care about, so the query only re-fetches when `userId` itself changes.
@@ -181,7 +181,7 @@ const userRoute = createRoute({
 
 Bind the query to the root you're prefetching *into*. On the client there is one root, and the bare `userQuery.prefetch(...)` still works. A server handling concurrent requests has a root per request, and an unbound prefetch there rejects rather than guessing whose cache to warm.
 
-`prefetch(...)` populates the cache before `<adapter.Bridge>` mounts. By the time `ctx.use(userQuery, ...)` fires, the entry is already there and `data.value` is non-null on first read.
+`prefetch(...)` populates the cache before `<adapter.Bridge>` mounts. By the time `createQuery(ctx, userQuery, ...)` fires, the entry is already there and `data.value` is non-null on first read.
 
 ## Scope: client-side routers only
 

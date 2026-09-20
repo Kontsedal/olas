@@ -17,11 +17,13 @@
  */
 
 import {
+  createQuery,
   createRoot,
   defineController,
   defineQuery,
   type Query,
   type QuerySubscription,
+  queryEngine,
 } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 import { onReconnect, type RealtimeService, useRealtimePatcher } from '@kontsedal/olas-realtime'
@@ -71,7 +73,7 @@ describe('integration: realtime + multi-tab', () => {
 
     const buildDef = (q: Query<[], { posts: Post[] }>) =>
       defineController((ctx) => {
-        const feed = ctx.use(q, () => [])
+        const feed = createQuery(ctx, q, () => [])
         useRealtimePatcher<FeedEvent>(ctx, 'feed', {
           'like-added': ({ postId }) => {
             q.setData(() => {
@@ -95,10 +97,12 @@ describe('integration: realtime + multi-tab', () => {
 
     type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const tabA = createRoot(buildDef(queryA), {
+      queries: queryEngine(),
       deps: { realtime },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
     }) as unknown as Api & { dispose: () => void }
     const tabB = createRoot(buildDef(queryB), {
+      queries: queryEngine(),
       deps: { realtime },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
     }) as unknown as Api & { dispose: () => void }
@@ -149,7 +153,7 @@ describe('integration: realtime + multi-tab', () => {
 
     const buildDef = (q: Query<[], { posts: Post[] }>) =>
       defineController((ctx) => {
-        const feed = ctx.use(q, () => [])
+        const feed = createQuery(ctx, q, () => [])
         useRealtimePatcher<FeedEvent>(ctx, 'feed', {
           'like-added': ({ postId }) => {
             q.setData(() => {
@@ -166,10 +170,12 @@ describe('integration: realtime + multi-tab', () => {
 
     type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const tabA = createRoot(buildDef(queryA), {
+      queries: queryEngine(),
       deps: { realtime: rtA },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
     }) as unknown as Api & { dispose: () => void }
     const tabB = createRoot(buildDef(queryB), {
+      queries: queryEngine(),
       deps: { realtime: rtB },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
     }) as unknown as Api & { dispose: () => void }
@@ -207,14 +213,14 @@ describe('integration: realtime + multi-tab', () => {
     })
 
     const def = defineController((ctx) => {
-      const users = ctx.use(usersQuery, () => [])
+      const users = createQuery(ctx, usersQuery, () => [])
       onReconnect(ctx, () => {
         usersQuery.invalidate()
       })
       return { users }
     })
 
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     await settle()
     expect(fetches).toBe(1)
 

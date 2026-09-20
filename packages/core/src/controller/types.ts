@@ -1,24 +1,12 @@
 import type { Emitter } from '../emitter'
 import type { ErrorContext } from '../errors'
-import type {
-  FieldArray,
-  FieldArrayOptions,
-  Form,
-  FormOptions,
-  FormSchema,
-  ItemInitial,
-} from '../forms/form-types'
-import type { Validator } from '../forms/types'
-import type {
-  InfiniteQuery,
-  InfiniteQueryActions,
-  InfiniteQuerySubscription,
-} from '../query/infinite'
-import type { Mutation, MutationSpec } from '../query/mutation'
+import type { QueryEngine } from '../query/engine'
+import type { InfiniteQuery, InfiniteQueryActions } from '../query/infinite'
 import type { QueryClientPlugin } from '../query/plugin'
-import type { LocalCache, Query, QueryActions, QuerySubscription, UseOptions } from '../query/types'
+import type { Query, QueryActions } from '../query/types'
 import type { Scope } from '../scope'
 import type { Computed, ReadSignal, Signal } from '../signals/types'
+import type { CTX_INTERNALS, CtxInternals } from './internals'
 
 /**
  * App-wide deps available on every controller's `ctx.deps`.
@@ -43,7 +31,7 @@ export interface AmbientDeps {
  * A reactive form field. Extends `ReadSignal<T>` for the current value, plus
  * five signals for state (errors / isValid / isDirty / touched / isValidating)
  * and four methods (`set`, `reset`, `markTouched`, `revalidate`). Created via
- * `ctx.field(initial, validators?)`. Spec §8, §20.7.
+ * `createField(ctx, initial, validators?)`. Spec §8, §20.7.
  */
 export type Field<T> = ReadSignal<T> & {
   /**
@@ -193,43 +181,12 @@ export type LazyChild<Api> = {
  * land in later phases.
  */
 export type Ctx<TDeps = AmbientDeps> = {
-  cache<T>(
-    fetcher: (signal: AbortSignal) => Promise<T>,
-    options?: {
-      key?: () => readonly unknown[]
-      staleTime?: number
-      keepPreviousData?: boolean
-      initialData?: T | undefined
-    },
-  ): LocalCache<T>
-
-  /** Bind imperative query operations to this root without subscribing or fetching. */
-  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
-  bindQuery<Args extends unknown[], TPage, TItem>(
-    query: InfiniteQuery<Args, TPage, TItem>,
-  ): InfiniteQueryActions<Args, TPage, TItem>
-
-  // Select-projecting overload — picked when the options object has a
-  // required `select` field. `key`'s return is `readonly [...Args]` so
-  // callers writing `() => [id] as const` flow through cleanly.
-  use<Args extends unknown[], T, U>(
-    source: Query<Args, T>,
-    options: {
-      key?: () => readonly [...Args]
-      enabled?: () => boolean
-      select: (data: T) => U
-    },
-  ): QuerySubscription<U>
-  use<Args extends unknown[], T>(
-    source: Query<Args, T>,
-    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
-  ): QuerySubscription<T>
-  use<Args extends unknown[], TPage, TItem>(
-    source: InfiniteQuery<Args, TPage, TItem>,
-    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
-  ): InfiniteQuerySubscription<TPage, TItem>
-
-  mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>
+  /**
+   * @internal Escape hatch for the `ctx`-taking primitives (`createField`,
+   * `createQuery`, …). Not for application code — the shape can change in a
+   * patch release. See `controller/internals.ts`.
+   */
+  readonly [CTX_INTERNALS]: CtxInternals
 
   emitter<T = void>(): Emitter<T>
 
@@ -248,19 +205,6 @@ export type Ctx<TDeps = AmbientDeps> = {
    * caveat as `signal` — no lifecycle binding, just discoverability.
    */
   computed<T>(fn: () => T): Computed<T>
-
-  field<T>(
-    initial: T,
-    validators?: ReadonlyArray<Validator<T>>,
-    options?: { validateOn?: 'change' | 'blur' | 'submit' },
-  ): Field<T>
-
-  form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S>
-
-  fieldArray<I extends Field<any> | Form<any>>(
-    itemFactory: (initial?: ItemInitial<I>) => I,
-    options?: FieldArrayOptions<I>,
-  ): FieldArray<I>
 
   child<Props, Api>(
     def: ControllerDef<Props, Api>,
@@ -421,6 +365,20 @@ export type RootOptions<TDeps> = {
    */
   defaultQueryOptions?: DefaultQueryOptions
   /**
+   * The query engine. Omit it and this root has no cache: `ctx.use`,
+   * `ctx.mutation` and `ctx.bindQuery` throw a message naming the fix, and
+   * `query/client.ts` — the largest module in the package — never enters the
+   * bundle.
+   *
+   * ```ts
+   * createRoot(app, { deps, queries: queryEngine() })
+   * ```
+   *
+   * Adopted eagerly inside `createRoot`, before the factory runs, so plugin
+   * `init` timing is unchanged.
+   */
+  queries?: QueryEngine
+  /**
    * `QueryClientPlugin`s — cross-tab sync, server-push patches, etc.
    * Installed when the root's `QueryClient` is constructed; disposed when
    * the root disposes. SPEC §13.2.
@@ -446,7 +404,10 @@ export type RootOptions<TDeps> = {
  */
 export type Root<Api> = Api & {
   /** Bind imperative query operations to this root without subscribing or fetching. */
-  bindQuery: Ctx['bindQuery']
+  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
+  bindQuery<Args extends unknown[], TPage, TItem>(
+    query: InfiniteQuery<Args, TPage, TItem>,
+  ): InfiniteQueryActions<Args, TPage, TItem>
   dispose(): void
   suspend(options?: { maxIdle?: number }): void
   resume(): void

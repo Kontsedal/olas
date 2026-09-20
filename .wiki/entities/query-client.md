@@ -46,13 +46,13 @@ Every consumer resolves the same way — **`spec.X ?? client.defaults.X ?? built
 | `gcTime` | `ClientEntry` / `InfiniteClientEntry` fields (`client.ts:143`, `client.ts:394`) |
 | `keepPreviousData` | `createUse` / `createInfiniteUse` (`use.ts:149`, `use.ts:396`) — it lives on the subscription, not the entry |
 | `refetchOnWindowFocus`, `refetchOnReconnect` | folded into `client.refetchOnWindowFocus` / `client.refetchOnReconnect` at construction; see above |
-| `staleTime`, `keepPreviousData` (for `ctx.cache`) | `instance.ts` `cache()` merges them into `LocalCacheOptions` before `createLocalCache` |
+| `staleTime`, `keepPreviousData` (for `createCache`) | `instance.ts` `cache()` merges them into `LocalCacheOptions` before `createLocalCache` |
 
 Two asymmetries worth knowing:
 
 - **`refetchInterval` is not defaultable** — a root-wide interval would silently poll every query in the app. Same reasoning keeps it off `UseOptions`: the timer is per **entry**, so a per-subscriber interval would need a "whose interval wins" rule.
 - **`refetchOnWindowFocus` and `refetchOnReconnect` are no-ops for infinite queries.** `InfiniteClientEntry` installs no focus/online subscription at all, so those fields aren't threaded there (comment at the ctor records this).
-- **`ctx.cache` only gets `staleTime` and `keepPreviousData`**, because those are the only fields `LocalCacheOptions` carries — `retry`, `gcTime` and `networkMode` aren't part of its surface.
+- **`createCache` only gets `staleTime` and `keepPreviousData`**, because those are the only fields `LocalCacheOptions` carries — `retry`, `gcTime` and `networkMode` aren't part of its surface.
 
 ## ClientEntry vs Entry
 
@@ -67,7 +67,7 @@ Two asymmetries worth knowing:
 
 ## Cross-root query operation
 
-A `Query` is module-scoped, but imperative operations select a root with `ctx.bindQuery(query)` or `root.bindQuery(query)`. The typed action handle routes only to that client and checks disposal on every call. Binding either a handle or an entry registers the client in `query.__clients`; disposal unregisters it. Unbound methods use the sole registered client, and reject/throw before doing work when multiple clients are registered. With zero clients, prefetch rejects and other operations retain their no-op/undefined behavior. See `../decisions/per-root-query-client.md` and `packages/core/tests/query-isolation.test.ts`.
+A `Query` is module-scoped, but imperative operations select a root with `bindQuery(ctx, query)` or `root.bindQuery(query)`. The typed action handle routes only to that client and checks disposal on every call. Binding either a handle or an entry registers the client in `query.__clients`; disposal unregisters it. Unbound methods use the sole registered client, and reject/throw before doing work when multiple clients are registered. With zero clients, prefetch rejects and other operations retain their no-op/undefined behavior. See `../decisions/per-root-query-client.md` and `packages/core/tests/query-isolation.test.ts`.
 
 Two of these deliberately do **not** go through `bindEntry`. `peekData` stays out because a read must not create the entry it reports on. `cancel` and `invalidate` stay out because there is nothing to cancel or invalidate when no entry exists. `writeData` and `setData` do bind — see `../decisions/canonical-vs-optimistic-writes.md` for why `write` matches `setData` here rather than `setEntryData`.
 

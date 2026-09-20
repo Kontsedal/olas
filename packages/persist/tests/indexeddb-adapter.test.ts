@@ -8,7 +8,7 @@
  * 18+ ships a global one, but the adapter's `broadcastChannel` option lets
  * us route both endpoints through one in-test instance.
  */
-import { createRoot, defineController, signal } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
 import { type IndexedDbAdapterOptions, indexedDbAdapter, usePersisted } from '../src'
 
@@ -333,7 +333,7 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
       const p = usePersisted(ctx, 'draft', s, { storage: adapter })
       return { s, ready: p.ready }
     })
-    const r1 = createRoot(defWrite, { deps: {} })
+    const r1 = createRoot(defWrite, { queries: queryEngine(), deps: {} })
     await flush()
     expect(r1.ready.value).toBe(true)
     r1.s.set('saved-value')
@@ -350,7 +350,7 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
       const p = usePersisted(ctx, 'draft', s, { storage: adapter2 })
       return { s, ready: p.ready }
     })
-    const r2 = createRoot(defRead, { deps: {} })
+    const r2 = createRoot(defRead, { queries: queryEngine(), deps: {} })
     await flush()
     expect(r2.ready.value).toBe(true)
     expect(r2.s.value).toBe('saved-value')
@@ -374,7 +374,7 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
       usePersisted(ctx, 'k', s, { storage: tabB, crossTab: true })
       return { s }
     })
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await flush()
 
     await tabA.set('k', JSON.stringify('hello-from-A'))
@@ -413,7 +413,7 @@ describe('indexedDbAdapter — commit-ack + error routing (T6.1)', () => {
       usePersisted(ctx, 'draft', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s }
     })
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await flush()
     root.s.set('will-fail')
     await flush()

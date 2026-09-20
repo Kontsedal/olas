@@ -1,6 +1,7 @@
 import { DevtoolsEmitter } from '../devtools'
 import { scheduleExpiry } from '../expiry-timer'
-import { QueryClient } from '../query/client'
+import type { QueryClient } from '../query/client'
+import { missingQueryEngine } from '../query/engine'
 import { getFactory } from './define'
 import { ControllerInstance, type RootShared } from './instance'
 import type { AmbientDeps, ControllerDef, Root, RootOptions } from './types'
@@ -28,20 +29,28 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
   options: RootOptions<TDeps>,
 ): Root<Api> {
   const devtools = new DevtoolsEmitter()
-  const queryClient = new QueryClient({
-    onError: options.onError,
-    hydrate: options.hydrate,
-    devtools,
-    deps: options.deps as Record<string, unknown>,
-    refetchOnWindowFocus: options.refetchOnWindowFocus,
-    refetchOnReconnect: options.refetchOnReconnect,
-    defaultQueryOptions: options.defaultQueryOptions,
-    plugins: options.plugins,
-  })
+  // The engine is adopted EAGERLY, before the factory runs, so plugin `init`
+  // fires exactly when it always did. `mutationQueuePlugin` replays mutations
+  // persisted by a previous session at `init` — a startup obligation that must
+  // not wait for a controller to happen to touch a query. This module imports
+  // `QueryClient` as a TYPE only; `query/engine.ts` is the single value
+  // importer, which is what keeps the cache engine out of a query-free bundle.
+  const queryClient =
+    options.queries?.__create({
+      onError: options.onError,
+      devtools,
+      deps: options.deps as Record<string, unknown>,
+      hydrate: options.hydrate,
+      refetchOnWindowFocus: options.refetchOnWindowFocus,
+      refetchOnReconnect: options.refetchOnReconnect,
+      defaultQueryOptions: options.defaultQueryOptions,
+      plugins: options.plugins,
+    }) ?? null
   const rootShared: RootShared = {
     devtools,
     onError: options.onError,
     queryClient,
+    queryDefaults: options.defaultQueryOptions ?? {},
     scopesVersion: { value: 0 },
   }
 
@@ -65,7 +74,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
   try {
     api = instance.construct(getFactory(def), props)
   } catch (err) {
-    queryClient.dispose()
+    queryClient?.dispose()
     throw err
   }
 
@@ -93,13 +102,13 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
   // `dispose`/`suspend`/...) — AFTER the tree is fully constructed. Tear down
   // the live instance + queryClient (effects, focus/online listeners, plugin
   // transports) before rethrowing so the conflict doesn't leak the whole tree.
-  // The construct-throw path above rolls back via queryClient.dispose(); this
+  // The construct-throw path above rolls back via queryClient?.dispose(); this
   // is the symmetric guard for the post-construction failure. (T2.5)
   try {
     return attachRootControls(target, instance, devtools, queryClient)
   } catch (err) {
     instance.dispose()
-    queryClient.dispose()
+    queryClient?.dispose()
     throw err
   }
 }
@@ -108,7 +117,7 @@ function attachRootControls<Api>(
   api: Api,
   instance: ControllerInstance,
   devtools: DevtoolsEmitter,
-  queryClient: QueryClient,
+  queryClient: QueryClient | null,
 ): Root<Api> {
   /** Cancellation closure from `scheduleExpiry`; `null` = no auto-dispose armed. */
   let suspendTimer: (() => void) | null = null
@@ -119,7 +128,7 @@ function attachRootControls<Api>(
       suspendTimer = null
     }
     instance.dispose()
-    queryClient.dispose()
+    queryClient?.dispose()
   }
 
   const suspend = (opts?: { maxIdle?: number }) => {
@@ -152,7 +161,7 @@ function attachRootControls<Api>(
   const debug = {
     subscribe: (handler: Parameters<DevtoolsEmitter['subscribe']>[0]) =>
       devtools.subscribe(handler),
-    queryEntries: () => queryClient.queryEntriesSnapshot(),
+    queryEntries: () => queryClient?.queryEntriesSnapshot() ?? [],
   }
 
   const target = api as Record<string, unknown>
@@ -172,7 +181,10 @@ function attachRootControls<Api>(
   // hard fence in case a consumer mutates the api after construction.
   const lock = { enumerable: false, writable: false, configurable: false }
   Object.defineProperty(target, 'bindQuery', {
-    value: queryClient.bindQuery.bind(queryClient),
+    value: (query: unknown) => {
+      if (queryClient === null) throw missingQueryEngine('root.bindQuery')
+      return queryClient.bindQuery(query as never)
+    },
     ...lock,
   })
   Object.defineProperty(target, 'dispose', { value: dispose, ...lock })
@@ -180,16 +192,19 @@ function attachRootControls<Api>(
   Object.defineProperty(target, 'resume', { value: resume, ...lock })
   Object.defineProperty(target, '__debug', { value: debug, ...lock })
   Object.defineProperty(target, 'dehydrate', {
-    value: () => queryClient.dehydrate(),
+    // No engine means no cache, so nothing to dehydrate. Returning an
+    // empty state beats throwing: an SSR render of a query-free root is
+    // legitimate, and the client hydrates the same nothing.
+    value: () => queryClient?.dehydrate() ?? { queries: [] },
     ...lock,
   })
   Object.defineProperty(target, 'waitForIdle', {
-    value: () => queryClient.waitForIdle(),
+    value: () => queryClient?.waitForIdle() ?? Promise.resolve(),
     ...lock,
   })
   Object.defineProperty(target, 'applyDehydratedEntry', {
     value: (queryId: string, keyArgs: readonly unknown[], data: unknown, lastUpdatedAt: number) =>
-      queryClient.applyDehydratedEntry(queryId, keyArgs, data, lastUpdatedAt),
+      queryClient?.applyDehydratedEntry(queryId, keyArgs, data, lastUpdatedAt),
     ...lock,
   })
 

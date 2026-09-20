@@ -42,7 +42,7 @@ Phase 4's staleness test:
 test('isStale ... false right after, true after staleTime', async () => {
   vi.setSystemTime(0)
   const def = defineController((ctx) => ({
-    x: ctx.cache(async () => 'v', { staleTime: 100 }),
+    x: createCache(ctx, async () => 'v', { staleTime: 100 }),
   }))
   const root = createRoot(def, { deps: emptyDeps })
   await vi.advanceTimersByTimeAsync(0)

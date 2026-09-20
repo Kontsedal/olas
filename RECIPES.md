@@ -18,13 +18,13 @@ const searchController = defineController((ctx) => {
   const debouncedTerm = debounced(term, 300)
 
   // a query keyed by the debounced value
-  const results = ctx.use(searchQuery, () => [debouncedTerm.value])
+  const results = createQuery(ctx, searchQuery, () => [debouncedTerm.value])
 
   return { term, results }
 })
 ```
 
-`debounced(source, ms)` returns a `ReadSignal<T>` that reflects `source` but waits `ms` after the last write before emitting. Compose with `ctx.use` directly — the query re-keys on debounced changes, not raw ones.
+`debounced(source, ms)` returns a `ReadSignal<T>` that reflects `source` but waits `ms` after the last write before emitting. Compose with `createQuery` directly — the query re-keys on debounced changes, not raw ones.
 
 For "debounce a validator," use `debouncedValidator(fn, ms)` from `@kontsedal/olas-core` instead — it wraps a `Validator<T>` so per-keystroke async checks don't pile up.
 
@@ -55,7 +55,7 @@ function usePagination(_ctx: Ctx, opts: { pageSize: number; initialPage?: number
 // usage
 const listController = defineController((ctx) => {
   const pagination = usePagination(ctx, { pageSize: 25 })
-  const items = ctx.use(itemsQuery, () => [pagination.page.value, pagination.pageSize.value])
+  const items = createQuery(ctx, itemsQuery, () => [pagination.page.value, pagination.pageSize.value])
   return { ...pagination, items }
 })
 ```
@@ -74,7 +74,7 @@ function useSubmit<T, R>(
   form: Form<any> & { value: ReadSignal<T> },
   mutate: (data: T, signal: AbortSignal) => Promise<R>,
 ): Mutation<void, R> {
-  return ctx.mutation({
+  return createMutation(ctx, {
     mutate: async (_: void, signal) => {
       form.markAllTouched()
       const valid = await form.validate()
@@ -87,7 +87,7 @@ function useSubmit<T, R>(
 
 // usage
 const profileController = defineController((ctx) => {
-  const form = ctx.form({ name: ctx.field('') })
+  const form = createForm(ctx, { name: createField(ctx, '') })
   const save = useSubmit(ctx, form, (data, signal) => ctx.deps.api.saveProfile(data, { signal }))
   return { form, save }
 })
@@ -119,7 +119,7 @@ function useInlineEdit<T>(
     draft.set(undefined)
     isEditing.set(false)
   }
-  const commit = ctx.mutation({
+  const commit = createMutation(ctx, {
     mutate: (_: void, signal) => save(draft.peek() as T, signal),
     onSuccess: () => {
       draft.set(undefined)
@@ -208,8 +208,8 @@ function useRealtimePatcher<TEvent extends { type: string }>(
 }
 
 // usage
-const newsfeed = ctx.bindQuery(newsfeedQuery)
-const comments = ctx.bindQuery(commentsQuery)
+const newsfeed = bindQuery(ctx, newsfeedQuery)
+const comments = bindQuery(ctx, commentsQuery)
 
 useRealtimePatcher<FeedEvent>(ctx, 'feed-events', {
   'like-added': (ev) => newsfeed.write('top-stories', (pages) => /* patch */),
@@ -218,7 +218,7 @@ useRealtimePatcher<FeedEvent>(ctx, 'feed-events', {
 })
 ```
 
-Two things are load-bearing here. **`ctx.bindQuery`** scopes every operation to this root — a server handling concurrent requests has one root per request, and an unbound `newsfeedQuery.write(...)` would refuse to guess which one (§21.5). **`write`, not `setData`** — a realtime event is server truth that already happened, so there is nothing to roll back. `setData` opens an optimistic snapshot that someone must settle; calling it fire-and-forget leaks one live snapshot per event and wedges `hasPendingMutations` true forever. `setData` is for the optimistic half of a mutation; `write` is for data that is already true.
+Two things are load-bearing here. **`bindQuery`** scopes every operation to this root — a server handling concurrent requests has one root per request, and an unbound `newsfeedQuery.write(...)` would refuse to guess which one (§21.5). **`write`, not `setData`** — a realtime event is server truth that already happened, so there is nothing to roll back. `setData` opens an optimistic snapshot that someone must settle; calling it fire-and-forget leaks one live snapshot per event and wedges `hasPendingMutations` true forever. `setData` is for the optimistic half of a mutation; `write` is for data that is already true.
 
 Requires a `realtime` service in deps with `subscribe(channel, handler)`. The framework primitive is `ctx.effect` + `setData`; this wraps the dispatching boilerplate.
 
@@ -265,7 +265,7 @@ const root = createRoot(appController, {
 ```tsx
 // inside a controller
 const checkoutController = defineController((ctx) => {
-  const place = ctx.mutation({
+  const place = createMutation(ctx, {
     ...createOrder,
     onSuccess: () => toast('Order placed'),
     onError: () => toast('We had trouble; we will retry automatically.'),
@@ -354,12 +354,12 @@ import { RouteParamsScope } from '@kontsedal/olas-router'
 
 const profileController = defineController((ctx) => {
   const params = ctx.inject(RouteParamsScope)
-  const user = ctx.use(userQuery, () => [params.value.userId])
+  const user = createQuery(ctx, userQuery, () => [params.value.userId])
   return { user }
 })
 ```
 
-`ctx.use`'s key thunk reads `params.value` — route changes auto-rekey
+`createQuery`'s key thunk reads `params.value` — route changes auto-rekey
 the subscription. No effects, no manual subscriptions.
 
 ### Pattern B — controller-per-route via `ctx.session`
@@ -382,7 +382,7 @@ const appController = defineController((ctx) => {
 
 ### Pattern C — pre-fetching on route enter
 
-Use the router's loader and `beforeLoad` hook to prefetch — the data lands in the cache before the component mounts, so `ctx.use` returns it synchronously. (See "structural sharing" in §6 of `SPEC.md` for the ref-stability guarantees this gives you.)
+Use the router's loader and `beforeLoad` hook to prefetch — the data lands in the cache before the component mounts, so `createQuery` returns it synchronously. (See "structural sharing" in §6 of `SPEC.md` for the ref-stability guarantees this gives you.)
 
 Prefetch through `root.bindQuery(query)` rather than the bare definition, so the fetch lands in *this* root's cache:
 
@@ -402,7 +402,7 @@ Combined with `useQuery(sub, { suspense: true })`, the suspense fallback is skip
 
 ## `readsFactory` — one query, many React readers that own no controller
 
-`useQuery(subscription)` reads a subscription; it cannot *create* one. Only a controller can, through `ctx.use`, and that is deliberate. A component that mints its own cache subscription owns data lifetime, which is the thing Olas exists to move out of the view. That leaves one real shape unaddressed: a **React context or hook** that needs server data and has no controller of its own. Theme providers, feature-flag gates, keybinding overrides, "current user" wrappers — all of them read one query and render children.
+`useQuery(subscription)` reads a subscription; it cannot *create* one. Only a controller can, through `createQuery`, and that is deliberate. A component that mints its own cache subscription owns data lifetime, which is the thing Olas exists to move out of the view. That leaves one real shape unaddressed: a **React context or hook** that needs server data and has no controller of its own. Theme providers, feature-flag gates, keybinding overrides, "current user" wrappers — all of them read one query and render children.
 
 The pattern: a controller owns the subscriptions, exposes them as a plain object, and React reads them **by identity**.
 
@@ -413,8 +413,8 @@ import { themeQuery, flagsQuery } from './queries'
 
 export function appReads(ctx: Ctx) {
   return {
-    theme: ctx.use(themeQuery),
-    flags: ctx.use(flagsQuery),
+    theme: createQuery(ctx, themeQuery),
+    flags: createQuery(ctx, flagsQuery),
   }
 }
 export type AppReads = ReturnType<typeof appReads>
@@ -446,7 +446,7 @@ Three properties make this worth the indirection:
 - **Lifetime is the controller's.** The subscription lives and dies with the controller that owns it, not with whichever component mounted first. A provider that unmounts and remounts (a route change, a StrictMode double-mount) re-reads a warm entry instead of re-acquiring one.
 - **It survives the reader moving.** When the provider eventually becomes a controller itself, the factory does not change — only who calls it.
 
-Two roots can share the same provider, such as a main window and a detached one. Have **both** roots expose the factory under the same key, and `useRoot()` resolves to whichever root the component is mounted under. And keep the factory to reads that a React *provider* owns — a read belonging to one feature belongs in that feature's controller, where `ctx.use` is already available.
+Two roots can share the same provider, such as a main window and a detached one. Have **both** roots expose the factory under the same key, and `useRoot()` resolves to whichever root the component is mounted under. And keep the factory to reads that a React *provider* owns — a read belonging to one feature belongs in that feature's controller, where `createQuery` is already available.
 
 ---
 

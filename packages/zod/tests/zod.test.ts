@@ -1,4 +1,4 @@
-import { createRoot, defineController } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import { formFromZod, zodValidator, zodValidatorAsync } from '../src'
@@ -48,7 +48,7 @@ describe('formFromZod', () => {
     const def = defineController((ctx) => ({
       form: formFromZod(ctx, schema),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({ name: 'Alice', age: 0 })
     root.dispose()
   })
@@ -69,7 +69,7 @@ describe('formFromZod', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({
       name: 'Bob',
       address: { street: 'Main', city: 'Springfield' },
@@ -84,7 +84,7 @@ describe('formFromZod', () => {
     const def = defineController((ctx) => ({
       form: formFromZod(ctx, schema, { initials: { tags: ['hello', 'world'] } }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({ tags: ['hello', 'world'] })
     expect(root.form.isValid.value).toBe(true)
     root.dispose()
@@ -104,7 +104,7 @@ describe('formFromZod', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     const titleField = (root.form.fields as { title: { errors: { value: string[] } } }).title
@@ -137,7 +137,7 @@ describe('formFromZod', () => {
         initials: { password: 'abc', confirm: 'xyz' },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     expect(root.form.isValid.value).toBe(false)
@@ -166,7 +166,7 @@ describe('formFromZod', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     const city = (
@@ -184,7 +184,7 @@ describe('formFromZod', () => {
     const def = defineController((ctx) => ({
       form: formFromZod(ctx, schema, { initials: { name: '' } }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(root.form.isValid.value).toBe(false)
     // We can't statically know `fields.name` is a Field — narrow:
@@ -201,7 +201,7 @@ describe('formFromZod', () => {
     const def = defineController((ctx) => ({
       form: formFromZod(ctx, schema),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // optional/nullable have no Zod default → defaultInitial returns ''
     // for the inner string, 0 for the inner number.
     expect(root.form.value.value).toEqual({ maybe: '', nullable: 0 })
@@ -217,7 +217,7 @@ describe('formFromZod', () => {
     const def = defineController((ctx) => ({
       form: formFromZod(ctx, schema),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({ flag: false, tags: [], kind: 'a' })
     root.dispose()
   })
@@ -229,7 +229,7 @@ describe('formFromZod', () => {
     const def = defineController((ctx) => ({
       form: formFromZod(ctx, schema),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({ now: 42 })
     root.dispose()
   })
@@ -265,7 +265,7 @@ describe('formFromZod — duplicate zod copy detection (T6.5)', () => {
       const def = defineController((ctx) => ({
         form: formFromZod(ctx, schema as z.ZodObject<z.ZodRawShape>),
       }))
-      const root = createRoot(def, { deps: emptyDeps })
+      const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       expect(warnSpy).toHaveBeenCalledWith(
         expect.stringMatching(/duplicate zod|two copies|instanceof/i),
       )
@@ -284,7 +284,7 @@ describe('formFromZod — defaultInitial gaps (T6.5)', () => {
       either: z.union([z.string(), z.number()]),
     })
     const def = defineController((ctx) => ({ form: formFromZod(ctx, schema) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const fields = root.form.fields as unknown as {
       when: { value: unknown }
       len: { value: unknown }

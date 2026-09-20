@@ -1,6 +1,8 @@
 import { describe, expect, test, vi } from 'vitest'
+import { createField, createFieldArray, createForm } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { required } from '../src/forms/validators'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 
 const emptyDeps = {}
@@ -16,12 +18,12 @@ const deferred = <T>() => {
 describe('ctx.form — basic aggregation', () => {
   test('value aggregates leaf fields', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('Alice', [required()]),
-        age: ctx.field<number>(30),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, 'Alice', [required()]),
+        age: createField<number>(ctx, 30),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({ name: 'Alice', age: 30 })
     root.form.fields.name.set('Bob')
     expect(root.form.value.value).toEqual({ name: 'Bob', age: 30 })
@@ -30,15 +32,15 @@ describe('ctx.form — basic aggregation', () => {
 
   test('nested forms aggregate recursively', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field('Alice'),
-        address: ctx.form({
-          street: ctx.field('Main'),
-          city: ctx.field('Springfield'),
+      form: createForm(ctx, {
+        name: createField(ctx, 'Alice'),
+        address: createForm(ctx, {
+          street: createField(ctx, 'Main'),
+          city: createField(ctx, 'Springfield'),
         }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({
       name: 'Alice',
       address: { street: 'Main', city: 'Springfield' },
@@ -53,12 +55,12 @@ describe('ctx.form — basic aggregation', () => {
 
   test('errors aggregate per-field; isValid reflects whole tree', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('', [required()]),
-        age: ctx.field(0),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, '', [required()]),
+        age: createField(ctx, 0),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.errors.value).toEqual({ name: ['Required'], age: undefined })
     expect(root.form.isValid.value).toBe(false)
 
@@ -70,12 +72,12 @@ describe('ctx.form — basic aggregation', () => {
 
   test('set performs a batched deep-merge', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field('A'),
-        nested: ctx.form({ x: ctx.field(1), y: ctx.field(2) }),
+      form: createForm(ctx, {
+        name: createField(ctx, 'A'),
+        nested: createForm(ctx, { x: createField(ctx, 1), y: createField(ctx, 2) }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.form.set({ name: 'B', nested: { x: 10 } })
     expect(root.form.value.value).toEqual({ name: 'B', nested: { x: 10, y: 2 } })
     root.dispose()
@@ -83,12 +85,12 @@ describe('ctx.form — basic aggregation', () => {
 
   test('markAllTouched + reset cascade', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('', [required()]),
-        nested: ctx.form({ x: ctx.field<string>('', [required()]) }),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, '', [required()]),
+        nested: createForm(ctx, { x: createField<string>(ctx, '', [required()]) }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.form.markAllTouched()
     expect(root.form.fields.name.touched.value).toBe(true)
     expect(root.form.fields.nested.fields.x.touched.value).toBe(true)
@@ -105,11 +107,11 @@ describe('ctx.form — basic aggregation', () => {
 
   test('validate() awaits children and returns overall isValid', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('', [required()]),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, '', [required()]),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(await root.form.validate()).toBe(false)
     root.form.fields.name.set('Alice')
     expect(await root.form.validate()).toBe(true)
@@ -120,13 +122,14 @@ describe('ctx.form — basic aggregation', () => {
     // Regression: `applyPartial` previously called `Field.set(...)` for the
     // initial value, which marked dirty. Server-loaded forms were born dirty.
     const def = defineController((ctx) => ({
-      form: ctx.form(
+      form: createForm(
+        ctx,
         {
-          name: ctx.field<string>(''),
-          email: ctx.field<string>(''),
-          address: ctx.form({
-            street: ctx.field<string>(''),
-            city: ctx.field<string>(''),
+          name: createField<string>(ctx, ''),
+          email: createField<string>(ctx, ''),
+          address: createForm(ctx, {
+            street: createField<string>(ctx, ''),
+            city: createField<string>(ctx, ''),
           }),
         },
         {
@@ -138,7 +141,7 @@ describe('ctx.form — basic aggregation', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // Initial values applied
     expect(root.form.fields.name.value).toBe('Ada')
@@ -155,9 +158,9 @@ describe('ctx.form — basic aggregation', () => {
     // Regression: reset() called Field.reset() (which goes to ctor `initial`)
     // and then re-applied form.initial via set(), making the form dirty again.
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('') }, { initial: { name: 'Ada' } }),
+      form: createForm(ctx, { name: createField<string>(ctx, '') }, { initial: { name: 'Ada' } }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     root.form.fields.name.set('Bob')
     expect(root.form.fields.name.value).toBe('Bob')
@@ -173,17 +176,18 @@ describe('ctx.form — basic aggregation', () => {
 describe('ctx.form — form-level validators', () => {
   test('topLevelErrors populated when cross-field rule fails', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form(
+      form: createForm(
+        ctx,
         {
-          password: ctx.field(''),
-          confirm: ctx.field(''),
+          password: createField(ctx, ''),
+          confirm: createField(ctx, ''),
         },
         {
           validators: [(v) => (v.password === v.confirm ? null : 'Passwords must match')],
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.form.fields.password.set('abc')
     await vi.waitFor(() => expect(root.form.topLevelErrors.value).toEqual(['Passwords must match']))
     expect(root.form.isValid.value).toBe(false)
@@ -198,11 +202,12 @@ describe('ctx.form — form-level validators', () => {
 describe('ctx.form — flatErrors', () => {
   test('emits {path,errors} entries for leaves and form-level', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form(
+      form: createForm(
+        ctx,
         {
-          name: ctx.field<string>('', [required()]),
-          address: ctx.form({
-            city: ctx.field<string>('', [required()]),
+          name: createField<string>(ctx, '', [required()]),
+          address: createForm(ctx, {
+            city: createField<string>(ctx, '', [required()]),
           }),
         },
         {
@@ -210,7 +215,7 @@ describe('ctx.form — flatErrors', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Wait for the always-wrong top-level + required leaf to land in flat.
     await vi.waitFor(() => {
       const f = root.form.flatErrors.value
@@ -226,9 +231,9 @@ describe('ctx.form — flatErrors', () => {
 describe('ctx.fieldArray', () => {
   test('add/remove/insert/move/clear', () => {
     const def = defineController((ctx) => ({
-      tags: ctx.fieldArray((initial) => ctx.field(initial ?? '')),
+      tags: createFieldArray(ctx, (initial) => createField(ctx, initial ?? '')),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.tags.add('a')
     root.tags.add('b')
     root.tags.add('c')
@@ -251,17 +256,18 @@ describe('ctx.fieldArray', () => {
 
   test('arrays of sub-forms aggregate value/errors', () => {
     const def = defineController((ctx) => ({
-      items: ctx.fieldArray((initial) =>
-        ctx.form(
+      items: createFieldArray(ctx, (initial) =>
+        createForm(
+          ctx,
           {
-            sku: ctx.field<string>('', [required()]),
-            qty: ctx.field<number>(1),
+            sku: createField<string>(ctx, '', [required()]),
+            qty: createField<number>(ctx, 1),
           },
           { initial: initial as { sku?: string; qty?: number } | undefined },
         ),
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.items.add({ sku: 'A', qty: 2 })
     root.items.add({ sku: '', qty: 5 })
     expect(root.items.value.value).toEqual([
@@ -278,11 +284,11 @@ describe('ctx.fieldArray', () => {
 
   test('array-level validators populate topLevelErrors', async () => {
     const def = defineController((ctx) => ({
-      tags: ctx.fieldArray(() => ctx.field(''), {
+      tags: createFieldArray(ctx, () => createField(ctx, ''), {
         validators: [(items) => (items.length >= 1 ? null : 'At least one')],
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual(['At least one']))
     expect(root.tags.isValid.value).toBe(false)
 
@@ -294,11 +300,11 @@ describe('ctx.fieldArray', () => {
 
   test('initial items + reset re-populates', () => {
     const def = defineController((ctx) => ({
-      tags: ctx.fieldArray((initial) => ctx.field(initial ?? ''), {
+      tags: createFieldArray(ctx, (initial) => createField(ctx, initial ?? ''), {
         initial: ['x', 'y'],
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.tags.value.value).toEqual(['x', 'y'])
     root.tags.add('z')
     root.tags.reset()
@@ -308,16 +314,20 @@ describe('ctx.fieldArray', () => {
 
   test('FieldArray.validate awaits async top-level + item validators', async () => {
     const def = defineController((ctx) => ({
-      tags: ctx.fieldArray((initial) => ctx.field<string>(initial ?? '', [required()]), {
-        validators: [
-          async (items) => {
-            await Promise.resolve()
-            return items.length >= 2 ? null : 'Need ≥2'
-          },
-        ],
-      }),
+      tags: createFieldArray(
+        ctx,
+        (initial) => createField<string>(ctx, initial ?? '', [required()]),
+        {
+          validators: [
+            async (items) => {
+              await Promise.resolve()
+              return items.length >= 2 ? null : 'Need ≥2'
+            },
+          ],
+        },
+      ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.tags.add('a')
     expect(await root.tags.validate()).toBe(false)
     root.tags.add('b')
@@ -327,9 +337,11 @@ describe('ctx.fieldArray', () => {
 
   test('FieldArray.markAllTouched cascades into sub-form items', () => {
     const def = defineController((ctx) => ({
-      items: ctx.fieldArray(() => ctx.form({ sku: ctx.field<string>('', [required()]) })),
+      items: createFieldArray(ctx, () =>
+        createForm(ctx, { sku: createField<string>(ctx, '', [required()]) }),
+      ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.items.add({ sku: '' })
     root.items.add({ sku: '' })
     root.items.markAllTouched()
@@ -342,12 +354,12 @@ describe('ctx.fieldArray', () => {
 
   test('form.set replaces FieldArray children via applyPartial', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field('A'),
-        tags: ctx.fieldArray((initial) => ctx.field(initial ?? '')),
+      form: createForm(ctx, {
+        name: createField(ctx, 'A'),
+        tags: createFieldArray(ctx, (initial) => createField(ctx, initial ?? '')),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.form.fields.tags.add('x')
     root.form.fields.tags.add('y')
     root.form.set({ name: 'B', tags: ['p', 'q', 'r'] })
@@ -362,11 +374,11 @@ describe('ctx.fieldArray', () => {
     // fix, overlapping indices keep their Field instance and only the
     // tail is grown/shrunk.
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        tags: ctx.fieldArray((initial) => ctx.field(initial ?? '')),
+      form: createForm(ctx, {
+        tags: createFieldArray(ctx, (initial) => createField(ctx, initial ?? '')),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.form.fields.tags.add('x')
     root.form.fields.tags.add('y')
     const beforeFirst = root.form.fields.tags.at(0)
@@ -405,14 +417,17 @@ describe('ctx.fieldArray', () => {
     // rather than the loaded one.
     let serverData: { tags: string[] } = { tags: ['a', 'b'] }
     const def = defineController((ctx) => ({
-      form: ctx.form(
+      form: createForm(
+        ctx,
         {
-          tags: ctx.fieldArray((initial: string | undefined) => ctx.field(initial ?? '')),
+          tags: createFieldArray(ctx, (initial: string | undefined) =>
+            createField(ctx, initial ?? ''),
+          ),
         },
         { initial: () => serverData },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.value.value).toEqual({ tags: ['a', 'b'] })
 
     // "Server reloaded" — apply via resetWithInitial path. We trigger it by
@@ -438,9 +453,10 @@ describe('async form-level + field-array-level validators', () => {
   test('Form async top-level validator transitions through isValidating', async () => {
     let resolve!: (msg: string | null) => void
     const def = defineController((ctx) => ({
-      form: ctx.form(
+      form: createForm(
+        ctx,
         {
-          a: ctx.field('x'),
+          a: createField(ctx, 'x'),
         },
         {
           validators: [
@@ -452,7 +468,7 @@ describe('async form-level + field-array-level validators', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // The validator effect runs on construction; isValid is false while pending.
     await vi.waitFor(() => expect(root.form.isValidating.value).toBe(true))
     resolve('bad')
@@ -465,8 +481,9 @@ describe('async form-level + field-array-level validators', () => {
     // The thrown error coerces to a string and lands in `topLevelErrors`;
     // the form keeps running (no top-level crash).
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { a: ctx.field('x') },
+      form: createForm(
+        ctx,
+        { a: createField(ctx, 'x') },
         {
           validators: [
             () => {
@@ -476,7 +493,7 @@ describe('async form-level + field-array-level validators', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() =>
       expect(root.form.topLevelErrors.value).toEqual(expect.arrayContaining(['boom'])),
     )
@@ -486,8 +503,9 @@ describe('async form-level + field-array-level validators', () => {
   test('Form.validate awaits in-flight async validator before returning', async () => {
     let resolve!: (msg: string | null) => void
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { a: ctx.field('x') },
+      form: createForm(
+        ctx,
+        { a: createField(ctx, 'x') },
         {
           validators: [
             () =>
@@ -498,7 +516,7 @@ describe('async form-level + field-array-level validators', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.form.isValidating.value).toBe(true))
     const verdict = root.form.validate()
     // Resolve on the next tick so validate() actually has to wait.
@@ -510,7 +528,7 @@ describe('async form-level + field-array-level validators', () => {
   test('FieldArray async top-level validator goes through isValidating', async () => {
     let resolve!: (msg: string | null) => void
     const def = defineController((ctx) => ({
-      tags: ctx.fieldArray(() => ctx.field(''), {
+      tags: createFieldArray(ctx, () => createField(ctx, ''), {
         validators: [
           () =>
             new Promise<string | null>((r) => {
@@ -519,7 +537,7 @@ describe('async form-level + field-array-level validators', () => {
         ],
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.tags.isValidating.value).toBe(true))
     resolve('rejected')
     await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual(['rejected']))
@@ -528,7 +546,7 @@ describe('async form-level + field-array-level validators', () => {
 
   test('FieldArray sync validator that throws surfaces as a string error', async () => {
     const def = defineController((ctx) => ({
-      tags: ctx.fieldArray(() => ctx.field(''), {
+      tags: createFieldArray(ctx, () => createField(ctx, ''), {
         validators: [
           () => {
             throw new Error('nope')
@@ -536,7 +554,7 @@ describe('async form-level + field-array-level validators', () => {
         ],
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() =>
       expect(root.tags.topLevelErrors.value).toEqual(expect.arrayContaining(['nope'])),
     )
@@ -547,10 +565,11 @@ describe('async form-level + field-array-level validators', () => {
 describe('flatErrors walker — fieldArray of forms', () => {
   test('emits errors at items[idx] paths for sub-forms and leaves', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        items: ctx.fieldArray((initial?: { sku?: string }) =>
-          ctx.form(
-            { sku: ctx.field<string>('', [required()]) },
+      form: createForm(ctx, {
+        items: createFieldArray(ctx, (initial?: { sku?: string }) =>
+          createForm(
+            ctx,
+            { sku: createField<string>(ctx, '', [required()]) },
             {
               initial,
               validators: [(v) => (v.sku === 'banned' ? 'sku is banned' : null)],
@@ -559,7 +578,7 @@ describe('flatErrors walker — fieldArray of forms', () => {
         ),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.form.fields.items.add({ sku: '' })
     root.form.fields.items.add({ sku: 'banned' })
 
@@ -573,9 +592,11 @@ describe('flatErrors walker — fieldArray of forms', () => {
 
   test('emits leaf errors at items[idx] when fieldArray items are plain fields', async () => {
     const def = defineController((ctx) => ({
-      tags: ctx.fieldArray((initial?: string) => ctx.field<string>(initial ?? '', [required()])),
+      tags: createFieldArray(ctx, (initial?: string) =>
+        createField<string>(ctx, initial ?? '', [required()]),
+      ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.tags.add('')
     root.tags.add('ok')
     await vi.waitFor(() => {
@@ -594,9 +615,9 @@ describe('flatErrors walker — fieldArray of forms', () => {
 describe('field validateOn (T5.3)', () => {
   test("'blur' defers validation until markTouched, then re-validates on change", async () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('', [required()], { validateOn: 'blur' }),
+      name: createField<string>(ctx, '', [required()], { validateOn: 'blur' }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Locked: an invalid (empty) value surfaces NO error and reads valid.
     expect(root.name.errors.value).toEqual([])
     expect(root.name.isValid.value).toBe(true)
@@ -616,9 +637,9 @@ describe('field validateOn (T5.3)', () => {
 
   test("'submit' defers until revalidate(); markTouched does NOT unlock it", async () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('', [required()], { validateOn: 'submit' }),
+      name: createField<string>(ctx, '', [required()], { validateOn: 'submit' }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.name.errors.value).toEqual([])
     root.name.markTouched()
     root.name.set('')
@@ -631,9 +652,9 @@ describe('field validateOn (T5.3)', () => {
 
   test('reset() re-locks a blur/submit field', async () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('', [required()], { validateOn: 'blur' }),
+      name: createField<string>(ctx, '', [required()], { validateOn: 'blur' }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.name.markTouched()
     await vi.waitFor(() => expect(root.name.errors.value).toEqual(['Required']))
     root.name.reset()
@@ -647,13 +668,15 @@ describe('field validateOn (T5.3)', () => {
 describe('Form.dirtyFields + clearSubtree (T5.3)', () => {
   test('dirtyFields lists dotted / bracket paths of dirty leaves, depth-first', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('a'),
-        address: ctx.form({ city: ctx.field<string>('') }),
-        tags: ctx.fieldArray((i?: string) => ctx.field<string>(i ?? ''), { initial: ['x'] }),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, 'a'),
+        address: createForm(ctx, { city: createField<string>(ctx, '') }),
+        tags: createFieldArray(ctx, (i?: string) => createField<string>(ctx, i ?? ''), {
+          initial: ['x'],
+        }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.dirtyFields.value).toEqual([])
     root.form.fields.name.set('b')
     root.form.fields.address.fields.city.set('NYC')
@@ -667,12 +690,12 @@ describe('Form.dirtyFields + clearSubtree (T5.3)', () => {
 
   test('clearSubtree resets a named subtree; empty path resets the whole form', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        a: ctx.field<string>('x'),
-        b: ctx.field<string>('y'),
+      form: createForm(ctx, {
+        a: createField<string>(ctx, 'x'),
+        b: createField<string>(ctx, 'y'),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.form.fields.a.set('A')
     root.form.fields.b.set('B')
     root.form.clearSubtree('a')
@@ -690,9 +713,9 @@ describe('field isValid stays stable while validating (T5.3)', () => {
   test('async validation holds last-known validity mid-flight (no strobe)', async () => {
     let gate = deferred<string | null>()
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('ok', [() => gate.promise]),
+      name: createField<string>(ctx, 'ok', [() => gate.promise]),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Initial run in flight: default last-known validity is `true`, so isValid
     // reads true (not a false flash).
     expect(root.name.isValidating.value).toBe(true)
@@ -718,9 +741,13 @@ describe('Form.reset batching (T5.3)', () => {
   test('reset() re-applies a reactive initial in one batch (no tearing)', () => {
     const seed = signal('a')
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('') }, { initial: () => ({ name: seed.value }) }),
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
+        { initial: () => ({ name: seed.value }) },
+      ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.form.fields.name.value).toBe('a') // construction applied initial
     // Make it dirty so the reactive-initial auto-reseat is blocked while we
     // change the seed underneath it.

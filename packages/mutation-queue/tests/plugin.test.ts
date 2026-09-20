@@ -1,9 +1,12 @@
 import {
+  createMutation,
+  createQuery,
   createRoot,
   defineController,
   defineMutation,
   defineQuery,
   type Mutation,
+  queryEngine,
 } from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
@@ -60,11 +63,12 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
       mutate: async (vars: { sku: string }) => ({ id: 'srv-1', ...vars }),
     })
     const def = defineController((ctx) => ({
-      create: ctx.mutation(createOrder) as Mutation<{ sku: string }, unknown>,
+      create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
     }))
 
     type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
     }) as unknown as Api & { dispose(): void }
@@ -103,10 +107,14 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
     })
 
     const def = defineController((ctx) => ({
-      run: ctx.mutation({ ...failingMutation, retry: 0 }) as Mutation<{ x: number }, unknown>,
+      run: createMutation(ctx, { ...failingMutation, retry: 0 }) as Mutation<
+        { x: number },
+        unknown
+      >,
     }))
     type Api = { run: Mutation<{ x: number }, unknown> }
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/err', maxAttempts: 3 })],
@@ -150,6 +158,7 @@ describe('mutationQueuePlugin — replay on init', () => {
 
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/replay' })],
     })
@@ -178,6 +187,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     const errors: Array<{ err: unknown; entry: QueueEntry }> = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
@@ -221,6 +231,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     const errors: Array<{ err: unknown; entry: QueueEntry }> = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
@@ -295,6 +306,7 @@ describe('mutationQueuePlugin — replay on init', () => {
 
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/serial' })],
     })
@@ -316,6 +328,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     const warnings: string[] = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
@@ -348,6 +361,7 @@ describe('mutationQueuePlugin — config', () => {
     const warnings: string[] = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
@@ -374,12 +388,12 @@ describe('mutationQueuePlugin — config', () => {
   test('ctx.mutation throws when persist: true without mutationId', () => {
     expect(() => {
       const def = defineController((ctx) =>
-        ctx.mutation({
+        createMutation(ctx, {
           persist: true,
           mutate: async () => undefined,
         }),
       )
-      createRoot(def, { deps: {} })
+      createRoot(def, { queries: queryEngine(), deps: {} })
     }).toThrow(/persist: true.*requires.*mutationId/)
   })
 })
@@ -514,9 +528,10 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       staleTime: Infinity,
     })
 
-    const def = defineController((ctx) => ({ sub: ctx.use(query, () => [1]) }))
-    const other = createRoot(def, { deps: { owner: 'other' } })
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, query, () => [1]) }))
+    const other = createRoot(def, { queries: queryEngine(), deps: { owner: 'other' } })
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: { owner: 'queue' },
       plugins: [
         mutationQueuePlugin({
@@ -557,7 +572,12 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
     })
     const plugin = mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/replaynow', maxAttempts: 5 })
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, onError: () => {}, plugins: [plugin] })
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      onError: () => {},
+      plugins: [plugin],
+    })
     await settle()
     // First replay failed transiently; entry retained for another attempt.
     expect(calls).toBe(1)
@@ -581,6 +601,7 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
       const def = defineController(() => ({}))
       const root = createRoot(def, {
+        queries: queryEngine(),
         deps: {},
         plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/online' })],
       })
@@ -608,6 +629,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const errors: Array<{ code?: string }> = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
@@ -638,6 +660,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     defineMutation({ mutationId: id, mutate: async (vars: unknown) => replayed.push(vars) })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
@@ -701,6 +724,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const finalErrors: unknown[] = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
@@ -749,6 +773,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/seq' })],
     })
@@ -768,6 +793,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
       const def = defineController(() => ({}))
       const root = createRoot(def, {
+        queries: queryEngine(),
         deps: {},
         plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/backoff', backoffMs: 1000 })],
       })
@@ -806,10 +832,11 @@ describe('a run that completed before dispose must not be replayed', () => {
       mutate: (_vars: { sku: string }) => pending,
     })
     const def = defineController((ctx) => ({
-      create: ctx.mutation(createOrder) as Mutation<{ sku: string }, unknown>,
+      create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
     }))
     type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
     }) as unknown as Api & { dispose(): void }

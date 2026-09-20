@@ -19,8 +19,11 @@
  */
 
 import {
+  bindQuery,
   type Ctx,
   computed,
+  createMutation,
+  createQuery,
   debounced,
   defineController,
   selection,
@@ -51,14 +54,14 @@ const errMessage = (err: unknown): string => (err instanceof Error ? err.message
 
 export const boardController = defineController(
   (ctx: Ctx) => {
-    const boardQueryActions = ctx.bindQuery(boardQuery)
+    const boardQueryActions = bindQuery(ctx, boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
 
     // Reactive key thunk — switching boards via the sidebar refetches under
     // a new entry without re-mounting boardController.
-    const board = ctx.use(boardQuery, () => [activeBoardId.value])
+    const board = createQuery(ctx, boardQuery, () => [activeBoardId.value])
 
     // ───────── Selected card (right-hand detail pane) ─────────
 
@@ -94,7 +97,7 @@ export const boardController = defineController(
     const selectedLabelIds = signal<ReadonlySet<string>>(new Set())
     const selectedAssigneeIds = signal<ReadonlySet<string>>(new Set())
 
-    const applyFilter = ctx.mutation<{ q: string }, SearchResults>({
+    const applyFilter = createMutation<{ q: string }, SearchResults>(ctx, {
       name: 'applyFilter',
       concurrency: 'latest-wins',
       mutate: async (vars, signal) => {
@@ -179,7 +182,7 @@ export const boardController = defineController(
 
     // ───────── Move card (parallel, optimistic with snapshot auto-rollback) ─────────
 
-    const moveCard = ctx.mutation<MoveVars, void>({
+    const moveCard = createMutation<MoveVars, void>(ctx, {
       name: 'moveCard',
       concurrency: 'parallel',
       onMutate: (vars) =>
@@ -224,7 +227,7 @@ export const boardController = defineController(
 
     // ───────── Create card (serial) ─────────
 
-    const createCard = ctx.mutation<{ columnId: string; title: string }, Card>({
+    const createCard = createMutation<{ columnId: string; title: string }, Card>(ctx, {
       name: 'createCard',
       concurrency: 'serial',
       mutate: async (vars, signal) => {
@@ -279,7 +282,7 @@ export const boardController = defineController(
 
     // ───────── Create column (serial) ─────────
 
-    const createColumn = ctx.mutation<{ title: string; hue?: number }, Column>({
+    const createColumn = createMutation<{ title: string; hue?: number }, Column>(ctx, {
       name: 'createColumn',
       concurrency: 'serial',
       mutate: async (vars, signal) => {
@@ -302,7 +305,7 @@ export const boardController = defineController(
 
     // ───────── Reorder a single column (serial) ─────────
 
-    const reorderColumn = ctx.mutation<{ columnId: string; cardIds: string[] }, void>({
+    const reorderColumn = createMutation<{ columnId: string; cardIds: string[] }, void>(ctx, {
       name: 'reorderColumn',
       concurrency: 'serial',
       onMutate: (vars) =>
@@ -333,7 +336,7 @@ export const boardController = defineController(
 
     // ───────── Archive (serial) ─────────
 
-    const archiveCard = ctx.mutation<{ cardId: string }, void>({
+    const archiveCard = createMutation<{ cardId: string }, void>(ctx, {
       name: 'archiveCard',
       concurrency: 'serial',
       onMutate: (vars) =>

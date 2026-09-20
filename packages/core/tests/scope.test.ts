@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
+import { queryEngine } from '../src/query/engine'
 import { defineScope } from '../src/scope'
 import { signal } from '../src/signals'
 
@@ -174,7 +175,7 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       seenTheme = ctx.inject(themeScope)
       return {}
     })
-    const r = createRoot(root, { deps: {}, scopes: [[themeScope, 'dark']] })
+    const r = createRoot(root, { queries: queryEngine(), deps: {}, scopes: [[themeScope, 'dark']] })
     expect(seenTheme).toBe('dark')
     r.dispose()
   })
@@ -190,7 +191,11 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       ctx.child(leaf, undefined)
       return {}
     })
-    const r = createRoot(root, { deps: {}, scopes: [[userIdScope, 'u-42']] })
+    const r = createRoot(root, {
+      queries: queryEngine(),
+      deps: {},
+      scopes: [[userIdScope, 'u-42']],
+    })
     expect(leafSaw).toBe('u-42')
     r.dispose()
   })
@@ -215,7 +220,11 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       )
       return {}
     })
-    const r = createRoot(outer, { deps: {}, scopes: [[tenantScope, 'seeded']] })
+    const r = createRoot(outer, {
+      queries: queryEngine(),
+      deps: {},
+      scopes: [[tenantScope, 'seeded']],
+    })
     expect(outerSaw).toBe('seeded')
     expect(innerSaw).toBe('override')
     r.dispose()
@@ -229,6 +238,7 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       return {}
     })
     const r = createRoot(root, {
+      queries: queryEngine(),
       deps: {},
       scopes: [
         [s, 1],

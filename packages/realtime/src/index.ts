@@ -312,7 +312,7 @@ export function useLiveStream<TEvent>(
  *
  * ```ts
  * const conn = useRealtimeConnection(ctx)
- * const orders = ctx.bindQuery(ordersQuery)
+ * const orders = bindQuery(ctx, ordersQuery)
  * ctx.effect(() => {
  *   if (conn.value === 'connected') {
  *     orders.invalidateAll()
