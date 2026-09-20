@@ -1130,3 +1130,23 @@ Two release-process changes, both reversing earlier decisions recorded in this l
   PR is a low-ceremony act several people can do; an npm version can never be reused. Those should
   not be the same gesture.
 
+## 2026-09-20 — the writing rules, written down
+
+Applied the fonbnk codebase wiki's prose rules across all 79 Markdown files, then wrote the rules
+themselves into `decisions/prose-rules.md` so the next session inherits the calibration rather than
+re-deriving it.
+
+- Ported that repo's `wiki-lint.js --style` to `scripts/prose-lint.mjs`, same thresholds, wired as
+  `pnpm prose:lint`. It is opt-in: no hook, no CI step.
+- The pass took 1989 findings to 1042. `slash-or` and `banned` went to zero. `hedge` went 92 to 8,
+  and each survivor is temporal or inside a quotation.
+- The decision page carries the part that is not in fonbnk's docs: the four shapes we leave flagged
+  on purpose. Em dashes are half the findings here and mostly earn their place. An absolute that a
+  test pins stays absolute. A code citation in parentheses is exempt by the written rule but still
+  counted. Terse changelog annotations in this file read better than the sentences they would become.
+- Fixed a real bug in the port while checking the new page against its own rules. The quote-collapse
+  pass runs before the line split, and a long quoted span can swallow the newline and leading `|`
+  between two table rows, hiding the second row from the table check and scanning it as prose. The
+  page's own rules table tripped it: 8 of its 11 findings were the table being read as prose.
+  Structure is now read from the original lines, so the collapse cannot move it.
+

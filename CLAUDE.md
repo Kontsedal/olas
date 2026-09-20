@@ -27,6 +27,7 @@ pnpm vitest run packages/core/tests/query.test.ts  # run one test file
 pnpm vitest run -t "race protection"               # run by test-name substring
 
 pnpm wiki:lint                                     # check .wiki/ for broken citations, orphans, stale pages
+pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
 CI = `install → typecheck → lint → test → build`. Reproducing CI locally is the five commands above in order.
@@ -248,3 +249,4 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 - **`@preact/signals-core` is a peer dep on `@kontsedal/olas-core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
 - **biome config in `biome.json`**, currently v2.x per `package.json`. Two rules are intentionally off. `noExplicitAny` is off because the wrapper types need it. `noConfusingVoidType` is off because it matches the spec's effect signature `() => void | (() => void)`. Don't re-enable them.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".
+- **Every `.md` follows one writing style**, checked by `pnpm prose:lint`. One fact per sentence, a named actor, no word that carries no fact. The rules, and the four things the linter flags that we leave alone on purpose, are in [`.wiki/decisions/prose-rules.md`](.wiki/decisions/prose-rules.md). Read it before a docs pass; a clean run is not the goal.

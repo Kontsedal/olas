@@ -62,22 +62,33 @@ function toProse(text) {
     return m.includes('```') || nl > 4 ? m : `QUOTE${'\n'.repeat(nl)}`
   })
   const lines = collapsed.split(/\r?\n/)
+  // Structure is read from the ORIGINAL lines. The quote-collapse above can
+  // swallow the newline and leading `|` between two table rows, which would
+  // hide the second row from the table check and scan it as prose. Deviation
+  // from the fonbnk port, which collapses first and loses that.
+  const raw = text.split(/\r?\n/)
   const out = []
   let inFence = false
-  let inFrontmatter = lines[0] !== undefined && lines[0].trim() === '---'
+  let inFrontmatter = raw[0] !== undefined && raw[0].trim() === '---'
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]
+    const structural = raw[i] ?? line
     if (inFrontmatter) {
-      if (i > 0 && line.trim() === '---') inFrontmatter = false
+      if (i > 0 && structural.trim() === '---') inFrontmatter = false
       out.push('')
       continue
     }
-    if (/^\s*```/.test(line)) {
+    if (/^\s*```/.test(structural)) {
       inFence = !inFence
       out.push('')
       continue
     }
-    if (inFence || /^\s*\|/.test(line) || /^\s*#{1,6}\s/.test(line) || /^\s*<!--/.test(line)) {
+    if (
+      inFence ||
+      /^\s*\|/.test(structural) ||
+      /^\s*#{1,6}\s/.test(structural) ||
+      /^\s*<!--/.test(structural)
+    ) {
       out.push('')
       continue
     }
