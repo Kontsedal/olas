@@ -1,0 +1,81 @@
+name: Publish
+
+# Manual release to npm. Nothing publishes on a merge — someone has to come here
+# and run this, from `main`, and type the confirmation.
+#
+# What it publishes: whatever versions are currently on `main`. The normal
+# sequence is (1) merge the "Version Packages" PR that `version.yml` opened,
+# (2) run this. `changeset publish` skips any package whose version already
+# exists on npm, so a re-run after a partial failure is safe and resumes rather
+# than duplicating.
+#
+# Requires an `NPM_TOKEN` repository secret. Without it `changeset publish` has
+# no auth and publishes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "publish" to confirm releasing to npm'
+        required: true
+        default: ''
+
+concurrency: publish-main
+
+permissions:
+  contents: write # `changeset publish` pushes git tags
+
+jobs:
+  publish:
+    name: verify + publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      # Typing the word is the whole point: `workflow_dispatch` is one click
+      # from the Actions tab, and this step is irreversible.
+      - name: Check confirmation
+        if: inputs.confirm != 'publish'
+        run: |
+          echo "::error::Confirmation failed. Re-run and type 'publish' in the confirm field."
+          exit 1
+
+      - name: Refuse to publish from anywhere but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Publish only from main (got ${{ github.ref }})."
+          exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      # Re-verify here rather than trusting main's last CI run: this publishes
+      # the artifacts built in THIS job, and an npm version can never be
+      # reused. Same chain as ci.yml, build first (see the note there).
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test:coverage
+      - run: pnpm --filter "./examples/*" test
+      - run: pnpm publint
+      - run: pnpm attw
+      - run: pnpm smoke:dist
+
+      # `publish:` only — no `version:`. This workflow must never rewrite
+      # versions; that already happened in the merged Version Packages PR.
+      - name: Publish
+        uses: changesets/action@v1
+        with:
+          publish: pnpm release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

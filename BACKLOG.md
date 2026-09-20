@@ -229,11 +229,11 @@ symbol the range must contain.
 
 ### Internal peer ranges have no upper bound
 
-The nine sub-packages declare `peerDependencies: { "@kontsedal/olas-core": ">=0.3.0" }`. The intent at 0.3.0 was `>=0.3.0 <1.0.0`; `changeset version` rewrote it to `>=0.3.0`, dropping the clause it doesn't manage. Consequence: `olas-react@0.4.x` nominally accepts a future `olas-core@1.x`, so the range doesn't fence off a breaking core. Cosmetic while all ten ship in lockstep at one version, and it self-resolves at 1.0 (a caret admits 1.1.0). Options if it starts mattering: re-add the ceiling as a post-`version` step in the release script, or move to a caret once on 1.x.
+**Resolved for 0.x.** The nine sub-packages declared `peerDependencies: { "@kontsedal/olas-core": ">=0.3.0" }` with no ceiling. That was cosmetic while all ten shipped in lockstep at one version; dropping the `fixed` group made it load-bearing, so every internal peer range now carries `<1.0.0` (`>=0.3.0 <1.0.0`, and `>=0.9.0 <1.0.0` on mutation-queue).
 
-**The version-cascade half of this is fixed** — it was never really about the range. Widening to `>=0.3.0` at 0.3.0 aimed at the wrong half of the condition: `shouldBumpMajor` short-circuits on `!onlyUpdatePeerDependentsWhenOutOfRange`, which defaults to **false**, so the range was never consulted at all and *any* non-patch core bump majored all nine peer-dependents, which the `fixed` group then propagated back to core. 0.4.0 sets `___experimentalUnsafeOptions_WILL_CHANGE_IN_PATCH.onlyUpdatePeerDependentsWhenOutOfRange: true` in `.changeset/config.json`, which makes the range load-bearing (verified: `changeset status` computes minor, `changeset version` produces 0.4.0 across all ten and leaves the peer ranges untouched). Keep the flag in mind when upgrading `@changesets/cli` — the name advertises that it can change in a patch.
+Verified against this tree with throwaway changesets: an in-range bump (core 0.8.0 → 0.9.0, zod → 0.8.1) leaves the ceilings intact and bumps nothing else, and an out-of-range bump (core → 1.0.0) cascades a major to all nine and rewrites their ranges — the intended fence.
 
-(nothing tagged yet — drop short, unclassified notes here when they don't fit above)
+**What remains.** On that cascade `changeset version` rewrites `>=0.3.0 <1.0.0` to `>=1.0.0`, dropping the ceiling again: it manages the floor and discards the rest of the range. So the ceiling survives normal operation but is stripped exactly when a major lands. This is tolerable now that publishing is manual — the rewrite shows up in the "Version Packages" PR diff, which a human reviews before merging, and again before running the publish workflow. If it starts being missed, the fix is a post-`version` script that re-applies ceilings, run as part of `changeset version`.
 
 ### CI releases cannot complete without two repo-settings changes
 
@@ -242,4 +242,6 @@ The 0.4.0 release had to be finished by hand twice, for reasons the workflow can
 1. **`GitHub Actions is not permitted to create or approve pull requests`** — the changesets action built and pushed `changeset-release/main` but could not open the Version Packages PR (run 30610698827). Fix: Settings → Actions → General → Workflow permissions → allow Actions to create PRs. Until then, every release needs a manual `gh pr create --head changeset-release/main`.
 2. **No `NPM_TOKEN` repo secret exists** (`gh secret list` is empty), so the publish step dies with `ENEEDAUTH` on all ten packages (run 30610849873). 0.3.0 and 0.4.0 were both published from a locally-authenticated machine (`npm whoami` → kontsedal) via `pnpm release`. Fix: mint an npm automation token and `gh secret set NPM_TOKEN`.
 
-Neither blocks releasing — the local path works — but the release.yml pipeline is decorative until both are done.
+Neither blocks releasing — the local path works — but the CI pipeline is decorative until both are done.
+
+Note the split since: `version.yml` opens the Version Packages PR (needs fix 1), `publish.yml` is `workflow_dispatch`-only and pushes to npm (needs fix 2). Fix 1 is the more annoying of the two, because without it there is no automated PR to review and the whole version step has to be run by hand.

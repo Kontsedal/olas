@@ -1,0 +1,55 @@
+name: Version
+
+# Opens and maintains the "Version Packages" PR. It NEVER publishes.
+#
+# On a push to `main` with pending changesets, changesets/action runs
+# `changeset version` on a branch and opens (or updates) a PR containing the
+# version bumps and CHANGELOG entries. Merging that PR consumes the changesets
+# and lands the new versions on `main` — still without publishing anything.
+#
+# Publishing is a separate, manually triggered workflow (`publish.yml`). The
+# split is deliberate: merging a PR is a low-ceremony action that several people
+# can do, while pushing to npm is irreversible (a version number can never be
+# reused, even after `npm unpublish`). Those should not be the same gesture.
+#
+# Packages version INDEPENDENTLY — there is no `fixed` group in
+# `.changeset/config.json`, so a package bumps only when a changeset names it or
+# when a dependency moves outside its declared peer range.
+on:
+  push:
+    branches: [main]
+
+concurrency: version-${{ github.ref }}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  version:
+    name: open or update the Version Packages PR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # No `publish:` input — that is what keeps this workflow incapable of
+      # releasing. With only `version:`, the action's sole outcome is a PR.
+      - name: Create or update the version PR
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          title: 'chore: version packages'
+          commit: 'chore: version packages'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

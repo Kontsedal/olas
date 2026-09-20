@@ -17,7 +17,7 @@ edges:
   - { type: uses, target: ../entities/ctx.md }
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: uses, target: ../flows/construction-rollback.md }
-last_verified: 2026-07-29
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -110,7 +110,7 @@ Dispose iterates **reverse** order, suspend iterates reverse, resume iterates **
 
 `attachRootControls(api, instance, devtools, queryClient)` in `root.ts:71-157` defines six non-enumerable properties on the api object: `dispose`, `suspend`, `resume`, `dehydrate`, `waitForIdle`, `__debug`. Conflicts with controller-supplied keys throw at construction.
 
-`suspend({ maxIdle: ms })` — schedules a `setTimeout` to dispose if not resumed within `ms`. `resume()` cancels it.
+`suspend({ maxIdle: ms })` — arms an auto-dispose for `ms` from now, cancelled by `resume()` (and by `dispose()`). It schedules through `scheduleExpiry` (`../../packages/core/src/expiry-timer.ts`), not a bare `setTimeout`: `maxIdle: Infinity` arms nothing at all (stay suspended until something else disposes) and a finite value above the 32-bit timer limit is chunked rather than overflowing into an immediate dispose. `suspendTimer` holds the cancellation closure. See `../pitfalls/isstale-needs-timer.md`.
 
 ## What lives in `RootShared`
 

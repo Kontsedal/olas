@@ -529,6 +529,8 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Best-effort, replay-safe mutation queue. Persists `defineMutation({ persist: true })` runs to a `StorageAdapter`; replays pending entries on reload / crash / reconnect (Web-Locks-coordinated cross-tab). |
 | [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Works with TanStack Router or React Router v6. |
 
+**Versioning.** Each package versions independently — a release bumps only the packages that actually changed, so version numbers across the suite will not match and are not meant to. Install whichever packages you use at whatever versions npm resolves; each declares the range of `@kontsedal/olas-core` it works with as a peer dependency, so an incompatible combination fails at install time rather than at runtime.
+
 Outstanding work — additional storage adapters, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
 
 ---

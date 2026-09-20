@@ -1084,3 +1084,26 @@ step short in two directions.
   configured not to version them, so these were stale artifacts recording versions that never shipped
   (`@kontsedal/olas-react@1.0.0`).
 
+## 2026-09-20 — independent versioning, and publishing behind a manual trigger
+
+Two release-process changes, both reversing earlier decisions recorded in this log.
+
+- **Dropped the `fixed` lockstep group.** All ten packages shared one version and bumped together, so
+  a core-only change dragged nine untouched packages to a new version and the changelog claimed
+  releases that contained nothing. Removed; packages now version independently. Verified with
+  throwaway changesets against this tree: a core minor + a zod patch produces core 0.9.0, zod 0.8.1
+  and leaves the other eight alone, and the real changeset on this branch bumps only core and
+  mutation-queue — the two that actually changed.
+- Lockstep was also what made the missing peer-range ceilings harmless ("cosmetic while all ten ship
+  in lockstep", 2026-07-31). Dropping it makes them load-bearing, so every internal peer range gained
+  `<1.0.0`. Verified both directions: an in-range bump leaves ceilings intact and cascades nothing; an
+  out-of-range bump (core → 1.0.0) majors all nine and rewrites their ranges. The rewrite still drops
+  the ceiling — changesets manages the floor and discards the rest — but that now surfaces in a PR
+  diff a human reads. BACKLOG updated from "open" to "resolved for 0.x, with this caveat".
+- **Publishing is no longer a side effect of merging.** `release.yml` did both jobs: it opened the
+  version PR, and when that PR merged it published to npm. Split into `version.yml` (push to `main`,
+  opens the PR, has no `publish:` input so it *cannot* release) and `publish.yml`
+  (`workflow_dispatch`, main-only, typed confirmation, re-runs the full verify chain first). Merging a
+  PR is a low-ceremony act several people can do; an npm version can never be reused. Those should
+  not be the same gesture.
+

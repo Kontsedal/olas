@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-react",
   "version": "0.8.0",
-  "description": "Olas React adapter — OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.",
+  "description": "Olas React adapter \u2014 OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.",
   "keywords": [
     "olas",
     "controller-tree",
@@ -53,7 +53,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": ">=0.3.0",
+    "@kontsedal/olas-core": ">=0.3.0 <1.0.0",
     "react": ">=18"
   },
   "devDependencies": {

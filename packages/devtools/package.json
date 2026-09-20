@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-devtools",
   "version": "0.8.0",
-  "description": "Olas in-app devtools — controller tree inspector, cache timeline, mutation log, signal graph.",
+  "description": "Olas in-app devtools \u2014 controller tree inspector, cache timeline, mutation log, signal graph.",
   "keywords": [
     "olas",
     "controller-tree",
@@ -52,8 +52,8 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": ">=0.3.0",
-    "@kontsedal/olas-react": ">=0.3.0",
+    "@kontsedal/olas-core": ">=0.3.0 <1.0.0",
+    "@kontsedal/olas-react": ">=0.3.0 <1.0.0",
     "react": ">=18"
   },
   "devDependencies": {

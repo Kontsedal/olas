@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: ten published packages ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR + streaming SSR, `defineScope`, the dynamic-child trio `ctx.session` / `ctx.collection` / `ctx.lazyChild`), `@kontsedal/olas-react` (Provider + hooks + keep-alive + streaming hydration), `@kontsedal/olas-zod`, `@kontsedal/olas-persist` (`usePersisted` + `localStorageAdapter` + `indexedDbAdapter`), `@kontsedal/olas-devtools` (in-app panel + floating launcher), `@kontsedal/olas-cross-tab` (BroadcastChannel cache sync), `@kontsedal/olas-entities` (entity normalization plugin), `@kontsedal/olas-realtime` (realtime patcher + live streams), `@kontsedal/olas-mutation-queue` (durable persist + reload-safe replay for `persist: true` mutations), `@kontsedal/olas-router` (scope-based router bridge for TanStack Router / React Router v6). Plus the private `packages/integration` cross-package test suite. 843 tests across 59 files + the `examples/` apps (kanban, reader-ssr, stock-ticker, virtualized-table). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
+Current implementation status: ten published packages ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR + streaming SSR, `defineScope`, the dynamic-child trio `ctx.session` / `ctx.collection` / `ctx.lazyChild`), `@kontsedal/olas-react` (Provider + hooks + keep-alive + streaming hydration), `@kontsedal/olas-zod`, `@kontsedal/olas-persist` (`usePersisted` + `localStorageAdapter` + `indexedDbAdapter`), `@kontsedal/olas-devtools` (in-app panel + floating launcher), `@kontsedal/olas-cross-tab` (BroadcastChannel cache sync), `@kontsedal/olas-entities` (entity normalization plugin), `@kontsedal/olas-realtime` (realtime patcher + live streams), `@kontsedal/olas-mutation-queue` (durable persist + reload-safe replay for `persist: true` mutations), `@kontsedal/olas-router` (scope-based router bridge for TanStack Router / React Router v6). Plus the private `packages/integration` cross-package test suite. 901 tests across 62 files + the `examples/` apps (kanban, reader-ssr, stock-ticker, virtualized-table). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -30,6 +30,19 @@ pnpm wiki:lint                                     # check .wiki/ for broken cit
 ```
 
 CI = `install → typecheck → lint → test → build`. Reproducing CI locally is the five commands above in order.
+
+## Releasing
+
+Packages version **independently** — `.changeset/config.json` has no `fixed` group, so a release bumps only the packages a changeset names, plus any whose peer range a bumped dependency fell out of. Version numbers across the suite are not expected to match. Don't "fix" a mismatch by adding bumps.
+
+Every user-visible change needs a changeset (`pnpm changeset`) naming the packages it actually touches. A docs-only change to a package README needs none.
+
+The pipeline is two workflows, deliberately split:
+
+1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`changeset version`). **Never publishes.**
+2. `.github/workflows/publish.yml` — `workflow_dispatch` only, from `main`, with a typed confirmation. Re-runs the full verify chain, then `pnpm release`.
+
+Merging the version PR does **not** release. Someone has to run the publish workflow. That split is the point: merging is routine and reversible, pushing to npm is neither — a version number can never be reused. `changeset publish` skips packages already on npm, so re-running after a partial failure resumes safely.
 
 ## Workspace layout
 

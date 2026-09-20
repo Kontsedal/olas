@@ -9,7 +9,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/mutation-queue/tests/plugin.test.ts }
   - { type: uses, target: persist.md }
-last_verified: 2026-09-19
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -27,7 +27,7 @@ A `QueryClientPlugin` that persists `defineMutation({ persist: true })` runs to 
 
 1. **Replay on reconnect, not only reload.** `init` adds a `window` `'online'` listener that calls `runReplay`; `replayNow()` is exposed for manual drive. The `replaying` flag prevents overlap. (Old design replayed only once, at init.)
 2. **Cross-tab coordination** (`withReplayLock`, `plugin.ts`). Prefers Web Locks (`navigator.locks.request(name, { ifAvailable: true }, …)`) — a tab that can't get the lock skips the pass (the holder replays every entry under the shared prefix). Falls back to a best-effort TTL'd `localStorage` lease (`acquireLease`/`releaseLease` + a `setInterval` heartbeat); Node/SSR (neither primitive) runs uncoordinated. **Best-effort, not exactly-once** — the lease has a residual double-replay window; server `idempotencyKey` is the real gate.
-3. **Cache reconciliation** — `onReplaySettle(entry, result, api)` fires after a successful replay; `api.invalidate(query, keyArgs)` delegates to the query's own `invalidate(...)` so subscribers refetch server truth. Without it, UIs stay stale until `staleTime` lapses.
+3. **Cache reconciliation** — `onReplaySettle(entry, result, api)` fires after a successful replay; `api.invalidate(query, callArgs)` invalidates in the plugin's owning root so its subscribers refetch server truth. Without it, UIs stay stale until `staleTime` lapses. `callArgs` are the query's own arguments, not the tuple `key()` returns (see `../pitfalls/callargs-vs-keyargs.md`).
 
 ## Other T6.2 honesty fixes
 

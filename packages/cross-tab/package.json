@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-cross-tab",
   "version": "0.8.0",
-  "description": "Olas cross-tab cache sync — BroadcastChannel-backed QueryClientPlugin keeping every browser tab in lockstep.",
+  "description": "Olas cross-tab cache sync \u2014 BroadcastChannel-backed QueryClientPlugin keeping every browser tab in lockstep.",
   "keywords": [
     "olas",
     "controller-tree",
@@ -52,7 +52,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": ">=0.3.0"
+    "@kontsedal/olas-core": ">=0.3.0 <1.0.0"
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^"

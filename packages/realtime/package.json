@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-realtime",
   "version": "0.8.0",
-  "description": "Olas realtime composables — useRealtimePatcher, useLiveStream, and useRealtimeConnection over a pluggable RealtimeService.",
+  "description": "Olas realtime composables \u2014 useRealtimePatcher, useLiveStream, and useRealtimeConnection over a pluggable RealtimeService.",
   "keywords": [
     "olas",
     "controller-tree",
@@ -53,7 +53,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": ">=0.3.0"
+    "@kontsedal/olas-core": ">=0.3.0 <1.0.0"
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^"

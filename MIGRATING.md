@@ -49,6 +49,12 @@ const userQuery = defineQuery({
 
 Anonymous queries are omitted from `dehydrate()` and fetch on the client. Registration order is no longer used for hydration identity. Legacy auto-ID payloads cannot seed anonymous queries. Fresh hydrated entries skip refetch; `staleTime: 0` still refetches. Infinite-query dehydration remains unsupported.
 
+### Package versions diverge from here
+
+Through 0.8 every `@kontsedal/olas-*` package shared one version number, bumped in lockstep whether or not it had changed. From 0.9 they version independently: this release bumps `@kontsedal/olas-core` and `@kontsedal/olas-mutation-queue` to 0.9.0 and leaves the other eight at 0.8.0, because nothing in them changed.
+
+Nothing to do on your side — keep whatever versions npm resolves. Do not assume matching version numbers mean anything, and do not pin the suite to a single version. Each package declares the core range it supports as a peer dependency, so npm rejects an incompatible pairing at install time.
+
 ### Cache keys and stale timers
 
 `stableHash` now uses a fully tagged encoding. Rebuild any external indexes that persist its output; the output format is not a persistence protocol. Ordinary query calls still pass the same arguments. Cyclic keys throw a descriptive error.

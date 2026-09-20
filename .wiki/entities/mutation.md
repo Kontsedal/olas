@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../flows/mutation-concurrency.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-09-03
+last_verified: 2026-09-20
 confidence: high
 ---
 
@@ -81,7 +81,7 @@ Notes:
 
 ## Retry
 
-`runWithRetry` follows the same shape as `Entry.runWithRetry`: catch err → check `shouldRetry(retry, attempt, err)` → `await abortableSleep(...)` → retry. The user-facing promise resolves with the final outcome.
+`runWithRetry` follows the same shape as `Entry.runWithRetry`: catch err → check `shouldRetry(retry, attempt, err)` → `await abortableSleep(...)` → retry. The user-facing promise resolves with the final outcome. `abortableSleep` schedules via `scheduleExpiry`, so a user `retryDelay` past the 32-bit timer limit backs off for the time asked instead of overflowing to ~1ms, and a non-finite one parks until the abort fires.
 
 ## Dispose
 
