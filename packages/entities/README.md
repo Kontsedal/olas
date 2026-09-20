@@ -1,8 +1,8 @@
 # @kontsedal/olas-entities
 
-**The same `Post` shows up in your feed query, your profile query, and a search result — then someone likes it.** Now three cache entries disagree and you're patching them by hand. `@kontsedal/olas-entities` collapses that to one call: `entities.update(Post, id, { likes })` patches *every* query holding that id in a single batched write, and each subscriber re-renders once.
+**The same `Post` shows up in your feed query, your profile query, and a search result — then someone likes it.** Now three cache entries disagree and you're patching them by hand. `@kontsedal/olas-entities` collapses that to one call. `entities.update(Post, id, { likes })` patches *every* query holding that id in a single batched write, and each subscriber re-renders once.
 
-It's an entity-normalization plugin built on the [`QueryClientPlugin`](../../SPEC.md) surface (SPEC §13.2): it observes every cache write (fetch + setData + remote), walks the data via per-entity `idOf` predicates, and maintains a normalized store plus a reverse index of `(entity-id → queries-holding-it)`. Your queries never know it's there — the full worked problem it replaces is SPEC §18.1.
+It is an entity-normalization plugin built on the [`QueryClientPlugin`](../../SPEC.md) surface, per SPEC §13.2. It observes every cache write, whether fetch, setData or remote, walks the data via per-entity `idOf` predicates, and maintains a normalized store plus a reverse index from entity id to the queries holding it. Your queries never know it is there. SPEC §18.1 has the full worked problem it replaces.
 
 ## Install
 
@@ -113,11 +113,11 @@ On `entities.update(Post, id, patch)`:
 2. Write `next` into the entity slot.
 3. For each (queryId, keyArgs, paths) binding in the reverse index, call the new `QueryClientPluginApi.setEntryData` with an immutable patch at every path. All writes happen inside one `batch(...)` — subscribers see one notification per affected query, not one per path.
 
-The post-update walk that runs when the patch's `setEntryData` fires its `SetDataEvent` is dedup'd by `@preact/signals-core`'s `Object.is` equality — the slot already holds `next`, so re-setting it is a no-op and the loop terminates after one cycle.
+The patch's `setEntryData` fires a `SetDataEvent`, which triggers a post-update walk. `@preact/signals-core` dedups that with `Object.is` equality: the slot already holds `next`, so re-setting it is a no-op and the loop terminates after one cycle.
 
 ## Constraints (v1)
 
-- **Regular and infinite queries are both walked.** Infinite payloads (`kind: 'infinite'`) traverse the `TPage[]` shape transparently — the walker's existing array branch handles page indices, and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData`. Cross-tab still skips infinite (different concern: payload size).
+- **Regular and infinite queries are both walked.** Infinite payloads, carrying `kind: 'infinite'`, traverse the `TPage[]` shape transparently. The walker's existing array branch handles page indices, and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData`. Cross-tab still skips infinite, which is a separate concern about payload size.
 - **One plugin instance per root.** Construct a fresh `entitiesPlugin([...])` per `createRoot(...)`.
 - **Entity must be registered.** `signal, get, upsert, update, invalidate, entries and bindings` throw when called with an `EntityDef` that wasn't passed to `entitiesPlugin([...])`. Catches the mistake at the call site instead of leaking orphan signals.
 - **`update` default is shallow-merge.** Use the function form (`update(id, prev => ...)`) for non-shallow and computed updates.
@@ -125,7 +125,7 @@ The post-update walk that runs when the patch's `setEntryData` fires its `SetDat
 
 ## Memory characteristics
 
-- **Per-id signal slots are allocated on first read** of `entities.signal(Post, id)` (or first observation in a query). They live until the plugin is disposed. If your app calls `signal(Post, dynamicId)` with churning ids (e.g., per-render computed values), the slot map grows unbounded — dev builds emit a one-shot warning once any entity partition crosses 10k unique ids. Per-entity LRU eviction is on the BACKLOG.
+- **Per-id signal slots are allocated on first read** of `entities.signal(Post, id)`, or on first observation in a query. They live until the plugin is disposed. Calling `signal(Post, dynamicId)` with churning ids, such as per-render computed values, grows the slot map without bound. Dev builds emit a one-shot warning once any entity partition crosses 10k unique ids. Per-entity LRU eviction is on the BACKLOG.
 - **Walk cost is O(reachable nodes)** per `SetDataEvent`. The walker uses one mutable path accumulator (push/pop on descent/ascent) and clones only at binding boundaries.
 - **Shared-reference DAGs** are handled correctly: a single `Post` reachable via two paths gets bindings recorded for both. True cycles (a `Post` referencing itself) short-circuit on the second descent.
 

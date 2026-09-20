@@ -30,19 +30,19 @@ They differ in exactly one respect — whether a snapshot record is pushed (`Ent
 
 ## Why `setData` alone was not enough
 
-A snapshot exists to be **settled** by the mutation that created it: `onMutate` returns it, the runtime finalizes on success and rolls back on error (`mutation.ts`). That contract has no counterpart for a write with no mutation behind it — folding a server push into the cache, applying a realtime event, syncing a value another view just changed.
+A snapshot exists to be **settled** by the mutation that created it. `onMutate` returns it, and the runtime finalizes on success and rolls back on error; see `mutation.ts`. That contract has no counterpart for a write with no mutation behind it: folding a server push into the cache, applying a realtime event, or syncing a value another view just changed.
 
 With only `setData`, such a caller had three options, all bad:
 
 1. Discard the `Snapshot`. Then the record stays **live** forever: `hasPendingMutations` wedged at `true` for the rest of the entry's life, plus one retained baseline per call. On a long-lived entry patched on every server event that array grows without bound — a real leak, not a cosmetic flag.
 2. Call `snapshot.finalize()` at every call site. Correct, invisible in review when forgotten, and a strange thing to require of a write that was never optimistic.
-3. Reach for `QueryClientPluginApi.setEntryData` — the canonical-write path that already existed but is **plugin-facing** (`client.ts:905`), routed by `queryId` + `keyArgs` rather than the typed handle, and not part of the application surface.
+3. Reach for `QueryClientPluginApi.setEntryData`, the canonical-write path that already existed at `client.ts:905`. It is **plugin-facing**, routed by `queryId` and `keyArgs` rather than by the typed handle, and not part of the application surface.
 
-Downstream evidence: one app accumulated eight such sites (server-push folds and execute-result patches) before the leak was noticed, and filed it as "mint a `writeTab` helper with `{ track: false }`" — i.e. it independently re-derived this method as userland glue it could not implement, since `track` was internal.
+Downstream evidence: one app accumulated eight such sites, being server-push folds and execute-result patches, before the leak was noticed. It filed the issue as "mint a `writeTab` helper with `{ track: false }`", independently re-deriving this method as userland glue it could not implement, because `track` was internal.
 
 ## Why not `setData(..., { track: false })`
 
-The handle's signature is variadic — `setData(...args: [...Args, updater])` — so a trailing options bag is not cleanly expressible: with `Args` ending in an object type, TypeScript cannot tell the options from a key argument, and the runtime already recovers the updater positionally (`rest[rest.length - 1]`, `define.ts:104`). A second named method costs one line of surface and stays unambiguous at both the type level and the call site.
+The handle's signature is variadic, `setData(...args: [...Args, updater])`, so a trailing options bag is not cleanly expressible. With `Args` ending in an object type, TypeScript cannot tell the options from a key argument, and the runtime already recovers the updater positionally at `define.ts:104` with `rest[rest.length - 1]`. A second named method costs one line of surface and stays unambiguous at both the type level and the call site.
 
 It also reads better where it matters. `write` says *this is true* and `setData` says *this might have to be undone* — the distinction a reader needs, at the call site, without knowing what `track: false` means.
 
@@ -86,5 +86,5 @@ question — "is this write the whole record", which nothing inside the entry ca
 
 - `write` emits the same `SetDataEvent` with `source: 'set'` as any local write, so cross-tab and entity plugins treat it identically (matching `setEntryData`'s documented behaviour, spec §13.2).
 - Its devtools event is explicitly `'set'`, never `'mutate'`, even when called inside a mutation's `onMutate` — it inherits the ambient `causeId` but its *kind* is a plain set.
-- The supersede rule belongs to `writeData` alone. `setEntryData` and `applyRemoteSetData` (plugin and cross-tab paths, `client.ts`) still write straight through: they have their own ordering contracts, and cross-tab in particular relays another tab's write rather than this tab's server truth.
+- The supersede rule belongs to `writeData` alone. `setEntryData` and `applyRemoteSetData`, the plugin and cross-tab paths in `client.ts`, still write straight through. They have their own ordering contracts, and cross-tab in particular relays another tab's write rather than this tab's server truth.
 - `hasPendingMutations` is purely observational (nothing in core gates on it), so this was never a correctness bug in the engine — it was a wrong-state report plus unbounded retention. Both are gone for callers who use the right method.

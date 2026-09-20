@@ -26,7 +26,7 @@ confidence: medium
 
 # `@kontsedal/olas-devtools`
 
-Drop-in React panel that subscribes to a root's `__debug` bus and renders six live views. The **default and headline view is the causal Timeline** — every event ordered by `seq` and grouped by `causeId` into collapsible cause-chains, each `cache:set-data` expandable to a structural before/after diff. The other tabs are controller Tree, Cache (event log), Inspector (live cache state), Mutations, and Fields. Plus a floating `<DevtoolsLauncher>` that hosts the panel inside a draggable and resizable window with state persisted to `localStorage`. Spec §13/§14.
+Drop-in React panel that subscribes to a root's `__debug` bus and renders six live views. The **default and headline view is the causal Timeline**. Every event is ordered by `seq` and grouped by `causeId` into collapsible cause-chains, and each `cache:set-data` expands to a structural before-and-after diff. The other tabs are the controller Tree, the Cache event log, the Inspector for live cache state, Mutations and Fields. A floating `<DevtoolsLauncher>` hosts the panel inside a draggable, resizable window, with state persisted to `localStorage`. Spec §13, §14.
 
 ## Public surface
 
@@ -93,14 +93,14 @@ The package splits into three pieces:
 
 ## T6.3 hardening
 
-- **Bounded tree.** Disposed controllers used to accumulate in `tree$` forever (churny virtualized lists and lazy children). `pruneDisposed()` (called on `controller:disposed`) removes the oldest **fully-disposed subtrees** once the retained-disposed count exceeds `maxDisposedNodes` (option, default `DEFAULT_MAX_DISPOSED_NODES = 200`). Active/suspended nodes — and any disposed node with a live descendant — are never pruned (`subtreeAllDisposed` guard). Pure helpers `countDisposed`, `collectPrunableRoots` and `removeNodeAt` are exported and unit-tested.
+- **Bounded tree.** Disposed controllers used to accumulate in `tree$` forever, which churny virtualized lists and lazy children made worse. `pruneDisposed()`, called on `controller:disposed`, removes the oldest **fully-disposed subtrees** once the retained-disposed count exceeds the `maxDisposedNodes` option, whose default is `DEFAULT_MAX_DISPOSED_NODES = 200`. Active and suspended nodes are never pruned, and neither is a disposed node with a live descendant; the `subtreeAllDisposed` guard enforces that. Pure helpers `countDisposed`, `collectPrunableRoots` and `removeNodeAt` are exported and unit-tested.
 - **Concurrent mutation durations.** `mutationStarts` is now `Map<path#name, number[]>` — a FIFO queue of `run` start times. Overlapping runs of the same mutation each pair (oldest-first) with their own duration; the old single-value map let a later run's start clobber the earlier one's, losing a duration. Exact run↔settle attribution isn't possible (the debug bus carries no per-run id), but FIFO never loses a start.
 - **`JsonView` cycle guard.** `seen` is the set of **ancestors on the current path**, rebuilt immutably per level (`new Set(seen).add(value)`), not a mutated shared set of everything-rendered. A shared reference (`{a: obj, b: obj}` — a DAG) is no longer mis-flagged `[Circular]`, collapse→re-expand doesn't carry stale state, and StrictMode's double-render stays independent. True cycles (a node that is its own ancestor) are still caught. Tested in `jsonview.test.tsx`.
 - **Debounced filter.** The panel's filter `<input>` stays responsive (`value={filter}`), but views filter against a 150ms-debounced `debouncedFilter`, so a `JSON.stringify`-per-entry pass doesn't run on every keystroke.
 
 ## Post-mount observability
 
-Spec §13 phrasing: "Without devtools, large signal graphs become opaque." This panel subscribes via `useEffect` on mount, so the *initial* `controller:constructed` for the root happens before subscription — the tree starts empty even though the root exists. Mount the panel as early as possible in the React tree to maximize what's captured.
+Spec §13 phrasing: "Without devtools, large signal graphs become opaque." This panel subscribes via `useEffect` on mount, so the *initial* `controller:constructed` for the root happens before the subscription. The tree therefore starts empty even though the root exists. Mount the panel as early as possible in the React tree to maximize what's captured.
 
 For full history, build a `DevtoolsStore` next to `createRoot` (before any controller exists) and pass it to a custom UI later. The store and the panel are decoupled — the panel uses one internally; consumers can use the store on its own.
 
@@ -121,15 +121,15 @@ For full history, build a `DevtoolsStore` next to `createRoot` (before any contr
 
 ## The causal Timeline (T8.4)
 
-`store.events$` is a bounded, `seq`-ordered log of EVERY event (bound = `maxTimelineEntries`, default 500 — higher than the per-view `maxEntries` because it aggregates all families). `groupByCause` folds it into rows: events sharing a `causeId` collapse into one `<CauseGroup>` positioned at the group's first event (the group array is filled by reference as later events arrive, so a whole mutation chain renders together); un-caused events stay standalone. Rows render newest-first; a group's inner events stay chronological so cause → effect reads top-down.
+`store.events$` is a bounded, `seq`-ordered log of EVERY event. The bound is `maxTimelineEntries`, default 500, which is higher than the per-view `maxEntries` because it aggregates all families. `groupByCause` folds it into rows. Events sharing a `causeId` collapse into one `<CauseGroup>` positioned at the group's first event, and the group array is filled by reference as later events arrive, so a whole mutation chain renders together. Un-caused events stay standalone. Rows render newest-first; a group's inner events stay chronological so cause → effect reads top-down.
 
-A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.prev, event.data)` from `diff.ts` — a small, cycle-safe AND depth-bounded (`MAX_DIFF_DEPTH`, so an arbitrarily deep cache value can't overflow the stack and crash the panel) structural walker (added/removed/changed keys highlighted; wholly-unchanged subtrees collapse to a `same` node and are summarized as "+N unchanged"). `diff.ts` deliberately does NOT import core's structural-share internals. The store seeds the per-key diff baseline (`lastDataByKey`) on attach and evicts it on `cache:gc`, so a re-fetch after GC reads as an initial write, not a diff against a ghost value.
+A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.prev, event.data)` from `diff.ts`. That is a small structural walker, both cycle-safe and depth-bounded by `MAX_DIFF_DEPTH`, so an arbitrarily deep cache value cannot overflow the stack and crash the panel. It highlights added, removed and changed keys. Wholly-unchanged subtrees collapse to a `same` node, summarized as "+N unchanged". `diff.ts` deliberately does NOT import core's structural-share internals. The store seeds the per-key diff baseline (`lastDataByKey`) on attach and evicts it on `cache:gc`, so a re-fetch after GC reads as an initial write, not a diff against a ghost value.
 
 ## Controller variables (`ctx.debug`)
 
-A `TreeNode` whose `ControllerNode.debug` record is non-empty renders a **Variables** section (open by default) listing each `name: value` a controller registered via `ctx.debug({...})`. The store carries the debug record on the node — set from `controller:constructed`'s `debug` field (`insertNode` 4th arg) and updated by `controller:debug` (`setNodeDebug`); `controller:debug` is deliberately kept OFF the timeline (it's a state re-registration, not a causal event).
+A `TreeNode` whose `ControllerNode.debug` record is non-empty renders a **Variables** section (open by default) listing each `name: value` a controller registered via `ctx.debug({...})`. The store carries the debug record on the node. It is set from `controller:constructed`'s `debug` field, the 4th argument to `insertNode`, and updated by `controller:debug` through `setNodeDebug`. `controller:debug` is deliberately kept OFF the timeline, because it is a state re-registration rather than a causal event.
 
-Rendering is **reactive with no polling**: `<DebugVar>` duck-types a signal-like value (`peek` + `subscribeChanges` — what `use()` needs; core exports no runtime guard) and renders it through `<ReactiveValue>`, which calls `use()` so the value updates as the signal changes. Non-signals render a static `JsonView` snapshot; functions show `[fn]`. Subscriptions are lazy — only the visible, expanded nodes on the (active) Tree tab hold `use()` subscriptions, so it stays cheap. A Field (itself a `ReadSignal`) shows its value live; a whole Form/subscription/mutation isn't a top-level signal, so it renders as a static object — debug their value signals instead.
+Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value by checking for `peek` and `subscribeChanges`, which is what `use()` needs, because core exports no runtime guard. It renders through `<ReactiveValue>`, which calls `use()` so the value updates as the signal changes. Non-signals render a static `JsonView` snapshot, and functions show `[fn]`. Subscriptions are lazy: only the visible, expanded nodes on the active Tree tab hold `use()` subscriptions, so it stays cheap. A Field is itself a `ReadSignal` and shows its value live. A whole Form, subscription or mutation is not a top-level signal, so it renders as a static object; debug their value signals instead.
 
 ## Event-driven inspector (the poll is gone)
 
@@ -137,14 +137,14 @@ The Inspector previously polled `root.__debug.queryEntries()` on a `setInterval`
 
 ## What's tested
 
-- `store.test.ts` (25 tests) — `insertNode` and `setNodeState`, bounded logs, `DebugEvent` variants through `handle()`, `attach()` unsubscribe, PLUS the unified timeline (ordering, `seq` fallback vs emitter `seq`, `causeId`, `prev` diff baseline + seed-on-attach, `maxTimelineEntries` bounding, pause-drops, clear-resets-baseline) and the event-driven `cacheState$` (seed on attach + refresh-on-cache-event + no-refresh-on-non-cache-event).
-- `diff.test.ts` (10 tests) — `diffValues` add/remove/change/same, nested recursion, DAG-vs-cycle, opaque built-ins (Date), first-write.
-- `panel.test.tsx` (10 tests) — RTL: default Timeline tab, cause-chain grouping of a failing optimistic mutation, `cache:set-data` diff expansion, event-driven inspector; plus prior tree, cache, clear, tabs, suspend, debounce and defaultTab coverage.
+- `store.test.ts`, 25 tests. It covers `insertNode` and `setNodeState`, bounded logs, `DebugEvent` variants through `handle()`, and `attach()` unsubscribe. It also covers the unified timeline: ordering, `seq` fallback against emitter `seq`, `causeId`, the `prev` diff baseline and seed-on-attach, `maxTimelineEntries` bounding, pause-drops and clear-resets-baseline. Finally it covers the event-driven `cacheState$`: seed on attach, refresh on a cache event, and no refresh on a non-cache event.
+- `diff.test.ts`, 10 tests. `diffValues` for add, remove, change and same; nested recursion; DAG against cycle; opaque built-ins such as Date; and first-write.
+- `panel.test.tsx`, 10 tests, using RTL. The default Timeline tab, cause-chain grouping of a failing optimistic mutation, `cache:set-data` diff expansion, and the event-driven inspector. It also keeps the prior tree, cache, clear, tabs, suspend, debounce and defaultTab coverage.
 - Indirectly: `core/tests/devtools-events.test.ts` pins the runtime-emit + `seq`/`causeId` correlation contract.
 
 ## What's NOT included / follow-ups
 
-- **`cache:subscribed`** wiring (subscriber counts) — needs subscriber-path threading through `use → acquire` (overhaul T8.5). Declared in the union, not emitted.
+- **`cache:subscribed`** wiring, for subscriber counts. It needs subscriber-path threading through `use → acquire`, which is overhaul T8.5. Declared in the union, not emitted.
 - **Infinite-query** fetch and snapshot devtools events — T8.1 wired regular queries only (`setInfiniteData` does emit `cache:set-data`).
-- The rest of the devtools overhaul: virtualization + ring buffer (T8.2), omnibox search (T8.3), live actions (T8.6), env simulation + forms inspector (T8.7), plugin lanes (T8.8), session export/import (T8.9). See `../candidates/decisions/devtools-overhaul.md`.
+- The rest of the devtools overhaul: virtualization and ring buffer (T8.2), omnibox search (T8.3), live actions (T8.6), env simulation and forms inspector (T8.7), plugin lanes (T8.8), and session export and import (T8.9). See `../candidates/decisions/devtools-overhaul.md`.
 - Signal dependency graph view (spec §13 mentions it).
