@@ -34,7 +34,7 @@ The guarantee is LIFO — a thing is torn down before whatever it was built on t
 
 ## Why it matters
 
-It decides whether a hook can still use a collaborator. The live case is flushing a pending `debounced` write at unmount (§9): `TimingSignal.dispose()` is `cancel()` + tear down the internal effect (`debounced.ts:116-119`), so it **drops** the pending value. Keeping the write means `flush()` first — and `flush()` only lands if the effect that consumes the debounced signal is still subscribed:
+It decides whether a hook can still use a collaborator. The live case is flushing a pending `debounced` write at unmount (§9). `TimingSignal.dispose()` calls `cancel()` and tears down the internal effect at `debounced.ts:116-119`, so it **drops** the pending value. Keeping the write means `flush()` first — and `flush()` only lands if the effect that consumes the debounced signal is still subscribed:
 
 ```ts
 const settled = debounced(width.signal, 500)
@@ -50,8 +50,8 @@ Swap the two registrations and `flush()` emits into nothing — silently. There 
 
 ## The rule
 
-When an `onDispose` hook needs to *do* something through a controller primitive rather than only release a resource, **create the primitive first**. If that is hard to guarantee — the hook added by a composable, the effect by the caller — don't rely on ordering: register the flush with something that owns the timing explicitly (an app-level pending-writes drain), or flush at the event that should persist rather than at teardown.
+When an `onDispose` hook needs to *do* something through a controller primitive rather than only release a resource, **create the primitive first**. That is hard to guarantee when a composable adds the hook and the caller adds the effect. Do not rely on ordering there. Register the flush with something that owns the timing explicitly, such as an app-level pending-writes drain, or flush at the event that should persist rather than at teardown.
 
 ## Where it's documented
 
-`SPEC.md` §4 now states reverse-registration order and carries the flush example. The wiki had it right all along — `modules/controller.md`, `overview.md` and `entities/controller-instance.md` all say "iterates reverse" — which is the other lesson: the spec and the wiki disagreed for months and nothing checks one against the other.
+`SPEC.md` §4 now states reverse-registration order and carries the flush example. The wiki had it right all along. `modules/controller.md`, `overview.md` and `entities/controller-instance.md` all say "iterates reverse". That is the other lesson: the spec and the wiki disagreed for months, and nothing checks one against the other.

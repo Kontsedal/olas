@@ -8,11 +8,11 @@ This document is intentionally abstract. It describes the idea, not a specific i
 
 ## The core idea
 
-Most interactions with a coding agent look like RAG over a filesystem: the agent grep-searches the repo, reads a handful of files, holds them in context only long enough to answer the question, and discards everything when the session ends. Next session, it does the same work over again. Nothing accumulates. Every explanation you give — *"the reason we do X is because of Y"*, *"we tried Z, it didn't work because…"* — dies in chat history the moment the conversation closes.
+Most interactions with a coding agent look like RAG over a filesystem. The agent grep-searches the repo, reads a handful of files, holds them in context only long enough to answer the question, and discards everything when the session ends. Next session, it does the same work over again. Nothing accumulates. Every explanation you give — *"the reason we do X is because of Y"*, *"we tried Z, it didn't work because…"* — dies in chat history the moment the conversation closes.
 
-The codebase wiki pattern is different. The agent **incrementally builds and maintains a persistent wiki alongside the code** — a structured, interlinked collection of markdown pages capturing what the codebase is, why it's that way, and what's known to be true about it. When code changes, the agent updates affected pages. When you explain something, the agent files it. When the agent infers something it isn't sure about, the inference goes into a staging area until evidence accumulates.
+The codebase wiki pattern is different. The agent **incrementally builds and maintains a persistent wiki alongside the code**. That wiki is a structured, interlinked collection of markdown pages capturing what the codebase is, why it is that way, and what is known to be true about it. When code changes, the agent updates affected pages. When you explain something, the agent files it. When the agent infers something it isn't sure about, the inference goes into a staging area until evidence accumulates.
 
-The key shift: **the wiki is a persistent, compounding artifact that lives in the repo.** The architecture has already been mapped. The pitfalls have already been documented. The cross-references between modules already exist. The wiki keeps getting richer with every PR merged, every bug fixed, every design decision explained — and it stays *current*, because the cost of maintenance is paid by the agent, not by you.
+The key shift: **the wiki is a persistent, compounding artifact that lives in the repo.** The architecture has already been mapped. The pitfalls have already been documented. The cross-references between modules already exist. The wiki keeps getting richer with every PR merged, every bug fixed and every design decision explained. It stays *current*, because the cost of maintenance is paid by the agent rather than by you.
 
 You almost never write the wiki yourself. The agent writes it. Your job is to direct attention, confirm or reject inferences, and ask the right questions. The agent's job is the bookkeeping: summarizing, cross-referencing, filing, keeping pages in sync with code, flagging contradictions.
 
@@ -168,7 +168,7 @@ Typed edges turn the wiki into a real graph the agent can traverse purposefully.
 
 ## Candidate staging: handling low-confidence claims
 
-The most dangerous failure mode for a coding agent's wiki is **confident wrongness.** If a page asserts something incorrect with high confidence, every future query that hits that page propagates the error.
+The most dangerous failure mode for a coding agent's wiki is **confident wrongness**. A page that asserts something incorrect with high confidence propagates the error into every future query that hits it.
 
 The fix is a staging area for low-confidence claims:
 

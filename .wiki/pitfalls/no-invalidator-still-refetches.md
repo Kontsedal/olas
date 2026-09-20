@@ -44,7 +44,7 @@ An optimistic toggle that visibly reverts a moment later, only if the user had h
 
 ## The rule
 
-Call `cancel(...)` before an optimistic `setData(...)` **unconditionally**. It is synchronous, so it fits a sync `onMutate`; it is a no-op when nothing is in flight; and it costs one line against a class of bug whose defining property is that it doesn't reproduce.
+Call `cancel(...)` before an optimistic `setData(...)` **unconditionally**. It is synchronous, so it fits a sync `onMutate`. It is a no-op when nothing is in flight. It costs one line against a class of bug whose defining property is that it does not reproduce.
 
 ```ts
 const uiState = ctx.bindQuery(uiStateQuery)  // root-scoped; see §21.5
@@ -59,7 +59,7 @@ onMutate: (vars) => {
 
 ## The adjacent trap, and why it is no longer one
 
-The same reasoning error used to have a sibling: assuming a *canonical* write was safe from this race. It wasn't, and every `write` call site had to remember `cancel()` exactly as an optimistic one does. A consumer app paid for that twice in a day — a result grid blanking a moment after its query finished, and a tab, split or panel-close undoing itself — so **`write` supersedes the in-flight fetch itself now** (spec §6.4; pinned in `query.test.ts`, "supersedes an in-flight fetch when the entry already holds data").
+The same reasoning error used to have a sibling: assuming a *canonical* write was safe from this race. It was not, and every `write` call site had to remember `cancel()` exactly as an optimistic one does. A consumer app paid for that twice in a day: a result grid blanked a moment after its query finished, and a tab, split or panel-close undid itself. So **`write` supersedes the in-flight fetch itself now** (spec §6.4; pinned in `query.test.ts`, "supersedes an in-flight fetch when the entry already holds data").
 
 The trap above is unchanged for `setData`, and deliberately so. The asymmetry is the point:
 
@@ -68,7 +68,7 @@ The trap above is unchanged for `setData`, and deliberately so. The asymmetry is
 | `write` | **yes, by definition** — the server already said this | supersedes it itself |
 | `setData` | no — it is a guess | a response may overrule it; cancel first |
 
-**The one thing `write` still will not do is cancel a fetch when the entry holds no data.** That fetch is not a stale answer to discard, it is what will produce the first value — and cancelling it strands the entry at `status: 'success'` over `undefined` with nothing to refetch it until `staleTime` lapses. The two edges pull opposite ways, and "is anything cached?" separates them, which is the same `peek` guard the recipe below already uses for a different reason.
+**The one thing `write` still will not do is cancel a fetch when the entry holds no data.** That fetch is what will produce the first value, not a stale answer to discard. Cancelling it strands the entry at `status: 'success'` over `undefined`, with nothing to refetch it until `staleTime` lapses. The two edges pull opposite ways, and "is anything cached?" separates them. That is the same `peek` guard the recipe below already uses for a different reason.
 
 ## Where it's documented
 

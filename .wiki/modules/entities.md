@@ -76,7 +76,7 @@ This relies on `setAtPath` returning a structure that shares siblings by referen
 
 ## Constraints (v1)
 
-- **Regular and infinite queries both walked.** Infinite payloads (`kind: 'infinite'`) traverse the `TPage[]` shape transparently — the walker's existing array branch handles page indices, and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData` (`packages/core/src/query/client.ts`). Cross-tab still skips infinite (different concern: payload size).
+- **Regular and infinite queries both walked.** Infinite payloads, carrying `kind: 'infinite'`, traverse the `TPage[]` shape transparently. The walker's existing array branch handles page indices, and `setEntryData` in `packages/core/src/query/client.ts` routes infinite-keyed writes back through `InfiniteEntry.setData`. Cross-tab still skips infinite, which is a separate concern about payload size.
 - **One plugin instance per root.** Sharing a plugin instance across `createRoot(...)` calls would clobber the store and corrupt the reverse index. Construct a fresh `entitiesPlugin([...])` per root.
 - **Entity must be registered.** All public methods throw when called with an `EntityDef` not in the plugin's entities array. Catches the mistake at the call site instead of leaking orphan signals.
 - **`update` default is shallow-merge** (`Partial<T>`). The function form `update(id, prev => next)` covers non-shallow updates without forcing a third package.
@@ -84,7 +84,7 @@ This relies on `setAtPath` returning a structure that shares siblings by referen
 
 ## bindingKey uses `stableHash`
 
-Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the same canonicalizer the core `QueryClient` uses for its own per-entry hash — Date values canonicalize to ISO strings, object keys sort, `undefined` distinguishes from absent, and functions, symbols, Map and Set throw. This means an entities binding key collides with the `QueryClient` entry it points at iff the same `keyArgs` would, so `api.setEntryData(queryId, keyArgs, ...)` always finds the right entry.
+Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the same canonicalizer the core `QueryClient` uses for its own per-entry hash. Date values canonicalize to ISO strings, object keys sort, `undefined` is distinguishable from absent, and functions, symbols, Map and Set throw. So an entities binding key collides with the `QueryClient` entry it points at exactly when the same `keyArgs` would, and `api.setEntryData(queryId, keyArgs, ...)` always finds the right entry.
 
 ## Memory model
 

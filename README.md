@@ -271,7 +271,7 @@ function UserCard() {
 }
 ```
 
-**Two controllers subscribing to the same `userQuery` with the same id share one fetch and one cache entry.** When the last subscriber disposes, the entry is collected after `gcTime` (5 min default).
+**Two controllers subscribing to the same `userQuery` with the same id share one fetch and one cache entry.** When the last subscriber disposes, the entry is collected after `gcTime`, which defaults to five minutes.
 
 ```mermaid
 graph TD
@@ -317,7 +317,7 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
 })
 ```
 
-`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `users.cancel(...)` — `users` being the root-scoped handle from `ctx.bindQuery(userQuery)` — so an outgoing refetch's stale response can't land on top of the optimistic value; if the call fails, `onError` calls `snapshot.rollback()` and the UI reverts (rollback restores server truth when a fetch succeeded in between — see SPEC §6.4).
+`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `users.cancel(...)`, where `users` is the root-scoped handle from `ctx.bindQuery(userQuery)`, so an outgoing refetch's stale response cannot land on top of the optimistic value. If the call fails, `onError` calls `snapshot.rollback()` and the UI reverts. Rollback restores server truth when a fetch succeeded in between; see SPEC §6.4.
 
 Three concurrency modes (`parallel` is default):
 
@@ -529,7 +529,7 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Best-effort, replay-safe mutation queue. Persists `defineMutation({ persist: true })` runs to a `StorageAdapter`; replays pending entries on reload / crash / reconnect (Web-Locks-coordinated cross-tab). |
 | [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Works with TanStack Router or React Router v6. |
 
-**Versioning.** Each package versions independently — a release bumps only the packages that changed, so version numbers across the suite will not match and are not meant to. Install whichever packages you use at whatever versions npm resolves; each declares the range of `@kontsedal/olas-core` it works with as a peer dependency, so an incompatible combination fails at install time rather than at runtime.
+**Versioning.** Each package versions independently. A release bumps only the packages that changed, so version numbers across the suite will not match and are not meant to. Install whichever packages you use at whatever versions npm resolves. Each declares the range of `@kontsedal/olas-core` it works with as a peer dependency, so an incompatible combination fails at install time rather than at runtime.
 
 Outstanding work — additional storage adapters, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
 
