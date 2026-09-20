@@ -1,6 +1,6 @@
 # @kontsedal/olas-devtools
 
-In-app devtools UI for an Olas root. Two React components: `<DevtoolsLauncher>` (floating draggable window with a launcher button) and `<DevtoolsPanel>` (the panel itself, for embedding in your own chrome). Both read the same `root.__debug` event stream.
+In-app devtools UI for an Olas root, as two React components. `<DevtoolsLauncher>` is a floating draggable window with a launcher button. `<DevtoolsPanel>` is the panel itself, for embedding in your own chrome. Both read the same `root.__debug` event stream.
 
 A standalone browser extension reading the same stream is tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
 
@@ -88,7 +88,7 @@ class DevtoolsStore {
 
 ## Important: the panel sees only post-mount events
 
-The panel subscribes to `root.__debug` on mount. Events that fired before mount (e.g. the root controller's `controller:constructed`) are NOT in the tree. Mount the panel as early as possible if you want the full picture. The cache, mutation and field logs are bounded by `maxEntries` (default 100) anyway, and the controller tree drops the oldest fully-disposed subtrees beyond `maxDisposedNodes` (default 200, a `DevtoolsStore` option) so a long, churny session stays bounded.
+The panel subscribes to `root.__debug` on mount. Events that fired before mount are NOT in the tree, and the root controller's `controller:constructed` is one of them. Mount the panel as early as possible if you want the full picture. The cache, mutation and field logs are bounded by `maxEntries`, default 100, anyway. The controller tree drops the oldest fully-disposed subtrees beyond `maxDisposedNodes`, default 200, a `DevtoolsStore` option) so a long, churny session stays bounded.
 
 If you need historical state, build a parallel `DevtoolsStore` early (next to `createRoot`) and pass it into a custom UI later.
 
@@ -105,4 +105,4 @@ Spec §20.9 lists the full `DebugEvent` union. Today the runtime emits:
 ## Further reading
 
 - [`.wiki/modules/devtools.md`](../../.wiki/modules/devtools.md) — internal mechanics.
-- [SPEC §14](../../SPEC.md#14-devtools) (Devtools), [§20.9](../../SPEC.md#209-errors--devtools) (`DebugEvent`).
+- [SPEC §14](../../SPEC.md#14-devtools) for devtools, and [§20.9](../../SPEC.md#209-errors--devtools) for `DebugEvent`.

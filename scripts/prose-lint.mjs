@@ -19,7 +19,7 @@
  *   node scripts/prose-lint.mjs --verbose       # every finding, not a sample
  *   node scripts/prose-lint.mjs --summary       # per-file totals only
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 
 const ROOT = process.cwd()
@@ -107,7 +107,11 @@ function sentences(line) {
   let buf = ''
   for (const tok of line.split(/(\s+)/)) {
     buf += tok
-    if (/[.!?]["')\]]?$/.test(tok.trim()) && !ABBREV.test(tok.trim()) && !/\d\.$/.test(tok.trim())) {
+    if (
+      /[.!?]["')\]]?$/.test(tok.trim()) &&
+      !ABBREV.test(tok.trim()) &&
+      !/\d\.$/.test(tok.trim())
+    ) {
       parts.push(buf.trim())
       buf = ''
     }
@@ -134,7 +138,8 @@ function styleReport(rel, text) {
       const joins = countOf(s, /\S\s*—\s*\S/g)
       emDash += joins
       if (joins) findings.push([lineNo, 'em-dash', `${joins} clause-joining - ${clip(s)}`])
-      if (w > MAX_SENTENCE_WORDS) findings.push([lineNo, 'long-sentence', `${w} words - ${clip(s)}`])
+      if (w > MAX_SENTENCE_WORDS)
+        findings.push([lineNo, 'long-sentence', `${w} words - ${clip(s)}`])
       const brackets = countOf(s, /\([^)]*\)/g)
       if (brackets > MAX_BRACKETS_PER_SENTENCE)
         findings.push([lineNo, 'stacked-brackets', `${brackets} bracket groups - ${clip(s)}`])

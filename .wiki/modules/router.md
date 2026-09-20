@@ -23,7 +23,7 @@ A framework-neutral bridge that funnels a React router's route state (TanStack R
 
 `createRouterAdapter(initial?: RouteState): RouterAdapter` mints an **adapter-local** `AdapterStore` of three signals (`params`, `search`, `pathname`) and returns `{ scopes, Bridge }`:
 
-- `scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]>` — pass to `createRoot({ scopes: adapter.scopes })`. Each `[Scope, value]` binds a module-scoped scope to this adapter's signal, so multiple roots (per-request SSR, isolated tests) don't share route state even though the `Scope` definitions are module-global (`adapter.tsx` `AdapterStore` comment).
+- `scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]>` — pass to `createRoot({ scopes: adapter.scopes })`. Each `[Scope, value]` binds a module-scoped scope to this adapter's signal. Multiple roots, whether per-request SSR or isolated tests, therefore do not share route state, even though the `Scope` definitions are module-global. See the `AdapterStore` comment in `adapter.tsx`.
 - `Bridge` — a React component mounted inside `<OlasProvider>`; it pushes the router's `params`, `search` and `pathname` props into the adapter's signals.
 
 `RouteState = { params?: Record<string, string | undefined>; search?: Record<string, unknown>; pathname?: string }`.

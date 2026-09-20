@@ -1,6 +1,6 @@
 # @kontsedal/olas-zod
 
-Zod ↔ Olas forms adapter. Point a single `Field` at a schema with `zodValidator` (or `zodValidatorAsync` for async refinements), or infer a whole `Form` from a `z.object(...)` with `formFromZod` — either way the schema is the one source of truth for both *shape* and *validation*.
+Zod to Olas forms adapter. Point a single `Field` at a schema with `zodValidator`, or with `zodValidatorAsync` for async refinements. Or infer a whole `Form` from a `z.object(...)` with `formFromZod`. Either way the schema is the one source of truth for both *shape* and *validation*.
 
 Olas core stays Zod-free. This package has a peer dep on `zod ^4`.
 
@@ -87,4 +87,4 @@ Leaf and nested-object rules walk correctly in every case. Two outer-schema rule
 
 - [`../../API.md`](../../API.md#olaszod) — full reference.
 - [`../../.wiki/modules/zod.md`](../../.wiki/modules/zod.md)
-- [SPEC §8.7](../../SPEC.md#87-zod-integration-kontsedalolas-zod) (Zod integration), [§20.7](../../SPEC.md#207-fields-forms--validators) (form types).
+- [SPEC §8.7](../../SPEC.md#87-zod-integration-kontsedalolas-zod) for the Zod integration, and [§20.7](../../SPEC.md#207-fields-forms--validators) for the form types.

@@ -23,7 +23,8 @@
     "verify:dist": "pnpm build && pnpm publint && pnpm attw && pnpm smoke:dist",
     "changeset": "changeset",
     "release": "pnpm build && changeset publish",
-    "wiki:lint": "tsx scripts/wiki-lint.ts"
+    "wiki:lint": "tsx scripts/wiki-lint.ts",
+    "prose:lint": "node scripts/prose-lint.mjs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",

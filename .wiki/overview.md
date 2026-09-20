@@ -52,7 +52,7 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 | `@kontsedal/olas-mutation-queue` | Implemented | `mutationQueuePlugin` — durable persist + reload-safe replay for `defineMutation({ persist: true })` |
 | `@kontsedal/olas-router` | Implemented | `createRouterAdapter` + `RouteParams/Search/Pathname` scopes — TanStack Router / React Router v6 |
 
-Polish & docs landed: READMEs (every published package), `MIGRATING.md`, `RECIPES.md`, TSDoc, four runnable example apps (kanban flagship, stock-ticker, reader-ssr, virtualized-table), a cross-package `packages/integration` test suite. A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
+Polish and docs landed: a README for every published package, `MIGRATING.md`, `RECIPES.md`, TSDoc, four runnable example apps, and a cross-package `packages/integration` test suite. The examples are kanban as the flagship, plus stock-ticker, reader-ssr and virtualized-table. A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
 
 ## Core module map
 
