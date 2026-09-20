@@ -469,7 +469,7 @@ Shared, keyed, cacheable async data. Two controllers subscribing to the same que
 
 ### `defineQuery<Args, T>(spec: QuerySpec<Args, T>): Query<Args, T>`
 
-Declare a query at module scope. The returned `Query` value is passed to `ctx.use(...)` in subscribers, and exposes `invalidate`, `invalidateAll`, `setData`, `write`, `peek`, `cancel`, `cancelAll`, `prefetch` at the module level for direct cache reads and writes (e.g., from a mutation's `onMutate`).
+Declare a query at module scope. Subscribers pass the returned `Query` value to `ctx.use(...)`. It also exposes `invalidate`, `invalidateAll`, `setData`, `write`, `peek`, `cancel`, `cancelAll` and `prefetch` at the module level, for direct cache reads and writes from a mutation's `onMutate`.
 
 ```ts
 import { defineQuery } from '@kontsedal/olas-core'
@@ -516,7 +516,7 @@ type RefetchInterval<T> = number | ((data: T | undefined) => number)
   refetchInterval: (jobs) => (jobs?.some((j) => j.state === 'running') ? 1_000 : 30_000)
   ```
 
-  The resolved gap must be a positive finite number — in **either** form. Anything else (`0`, `NaN`, negative, `Infinity`), whether it's a literal or a thunk's return, stops the timer for that entry and dev-warns rather than spinning a hot loop; it restarts only on the entry's next 0→1 subscriber transition. A thunk must also not **throw** — a throw is caught and treated as a bad gap, with a dev warning carrying the error, because the resolution runs before the chain re-arms.
+  The resolved gap must be a positive finite number — in **either** form. Anything else stops the timer for that entry and dev-warns, rather than spinning a hot loop. That covers `0`, `NaN`, a negative number and `Infinity`, as a literal or as a thunk's return. The timer restarts only on the entry's next 0→1 subscriber transition. A thunk must also not **throw**. A throw is caught and treated as a bad gap, with a dev warning carrying the error, because the resolution runs before the chain re-arms.
 
   The thunk's first call is synchronous at the 0→1 subscribe, before the initial fetch settles, so handle `data === undefined`. It is **not reactive** — a signal read inside yields that tick's value and registers no dependency. And it's resolved **per entry, not per subscriber** (the timer belongs to the shared cache entry), which is why `UseOptions` has no `refetchInterval` and `DefaultQueryOptions` excludes it. `ctx.cache` and `LocalCache` has no interval at all. SPEC §5.9.
 
@@ -542,7 +542,7 @@ type Query<Args extends unknown[], T> = {
 - `setData(...args, updater)` — **optimistic** patch of one key's cached data. Returns a `Snapshot` the caller must settle — normally by returning it from a mutation's `onMutate`, which finalizes on success and rolls back on error. Until it is settled the entry reports `hasPendingMutations: true` (spec §6.4).
 - `write(...args, updater)` — **canonical** patch of one key's cached data: no snapshot, no rollback handle, `hasPendingMutations` untouched. This is the write for data that is already true (a server push folded into the cache, a realtime event, a cross-view sync). Reach for it whenever there is no mutation to settle a snapshot — a fire-and-forget `setData` leaks one live snapshot per call (spec §6.4).
 - `peek(...args)` — read one key's cached data **synchronously**; `undefined` when there is nothing to read (no entry, or an entry that has not settled). Never creates an entry, never fetches, and registers **no reactive dependency** — a `peek` inside a `computed` will not re-run it. For imperative moments: an event handler that needs the current value, or a guard before a `write` (spec §5.5).
-- `cancel(...args)` — abort the in-flight fetch for one key (if any). Supersedes the request, restores a settled status, leaves `data` untouched. Call before an optimistic `setData` so a stale in-flight response can't clobber it — **including when nothing invalidates the query**, since a stale entry refetches by itself whenever a subscription acquires or resumes (spec §5.5, §6.4).
+- `cancel(...args)` — abort the in-flight fetch for one key (if any). Supersedes the request, restores a settled status, leaves `data` untouched. Call it before an optimistic `setData`, so a stale in-flight response can't clobber it. Do this **even when nothing invalidates the query**, because a stale entry refetches by itself whenever a subscription acquires or resumes (spec §5.5, §6.4).
 - `cancelAll()` — cancel in-flight fetches for every keyed entry of this query.
 - `prefetch(...args)` — fetch into the cache without subscribing (e.g., on hover before navigating).
 
@@ -590,7 +590,7 @@ type AsyncState<T> = {
 
 Subscribers can read any of the 9 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` and `Query`; a `ctx.cache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
 
-**`isPaused`** is `true` while a fetch is deferred waiting for connectivity — either an `online`-mode fetch that hit `navigator.onLine === false`, or an `offlineFirst` fetch that got a network error (`fetch`'s `TypeError`) while offline. It resumes automatically on the next `online` event. Nothing is in flight while paused (`isFetching` is `false`) and `status` stays `idle` or last-success rather than flipping to `error`.
+**`isPaused`** is `true` while a fetch is deferred waiting for connectivity. Two cases reach it: an `online`-mode fetch that hit `navigator.onLine === false`, and an `offlineFirst` fetch that got a `fetch` `TypeError` while offline. It resumes automatically on the next `online` event. Nothing is in flight while paused (`isFetching` is `false`) and `status` stays `idle` or last-success rather than flipping to `error`.
 
 ### Type: `UseOptions<Args>`
 
@@ -626,7 +626,7 @@ export const feedQuery = defineInfiniteQuery({
 
 The subscription returned by `ctx.use(feedQuery, ...)` includes `pages`, `items` (flattened), `hasNextPage`, `fetchNextPage`, etc. — full shape in SPEC §20.4.
 
-`refetchInterval` works here too, with the same two forms: `RefetchInterval<TPage[]>`, so the thunk receives the entry's pages array (`undefined` until the first page lands). Remember that a tick re-fetches *every* loaded page (SPEC §5.11), so a list scrolled 20 pages deep costs 20 requests per tick — that's the case where a data-driven gap earns its keep.
+`refetchInterval` works here too, with the same two forms: `RefetchInterval<TPage[]>`, so the thunk receives the entry's pages array (`undefined` until the first page lands). A tick re-fetches *every* loaded page (SPEC §5.11), so a list scrolled 20 pages deep costs 20 requests per tick. That is where a data-driven gap earns its keep.
 
 ---
 
@@ -719,11 +719,11 @@ type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
   - `parallel` *(default)* — runs are independent. `isPending` is true if any are in-flight.
   - `latest-wins` — a new `.run()` aborts the in-flight one.
   - `serial` — runs queue and execute one at a time.
-- **`detached`** — when `true`, `dispose()` stops cancelling: in-flight runs finish, queued `serial` runs drain, `run(...)` still works afterwards, and `onSuccess`, `onError` and `onSettled` still fire. Use it for **writes** whose completion the user has already been promised — a licence activation behind a modal the user can close, a destructive action whose confirm may be answered after its panel is gone. The callbacks then run after the controller is torn down, so keep them to client-level work (`query.invalidate()`, a toast) and away from the controller's own signals and children. SPEC §6.5.
+- **`detached`** — when `true`, `dispose()` stops cancelling: in-flight runs finish, queued `serial` runs drain, `run(...)` still works afterwards, and `onSuccess`, `onError` and `onSettled` still fire. Use it for **writes** whose completion the user has already been promised. Two examples: a licence activation behind a modal the user can close, and a destructive action whose confirm may be answered after its panel is gone. The callbacks then run after the controller is torn down, so keep them to client-level work such as `query.invalidate()` or a toast, and away from the controller's own signals and children. SPEC §6.5.
 
 **Gotcha:** rollback is **automatic only on abort** (latest-wins supersede, dispose). For normal `mutate` rejections, call `snapshot?.rollback()` in `onError` explicitly. See [`.wiki/pitfalls/latest-wins-rollback-order.md`](.wiki/pitfalls/latest-wins-rollback-order.md).
 
-**A run that already finished is never rolled back.** If `mutate` resolves and the abort lands before the run's continuation, the snapshot is *finalized* rather than rolled back — the work happened, and rolling back would commit a knowingly stale value to a cache that outlives the mutation. The promise still rejects with `AbortError`. SPEC §6.2.
+**A run that already finished is never rolled back.** If `mutate` resolves and the abort lands before the run's continuation, the snapshot is *finalized* rather than rolled back. The work happened, and rolling back would commit a knowingly stale value to a cache that outlives the mutation. The promise still rejects with `AbortError`. SPEC §6.2.
 
 ### Type: `Mutation<V, R>`
 
@@ -742,7 +742,7 @@ type Mutation<V, R> = {
 
 `status` is the latest run's outcome; React's `useMutation` derives `isIdle`, `isSuccess` and `isError` from it, so a `void` mutation still reports `isSuccess` after it resolves (it isn't stuck on `isIdle`).
 
-`reset()` **cancels**: it aborts every in-flight run (awaiters reject with an `AbortError` — use `isAbortError`) and rejects queued `serial` runs so no caller hangs, then clears `data`, `error` and `lastVariables` and returns `status` to `'idle'` with `isPending` false. SPEC §6.2 lists it among the abort triggers.
+`reset()` **cancels**. It aborts every in-flight run, so awaiters reject with an `AbortError` that `isAbortError` matches, and it rejects queued `serial` runs so no caller hangs. It then clears `data`, `error` and `lastVariables`, and returns `status` to `'idle'` with `isPending` false. SPEC §6.2 lists it among the abort triggers.
 
 **Gotcha when porting from react-query:** rq's `reset()` detaches the observer and lets the in-flight request finish. Olas aborts it. A mechanical `reset()` → `reset()` port silently changes whether the write lands.
 
@@ -757,7 +757,7 @@ class MutationDisposedError extends Error {
 
 What `run(...)` rejects with once the mutation has been disposed. `mutate` is never called — **the write does not happen.**
 
-It is deliberately **not** an `AbortError`. `isAbortError(err)` is how callers filter cancellations, and a run that was never accepted is not one: it is work the app asked for and silently did not get, and a blanket abort filter would hide the loss.
+It is deliberately **not** an `AbortError`. `isAbortError(err)` is how callers filter cancellations, and a run that was never accepted is not one. It is work the app asked for and silently did not get, and a blanket abort filter would hide the loss.
 
 ```ts
 import { MutationDisposedError, isAbortError } from '@kontsedal/olas-core'
@@ -1219,7 +1219,7 @@ Test-only helpers. Importing from a non-test file is a smell — the `/testing` 
 
 Construct an isolated root wrapping a single controller. Returns the controller's API plus the standard `Root` lifecycle controls. Equivalent to a hand-rolled "wrap in a root" boilerplate.
 
-`defaultQueryOptions` mirrors `RootOptions` so staleTime/retry-dependent behavior is testable without hand-rolling a root. Note each call builds its **own** root — and therefore its own cache — so two `createTestController` calls never share an entry; test cache-lifetime behavior (gcTime, dedup) inside a single root via `ctx.session` and `ctx.attach`.
+`defaultQueryOptions` mirrors `RootOptions` so staleTime/retry-dependent behavior is testable without hand-rolling a root. Each call builds its **own** root, and therefore its own cache, so two `createTestController` calls never share an entry. Test cache-lifetime behavior such as gcTime and dedup inside a single root, via `ctx.session` and `ctx.attach`.
 
 ```ts
 import { createTestController } from '@kontsedal/olas-core/testing'
@@ -1466,7 +1466,7 @@ Bridge Zod schemas into Olas validators and forms.
 
 ### `zodValidator<T>(schema: z.ZodType<T>): Validator<T>`
 
-Wrap a Zod schema as a synchronous `Validator<T>` (a thin alias over `validator(...)` from `@kontsedal/olas-core`, since Zod 4 implements Standard Schema). It returns `FormIssue[]` carrying each issue's `path` — so it works as a leaf **field** validator (leaf issues have empty paths and collapse to messages) *and*, given a whole-object schema, as a **form-level** validator that routes each issue onto the matching field.
+Wrap a Zod schema as a synchronous `Validator<T>` (a thin alias over `validator(...)` from `@kontsedal/olas-core`, since Zod 4 implements Standard Schema). It returns `FormIssue[]` carrying each issue's `path`, so it works in both positions. As a leaf **field** validator, leaf issues have empty paths and collapse to messages. Given a whole-object schema, it works as a **form-level** validator that routes each issue onto the matching field.
 
 ```ts
 import { z } from 'zod'

@@ -2,7 +2,7 @@
 
 Router-agnostic bridge for `@kontsedal/olas-core`. Exposes route params, search and pathname as `Scope`-resolved `ReadSignal`s so any controller can `ctx.inject(RouteParamsScope)` and react to URL changes — without controllers ever importing your router.
 
-Works with any **client-side** React router. TanStack Router and React Router v6 are the wire-ups documented below; the same pattern works for `@reach/router`, your own custom router, or anything that hands you `params`, `search` and `pathname` per render. (Next.js and RSC is out of scope by design — see [Scope](#scope-client-side-routers-only) at the bottom.)
+Works with any **client-side** React router. TanStack Router and React Router v6 are the wire-ups documented below. The same pattern works for `@reach/router`, your own custom router, or anything that hands you `params`, `search` and `pathname` per render. Next.js and RSC are out of scope by design; see [Scope](#scope-client-side-routers-only) at the bottom.
 
 ## Install
 
@@ -117,7 +117,7 @@ const RoutePathnameScope: Scope<ReadSignal<string>>
 
 ## How it works
 
-The adapter holds three internal signals. `Bridge` is a `useLayoutEffect` that calls `signal.set(...)` for each slot whose value shallow-changed (routers re-allocate `params` and `search` on every render, so a vanilla `Object.is` check would write on every commit). All writes are wrapped in `batch(...)` so a controller depending on multiple slots never observes an intermediate state. `useLayoutEffect` runs before the browser paints, so the pre-Bridge value is visible for at most the very first commit on the client (and not at all on the server if you seed — below).
+The adapter holds three internal signals. `Bridge` is a `useLayoutEffect` that calls `signal.set(...)` for each slot whose value shallow-changed. The shallow check matters because routers re-allocate `params` and `search` on every render, so a vanilla `Object.is` check would write on every commit. All writes are wrapped in `batch(...)`, so a controller depending on multiple slots never observes an intermediate state. `useLayoutEffect` runs before the browser paints, so the pre-Bridge value is visible for at most the very first commit on the client, and not at all on the server if you seed.
 
 ```
 your router  →  <adapter.Bridge params={...} search={...} pathname={...}>
@@ -133,7 +133,7 @@ your router  →  <adapter.Bridge params={...} search={...} pathname={...}>
 
 `createRouterAdapter()` allocates its signals **per call**. Two roots that both `createRoot({ scopes: makeAdapter().scopes })` get independent route state — vital for per-request SSR isolation and for tests that mount multiple roots in parallel.
 
-**Seed route state on the server.** `Bridge` pushes state in a `useLayoutEffect`, which never runs during SSR. So without seeding, `params`, `search` and `pathname` are empty (`{}` and `''`) for the *entire* server render — a controller that reads `params.value.userId` sees `undefined`, fetches nothing (or the wrong thing), and the server HTML is wrong. Pass `initial` derived from the request URL:
+**Seed route state on the server.** `Bridge` pushes state in a `useLayoutEffect`, which never runs during SSR. Without seeding, `params`, `search` and `pathname` stay empty for the *entire* server render, at `{}` and `''`. A controller that reads `params.value.userId` then sees `undefined`, fetches nothing or the wrong thing, and the server HTML is wrong. Pass `initial` derived from the request URL:
 
 ```ts
 // server, per request
@@ -146,7 +146,7 @@ const root = createRoot(appController, { deps, scopes: adapter.scopes })
 // ...renderToString(<OlasProvider root={root}>…</OlasProvider>)
 ```
 
-**First-render footgun (client-only apps).** If you *don't* seed (pure client render), the scopes are empty on the very first commit — before the `Bridge`'s layout effect fires. A controller that reads `params.value.id` at construction gets `undefined` for that one tick. Guard queries so they don't fire against a missing param:
+**First-render footgun in client-only apps.** On a pure client render with no seed, the scopes are empty on the very first commit, before the `Bridge`'s layout effect fires. A controller that reads `params.value.id` at construction gets `undefined` for that one tick. Guard queries so they don't fire against a missing param:
 
 ```ts
 const params = ctx.inject(RouteParamsScope)
@@ -179,7 +179,7 @@ const userRoute = createRoute({
 })
 ```
 
-Bind the query to the root you're prefetching *into*. On the client there is one root and the bare `userQuery.prefetch(...)` still works, but a server handling concurrent requests has a root per request and an unbound prefetch there rejects rather than guessing whose cache to warm.
+Bind the query to the root you're prefetching *into*. On the client there is one root, and the bare `userQuery.prefetch(...)` still works. A server handling concurrent requests has a root per request, and an unbound prefetch there rejects rather than guessing whose cache to warm.
 
 `prefetch(...)` populates the cache before `<adapter.Bridge>` mounts. By the time `ctx.use(userQuery, ...)` fires, the entry is already there and `data.value` is non-null on first read.
 

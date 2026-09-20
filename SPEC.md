@@ -9,7 +9,7 @@ This isn't a stylistic preference. It's the architectural principle the whole li
 Everything that decides *what happens* belongs in a controller:
 
 - **Data fetching and caching** — every API call, every `fetch`, every WebSocket subscription. The UI never calls the network.
-- **State** — both server-derived (cached responses) and client-local (filters, drafts, open/closed flags, selected items, current step in a wizard). All of it.
+- **State** — both server-derived, meaning cached responses, and client-local: filters, drafts, open and closed flags, selected items, the current step in a wizard. All of it.
 - **Mutations** — every write to the server, with optimistic updates, rollback, and invalidation.
 - **Events** — domain events (`'note saved'`, `'user invited'`) that other parts of the app react to.
 - **Validation** — form rules, business invariants, async server-side checks (username taken, etc.).
@@ -47,7 +47,7 @@ Once the boundary is mechanical, four things become true:
 
 ## Why this is worth the rules
 
-The common shape of a serious browser app today is a sprawl: hooks holding state, effects mutating that state, components calling APIs, contexts threaded through render trees, custom stores glued to query libraries glued to form libraries. The "logic" is everywhere, observable only by rendering, testable only by simulating a DOM, and bound tightly to the framework that owns the components.
+The common shape of a serious browser app today is a sprawl. Hooks hold state, effects mutate that state, components call APIs, contexts thread through render trees, and custom stores are glued to query libraries glued to form libraries. The "logic" ends up everywhere. It is observable only by rendering, testable only by simulating a DOM, and bound tightly to the framework that owns the components.
 
 Olas inverts this. The controller tree *is* the program; the UI is a presentation layer. The boundary is enforced — controllers cannot import UI code, controllers cannot return components, and the testing story makes it cheaper to do the right thing than the wrong one.
 
@@ -73,7 +73,7 @@ If those describe your app, the upfront cost of learning the controller tree pay
 
 The library is opinionated, the vocabulary is sizable (~20 primitives), and the testing payoff requires writing tests. Below a certain size, that's a bad trade.
 
-If you're picking a tool for the next thing, ask: *will this codebase still be alive in three years, and will engineers I haven't hired yet be working on it?* If yes — Olas is built for that horizon. If no — pick something smaller.
+If you're picking a tool for the next thing, ask one question. *Will this codebase still be alive in three years, and will engineers I haven't hired yet be working on it?* If yes, Olas is built for that horizon. If no, pick something smaller.
 
 ---
 
@@ -151,7 +151,7 @@ const userProfile = defineController((ctx, id: string) => {
 
 ### 3.2 The `ctx` object
 
-`ctx` exposes every primitive a controller can construct (cache, use, mutation, emitter, field, form, fieldArray, child, attach, collection, session, lazyChild, effect, on, provide, inject), the lifecycle hooks (`onDispose`, `onSuspend`, `onResume`), the devtools helper `debug`, and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
+`ctx` exposes every primitive a controller can construct: cache, use, mutation, emitter, field, form, fieldArray, child, attach, collection, session, lazyChild, effect, on, provide and inject. It also carries the lifecycle hooks `onDispose`, `onSuspend` and `onResume`, the devtools helper `debug`, and `deps`. The full canonical type signature lives in **§20.2** — refer there for the authoritative shape; this section sticks to usage patterns.
 
 At a glance, the primitives split into these groups:
 
@@ -160,7 +160,7 @@ At a glance, the primitives split into these groups:
 - **Events & communication:** `emitter`, `on`, `provide`, `inject`.
 - **Tree composition:** `child`, `attach`, `collection`, `dynamicCollection`, `session`.
 - **Lifecycle & DI:** `onDispose`, `onSuspend`, `onResume`, `deps`.
-- **Devtools (dev-only):** `debug({ ... })` — expose named live values (signals, computeds, fields, …) to the devtools "Variables" view for this controller. A no-op in production; see §14.
+- **Devtools, dev-only:** `debug({ ... })` — expose named live values such as signals, computeds and fields to the devtools "Variables" view for this controller. A no-op in production; see §14.
 
 **On `ctx`'s breadth.** `ctx` is intentionally broad — it's the single source of "things bound to this controller's lifetime." That's a coherent responsibility, but the surface is large (~19 methods). Two consequences worth knowing upfront:
 
@@ -191,7 +191,7 @@ function useUser(ctx: Ctx, id: () => string) {
 
 ### 3.4 When can `ctx.*` be called?
 
-All `ctx` primitives — `cache`, `mutation`, `emitter`, `field`, `form`, `fieldArray`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `use`, `on`, `provide` — are callable **any time during the controller's active lifetime**, not only during the initial factory run. Everything you create through `ctx` is owned by that controller and disposed when it disposes.
+Every `ctx` primitive is callable **any time during the controller's active lifetime**, not only during the initial factory run. The full set: `cache`, `mutation`, `emitter`, `field`, `form`, `fieldArray`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `use`, `on`, `provide`. Everything you create through `ctx` is owned by that controller and disposed when it disposes.
 
 This makes runtime-driven shapes natural:
 
@@ -245,7 +245,7 @@ Most controllers have two states: **active** and **disposed**. Construction happ
 | construct        | `ctx.child(...)` or `createRoot(...)`    | Runs factory, sets up effects/caches/children                 |
 | dispose          | parent disposes, or `controller.dispose()` | Cleanup runs in **reverse registration order** — see below |
 
-**Teardown order is reverse registration order — one pass, all kinds interleaved.** Children, effects, caches, subscriptions and `onDispose` hooks live in a single lifecycle list in the order they were created, and dispose walks that list backwards. There is no phase ordering: an `onDispose` hook registered *after* an effect runs *before* that effect is torn down, and the same hook registered *before* it runs after. LIFO is the useful guarantee — a thing is torn down before whatever it was built on top of — and it is the only one.
+**Teardown order is reverse registration order: one pass, all kinds interleaved.** Children, effects, caches, subscriptions and `onDispose` hooks share one lifecycle list, in creation order. Dispose walks that list backwards. There is no phase ordering. An `onDispose` hook registered *after* an effect runs *before* that effect is torn down. The same hook registered *before* it runs after. LIFO is the useful guarantee, and the only one: a thing is torn down before whatever it was built on top of.
 
 This matters when a hook needs a collaborator to still be alive. Flushing a pending `debounced` write from `onDispose` (§9) works only because the effect that consumes it is still subscribed, which is true only because the hook was registered later:
 
@@ -286,7 +286,7 @@ Some controllers also support `suspend()` and `resume()`. This is for "definitel
 - A fetch that was already in flight when suspend was called continues to completion (we don't abort, since the result may be immediately useful on resume).
 - On resume, any cache past its `staleTime` refetches.
 
-**Explicit child suspension survives tree cascades.** A child suspended explicitly via `attach.suspend()` or `collection.suspendItem(key)` stays suspended through a whole-tree `suspend()` → `resume()` cycle (what `<KeepAlive>` performs). Only its matching `attach.resume()` and `resumeItem(key)` wakes it — otherwise a virtualized list's scrolled-out rows would all resume on a single tree resume. Symmetrically, `attach.resume()` and `resumeItem()` called while the parent is still suspended does not activate the child inside a frozen tree — it clears the explicit mark and the child rejoins the parent's next resume cascade.
+**Explicit child suspension survives tree cascades.** A child suspended explicitly via `attach.suspend()` or `collection.suspendItem(key)` stays suspended through a whole-tree `suspend()` → `resume()` cycle (what `<KeepAlive>` performs). Only its matching `attach.resume()` and `resumeItem(key)` wakes it — otherwise a virtualized list's scrolled-out rows would all resume on a single tree resume. The reverse is symmetric. `attach.resume()` and `resumeItem()` called while the parent is still suspended do not activate the child inside a frozen tree. They clear the explicit mark, and the child rejoins the parent's next resume cascade.
 
 ### 4.2 Suspend vs dispose — picking the right one
 
@@ -378,7 +378,7 @@ const feed = ctx.use(newsfeedQuery, {
 
 While `enabled` returns `false`, the subscription holds `status: 'idle'`, `data: undefined`, no network fetch fires, and `isLoading` stays `false`. When `enabled` flips to `true`, the key is evaluated and fetching starts normally. Flipping back to `false` does **not** dispose the entry — subsequent re-enables reuse the cached data subject to `staleTime`.
 
-**`keepDataWhileDisabled` (opt-in).** Pass `ctx.use(query, { enabled, keepDataWhileDisabled: true })` to keep the subscription reporting its **last `data`** (snapshotted at the moment `enabled` went false) instead of blanking to `undefined` — the react-query "a disabled observer still reads the cache" shape, for porting flows that flash empty otherwise. The entry is still released (refcount and GC unchanged) and `status` stays `'idle'`; only `data` survives. `error` is not retained. On re-enable the live entry's data takes over. Default `false`.
+**`keepDataWhileDisabled` (opt-in).** Pass `ctx.use(query, { enabled, keepDataWhileDisabled: true })` to keep the subscription reporting its **last `data`**, snapshotted at the moment `enabled` went false, instead of blanking to `undefined`. This is the react-query "a disabled observer still reads the cache" shape, for porting flows that flash empty otherwise. The entry is still released, so refcount and GC are unchanged, and `status` stays `'idle'`. Only `data` survives. `error` is not retained. On re-enable the live entry's data takes over. Default `false`.
 
 For the common case (no `enabled`), continue to pass a bare thunk: `ctx.use(query, () => [id])`. The options object form is only needed when you want `enabled`.
 
@@ -407,7 +407,7 @@ type QuerySubscription<T> = {
 
 The `isLoading` vs `isFetching` split is intentional: spinners typically gate on `isLoading`, but progress indicators want `isFetching`.
 
-**`hasPendingMutations`** is true while any `setData`-produced `Snapshot` is alive and unrolled-back for this entry. It flips back to `false` when the last outstanding mutation either succeeds (its `onSuccess` finalizes and the snapshot is discarded) or rolls back (via `snapshot.rollback()`). UI uses this to render "saving…" indicators on individual records without inventing a `pending: true` flag in the data shape.
+**`hasPendingMutations`** is true while any `setData`-produced `Snapshot` is alive and unrolled-back for this entry. It flips back to `false` when the last outstanding mutation settles. On success `onSuccess` finalizes and the snapshot is discarded; on failure `snapshot.rollback()` restores the baseline. UI uses this to render "saving…" indicators on individual records without inventing a `pending: true` flag in the data shape.
 
 ### 5.4 Keys — a single thunk returning an array
 
@@ -452,19 +452,19 @@ Every fetcher receives an `AbortSignal` as its last argument. The cache aborts a
 
 Fetchers are responsible for passing the signal to their I/O (`fetch(url, { signal })`, axios cancel tokens, etc.). If a fetcher ignores it, the cache will discard the eventual result.
 
-**Explicit cancellation.** `query.cancel(...keyArgs)` (and `subscription.cancel()` for the bound entry) aborts the in-flight fetch on demand: it supersedes the request so its result can never land, restores a settled status (`'success'` if data exists, else `'idle'`), and leaves `data` untouched. `query.cancelAll()` cancels every keyed entry of the query. The canonical use is the optimistic-write recipe (§6.4): cancel outgoing refetches *before* an optimistic `setData`, so a slower in-flight response can't land and clobber the optimistic value. `query.replace(...)` needs no such call — it supersedes the in-flight fetch itself, because a whole-record write is newer than any request issued before it (§6.4). `query.write(...)` does not: it patches, and a patch has no claim on the fields it left alone. Complementarily, on a **successful** fetch any live optimistic snapshots are rebased onto the fresh result, so a later rollback restores server truth rather than resurrecting pre-fetch data.
+**Explicit cancellation.** `query.cancel(...keyArgs)` aborts the in-flight fetch on demand, and `subscription.cancel()` does the same for the bound entry. It supersedes the request so its result can never land, restores a settled status of `'success'` when data exists and `'idle'` otherwise, and leaves `data` untouched. `query.cancelAll()` cancels every keyed entry of the query. The canonical use is the optimistic-write recipe (§6.4): cancel outgoing refetches *before* an optimistic `setData`, so a slower in-flight response can't land and clobber the optimistic value. `query.replace(...)` needs no such call — it supersedes the in-flight fetch itself, because a whole-record write is newer than any request issued before it (§6.4). `query.write(...)` does not: it patches, and a patch has no claim on the fields it left alone. Complementarily, on a **successful** fetch any live optimistic snapshots are rebased onto the fresh result, so a later rollback restores server truth rather than resurrecting pre-fetch data.
 
-**"Nothing invalidates this query" does not mean "no fetch is in flight".** The cancel-before-*optimistic*-write step is not only for queries something else invalidates. An entry fetches on its own whenever a subscription **acquires it while stale** — a first subscriber, a second root binding the same key, or a `resume()` after a suspend (§4.1), all `staleTime`-driven and with no invalidator anywhere in the program. Skipping `cancel(...)` because a grep found no `invalidate(...)` call is therefore unsound: the refetch lands after the optimistic write and overwrites it. The failure is transient and self-healing, which is exactly why it survives review.
+**"Nothing invalidates this query" does not mean "no fetch is in flight".** The cancel-before-*optimistic*-write step is not only for queries something else invalidates. An entry fetches on its own whenever a subscription **acquires it while stale**. That covers a first subscriber, a second root binding the same key, and a `resume()` after a suspend (§4.1). All three are `staleTime`-driven, with no invalidator anywhere in the program. Skipping `cancel(...)` because a grep found no `invalidate(...)` call is therefore unsound: the refetch lands after the optimistic write and overwrites it. The failure is transient and self-healing, which is exactly why it survives review.
 
-**Reading without subscribing.** `query.peek(...keyArgs)` returns the entry's current data synchronously, or `undefined` when there is nothing to read — no entry (never fetched, or gc'd), or an entry that has not settled. It never creates an entry (asking cannot change the answer), never fetches, and **registers no reactive dependency**: a `peek` inside a `computed` or an effect will not re-run it when the data changes. Reactive reads are `ctx.use(...)`'s job; `peek` is for imperative moments — an event handler that needs the current value, a guard before a canonical write (§6.4) — and for the read side of the imperative surface, whose write side (`setData`, `cancel`) could already reach a keyed entry from outside a subscription.
+**Reading without subscribing.** `query.peek(...keyArgs)` returns the entry's current data synchronously. It returns `undefined` when there is nothing to read: no entry, because it was never fetched or has been gc'd, or an entry that has not settled. It never creates an entry, because asking cannot change the answer, and it never fetches. It also **registers no reactive dependency**, so a `peek` inside a `computed` or an effect will not re-run it when the data changes. Reactive reads are `ctx.use(...)`'s job. `peek` is for imperative moments: an event handler that needs the current value, or a guard before a canonical write (§6.4). It is also the read side of the imperative surface, whose write side of `setData` and `cancel` could already reach a keyed entry from outside a subscription.
 
 **Network mode & `isPaused`.** A query's `networkMode` (spec'd on `QuerySpec`) controls how fetches interact with `navigator.onLine`:
 
 - `online` (default) — a fetch requested while offline is **deferred**, not run; it resumes automatically on the next reconnect. The entry reports `isPaused: true` while deferred.
 - `always` — never gate on connectivity; the fetcher runs whenever requested (localhost, IPC and service-worker sources that don't surface through `navigator.onLine`).
-- `offlineFirst` — start the fetch regardless. If it rejects with a network-shaped error (a `fetch` `TypeError`; `AbortError` excluded) **while offline**, park the entry (`isPaused: true`) and retry on reconnect instead of surfacing the error; the `status` stays `idle` and last-success. Otherwise the error surfaces normally.
+- `offlineFirst` — start the fetch regardless. If it rejects **while offline** with a network-shaped error, park the entry at `isPaused: true` and retry on reconnect instead of surfacing the error. Network-shaped means a `fetch` `TypeError`, not an `AbortError`. The `status` stays `idle` and last-success. Otherwise the error surfaces normally.
 
-`isPaused` (on `AsyncState`, §5.3) is the observable signal for both parked paths — `false` whenever a fetch is in flight or settled. Use it to render a "waiting for network" affordance distinct from a spinner (`isFetching`) or an error (`status === 'error'`).
+`isPaused` (on `AsyncState`, §5.3) is the observable signal for both parked paths — `false` whenever a fetch is in flight or settled. Use it to render a "waiting for network" affordance, distinct from the spinner that `isFetching` drives and the error that `status === 'error'` drives.
 
 ### 5.6 Race conditions
 
@@ -489,7 +489,7 @@ userQuery.prefetch(id) // fire-and-forget warmup
 
 Internally these all dispatch to the root's query client.
 
-**Invalidate semantics.** `invalidate` and `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry — one kept warm by `gcTime` after its last subscriber left, or created by `prefetch` — is marked stale and *not* refetched; the next subscriber triggers the fetch. This matches TanStack and avoids waking data no subscriber is watching.
+**Invalidate semantics.** `invalidate` and `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry is marked stale and *not* refetched, and the next subscriber triggers the fetch. An entry is subscriber-less when `gcTime` kept it warm after its last subscriber left, or when `prefetch` created it. This matches TanStack and avoids waking data no subscriber is watching.
 
 Both return a `Promise<void>` that resolves when the refetches they trigger settle or are discarded, or immediately for entries without subscribers (which are marked stale only). Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `ctx.bindQuery(query)` or `root.bindQuery(query)` to select a root (§21.5). Resolution alone does not guarantee reconciliation if a request was superseded (§6.4).
 
@@ -515,7 +515,7 @@ commentsQuery.setData(postId, (prev) => {
 })
 ```
 
-**Perf note.** `structuredClone` is O(*total nodes in the tree*), every call — it deep-copies everything to enforce immutability. On a thread of 10,000 comments, each like flips the whole tree; that's tens of milliseconds and can produce visible UI stutter. Immer (`produce`) is O(*touched path*) via structural sharing — only the nodes you mutated, and their ancestors up to the root, are new objects; the rest is shared with the previous value. For any cache holding more than a few hundred nodes, or any update path that runs on hot input (typing, scrolling, dragging), prefer Immer.
+**Perf note.** `structuredClone` is O(*total nodes in the tree*), every call — it deep-copies everything to enforce immutability. On a thread of 10,000 comments, each like flips the whole tree; that's tens of milliseconds and can produce visible UI stutter. Immer's `produce` is O(*touched path*) via structural sharing. Only the nodes you mutated, and their ancestors up to the root, are new objects. The rest is shared with the previous value. Prefer Immer for any cache holding more than a few hundred nodes, and for any update path that runs on hot input such as typing, scrolling or dragging.
 
 We deliberately don't bundle Immer — users who want it import it themselves, others stay slim.
 
@@ -548,15 +548,15 @@ A number is a fixed gap in ms. A function is resolved **once per scheduling deci
 refetchInterval: (jobs) => (jobs?.some((j) => j.state === 'running') ? 1_000 : 30_000)
 ```
 
-That "poll fast while there's work, slowly when idle" shape is the case the function form exists for. Expressing it with a fixed number forces a choice between a wasteful cadence at rest and a sluggish one under load; expressing it outside the query means a second timer racing the first.
+That "poll fast while there's work, slowly when idle" shape is the case the function form exists for. A fixed number forces a choice between a wasteful cadence at rest and a sluggish one under load. Expressing it outside the query means a second timer racing the first.
 
 The contract:
 
-- **The gap for tick N+1 is resolved at tick N**, before that tick's fetch starts — so a change in data shows up in the gap *after* the fetch that produced it. The timer is a self-rescheduling chain, not a settle-chained delay: a fetch slower than the gap doesn't stretch the cadence, and a tick that lands while a fetch is already in flight is skipped (it joins the running fetch rather than aborting it).
-- **The gap must be a positive finite number, in either form.** `0`, `NaN`, negative and `Infinity` stop the timer for that entry (dev builds warn) rather than degenerating into a fetch-per-macrotask loop. This is a rule about the *resolved gap*, so it binds a literal `refetchInterval: 0` exactly as it binds a thunk returning `0`. Once stopped, the timer restarts only on the entry's next **0→1 subscriber transition** — a subscriber joining an entry that still has others does not re-arm it.
-- **A valid gap above the platform timer limit is scheduled in chunks, not clamped.** Rejecting `Infinity` is not the same as handling overflow: a finite gap larger than 2,147,483,647 ms passes the rule above and would still overflow a raw `setTimeout` into an immediate fire — the longest interval you can ask for behaving as the shortest. The chain goes through the shared expiry scheduler (§21.5) like every other user-supplied duration.
-- **A thunk must not throw.** A throw is handled like a bad gap — the chain stops with a dev warning that names the throw and carries the error. It is caught rather than left to escape because the resolution happens *before* the re-arm inside the timer callback: unguarded, one throw would end polling for that entry permanently with nothing but an uncaught error in a timer to show for it.
-- **The first resolution is synchronous, at acquire.** The 0→1 subscriber arms the chain before the initial fetch can settle, so a thunk's first call receives `undefined` — or hydrated/cached data when the entry already holds some. It must handle that argument.
+- **The gap for tick N+1 is resolved at tick N**, before that tick's fetch starts. A change in data therefore shows up in the gap *after* the fetch that produced it. The timer is a self-rescheduling chain, not a settle-chained delay. A fetch slower than the gap doesn't stretch the cadence. A tick that lands while a fetch is already in flight is skipped, and joins the running fetch rather than aborting it.
+- **The gap must be a positive finite number, in either form.** `0`, `NaN`, a negative number and `Infinity` all stop the timer for that entry, with a dev-build warning. The alternative would be a fetch-per-macrotask loop. The rule is about the *resolved gap*, so it binds a literal `refetchInterval: 0` exactly as it binds a thunk returning `0`. Once stopped, the timer restarts only on the entry's next **0→1 subscriber transition**. A subscriber joining an entry that still has others does not re-arm it.
+- **A valid gap above the platform timer limit is scheduled in chunks, not clamped.** Rejecting `Infinity` is not the same as handling overflow. A finite gap larger than 2,147,483,647 ms passes the rule above, and would still overflow a raw `setTimeout` into an immediate fire. The longest interval you can ask for would behave as the shortest. The chain goes through the shared expiry scheduler (§21.5) like every other user-supplied duration.
+- **A thunk must not throw.** A throw is handled like a bad gap — the chain stops with a dev warning that names the throw and carries the error. It is caught rather than left to escape, because the resolution happens *before* the re-arm inside the timer callback. Unguarded, one throw would end polling for that entry permanently, leaving nothing but an uncaught error in a timer.
+- **The first resolution is synchronous, at acquire.** The 0→1 subscriber arms the chain before the initial fetch can settle. A thunk's first call therefore receives `undefined`, or hydrated or cached data when the entry already holds some. It must handle that argument.
 - **The thunk is not reactive.** Reading a signal inside it yields that tick's value and registers no dependency; changing that signal reschedules nothing. Drive the decision off the `data` argument.
 - **The data is read without subscribing**, so resolving a gap never marks the entry as accessed or perturbs staleness.
 - **It is per entry, not per subscriber.** The timer belongs to the shared cache entry, so ten controllers subscribed to one key share one interval. This is why `UseOptions` (§20.4) carries no `refetchInterval`: per-subscriber intervals would need a "whose interval wins" rule, and every answer to that question surprises somebody. It's also why the field isn't defaultable (below).
@@ -571,7 +571,7 @@ The contract:
 createRoot(app, { deps, defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 } })
 ```
 
-Why this exists: the built-in defaults (`staleTime: 0`, `retry: 0`) are the right *quiet* choice for a single query, but an app that wants different ones had to restate them on all N `defineQuery` calls. Forgetting one doesn't error — it presents as "why is this refetching on every subscribe?", which is a bad failure mode for a value with no local justification.
+Why this exists: the built-in `staleTime: 0` and `retry: 0` are the right *quiet* choice for a single query. An app that wants different ones had to restate them on all N `defineQuery` calls. Forgetting one doesn't error. It presents as "why is this refetching on every subscribe?", a bad failure mode for a value with no local justification.
 
 Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (for the fields `LocalCacheOptions` carries — `staleTime`, `keepPreviousData`).
 
@@ -624,7 +624,7 @@ type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
 }
 ```
 
-**Refetch semantics.** A refetch of an infinite entry — `refetchInterval`, `invalidate()`, `refetch()`, focus/reconnect — **re-fetches every currently-loaded page** in order (from `initialPageParam`, chaining each next param via `getNextPageParam` off the freshly-fetched pages), not only the first. Pages update atomically at the end, so a scrolled-down list never flashes down to one page mid-refetch. This matches TanStack. A refetch that finds the dataset has shrunk (a page now returns `getNextPageParam === null` earlier) keeps only the pages that still exist. **Not dehydrated:** infinite entries are skipped by `dehydrate()` (§15) — a server-rendered infinite list refetches its first page(s) on the client.
+**Refetch semantics.** A refetch of an infinite entry **re-fetches every currently-loaded page** in order, not only the first. It starts at `initialPageParam` and chains each next param via `getNextPageParam` off the freshly-fetched pages. The triggers are `refetchInterval`, `invalidate()`, `refetch()`, focus and reconnect. Pages update atomically at the end, so a scrolled-down list never flashes down to one page mid-refetch. This matches TanStack. A refetch that finds the dataset has shrunk, because a page now returns `getNextPageParam === null` earlier, keeps only the pages that still exist. **Not dehydrated:** `dehydrate()` skips infinite entries (§15), so a server-rendered infinite list refetches its first pages on the client.
 
 The `flat` selector is configurable per-query via an `itemsOf: (page) => page.items` field. If omitted, `flat` equals `pages`.
 
@@ -698,7 +698,7 @@ Each `mutate` receives an `AbortSignal`. It's triggered when:
 - `mutation.reset()` is called.
 - `concurrency: 'latest-wins'` and a new `run()` supersedes this one.
 
-**`run()` after dispose rejects with `MutationDisposedError`, and `mutate` is never called.** The write does not happen. That error is deliberately **not** an `AbortError`: `isAbortError(err)` is how callers filter cancellations, and a run that was never accepted is not a cancellation — it is a write the app asked for and silently did not get. Filtering it away would hide that. It carries `mutationName` and `controllerPath` to say which one.
+**`run()` after dispose rejects with `MutationDisposedError`, and `mutate` is never called.** The write does not happen. That error is deliberately **not** an `AbortError`. `isAbortError(err)` is how callers filter cancellations, and a run that was never accepted is not a cancellation. It is a write the app asked for and silently did not get. Filtering it away would hide that. It carries `mutationName` and `controllerPath` to say which one.
 
 ```ts
 import { MutationDisposedError, isAbortError } from '@kontsedal/olas-core'
@@ -715,7 +715,7 @@ try {
 }
 ```
 
-**A run that already completed is never rolled back.** If `mutate` resolves and the abort lands in the gap before the run's continuation, the work is done — you cannot cancel what already happened. The optimistic snapshot is **finalized**, not rolled back (rolling back would commit a value already known to be stale to a cache that outlives the mutation, with no `onSuccess` left to invalidate it), and a persistable run settles as `'success'` rather than `'cancelled'` so the queue does not replay a write the server accepted (§13.3). The returned promise still rejects with `AbortError` — the caller walked away, and `data` and `status` belong to the superseder, or are left unset.
+**A run that already completed is never rolled back.** If `mutate` resolves and the abort lands in the gap before the run's continuation, the work is done. You cannot cancel what already happened. The optimistic snapshot is **finalized**, not rolled back. A rollback would commit a value already known to be stale to a cache that outlives the mutation, with no `onSuccess` left to invalidate it. A persistable run settles as `'success'` rather than `'cancelled'`, so the queue does not replay a write the server accepted (§13.3). The returned promise still rejects with `AbortError` — the caller walked away, and `data` and `status` belong to the superseder, or are left unset.
 
 ### 6.3 Optimistic updates
 
@@ -733,30 +733,30 @@ The rollback closure typically calls `query.setData(...)` with the pre-mutation 
 
 Each `Snapshot` captures the entry's value at the moment its `setData` ran — a **baseline**, not a delta. Snapshots form a stack in application order, and rollback is **positional**:
 
-- Rolling back the **top** (most-recent live) snapshot restores its captured baseline as the current data. So if A applies then B applies and B fails first, B's rollback reverts to the state observed **after A's update**; a later A rollback then reverts to the original pre-A value. (LIFO — the common case.)
+- Rolling back the **top** (most-recent live) snapshot restores its captured baseline as the current data. So if A applies, then B applies, and B fails first, B's rollback reverts to the state observed **after A's update**. A later A rollback then reverts to the original pre-A value. This is the LIFO case, and the common one.
 - Rolling back a **non-top** snapshot does **not** rewrite the currently-displayed value — a middle layer can't be removed cleanly without replaying the updaters stacked above it. Instead that layer's baseline is spliced out of the chain and threaded down onto the next layer ("chain-splice"). The visible value keeps every still-pending optimistic delta until the top layer settles.
 
-The guarantee this buys: **once every optimistic layer has rolled back — in any order — the data returns to the original pre-mutation value.** Before the chain-splice, an out-of-order rollback (A applies, B applies, A fails first, then B fails) restored B's stale baseline last and resurrected A's delta, corrupting the final state.
+The guarantee this buys is one sentence. **Once every optimistic layer has rolled back, in any order, the data returns to the original pre-mutation value.** Before the chain-splice, an out-of-order rollback restored B's stale baseline last. That resurrected A's delta and corrupted the final state. The order that broke it: A applies, B applies, A fails first, then B fails.
 
 **Fetch success rebases live snapshots.** When a fetch resolves while optimistic snapshots are live, each snapshot's captured baseline is updated to the fresh server value. A subsequent rollback therefore restores *server truth*, not the pre-fetch value — otherwise a refetch landing mid-mutation, followed by that mutation failing, would resurrect stale pre-fetch data. Pair this with `query.cancel(...)` (§5.5): cancelling outgoing refetches *before* an optimistic write prevents a stale response from overwriting it in the first place.
 
-This is snapshot-based rollback, not full rebasing: it does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For conflicting updates (two mutations writing the same field), prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
+This is snapshot-based rollback, not full rebasing. It does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For conflicting updates, meaning two mutations writing the same field, prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
 
-Only `query.setData(...)` (as used inside a mutation's `onMutate`) creates a rollback snapshot and flips `hasPendingMutations`. **Canonical cache writes** that do not originate from an optimistic mutation — cross-tab receive, entity backprop (`setEntryData`, §13.2), realtime patches — write straight through the entry without pushing a snapshot, so they never set `hasPendingMutations` and can never wedge it at `true`.
+Only `query.setData(...)` (as used inside a mutation's `onMutate`) creates a rollback snapshot and flips `hasPendingMutations`. **Canonical cache writes** that do not originate from an optimistic mutation write straight through the entry without pushing a snapshot. Cross-tab receive, entity backprop through `setEntryData` (§13.2) and realtime patches are all of this kind, so none of them sets `hasPendingMutations` or can wedge it at `true`.
 
-**Userland canonical writes use `query.write(...)`.** It is `setData` minus the snapshot: same entry (created if absent), same `source: 'set'` plugin/devtools event, no rollback handle, `hasPendingMutations` untouched. Use it whenever the write is not an optimistic guess that a mutation might have to undo — folding a server-pushed record into the cache, applying a realtime event, syncing a value another view just changed.
+**Userland canonical writes use `query.write(...)`.** It is `setData` minus the snapshot. Same entry, created if absent. Same `source: 'set'` event for plugins and devtools. No rollback handle, and `hasPendingMutations` untouched. Use it whenever the write is not an optimistic guess that a mutation might have to undo. Folding a server-pushed record into the cache, applying a realtime event, and syncing a value another view just changed are all of that kind.
 
-**`replace(...keyArgs, value)` is the write that supersedes an in-flight fetch.** It takes a whole VALUE rather than an updater, and that signature is the contract: a patch built from `prev` describes the fields it touches and says nothing about the rest, so a response already on its way may be carrying newer values for them — discarding it would lose those. A replacement asserts there is nothing else, *this is the record now*, which is exactly the condition under which a request issued earlier has nothing left to contribute. Its canonical source is a server read-back taken after the write it reports.
+**`replace(...keyArgs, value)` is the write that supersedes an in-flight fetch.** It takes a whole VALUE rather than an updater, and that signature is the contract. A patch built from `prev` describes the fields it touches and says nothing about the rest. A response already on its way may carry newer values for those other fields, and discarding it would lose them. A replacement asserts there is nothing else, *this is the record now*, which is exactly the condition under which a request issued earlier has nothing left to contribute. Its canonical source is a server read-back taken after the write it reports.
 
-`write` and `setData` both leave an outstanding fetch alone, for different reasons. `write` is canonical but partial, so it has no claim on what it did not touch. `setData` is a guess, and a server response is entitled to overrule a guess — which is why the cancel-before-`setData` recipe in §5.5 is still the caller's to make, and why `cancel(...)` remains the escape hatch for a `write` the caller has decided should win anyway.
+`write` and `setData` both leave an outstanding fetch alone, for different reasons. `write` is canonical but partial, so it has no claim on what it did not touch. `setData` is a guess, and a server response is entitled to overrule a guess. That is why the cancel-before-`setData` recipe in §5.5 is still the caller's to make. `cancel(...)` remains the escape hatch for a `write` the caller has decided should win anyway.
 
-**`replace` supersedes only when `value` is defined.** A write flips an idle/pending entry to `success` whatever it is handed, so replacing with `undefined` *and* cancelling would strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. Replacing with `undefined` says "there is no record", and the in-flight fetch is left to produce the first value.
+**`replace` supersedes only when `value` is defined.** A write flips an idle or pending entry to `success` whatever it is handed. Replacing with `undefined` *and* cancelling would therefore strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. Replacing with `undefined` says "there is no record", and the in-flight fetch is left to produce the first value.
 
 All three rebase live optimistic snapshots onto the written value, so a rollback restores what was written rather than a baseline captured before it.
 
 **The limit of that rule.** "Holds data" means `!== undefined`, which is how the whole cache spells "nothing here" (`peek`, `firstValue`, `keepPreviousData`). A query whose fetcher legitimately resolves `undefined` therefore never supersedes, and a stale response can still clobber a `write` on it. Call `cancel(...)` first on such a query; distinguishing "no value yet" from "the value is `undefined`" would need a has-settled flag the entry does not carry.
 
-This is a correctness distinction, not a stylistic one. A `setData` snapshot exists to be settled by the mutation that created it (`onMutate` returns it; success finalizes, failure rolls back). A fire-and-forget patcher has no mutation to settle it, so **every call leaves a live snapshot record on the entry**: `hasPendingMutations` wedged at `true` for the rest of the entry's life, and — on a long-lived entry patched on every server event — a snapshot array that grows without bound, each layer retaining its captured baseline. Before `write` existed, the only escapes were the plugin-facing `setEntryData` (not reachable from application code) or remembering to call `snapshot.finalize()` on every patch.
+This is a correctness distinction, not a stylistic one. A `setData` snapshot exists to be settled by the mutation that created it (`onMutate` returns it; success finalizes, failure rolls back). A fire-and-forget patcher has no mutation to settle it, so **every call leaves a live snapshot record on the entry**. `hasPendingMutations` wedges at `true` for the rest of the entry's life. On a long-lived entry patched on every server event, the snapshot array also grows without bound, each layer retaining its captured baseline. Before `write` existed, the only escapes were the plugin-facing `setEntryData` (not reachable from application code) or remembering to call `snapshot.finalize()` on every patch.
 
 ### 6.5 Detached runs — writes that outlive the screen
 
@@ -779,9 +779,9 @@ What still cancels a detached run:
 
 Both are the app explicitly saying "drop this one". Dispose only says "this screen is gone", which is not the same claim.
 
-**The callbacks run after the controller is torn down.** That is the whole point — it is how the `onSuccess` invalidation lands — but it means they must not touch what dispose destroyed. Keep them to client-level work: `query.invalidate()`, a toast, a logger. Not the controller's signals, fields or children. If the whole **root** is gone the run still completes, but its cache writes no-op, because the client has deregistered itself from every query.
+**The callbacks run after the controller is torn down.** That is the whole point, because it is how the `onSuccess` invalidation lands. It also means they must not touch what dispose destroyed. Keep them to client-level work: `query.invalidate()`, a toast, a logger. Not the controller's signals, fields or children. If the whole **root** is gone the run still completes, but its cache writes no-op, because the client has deregistered itself from every query.
 
-**A non-detached run whose `mutate` already resolved is finalized, not rolled back.** If the abort lands in the gap between the promise resolving and its continuation, the work has already happened — rolling back would write a known-stale value into a cache that outlives the mutation. So the optimistic value is committed as server truth. The consequence worth knowing: `onSuccess` does *not* run on that path, so the invalidation that would normally reconcile the optimistic guess against the server's normalized record never fires. Nothing marks the entry stale either, which means on a query with `staleTime: Infinity` the committed guess is what the cache holds until something invalidates it explicitly. `detached: true` is the way to avoid the whole situation: the run finishes normally and `onSuccess` lands.
+**A non-detached run whose `mutate` already resolved is finalized, not rolled back.** The abort can land in the gap between the promise resolving and its continuation. By then the work has already happened. Rolling back would write a known-stale value into a cache that outlives the mutation, so the optimistic value is committed as server truth. One consequence is worth knowing. `onSuccess` does *not* run on that path, so the invalidation that would normally reconcile the optimistic guess against the server's normalized record never fires. Nothing marks the entry stale either, which means on a query with `staleTime: Infinity` the committed guess is what the cache holds until something invalidates it explicitly. `detached: true` is the way to avoid the whole situation: the run finishes normally and `onSuccess` lands.
 
 Reach for it on writes whose completion the user has already been promised, and leave it off everything else.
 
@@ -805,7 +805,7 @@ Emitters created via `ctx.emitter()` auto-unsubscribe all handlers on dispose. H
 
 ## 8. Fields, forms & validators
 
-Three primitives cover the entire form story: `Field<T>` (one value), `Form<S>` (nested aggregate), `FieldArray<I>` (dynamic-length list).
+Three primitives cover the entire form story. `Field<T>` holds one value, `Form<S>` is a nested aggregate, and `FieldArray<I>` is a dynamic-length list.
 
 ### 8.1 Field
 
@@ -841,7 +841,7 @@ type Validator<T> = (
 
 The `AbortSignal` is triggered when the value changes again before the validator resolves (or the field is disposed) — async validators should pass it through to their I/O.
 
-A validator may return a `string` (an error on the node it's attached to), `null` and `[]` (valid), or a `FormIssue[]` to target descendants by `path` — see §8.3 for how form- and array-level validators route those onto specific fields. On a leaf `Field`, a returned `FormIssue[]` collapses to its messages (a leaf has no descendants to route to).
+A validator may return a `string`, which is an error on the node it is attached to. `null` and `[]` both mean valid. A `FormIssue[]` targets descendants by `path`; see §8.3 for how form-level and array-level validators route those onto specific fields. On a leaf `Field` a returned `FormIssue[]` collapses to its messages, because a leaf has no descendants to route to.
 
 **Validators run in a tracking scope.** Reading any signal inside a validator causes the validator to re-run automatically when that signal changes:
 
@@ -855,7 +855,7 @@ const confirm = ctx.field('', [
 
 Sync validators run first and short-circuit; async validators only run after all syncs pass.
 
-**Built-in validators.** `required`, `minLength`, `maxLength`, `min`, `max`, `email`, `pattern`, and `mustBeTrue`. `required` rejects empty values (`''`, `null`, `undefined`, `[]`) but a boolean `false` is a legitimate value and **passes** — for a consent or terms checkbox that must be ticked, use `mustBeTrue(message?)`, which rejects anything that isn't `true`.
+**Built-in validators.** `required`, `minLength`, `maxLength`, `min`, `max`, `email`, `pattern`, and `mustBeTrue`. `required` rejects the empty values `''`, `null`, `undefined` and `[]`. A boolean `false` is a legitimate value and **passes**. For a consent or terms checkbox that must be ticked, use `mustBeTrue(message?)`, which rejects anything that is not `true`.
 
 ### 8.2 Debounced async validators
 
@@ -873,7 +873,7 @@ const username = ctx.field('', [
 ])
 ```
 
-While debouncing or the request is in flight, `isValidating` is `true` and `isValid` **holds its last settled value** — editing an already-valid field keeps `isValid: true` mid-check, so a submit button bound to it doesn't strobe to disabled on every keystroke. A field with no prior settled validation defaults to valid. `isValid` only flips when a validation pass completes.
+While debouncing, or while the request is in flight, `isValidating` is `true` and `isValid` **holds its last settled value**. Editing an already-valid field therefore keeps `isValid: true` mid-check, so a submit button bound to it doesn't strobe to disabled on every keystroke. A field with no prior settled validation defaults to valid. `isValid` only flips when a validation pass completes.
 
 ### 8.3 Form — aggregate of fields & nested forms
 
@@ -956,7 +956,7 @@ form.fields.confirm.errors // ['Passwords must match'] — routed onto the field
 form.topLevelErrors        // [] — nothing landed at the top
 ```
 
-Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` and `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel** beside a field's own validator output and `setErrors` server errors: they merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run** (so fixing the mismatch removes them, while a field's own `set()` does not). An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
+Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` and `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel**, beside a field's own validator output and `setErrors` server errors. They merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run**. Fixing the mismatch therefore removes them, while a field's own `set()` does not. An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
 
 **Flat error summary.** For a11y "X errors at top of form" displays:
 
@@ -1025,7 +1025,7 @@ order.value.value
 
 The factory passed to `fieldArray` runs once per `add()` and `insert()` to construct a fresh sub-form (or sub-field). Each item is owned by the array; removing it disposes the underlying form.
 
-**Structural dirtiness.** `add`, `insert`, `remove`, `move`, and `clear` mark the array **dirty** — `isDirty` is `true` after any of them, not only after a per-item edit. This is what makes the reactive-`initial` guard (§8.4) safe: once the user adds or removes a row, the default `resetOnInitialChange: 'when-clean'` stops re-seating, so a background refetch of `initial: () => queryData` can't silently delete the rows the user just added. `reset()` — and an `initial`-driven re-seat — clears the structural dirt back to the clean baseline.
+**Structural dirtiness.** `add`, `insert`, `remove`, `move`, and `clear` mark the array **dirty** — `isDirty` is `true` after any of them, not only after a per-item edit. This is what makes the reactive-`initial` guard (§8.4) safe. Once the user adds or removes a row, the default `resetOnInitialChange: 'when-clean'` stops re-seating. A background refetch of `initial: () => queryData` therefore cannot silently delete the rows the user just added. `reset()` — and an `initial`-driven re-seat — clears the structural dirt back to the clean baseline.
 
 For arrays of simple fields (no sub-form), the factory returns a single field:
 
@@ -1330,9 +1330,9 @@ The collection subscribes to `source`. On each change it diffs by `keyOf`:
 - **Removed keys** → dispose that child controller (recursive disposal, same as parent-driven).
 - **Unchanged keys** → leave the child in place; its props **are not** re-applied. Controllers own their state past construction.
 
-If item *content* changes (same key, new fields) and a child needs to react, the child should consume that data through a signal passed in `propsOf` — not by expecting `propsOf` to be re-invoked.
+Item *content* can change under the same key, with new fields. A child that needs to react should consume that data through a signal passed in `propsOf`, rather than expecting `propsOf` to be re-invoked.
 
-Collections solve two problems at once: dynamic lifecycles, and **per-item subscription performance**. Each child controller owns its own signals, so UI items can subscribe only to *their* signals — the parent list re-renders only when items are added/removed, item internals re-render only when their signals change.
+Collections solve two problems at once: dynamic lifecycles, and **per-item subscription performance**. Each child controller owns its own signals, so UI items can subscribe only to *their* signals. The parent list re-renders only when items are added or removed. Item internals re-render only when their own signals change.
 
 For non-controller-worthy items (plain data), a `computed(() => list.value.find(...))` is fine — accept the linear search up to a few thousand items.
 
@@ -1361,11 +1361,11 @@ blocks.items.value
 // Array<{ key, api: TextBlockApi | CodeBlockApi | ChartBlockApi }>
 ```
 
-`ctx.collection` accepts **either** the homogeneous form (`controller` + `propsOf`) **or** the factory form (`factory: (item) => { controller, props }`), never both. The factory form is called once per new key; type-discriminant changes for an existing key dispose and reconstruct the child.
+`ctx.collection` accepts **either** the homogeneous form of `controller` plus `propsOf`, **or** the factory form `factory: (item) => { controller, props }`. Never both. The factory form is called once per new key; type-discriminant changes for an existing key dispose and reconstruct the child.
 
 This makes `ctx.collection` the single primitive for plugin, block and widget containers. Document editors, dashboards, page builders, IDE panels — anywhere the children are typed-per-item.
 
-**Ephemeral controllers — `ctx.session`.** When a child controller exists only for a transient interaction (modal, edit session, tooltip, command palette open), `ctx.child` is the wrong primitive — it lives until the parent disposes. Use `ctx.session`:
+**Ephemeral controllers — `ctx.session`.** A child controller sometimes exists only for a transient interaction: a modal, an edit session, a tooltip, an open command palette. `ctx.child` is the wrong primitive there, because it lives until the parent disposes. Use `ctx.session`:
 
 ```ts
 const [editor, dispose] = ctx.session(richEditorController, { initial: content })
@@ -1377,19 +1377,24 @@ await editor.save.run({ content: editor.draft.value })
 dispose()
 ```
 
-Lifetime is bounded by either (a) the explicit `dispose()` you call, or (b) the parent's disposal — whichever comes first. The api shape is exactly the controller's return type, with no wrapper around it.
+Lifetime is bounded by whichever comes first: the explicit `dispose()` you call, or the parent's disposal. The api shape is exactly the controller's return type, with no wrapper around it.
 
-Use cases: modal forms (open, edit, save/cancel, dispose), inline edit sessions (one row enters edit mode, commits, disposes), wizards (each step's controller lives for its step), command palette (the palette is constructed when opened, disposed when closed).
+Use cases:
+
+- Modal forms: open, edit, save or cancel, dispose.
+- Inline edit sessions: one row enters edit mode, commits, disposes.
+- Wizards: each step's controller lives for its step.
+- Command palette: constructed when opened, disposed when closed.
 
 ### 11.2 When to use controllers vs raw signals
 
-Controllers are the unit of *testable logic*. Each one is a small program with its own lifecycle, its own primitives, and its own public surface. They earn their cost — both runtime (per-instance allocations, subscriptions, devtools events) and conceptual (you have to think about where it lives in the tree).
+Controllers are the unit of *testable logic*. Each one is a small program with its own lifecycle, its own primitives, and its own public surface. They earn their cost. The runtime cost is per-instance allocations, subscriptions and devtools events. The conceptual cost is that you have to think about where each one lives in the tree.
 
-Use a **controller** when each item is its own small program: an open chat in messenger, a tab in a tabbed editor, an active video player on a watch page, a row in an editable spreadsheet of ~hundreds of rows. The signals it owns, the mutations it exposes, and the per-item lifecycle (close, pause, dispose) all justify a dedicated controller.
+Use a **controller** when each item is its own small program. Examples: an open chat in messenger, a tab in a tabbed editor, an active video player, a row in an editable spreadsheet of a few hundred rows. The signals it owns, the mutations it exposes, and its per-item lifecycle all justify a dedicated controller.
 
-Use **plain signals or maps of signals** when items are homogeneous data with no per-item behavior worth testing in isolation: posts in an infinite news feed (10,000 visible), cells in a spreadsheet grid (100,000), nodes in a virtualized tree, comments past the first ten. These belong as data inside a parent controller. The parent owns one or many signals that hold the collection; UI subscribes to per-item slices (typically via `computed(() => bigMap.value.get(id))` or per-item signals stored in a `Map<Key, Signal<Item>>`).
+Use **plain signals or maps of signals** when items are homogeneous data with no per-item behavior worth testing in isolation. Examples: posts in an infinite news feed at 10,000 visible, cells in a spreadsheet grid at 100,000, nodes in a virtualized tree, comments past the first ten. These belong as data inside a parent controller. The parent owns one or many signals that hold the collection, and the UI subscribes to per-item slices. The usual shapes are `computed(() => bigMap.value.get(id))` or per-item signals stored in a `Map<Key, Signal<Item>>`.
 
-A rule of thumb: **if the per-item logic would have less than three lines in its own controller factory, it's data, not a controller.** If you need per-item mutations, lifecycle, scopes, validators, or composition — controller. If you only need to read/write a field — signal.
+A rule of thumb. **If the per-item logic would have less than three lines in its own controller factory, it is data, not a controller.** Choose a controller if you need per-item mutations, lifecycle, scopes, validators or composition. Choose a signal if you only need to read and write a field.
 
 For very large homogeneous collections where you still want fine-grained reactivity (one cell updating doesn't re-notify all subscribers to the parent map), the **per-key signal** pattern is canonical:
 
@@ -1439,7 +1444,7 @@ A controller's factory function can throw — typically because deps are misconf
 3. **The throw propagates up.** If a parent's factory was the one calling `ctx.child(...)`, the parent's factory now throws too. This recurses up to the closest `try/catch` or to `createRoot` itself.
 4. **Partially-constructed parents are rolled back.** When a parent's factory throws, every primitive and child the parent already created via `ctx` (before the throw) is disposed in reverse order of creation. The error then propagates further.
 5. **`createRoot` does not swallow.** If construction reaches the root and throws, `createRoot` itself throws — *not* `onError`. Bootstrap failures are caller's responsibility, exactly like a top-level synchronous exception in `main()`.
-6. **`root.onError` only fires for construction errors that happen *after* the root is alive** — e.g., inside an `effect` that constructs a `ctx.child` lazily, or inside a `ctx.collection`'s factory that throws when a new item arrives. Those throws go to `onError` with `kind: 'construction'` and don't propagate (the collection skips the bad item; UI sees one fewer entry).
+6. **`root.onError` only fires for construction errors that happen *after* the root is alive.** Two examples: an `effect` that constructs a `ctx.child` lazily, and a `ctx.collection` factory that throws when a new item arrives. Those throws go to `onError` with `kind: 'construction'` and do not propagate. The collection skips the bad item, so the UI sees one fewer entry.
 
 The rule of thumb: synchronous bootstrap errors throw out of `createRoot`; runtime construction errors (collection items, lazy children, schema-driven primitive creation) go through `onError`.
 
@@ -1461,7 +1466,7 @@ usePersisted(ctx, 'draft', draft, {
 })
 ```
 
-`usePersisted` is bound to `ctx` so it cleans up subscriptions on dispose. Loading the initial value is synchronous for localStorage; for async storages, it returns a `{ ready: Signal<boolean> }` and the signal holds the default until ready. A user write that lands **before** an async load settles is not lost — it wins over the stored value (and over a cross-tab change that also raced the load), and is flushed to storage; a cross-tab change that races the load is buffered and applied once ready. Fallible operations (`get`/`set`, `serialize`/`deserialize`, `migrate`, cross-tab `onChange`) route through the optional `onError(err, op, key)` — without it, errors are swallowed. `version` + `migrate` enable a `{"v":N,"d":…}` on-disk envelope with forward migration; `throttleMs` debounces writes (flushed on dispose).
+`usePersisted` is bound to `ctx` so it cleans up subscriptions on dispose. Loading the initial value is synchronous for localStorage; for async storages, it returns a `{ ready: Signal<boolean> }` and the signal holds the default until ready. A user write that lands **before** an async load settles is not lost. It wins over the stored value, and over a cross-tab change that also raced the load, and it is flushed to storage. A cross-tab change that races the load is buffered and applied once ready. Fallible operations (`get`/`set`, `serialize`/`deserialize`, `migrate`, cross-tab `onChange`) route through the optional `onError(err, op, key)` — without it, errors are swallowed. `version` + `migrate` enable a `{"v":N,"d":…}` on-disk envelope with forward migration; `throttleMs` debounces writes (flushed on dispose).
 
 Cross-tab sync is opt-in and only supported by storages that emit change events (localStorage via `storage` event).
 
@@ -1482,11 +1487,11 @@ createRoot(appController, {
 
 Only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) do not propagate cross-tab — the page-array payload is too heavy to be a safe default. Plugin events still fire with `kind: 'infinite'` so future plugins can opt in; the built-in cross-tab plugin filters them out.
 
-**Echo prevention is layered:** (1) the `QueryClient` marks remote-applied writes with `isRemote: true` on `SetDataEvent` and `InvalidateEvent`, and plugins skip rebroadcast in that case; (2) messages carry a `sourceId`, and the plugin filters its own; (3) messages carry a monotonic `msgId`, and out-of-order or duplicate messages are dropped.
+**Echo prevention is layered.** First, the `QueryClient` marks remote-applied writes with `isRemote: true` on `SetDataEvent` and `InvalidateEvent`, and plugins skip rebroadcast in that case. Second, messages carry a `sourceId` and the plugin filters its own. Third, messages carry a monotonic `msgId`, and out-of-order or duplicate messages are dropped.
 
-`SetDataEvent` carries a `source: 'set' | 'fetch' | 'remote'` field so layered plugins can distinguish explicit `setData` calls from fetcher-result writes (`'fetch'`) and remote-applied writes (`'remote'`). The cross-tab plugin only rebroadcasts `source: 'set'` — fetcher results are a per-tab concern, since every tab runs its own fetcher and rebroadcasting would be quadratic noise. A plugin that needs every cache write observes all three. Entity normalization is one, see §18.1.
+`SetDataEvent` carries a `source: 'set' | 'fetch' | 'remote'` field so layered plugins can tell an explicit `setData` call from a fetcher-result write and a remote-applied write. The cross-tab plugin only rebroadcasts `source: 'set'` — fetcher results are a per-tab concern, since every tab runs its own fetcher and rebroadcasting would be quadratic noise. A plugin that needs every cache write observes all three. Entity normalization is one, see §18.1.
 
-`QueryClientPluginApi` exposes `setEntryData(queryId, keyArgs, updater)` for plugins that need to write back into the cache via the local-write path (the resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast). Used by the entity-normalization plugin (§18.1) to patch every query holding a given entity in one batched round of writes. `setEntryData` and `applyRemoteSetData` are **canonical writes** — they update the entry and emit the event but push no optimistic snapshot and do not set `hasPendingMutations` (§6.4); only `query.setData` in a mutation's `onMutate` does.
+`QueryClientPluginApi` exposes `setEntryData(queryId, keyArgs, updater)` for plugins that need to write back into the cache via the local-write path (the resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast). Used by the entity-normalization plugin (§18.1) to patch every query holding a given entity in one batched round of writes. `setEntryData` and `applyRemoteSetData` are **canonical writes**. They update the entry and emit the event, but push no optimistic snapshot and do not set `hasPendingMutations` (§6.4). Only `query.setData` in a mutation's `onMutate` does that.
 
 **Channel-name versioning.** Channel names are user-supplied. Receivers drop messages whose protocol `v` they don't understand; users who want clean cross-deploy isolation should include a version suffix in their `channelName` (e.g. `'my-app/cache/v2'`).
 
@@ -1512,7 +1517,7 @@ root.__debug.queryEntries() // DebugCacheEntry[] — current state of every cach
 `DebugEvent` is a discriminated union on `type`:
 
 - `controller:constructed | suspended | resumed | disposed` — `{ path }` (`constructed` also carries `props`, and any variables the controller registered via `ctx.debug({...})` during construction as `debug`).
-- `controller:debug` — `{ path, values }`. A `ctx.debug({...})` call *after* construction (e.g. from an effect); carries the controller's full merged variables record (live references).
+- `controller:debug` — `{ path, values }`. A `ctx.debug({...})` call *after* construction, for example from an effect. It carries the controller's full merged variables record as live references.
 - `cache:subscribed | fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryKey }` (`fetch-success`/`fetch-error` add `durationMs`, `fetch-error` adds `error`, `subscribed` adds `subscriberPath`).
 - `cache:set-data` — `{ queryKey, source, data }`. Emitted on every cache write; `data` is the post-write value and `source` is `'set' | 'fetch' | 'mutate' | 'remote'` (mirrors the §13.2 plugin vocabulary). This is what lets a panel show *current* data without polling.
 - `snapshot:push | rollback | finalize` — `{ queryKey }`. The optimistic-update stack (§6.4): a tracked `setData` pushes, a mutation error and supersede rolls back, a mutation success finalizes.
@@ -1525,13 +1530,13 @@ Every *delivered* event also carries `seq` and `t`, and — where core can cheap
 
 - `seq` — a monotonic, per-root sequence number stamped by the bus. The canonical sort key for a timeline (wall-clock `t` can tie under a burst, and is approximate for events replayed to a late subscriber).
 - `t` — epoch-ms timestamp.
-- `causeId` — correlates every event produced by one cause into a group. A mutation run's id flows into the optimistic `cache:set-data`, the `snapshot:*` events, the `mutation:rollback`, and the mutation's own lifecycle events; a fetch's id flows into its `cache:fetch-*` and the `cache:set-data` it writes. Absent for an un-attributable write (e.g. a bare `query.setData(...)` outside any mutation).
+- `causeId` — correlates every event produced by one cause into a group. A mutation run's id flows into the optimistic `cache:set-data`, the `snapshot:*` events, the `mutation:rollback`, and the mutation's own lifecycle events. A fetch's id flows into its `cache:fetch-*` and the `cache:set-data` it writes. Absent for an un-attributable write (e.g. a bare `query.setData(...)` outside any mutation).
 
 These three are optional on the `DebugEvent` *type* (so tooling can construct events by hand), but the bus always stamps `seq`/`t` on delivery.
 
-`@kontsedal/olas-devtools` consumes this stream as an in-app panel whose headline view is a causal **Timeline**: events grouped by `causeId` into cause-chains, each `cache:set-data` expandable to a structural before/after diff — alongside a controller-tree (each node showing its `ctx.debug` **Variables** live), cache-log, live cache-inspector, mutation and field views.
+`@kontsedal/olas-devtools` consumes this stream as an in-app panel. Its headline view is a causal **Timeline**: events grouped by `causeId` into cause-chains, each `cache:set-data` expandable to a structural before-and-after diff. Alongside it sit a controller tree, where each node shows its `ctx.debug` **Variables** live, plus the cache log, the live cache inspector, and the mutation and field views.
 
-The schema is stable enough to build tooling on, but isn't a public API guarantee — internal events may be added, and consumers `switch` on `type` and ignore unknowns. All events and the bus itself are dev-only: production builds strip every `emit(...)` call site (`__DEV__`), so no events arrive (§23).
+The schema is stable enough to build tooling on, but isn't a public API guarantee — internal events may be added, and consumers `switch` on `type` and ignore unknowns. All events and the bus itself are dev-only. Production builds strip every `emit(...)` call site behind `__DEV__`, so no events arrive (§23).
 
 ---
 
@@ -1650,7 +1655,7 @@ useRealtimePatcher(ctx, `feed-events`, {
 })
 ```
 
-Ship this composable in user code. The framework primitive is `ctx.effect` + `write`; this wraps the typical dispatching boilerplate. Note both halves: `ctx.bindQuery` scopes the writes to this root (§21.5), and `write` rather than `setData` because a realtime event is server truth with nothing to roll back — a fire-and-forget `setData` leaves a live snapshot per event (§6.4).
+Ship this composable in user code. The framework primitive is `ctx.effect` + `write`; this wraps the typical dispatching boilerplate. Note both halves. `ctx.bindQuery` scopes the writes to this root, per §21.5. `write` rather than `setData`, because a realtime event is server truth with nothing to roll back. A fire-and-forget `setData` would leave a live snapshot per event (§6.4).
 
 ### Gesture / transient UI state
 
@@ -1984,11 +1989,11 @@ The following are deliberately out of scope. They aren't "we'll do them later" �
 - **Built-in router.** Routing belongs in deps as a service (§16.5). Plug in `react-router`, TanStack Router, or your own.
 - **Gesture and transient UI state.** State whose lifetime equals a single interaction (in-progress drag rectangle, hover, focus) belongs in components, not controllers. See §16.5.
 - **Multi-item mutation orchestration.** The `Mutation` primitive tracks one logical operation. For "fire N mutations and track each result," compose them in a controller (§16.5).
-- **Offline-first sync and mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network; if you need a queue-then-sync model (Notion, Linear), build it as a layer over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`.
+- **Offline-first sync and mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network. If you need the queue-then-sync model that Notion and Linear use, build it as a layer over `ctx.mutation` that queues locally and retries on reconnect, and persist via `@kontsedal/olas-persist`.
 
 ### 18.1 Entity normalization
 
-When the same entity (a `Post`, a `User`) appears in many independent queries — `newsfeedQuery`, `userProfileQuery`, `searchQuery`, `notificationsQuery`, `commentsQuery` — updating that entity (e.g. liking the post) means patching every query that contains it. Olas core does **not** ship normalized storage; each query owns its own data.
+The same entity, a `Post` or a `User`, can appear in many independent queries: `newsfeedQuery`, `userProfileQuery`, `searchQuery`, `notificationsQuery`, `commentsQuery`. Updating that entity, such as liking the post, means patching every query that contains it. Olas core does **not** ship normalized storage; each query owns its own data.
 
 Two equally-supported patterns:
 
@@ -2009,7 +2014,7 @@ const patchPostEverywhere = (ctx: Ctx, id: string, patch: Partial<Post>) => {
 - `defineEntity<T>({ name, idOf })` — module-scope entity descriptor.
 - `entitiesPlugin([Post, User, ...])` — install via `RootOptions.plugins[]`.
 - `entities.signal(Post, id) → ReadSignal<Post | undefined>` — reactive per-id reads.
-- `entities.update(Post, id, patchOrUpdater, options?)` — accepts `Partial<T>` (default shallow merge; pass `{ merge: 'deep' }` to recursively merge plain objects, with arrays or non-plain values replacing) or `(prev: T) => T` (updater). Backpropagates to every query holding the entity, batched into one round of subscriber notifications. Uses `QueryClientPluginApi.setEntryData` (§13.2) to write back — including for infinite queries (page arrays are walked transparently).
+- `entities.update(Post, id, patchOrUpdater, options?)` — accepts a `Partial<T>` patch or a `(prev: T) => T` updater. A patch shallow-merges by default; pass `{ merge: 'deep' }` to recursively merge plain objects, where arrays and non-plain values replace rather than merge. It backpropagates to every query holding the entity, batched into one round of subscriber notifications, and writes back through `QueryClientPluginApi.setEntryData` (§13.2). Infinite queries are included, because the page arrays are walked transparently.
 - `entities.upsert, get, invalidate, entries and bindings` — round out the surface (last two are devtools snapshots).
 
 ```ts
@@ -2026,7 +2031,7 @@ entities.update(Post, 'p1', { liked: true })    // patches feedQuery, profileQue
 entities.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 1 }))
 ```
 
-Both patterns share the same core; neither is a framework. The userland helper is the right choice for ~5 queries and few entity types; the plugin scales further by removing the per-touch-site boilerplate. Infinite-query payloads ARE walked — the page-array shape traverses transparently, and `setEntryData` writes back through `InfiniteEntry.setData`. The cross-tab plugin still skips infinite payloads (§13.2) — different concern (payload weight on the wire).
+Both patterns share the same core; neither is a framework. The userland helper is the right choice for about five queries and few entity types; the plugin scales further by removing the per-touch-site boilerplate. Infinite-query payloads ARE walked — the page-array shape traverses transparently, and `setEntryData` writes back through `InfiniteEntry.setData`. The cross-tab plugin still skips infinite payloads (§13.2), which is a separate concern about payload weight on the wire.
 
 Future-work ideas — additional packages, storage adapters, browser-extension devtools, cross-tab cache sync, normalization, lint rules — live in `BACKLOG.md`, not here. The spec describes what *is*.
 
@@ -3129,13 +3134,13 @@ Each child `ControllerInstance` inherits a *reference* to the root's `QueryClien
 
 Queries are module-scoped definitions. Each root owns its cache entries. `ctx.bindQuery(query)` and `root.bindQuery(query)` return a typed imperative handle for only that root, without subscribing or fetching. Regular handles expose `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `setData`, `write`, `replace`, `peek`, and `prefetch`; infinite handles expose their existing paginated equivalents. Bound prefetch can run before the first subscription. Bound handles fail after root disposal. `bindQuery` is a reserved root-control name.
 
-Each definition carries a `Set<QueryClient>`. Binding a handle or an entry registers its client; disposal unregisters it. Unbound methods resolve only when at most one client is registered. With multiple clients they throw (synchronous methods) or reject (promise methods) before reading data, running an updater, or starting work. With no clients, reads return undefined and writes/cancellation/invalidation do nothing; prefetch rejects. An intentional broadcast requires explicitly iterating bound root handles.
+Each definition carries a `Set<QueryClient>`. Binding a handle or an entry registers its client; disposal unregisters it. Unbound methods resolve only when at most one client is registered. With multiple clients a synchronous method throws and a promise method rejects, before reading data, running an updater, or starting work. With no clients, reads return undefined and writes, cancellation and invalidation do nothing, while prefetch rejects. An intentional broadcast requires explicitly iterating bound root handles.
 
 `QueryClientPluginApi.invalidate(query, callArgs)` targets only the owning client, including mutation-queue replay reconciliation. Cross-tab transport remains explicit plugin behavior.
 
 Cache keys use a recursive tagged encoding: every primitive, array, object and supported special value has its own type tag. Object properties are sorted; user data cannot impersonate special-value tags. Cycles, functions, symbols, Map/Set and unsupported class instances throw. The exported hash string is opaque and its format is not a persistence protocol.
 
-Expiry scheduling is shared: `scheduleExpiry` (`expiry-timer.ts`) creates **no timer at all** for a non-finite delay and walks a finite one in chunks against an absolute deadline, so a delay above the platform's signed 32-bit limit cannot overflow into an immediate fire. Every user-supplied duration goes through it: the staleness timer (`Entry`, `InfiniteEntry`), the gc timer (`ClientEntry`, `InfiniteClientEntry`), the `refetchInterval` chain, the retry backoff (`abortableSleep`, fed by `retryDelay`), and `suspend({ maxIdle })`. So `staleTime: Infinity` stays fresh until explicitly invalidated, and `gcTime: Infinity` retains a released entry for the life of the root. This applies to regular and infinite entries, initial hydration and streamed hydration.
+Expiry scheduling is shared. `scheduleExpiry` in `expiry-timer.ts` creates **no timer at all** for a non-finite delay, and walks a finite one in chunks against an absolute deadline. A delay above the platform's signed 32-bit limit therefore cannot overflow into an immediate fire. Every user-supplied duration goes through it: the staleness timer in `Entry` and `InfiniteEntry`, the gc timer in `ClientEntry` and `InfiniteClientEntry`, the `refetchInterval` chain, the retry backoff in `abortableSleep`, and `suspend({ maxIdle })`. So `staleTime: Infinity` stays fresh until explicitly invalidated, and `gcTime: Infinity` retains a released entry for the life of the root. This applies to regular and infinite entries, initial hydration and streamed hydration.
 
 ### 21.6 Cache entry state machine
 
@@ -3242,7 +3247,7 @@ Honest estimates so users know what they're paying for. All numbers are order-of
 | `@kontsedal/olas-persist` | **~1 kB** | localStorage adapter + composable. |
 | `@kontsedal/olas-zod` | **~2 kB + your Zod** | Adapter only; Zod itself is ~13 kB. |
 
-For a "kitchen sink" app: `core + react + persist + zod = ~15 kB + Zod = ~28 kB` over the wire. Comparable to TanStack Query (~13 kB) + react-hook-form (~10 kB) + Zod (~13 kB) = ~36 kB.
+For a "kitchen sink" app: `core + react + persist + zod = ~15 kB + Zod = ~28 kB` over the wire. Comparable to TanStack Query at ~13 kB, react-hook-form at ~10 kB and Zod at ~13 kB, which total ~36 kB.
 
 Tree-shaking removes unused parts of core: if you don't use `defineInfiniteQuery`, the infinite-query machinery is dropped (~2 kB saved). Forms are the largest single category (~4 kB) and are dropped if no controller calls `ctx.form`, `ctx.field`, or `ctx.fieldArray`.
 

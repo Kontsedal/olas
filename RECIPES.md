@@ -226,7 +226,7 @@ Requires a `realtime` service in deps with `subscribe(channel, handler)`. The fr
 
 ## Persisted mutations — survive reloads with `@kontsedal/olas-mutation-queue`
 
-When a mutation hits the network and the user reloads (or the browser crashes) mid-request, you typically want the mutation to run again on the next page load — not silently drop. `@kontsedal/olas-mutation-queue` ships a `QueryClientPlugin` that writes pending mutations to a `StorageAdapter` and replays them on `init`.
+A mutation can hit the network while the user reloads, or while the browser crashes, mid-request. You usually want it to run again on the next page load rather than drop silently. `@kontsedal/olas-mutation-queue` ships a `QueryClientPlugin` that writes pending mutations to a `StorageAdapter` and replays them on `init`.
 
 ```ts
 // orders.ts — module scope. `defineMutation` registers `mutate` against
@@ -394,7 +394,7 @@ const userRoute = createRoute({
 })
 ```
 
-On the client there is usually one root and the bare `userQuery.prefetch(...)` still works, but the bound form is the one that survives SSR: a server handling concurrent requests has a root per request, and an unbound prefetch there rejects rather than guessing whose cache to warm.
+On the client there is usually one root, and the bare `userQuery.prefetch(...)` still works. The bound form is the one that survives SSR. A server handling concurrent requests has a root per request, and an unbound prefetch there rejects rather than guessing whose cache to warm.
 
 Combined with `useQuery(sub, { suspense: true })`, the suspense fallback is skipped because data is already in cache by the time React reads it.
 
@@ -402,7 +402,7 @@ Combined with `useQuery(sub, { suspense: true })`, the suspense fallback is skip
 
 ## `readsFactory` — one query, many React readers that own no controller
 
-`useQuery(subscription)` reads a subscription; it cannot *create* one. Only a controller can (`ctx.use`), and that is deliberate — a component that mints its own cache subscription owns data lifetime, which is the thing Olas exists to move out of the view. But it leaves a real shape unaddressed: a **React context or hook** that needs server data and has no controller of its own. Theme providers, feature-flag gates, keybinding overrides, "current user" wrappers — all of them read one query and render children.
+`useQuery(subscription)` reads a subscription; it cannot *create* one. Only a controller can, through `ctx.use`, and that is deliberate. A component that mints its own cache subscription owns data lifetime, which is the thing Olas exists to move out of the view. That leaves one real shape unaddressed: a **React context or hook** that needs server data and has no controller of its own. Theme providers, feature-flag gates, keybinding overrides, "current user" wrappers — all of them read one query and render children.
 
 The pattern: a controller owns the subscriptions, exposes them as a plain object, and React reads them **by identity**.
 
@@ -442,11 +442,11 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
 Three properties make this worth the indirection:
 
-- **One entry, one fetch.** Every reader goes through the same subscription, so N providers reading the same query dedupe to one fetch and one cache entry — where N components each minting a subscription would at least each hold a reference.
+- **One entry, one fetch.** Every reader goes through the same subscription, so N providers reading the same query dedupe to one fetch and one cache entry. N components each minting a subscription would instead each hold a reference.
 - **Lifetime is the controller's.** The subscription lives and dies with the controller that owns it, not with whichever component mounted first. A provider that unmounts and remounts (a route change, a StrictMode double-mount) re-reads a warm entry instead of re-acquiring one.
 - **It survives the reader moving.** When the provider eventually becomes a controller itself, the factory does not change — only who calls it.
 
-If two roots share the same provider (a main window and a detached one, say), have **both** roots expose the factory under the same key; `useRoot()` then resolves to whichever root the component is mounted under. And keep the factory to reads that a React *provider* owns — a read belonging to one feature belongs in that feature's controller, where `ctx.use` is already available.
+Two roots can share the same provider, such as a main window and a detached one. Have **both** roots expose the factory under the same key, and `useRoot()` resolves to whichever root the component is mounted under. And keep the factory to reads that a React *provider* owns — a read belonging to one feature belongs in that feature's controller, where `ctx.use` is already available.
 
 ---
 
