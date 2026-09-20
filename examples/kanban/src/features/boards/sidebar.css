@@ -7,7 +7,7 @@
   padding: 10px 10px 12px;
   background: var(--color-bg-sunk);
   border-right: 1px solid var(--color-border);
-  transition: width var(--motion-base);
+  transition: width var(--motion-base) var(--ease-out);
   flex-shrink: 0;
 }
 .olas-sidebar-collapsed { width: var(--layout-sidebar-w-collapsed); }
@@ -18,21 +18,23 @@
 }
 .olas-sidebar-mark {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 26px; height: 26px;
-  background: linear-gradient(135deg, var(--color-accent) 0%, oklch(0.66 0.18 calc(var(--hue-accent) + 30)) 100%);
+  width: var(--control-md); height: var(--control-md);
+  background: var(--color-accent);
   color: var(--color-accent-fg);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-mark);
   flex-shrink: 0;
 }
-.olas-sidebar-title { font-weight: 600; font-size: 0.8125rem; letter-spacing: -0.005em; }
-.olas-sidebar-sub { color: var(--color-fg-mute); font-weight: 500; }
+.olas-sidebar-title { font-weight: var(--weight-semibold); font-size: var(--text-body); }
+.olas-sidebar-sub { color: var(--color-fg-mute); font-weight: var(--weight-medium); }
 .olas-sidebar-collapse { margin-left: auto; }
 .olas-sidebar-collapsed .olas-sidebar-collapse { margin-left: 0; }
 
 .olas-sidebar-section {
   padding: 0 8px 4px;
-  font-size: 0.6875rem; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase;
-  color: var(--color-fg-dim);
+  /* A heading above a group: uppercase with NO tracking, and the weight
+     carries the hierarchy so the colour does not have to. */
+  font-size: var(--text-chrome); font-weight: var(--weight-semibold); text-transform: uppercase;
+  color: var(--color-fg-mute);
 }
 
 .olas-sidebar-list { display: flex; flex-direction: column; gap: 1px; }
@@ -42,12 +44,12 @@
   padding: 5px 8px;
   border: 1px solid transparent;
   background: transparent;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-control);
   color: var(--color-fg-mute);
-  font-weight: 500;
-  font-size: 0.8125rem;
+  font-weight: var(--weight-medium);
+  font-size: var(--text-body);
   text-align: left;
-  transition: background var(--motion-fast), color var(--motion-fast);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 .olas-sidebar-board:hover { background: var(--color-bg-hover); color: var(--color-fg); }
 .olas-sidebar-board-active {
@@ -57,8 +59,8 @@
 
 .olas-sidebar-board-dot {
   width: 6px; height: 6px;
-  border-radius: 999px;
-  background: oklch(0.62 0.18 var(--board-hue, 270));
+  border-radius: var(--radius-pill);
+  background: var(--board-color, var(--color-border-control));
   flex-shrink: 0;
 }
 
@@ -76,4 +78,4 @@
   padding: 8px;
   margin-top: 8px;
 }
-.olas-sidebar-foot-text { color: var(--color-fg-dim); font-size: 0.72rem; }
+.olas-sidebar-foot-text { color: var(--color-fg-dim); font-size: var(--text-meta); }

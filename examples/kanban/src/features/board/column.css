@@ -5,30 +5,38 @@
   max-height: calc(100vh - 140px);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-surface);
   overflow: hidden;
   scroll-snap-align: start;
   isolation: isolate;
-  transition: background var(--motion-base), border-color var(--motion-base);
+  transition: background var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out);
 }
 
 .olas-column-head {
   display: flex; align-items: center; gap: 6px;
   padding: 4px 6px 6px;
 }
+/* The dot is the column's identity, and the only carrier of it, so it takes
+ * a slot from the identity palette rather than a raw hue off the API. */
 .olas-column-pill {
   width: 8px; height: 8px;
-  border-radius: 999px;
-  background: oklch(0.62 0.18 var(--column-hue, 270));
+  border-radius: var(--radius-pill);
+  background: var(--column-color, var(--color-border-control));
   flex-shrink: 0;
 }
+/* A column title is a name the USER typed. A text-transform cannot tell a
+ * label from a value, so it gets none — weight carries the hierarchy. */
 .olas-column-title {
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: var(--text-body);
+  font-weight: var(--weight-semibold);
   margin: 0;
-  letter-spacing: 0.01em;
-  text-transform: uppercase;
   color: var(--color-fg);
+}
+.olas-column-count {
+  font-size: var(--text-chrome);
+  font-weight: var(--weight-medium);
+  color: var(--color-fg-dim);
+  font-variant-numeric: tabular-nums;
 }
 .olas-column-spacer { flex: 1; }
 
@@ -41,26 +49,27 @@
   flex: 1;
   background: var(--color-bg-sunk);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-control);
   min-height: 64px;
-  transition: background var(--motion-fast), border-color var(--motion-fast), box-shadow var(--motion-fast);
+  transition: background var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out);
 }
+/* One fact, one mark: the wash says "drop here". The ring beside it was a
+ * second copy of that fact in the same colour. */
 .olas-column-body-over {
   border-color: var(--color-accent);
   background: var(--color-accent-soft);
-  box-shadow: 0 0 0 1px var(--color-accent);
 }
 
 .olas-column-empty {
   padding: 14px 10px;
   color: var(--color-fg-dim);
-  font-size: 0.75rem;
+  font-size: var(--text-meta);
   text-align: center;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-mark);
   border: 1px dashed transparent;
 }
 
-.olas-card-slot { transition: opacity var(--motion-fast); }
+.olas-card-slot { transition: opacity var(--motion-fast) var(--ease-out); }
 .olas-card-slot-faded { opacity: 0.32; }
 .olas-card-slot-dragging .olas-card-tile {
   opacity: 0.30;
@@ -71,8 +80,10 @@
 }
 
 .olas-card-tile-overlay { cursor: grabbing; }
+/* A tile under the cursor genuinely floats, so here the shadow is right —
+ * and it drops its border to earn it. */
 .olas-card-tile-overlay .olas-card-tile {
-  box-shadow: var(--shadow-lift);
-  border-color: var(--color-accent);
+  box-shadow: var(--shadow-float);
+  border-color: transparent;
   transform: rotate(1.5deg);
 }

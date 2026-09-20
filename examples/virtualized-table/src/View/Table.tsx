@@ -30,8 +30,8 @@ export function Table(): ReactElement {
   const ordered = useMemo(() => visibleIds, [visibleIds])
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-(--color-border) bg-(--color-bg-elev) shadow-[var(--shadow-card)]">
-      <div className="grid grid-cols-[36px_1fr_180px_120px_120px_56px] items-center gap-3 border-b border-(--color-border) bg-(--color-bg-sunk) px-3 py-2 text-[10.5px] font-semibold uppercase tracking-[0.07em] text-(--color-fg-mute)">
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden rounded-[var(--radius-surface)] border border-(--color-border) bg-(--color-bg-elev)">
+      <div className="grid grid-cols-[36px_1fr_180px_120px_120px_56px] items-center gap-3 border-b border-(--color-border) bg-(--color-bg-sunk) px-3 py-2 text-[length:var(--text-mark)] font-semibold uppercase text-(--color-fg-mute)">
         <span />
         <span>Issue</span>
         <span>Assignee</span>

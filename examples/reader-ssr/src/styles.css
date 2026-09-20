@@ -1,43 +1,45 @@
 @import "tailwindcss";
 
-@theme {
-  --color-bg:        oklch(0.985 0.012 90);
-  --color-bg-elev:   oklch(1     0    0);
-  --color-bg-sunk:   oklch(0.96  0.012 90);
-  --color-border:    oklch(0.90  0.010 90);
-  --color-fg:        oklch(0.18  0.02  280);
-  --color-fg-mute:   oklch(0.50  0.02  280);
-  --color-accent:    oklch(0.51  0.16  17);   /* warm red accent */
-  --color-accent-bg: oklch(0.97  0.04  17);
-  --shadow-card:     0 1px 2px rgb(20 20 30 / 0.04), 0 4px 14px rgb(20 20 30 / 0.05);
-  --font-serif:      "Iowan Old Style", "Palatino Linotype", "Hoefler Text", Georgia, serif;
-  --font-sans:       ui-sans-serif, -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif;
-}
+/* The shared scales: type by role, three corner tiers, space, motion and the
+   solved surfaces. See `.wiki/decisions/ui-rules.md`. */
+@import "../../_shared/ui/tokens.css";
 
-[data-theme="dark"] {
-  --color-bg: oklch(0.16 0.012 270);
-  --color-bg-elev: oklch(0.22 0.012 270);
-  --color-bg-sunk: oklch(0.13 0.012 270);
-  --color-border: oklch(0.3 0.015 270);
-  --color-fg: oklch(0.93 0.005 270);
-  --color-fg-mute: oklch(0.65 0.015 270);
-  --color-accent: oklch(0.72 0.13 17);
-  --color-accent-bg: oklch(0.25 0.06 17);
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.5), 0 4px 14px rgb(0 0 0 / 0.35);
+/*
+ * This app keeps the opinion it already had, and it is the strongest one in
+ * the suite: a serif reading column and a warm red accent. It is a reader, so
+ * the body is prose rather than chrome, and the type scale it uses is the
+ * upper half of the shared one.
+ *
+ * The accent is re-solved at the shared lightness so it clears 4.5:1 on every
+ * surface in both themes, which the old value did not guarantee.
+ */
+:root {
+  --color-accent: oklch(0.5 0.16 17);
+  --color-accent-hover: oklch(0.44 0.16 17);
+  --color-accent-fg: oklch(1 0 0);
+  --color-accent-soft: oklch(0.95 0.025 17); /* 0.025 is the sRGB ceiling here */
 }
 
 @media (prefers-color-scheme: dark) {
-  [data-theme="auto"] {
-    --color-bg: oklch(0.16 0.012 270);
-    --color-bg-elev: oklch(0.22 0.012 270);
-    --color-bg-sunk: oklch(0.13 0.012 270);
-    --color-border: oklch(0.3 0.015 270);
-    --color-fg: oklch(0.93 0.005 270);
-    --color-fg-mute: oklch(0.65 0.015 270);
-    --color-accent: oklch(0.72 0.13 17);
-    --color-accent-bg: oklch(0.25 0.06 17);
-    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.5), 0 4px 14px rgb(0 0 0 / 0.35);
+  :root:not([data-theme="light"]) {
+    --color-accent: oklch(0.78 0.129 17);
+    --color-accent-hover: oklch(0.84 0.088 17);
+    --color-accent-fg: oklch(0.16 0.02 17);
+    --color-accent-soft: oklch(0.3 0.06 17);
   }
+}
+
+:root[data-theme="dark"] {
+  --color-accent: oklch(0.78 0.129 17);
+  --color-accent-hover: oklch(0.84 0.088 17);
+  --color-accent-fg: oklch(0.16 0.02 17);
+  --color-accent-soft: oklch(0.3 0.06 17);
+}
+
+@theme {
+  --font-serif: "Iowan Old Style", "Palatino Linotype", "Hoefler Text", Georgia, serif;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 }
 
 html,
@@ -45,4 +47,15 @@ body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-serif);
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-accent);
+  outline-offset: var(--focus-offset);
+}
+
+/* The only looping animation in the app is the load-more spinner, and it says
+   "still working". Reduced motion keeps the element and stops the spin. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-spin { animation: none; }
 }

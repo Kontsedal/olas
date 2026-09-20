@@ -7,18 +7,16 @@
   min-height: var(--density-tile-min-h);
   background: var(--color-bg-elev);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-xs);
+  border-radius: var(--radius-control);
   cursor: pointer;
   transition:
-    background var(--motion-fast),
-    border-color var(--motion-fast),
-    box-shadow var(--motion-fast);
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
   user-select: none;
 }
 .olas-card-tile:hover {
   background: var(--color-bg-hover);
-  border-color: var(--color-border-strong);
+  border-color: var(--color-border-control);
 }
 .olas-card-tile-selected {
   border-color: var(--color-accent);
@@ -36,7 +34,7 @@
   color: var(--color-fg-dim);
   cursor: grab;
   opacity: 0;
-  transition: opacity var(--motion-fast);
+  transition: opacity var(--motion-fast) var(--ease-out);
 }
 .olas-card-tile:hover .olas-card-grip { opacity: 1; }
 .olas-card-grip:active { cursor: grabbing; }
@@ -48,12 +46,11 @@
 
 .olas-card-tile-title {
   font-size: var(--density-tile-title-size);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   margin: 0;
   line-height: 1.35;
   word-break: break-word;
   color: var(--color-fg);
-  letter-spacing: -0.005em;
 }
 
 .olas-card-tile-labels { display: flex; flex-wrap: wrap; gap: 3px; }
@@ -63,7 +60,7 @@
   flex-wrap: wrap;
   margin-top: 2px;
   color: var(--color-fg-mute);
-  font-size: 0.6875rem;
+  font-size: var(--text-chrome);
 }
 .olas-card-tile-spacer { flex: 1; }
 
@@ -74,11 +71,11 @@
   display: inline-block;
   width: 32px; height: 3px;
   background: var(--color-bg-sunk);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   overflow: hidden;
 }
 .olas-card-tile-progress > span {
   display: block; height: 100%;
   background: var(--color-success);
-  transition: width var(--motion-base);
+  transition: width var(--motion-base) var(--ease-out);
 }

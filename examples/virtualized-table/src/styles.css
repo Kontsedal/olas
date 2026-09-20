@@ -1,58 +1,55 @@
 @import "tailwindcss";
 
-@theme {
-  --color-bg:           oklch(0.985 0.005 270);
-  --color-bg-elev:      oklch(1     0     0);
-  --color-bg-sunk:      oklch(0.965 0.005 270);
-  --color-border:       oklch(0.90  0.005 270);
-  --color-fg:           oklch(0.18  0.02  270);
-  --color-fg-mute:      oklch(0.50  0.02  270);
-  --color-accent:       oklch(0.55  0.20  264);
-  --color-accent-fg:    oklch(0.99  0     0);
-  --color-success:      oklch(0.62  0.17  142);
-  --color-danger:       oklch(0.60  0.21  25);
-  --color-warning:      oklch(0.71  0.17  82);
-  --shadow-card:        0 1px 2px rgb(0 0 0 / 0.04), 0 2px 8px rgb(0 0 0 / 0.06);
-  --font-sans:          ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI", sans-serif;
-  --font-mono:          ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
+/* The shared scales and the solved palette, including the house accent.
+   See `.wiki/decisions/ui-rules.md`. */
+@import "../../_shared/ui/tokens.css";
 
-@media (prefers-color-scheme: dark) {
-  @theme {
-    --color-bg:        oklch(0.16  0.012 270);
-    --color-bg-elev:   oklch(0.21  0.012 270);
-    --color-bg-sunk:   oklch(0.13  0.012 270);
-    --color-border:    oklch(0.30  0.015 270);
-    --color-fg:        oklch(0.95  0.005 270);
-    --color-fg-mute:   oklch(0.65  0.015 270);
-    --color-accent:    oklch(0.71  0.17  264);
-    --color-success:   oklch(0.72  0.18  142);
-    --color-danger:    oklch(0.70  0.22  25);
-    --color-warning:   oklch(0.82  0.15  82);
-    --shadow-card:     0 1px 2px rgb(0 0 0 / 0.40), 0 2px 8px rgb(0 0 0 / 0.40);
-  }
+/* This demo hosts the devtools panel, so it takes the house accent rather
+   than an opinion of its own — a second hue here would show as a seam down
+   the middle of the screen. */
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --shadow-float: 0 8px 24px oklch(0 0 0 / 0.12), 0 2px 6px oklch(0 0 0 / 0.06);
 }
 
 html, body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);
+  font-size: var(--text-body);
 }
 
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-accent);
+  outline-offset: var(--focus-offset);
+}
+
+/* A row whose data just arrived. The flash IS the confirmation, and a colour
+   change is not movement, so it stays under reduced motion. */
 @keyframes olas-flash {
-  0%   { background-color: color-mix(in oklch, var(--color-accent) 30%, transparent); }
-  100% { background-color: transparent; }
+  from { background-color: var(--color-accent-soft); }
+  to   { background-color: transparent; }
 }
-.row-flash { animation: olas-flash 700ms ease-out; }
+.row-flash { animation: olas-flash 700ms var(--ease-out); }
 
-.olas-devtools {
-  --olas-bg: var(--color-bg-sunk);
+/* The panel ships this same palette; this is what keeps it in step when the
+   app's theme is chosen rather than inherited from the OS. */
+.olas-devtools,
+.olas-devtools-launcher,
+.olas-devtools-floating {
+  --olas-bg: var(--color-bg-elev);
+  --olas-soft: var(--color-bg-sunk);
+  --olas-soft-2: var(--color-bg-hover);
+  --olas-row-alt: var(--color-bg);
   --olas-fg: var(--color-fg);
   --olas-muted: var(--color-fg-mute);
-  --olas-accent: var(--color-accent);
+  --olas-dim: var(--color-fg-dim);
   --olas-border: var(--color-border);
-  --olas-row: var(--color-bg-elev);
-  --olas-row-alt: var(--color-bg-sunk);
+  --olas-border-control: var(--color-border-control);
+  --olas-accent: var(--color-accent);
+  --olas-accent-fg: var(--color-accent-fg);
   --olas-success: var(--color-success);
   --olas-warn: var(--color-warning);
   --olas-error: var(--color-danger);

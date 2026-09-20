@@ -13,7 +13,8 @@ import { MoreHorizontal, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { Board as BoardData, Column as ColumnData } from '../../api'
 import type { AppApi } from '../../app.controller'
-import { cx, IconButton, Tag } from '../../ui'
+import { cx, IconButton } from '../../ui'
+import { identityColor } from '../../ui/identity'
 import { CardTile } from './CardTile'
 import { CreateCardDialog } from './CreateCardDialog'
 
@@ -28,7 +29,7 @@ export function Column({
 }) {
   const app = useRoot<AppApi>()
   const matches = use(app.board.filterMatches)
-  const style = { ['--column-hue' as string]: String(column.hue) } as React.CSSProperties
+  const style = { ['--column-color' as string]: identityColor(column.hue) } as React.CSSProperties
   const [createOpen, setCreateOpen] = useState(false)
 
   const visibleCount =
@@ -43,7 +44,7 @@ export function Column({
       <header className="olas-column-head">
         <span className="olas-column-pill" aria-hidden />
         <h3 className="olas-column-title">{column.title}</h3>
-        <Tag>{visibleCount}</Tag>
+        <span className="olas-column-count">{visibleCount}</span>
         <span className="olas-column-spacer" />
         <IconButton
           size="sm"

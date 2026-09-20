@@ -1150,3 +1150,36 @@ re-deriving it.
   page's own rules table tripped it: 8 of its 11 findings were the table being read as prose.
   Structure is now read from the original lines, so the collapse cannot move it.
 
+
+## [2026-09-20 14:30] ingest | one interface spirit across five surfaces
+
+Distilled the interface rules, wrote them down, and applied them to the four example apps and the
+devtools panel. New page: [decisions/ui-rules.md](decisions/ui-rules.md).
+
+What the pass found, counted rather than remembered: 15 distinct literal font sizes in kanban and
+9 in devtools, 8 corner radii in devtools, a violet-indigo accent on four of the five surfaces,
+one `prefers-reduced-motion` block against nine animations, and four elements pairing a border
+with a shadow.
+
+New file `examples/_shared/ui/tokens.css` holds the scales every example shares — type by role,
+three corner tiers, the control ladder, space, motion and the palette. `packages/devtools` carries
+the same scales by value, because it ships its CSS inline in a TS string and has no stylesheet a
+host could import. That duplication is deliberate and is stated in both files.
+
+Five things the measurement found that looking would not have:
+
+- `--color-border-strong` measured 1.7-2.0:1 against the surfaces it edged, against the 3:1 WCAG
+  1.4.11 asks of a control's boundary. Split into `--color-border-control`, solved, with
+  `--color-border` staying a quiet divider.
+- Solving the foreground tiers straight to the floor put two of the three 0.04 apart in lightness.
+- Four accent and status values were authored outside sRGB and would have been clipped.
+- A fixed lightness and chroma across arbitrary hues failed at hue 192 and fell out of gamut over
+  a third of the circle. That is why a data hue now picks a slot in an eight-colour identity
+  palette at the render boundary rather than reaching the CSS raw.
+- `examples/stock-ticker/src/dom.ts` stroked its sparkline with `var(--green)` and `var(--red)`,
+  declared nowhere in the repo.
+
+Also closed: `JsonView` had zero `aria-` attributes while being an expand and collapse tree, and
+kanban handed the devtools panel three custom properties the panel does not read.
+
+The page states plainly that nothing gates any of the ten rules.

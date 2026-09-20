@@ -1,0 +1,265 @@
+/*
+ * The scales every Olas example shares.
+ *
+ * Read `.wiki/decisions/ui-rules.md` before changing anything here. The short
+ * version: every value in these apps is picked by ROLE from a named step, never
+ * by eye. A literal is the bug this file guards against, because a number
+ * chosen by eye is correct for exactly one configuration.
+ *
+ * An app imports this, then overrides only its own accent. It does not add
+ * steps to these scales locally — if no role fits, the scale is missing one,
+ * and adding it here is the change.
+ *
+ * Themes are three-state: an explicit choice stamps `data-theme`, and the
+ * default "auto" leaves `prefers-color-scheme` to decide. Every colour is
+ * defined on bare `:root` first, so a value can never exist only inside a
+ * media query.
+ */
+
+:root {
+  /* ── Type, by role ────────────────────────────────────────────────────
+   * Six steps. Pick by what the text IS, not by how big it should look.
+   * Prose never drops below `meta`: help text, empty states and field labels
+   * are READ, while `chrome` and `mark` are SCANNED. */
+  --text-mark: 10px; /* a chip, a badge, a keyboard hint, an avatar initial */
+  --text-chrome: 11px; /* dense captions, tag labels, row meta */
+  --text-meta: 12px; /* field labels, help text, empty states — the prose floor */
+  --text-body: 13px; /* the default: buttons, fields, list titles, body copy */
+  --text-title: 15px; /* a dialog title, a panel title */
+  --text-display: 20px; /* the one number a view is about */
+
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* ── Corners: three tiers, each naming a layer ────────────────────────
+   * Ask what the element IS, and what it sits BESIDE. A surface nested
+   * inside a surface takes the next tier down; a surface beside one takes
+   * the same. An inner corner equal to its outer one reads as a rendering
+   * fault, because the gap between the two curves changes along the bend. */
+  --radius-surface: 8px; /* a card, a panel, a dialog, a popover */
+  --radius-control: 6px; /* a button, a field, a select, a tab */
+  --radius-mark: 4px; /* a chip, a badge, a tag, a small icon button */
+  --radius-pill: 999px; /* a dot, a track, an avatar */
+
+  /* ── Control heights: one ladder ──────────────────────────────────────
+   * A control beside a control shares its box: height, corner AND border
+   * token, all three. Measure the element that draws the border. */
+  --control-sm: 24px;
+  --control-md: 28px;
+  --control-lg: 36px;
+
+  /* ── Space ───────────────────────────────────────────────────────────
+   * These are data surfaces, so the rhythm is 4-8px, not the 16-24px a
+   * marketing page wants. Density is the point, not a setting that got
+   * turned down. */
+  --space-1: 2px;
+  --space-2: 4px;
+  --space-3: 6px;
+  --space-4: 8px;
+  --space-5: 12px;
+  --space-6: 16px;
+  --space-7: 24px;
+  --space-8: 32px;
+
+  /* ── Motion ──────────────────────────────────────────────────────────
+   * Motion confirms a change the user caused. Colour and opacity only; no
+   * entrance choreography, no scroll reveals, no `transition: all` — that
+   * animates properties nobody chose, layout ones included. Anything that
+   * loops or enters carries its own `prefers-reduced-motion` answer, written
+   * per animation so the element still appears and only the movement stops. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --motion-fast: 120ms;
+  --motion-base: 180ms;
+
+  /* ── Elevation: an edge OR an elevation, never both ───────────────────
+   * One shadow, for the things that genuinely float — a dialog, a toast, a
+   * popover, a docked panel. They take the shadow and drop their border.
+   * Everything else takes the border. A hairline paired with a wide diffuse
+   * shadow is the most reliable mark of an interface nobody decided about. */
+  --shadow-float: 0 8px 24px oklch(0 0 0 / 0.12), 0 2px 6px oklch(0 0 0 / 0.06);
+
+  /* ── Surfaces, edges and foreground tiers ─────────────────────────────
+   * Solved, not sampled. Every foreground tier clears 4.5:1 against all four
+   * surfaces; `border-control` clears the 3:1 WCAG 1.4.11 wants from an edge
+   * that is what identifies a control. `border` stays a quiet divider, where
+   * a low-contrast hairline is the intent. */
+  --color-bg: oklch(0.978 0.004 240);
+  --color-bg-elev: oklch(1 0 0);
+  --color-bg-sunk: oklch(0.945 0.006 240);
+  --color-bg-hover: oklch(0.925 0.008 240);
+
+  --color-border: oklch(0.885 0.008 240); /* a divider between two things */
+  --color-border-control: oklch(0.6 0.012 240); /* a control's own boundary */
+
+  /* Hierarchy is weight and position first. Dimming is the LAST tool and it
+   * has a floor: `fg-dim` sits at 4.58:1 on the darkest surface it can land
+   * on, which is the whole of its headroom. Reach for size, weight, order and
+   * space before reaching for a dimmer colour. */
+  --color-fg: oklch(0.24 0.02 240);
+  --color-fg-mute: oklch(0.44 0.018 240);
+  --color-fg-dim: oklch(0.5 0.014 240);
+
+  /* ── State colours ───────────────────────────────────────────────────
+   * Colour marks STATE, not a kind. `--color-accent` means one of two
+   * things: this is what you chose, or this is what happens next. Not a
+   * hover, not a heading, not decoration.
+   *
+   * The house accent is a sea teal — Olas means waves. An app may override
+   * these three to carry its own opinion; it may not override what they
+   * MEAN. */
+  --color-accent: oklch(0.49 0.083 196);
+  --color-accent-hover: oklch(0.43 0.073 196); /* label holds at 7.48:1 */
+  --color-accent-fg: oklch(1 0 0); /* the label on a filled accent ground */
+  --color-accent-soft: oklch(0.94 0.026 196); /* a wash. See the warning below. */
+
+  --color-success: oklch(0.49 0.129 152);
+  --color-danger: oklch(0.52 0.163 22);
+  --color-warning: oklch(0.51 0.108 75);
+  --color-info: oklch(0.5 0.126 245);
+
+  /*
+   * `--color-accent-soft` is a ground for `--color-fg`, and never for
+   * `--color-accent` itself. A tint of the text's own hue is not a
+   * background, it is a contrast reduction: ground and text converge by
+   * construction, because the accent is solved to just clear 4.5:1 against
+   * the plain surfaces and the tint spends exactly that headroom. The wash
+   * says which side is chosen; the label only has to stay readable.
+   */
+
+  /* ── Identity colours ────────────────────────────────────────────────
+   * Categorical, for telling one PERSON, LABEL or COLUMN from another.
+   *
+   * These are NON-TEXT MARKS and nothing else: a dot, a column strip, an
+   * avatar ring. No glyph ever sits on one, which is the whole reason the
+   * family can be this chromatic — requiring a white initial to clear 4.5:1
+   * on top of it forced the grounds dark and the chroma down to near grey.
+   * An avatar therefore rings itself in the identity colour and sets its
+   * initials in --color-fg on the surface underneath.
+   *
+   * Eight hues, evenly spread, so a hue arriving from data has a near
+   * neighbour whichever way it points. One lightness and one chroma across
+   * the family, so only the HUE varies and the eight read as one palette;
+   * the chroma is the largest the tightest of the eight carries in sRGB,
+   * which is why it is not a round number.
+   *
+   * Each clears the 3:1 WCAG 1.4.11 asks of a mark that carries meaning,
+   * against all four surfaces, in both themes.
+   *
+   * What this scale exists to prevent: a raw hue taken from the data and
+   * painted directly. That is a value picked by nobody — it cannot be
+   * checked, it lands wherever the API put it, and half the circle is out of
+   * sRGB gamut at any fixed lightness. Map the datum onto a slot instead.
+   * And never cycle a state ramp as a categorical palette: a severity ramp
+   * is not a qualitative one, and a positional assignment makes a hue mean
+   * nothing across two views. */
+  --identity-1: oklch(0.575 0.098 20);
+  --identity-2: oklch(0.575 0.098 65);
+  --identity-3: oklch(0.575 0.098 110);
+  --identity-4: oklch(0.575 0.098 155);
+  --identity-5: oklch(0.575 0.098 200);
+  --identity-6: oklch(0.575 0.098 245);
+  --identity-7: oklch(0.575 0.098 290);
+  --identity-8: oklch(0.575 0.098 335);
+
+  /* ── Focus ────────────────────────────────────────────────────────────
+   * An outline rather than a box-shadow halo. A halo has to name the colour
+   * behind it, so it is baked to one surface and wrong on the other three;
+   * an outline sits over whatever is there. `outline-offset` reserves no
+   * space, so taking focus never moves the layout. */
+  --focus-width: 2px;
+  --focus-offset: 1px;
+
+  /* ── Type families ───────────────────────────────────────────────────
+   * The system stack, deliberately. An example app should not ship a webfont
+   * to make a point about state management, and the identity here comes from
+   * the scale and the density rather than the typeface. */
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --font-line: 1.45;
+
+  color-scheme: light;
+}
+
+/*
+ * Dark. Same roles, same names, re-solved values — every pair above holds
+ * here too. Declared twice on purpose: once for the system preference when no
+ * choice has been stamped, and once for the explicit choice, so the toggle
+ * wins in both directions.
+ */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: oklch(0.175 0.012 240);
+    --color-bg-elev: oklch(0.235 0.015 240);
+    --color-bg-sunk: oklch(0.135 0.01 240);
+    --color-bg-hover: oklch(0.275 0.017 240);
+
+    --color-border: oklch(0.315 0.015 240);
+    --color-border-control: oklch(0.565 0.012 240);
+
+    --color-fg: oklch(0.95 0.004 240);
+    --color-fg-mute: oklch(0.76 0.016 240);
+    --color-fg-dim: oklch(0.665 0.014 240);
+
+    --color-accent: oklch(0.78 0.1 196);
+    --color-accent-hover: oklch(0.84 0.1 196);
+    --color-accent-fg: oklch(0.16 0.02 196);
+    --color-accent-soft: oklch(0.32 0.05 196);
+
+    --color-success: oklch(0.78 0.14 152);
+    --color-danger: oklch(0.74 0.15 22);
+    --color-warning: oklch(0.8 0.135 75);
+    --color-info: oklch(0.76 0.125 245);
+
+    --identity-1: oklch(0.72 0.12 20);
+    --identity-2: oklch(0.72 0.12 65);
+    --identity-3: oklch(0.72 0.12 110);
+    --identity-4: oklch(0.72 0.12 155);
+    --identity-5: oklch(0.72 0.12 200);
+    --identity-6: oklch(0.72 0.12 245);
+    --identity-7: oklch(0.72 0.12 290);
+    --identity-8: oklch(0.72 0.12 335);
+
+    --shadow-float: 0 8px 24px oklch(0 0 0 / 0.5), 0 2px 6px oklch(0 0 0 / 0.35);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: oklch(0.175 0.012 240);
+  --color-bg-elev: oklch(0.235 0.015 240);
+  --color-bg-sunk: oklch(0.135 0.01 240);
+  --color-bg-hover: oklch(0.275 0.017 240);
+
+  --color-border: oklch(0.315 0.015 240);
+  --color-border-control: oklch(0.565 0.012 240);
+
+  --color-fg: oklch(0.95 0.004 240);
+  --color-fg-mute: oklch(0.76 0.016 240);
+  --color-fg-dim: oklch(0.665 0.014 240);
+
+  --color-accent: oklch(0.78 0.1 196);
+  --color-accent-hover: oklch(0.84 0.1 196);
+  --color-accent-fg: oklch(0.16 0.02 196);
+  --color-accent-soft: oklch(0.32 0.05 196);
+
+  --color-success: oklch(0.78 0.14 152);
+  --color-danger: oklch(0.74 0.15 22);
+  --color-warning: oklch(0.8 0.135 75);
+  --color-info: oklch(0.76 0.125 245);
+
+  --identity-1: oklch(0.72 0.12 20);
+  --identity-2: oklch(0.72 0.12 65);
+  --identity-3: oklch(0.72 0.12 110);
+  --identity-4: oklch(0.72 0.12 155);
+  --identity-5: oklch(0.72 0.12 200);
+  --identity-6: oklch(0.72 0.12 245);
+  --identity-7: oklch(0.72 0.12 290);
+  --identity-8: oklch(0.72 0.12 335);
+
+  --shadow-float: 0 8px 24px oklch(0 0 0 / 0.5), 0 2px 6px oklch(0 0 0 / 0.35);
+
+  color-scheme: dark;
+}

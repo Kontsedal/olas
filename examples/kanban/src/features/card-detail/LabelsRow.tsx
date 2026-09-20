@@ -1,6 +1,7 @@
 import { use, useQuery, useRoot } from '@kontsedal/olas-react'
 import type { AppApi } from '../../app.controller'
 import { cx } from '../../ui'
+import { identityColor } from '../../ui/identity'
 
 export function LabelsRow() {
   const app = useRoot<AppApi>()
@@ -27,7 +28,7 @@ export function LabelsRow() {
                 for (const id of next) array.add(id)
               }}
               className={cx('olas-pill-tag', !isOn && 'olas-pill-tag-off')}
-              style={{ ['--label-hue' as string]: String(l.hue) } as React.CSSProperties}
+              style={{ ['--label-color' as string]: identityColor(l.hue) } as React.CSSProperties}
             >
               <span className="olas-pill-tag-dot" aria-hidden />
               <span>{l.name}</span>

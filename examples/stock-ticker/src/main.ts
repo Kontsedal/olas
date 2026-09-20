@@ -51,7 +51,7 @@ const watchlistRows = computed<Row[]>(() => {
 bindList(wlEl, watchlistRows, (row) => {
   const li = document.createElement('li')
   li.className =
-    'group rounded-lg border border-(--color-border) bg-(--color-bg-sunk) px-3 py-2.5 flex flex-col gap-1.5 transition hover:-translate-y-px hover:shadow-[var(--shadow-card)]'
+    'group rounded-[var(--radius-surface)] border border-(--color-border) bg-(--color-bg-sunk) px-3 py-2.5 flex flex-col gap-1.5 transition-colors hover:border-(--color-border-control)'
 
   const header = document.createElement('div')
   header.className = 'flex items-center justify-between gap-2'
@@ -59,7 +59,7 @@ bindList(wlEl, watchlistRows, (row) => {
   const sym = document.createElement('button')
   sym.type = 'button'
   sym.className =
-    'font-mono font-bold text-sm bg-transparent border-0 p-0 text-left cursor-pointer hover:text-(--color-accent)'
+    'font-mono font-bold text-[length:var(--text-body)] bg-transparent border-0 p-0 text-left cursor-pointer hover:underline'
   sym.textContent = row.symbol
   sym.onclick = () => openDetailsFor(row.symbol)
 
@@ -70,16 +70,16 @@ bindList(wlEl, watchlistRows, (row) => {
   const deltaEl = document.createElement('span')
   deltaEl.className =
     direction === 'up'
-      ? 'font-mono text-[11px] font-medium px-1.5 py-0.5 rounded text-(--color-success) bg-(--color-success-bg)'
+      ? 'font-mono text-[length:var(--text-chrome)] font-medium px-1.5 py-0.5 text-(--color-success)'
       : direction === 'down'
-        ? 'font-mono text-[11px] font-medium px-1.5 py-0.5 rounded text-(--color-danger) bg-(--color-danger-bg)'
-        : 'font-mono text-[11px] font-medium px-1.5 py-0.5 rounded text-(--color-fg-mute) bg-(--color-bg-elev)'
+        ? 'font-mono text-[length:var(--text-chrome)] font-medium px-1.5 py-0.5 text-(--color-danger)'
+        : 'font-mono text-[length:var(--text-chrome)] font-medium px-1.5 py-0.5 text-(--color-fg-mute)'
   deltaEl.textContent = `${row.delta > 0 ? '+' : ''}${row.delta.toFixed(2)}%`
 
   const remove = document.createElement('button')
   remove.type = 'button'
   remove.className =
-    'opacity-0 group-hover:opacity-100 text-(--color-fg-mute) hover:text-(--color-danger) text-xs px-1 transition'
+    'opacity-0 group-hover:opacity-100 text-(--color-fg-mute) hover:text-(--color-danger) text-[length:var(--text-meta)] px-1 transition'
   remove.textContent = '✕'
   remove.title = 'Remove from watchlist'
   remove.onclick = () => root.ticker.removeFromWatchlist(row.symbol)
@@ -111,10 +111,10 @@ bindList(resultsEl, root.ticker.filteredSymbols, (sym) => {
   li.className =
     'flex items-center gap-2 px-3 py-2 border-b border-(--color-border) last:border-b-0'
   const s = document.createElement('span')
-  s.className = 'font-mono font-bold text-sm'
+  s.className = 'font-mono font-bold text-[length:var(--text-body)]'
   s.textContent = sym.symbol
   const meta = document.createElement('span')
-  meta.className = 'flex-1 text-xs text-(--color-fg-mute)'
+  meta.className = 'flex-1 text-[length:var(--text-meta)] text-(--color-fg-mute)'
   meta.textContent = `${sym.name} · ${sym.sector}`
   const add = document.createElement('button')
   add.type = 'button'
@@ -123,11 +123,11 @@ bindList(resultsEl, root.ticker.filteredSymbols, (sym) => {
     add.textContent = 'Added'
     add.disabled = true
     add.className =
-      'rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-2 py-0.5 text-[11px] text-(--color-fg-mute) cursor-not-allowed'
+      'rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-sunk) px-2 py-0.5 text-[length:var(--text-chrome)] text-(--color-fg-mute) cursor-not-allowed'
   } else {
     add.textContent = '+ add'
     add.className =
-      'rounded-md bg-(--color-accent) px-2 py-0.5 text-[11px] font-medium text-white hover:brightness-110'
+      'rounded-[var(--radius-control)] bg-(--color-accent) px-2 py-0.5 text-[length:var(--text-chrome)] font-medium text-(--color-accent-fg) hover:bg-(--color-accent-hover)'
     add.onclick = () => root.ticker.addToWatchlist(sym.symbol)
   }
   li.append(s, meta, add)
@@ -162,17 +162,18 @@ aAddEl.addEventListener('click', () => {
 bindList(alertsEl, root.ticker.alerts, (alert) => {
   const li = document.createElement('li')
   li.className =
-    'flex items-center gap-3 rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 font-mono text-xs'
+    'flex items-center gap-3 rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 font-mono text-[length:var(--text-meta)]'
   const label = document.createElement('span')
   const fired = alert.fired
   label.innerHTML = `<span class="font-bold">${alert.symbol}</span> <span class="text-(--color-fg-mute)">${alert.direction}</span> <span class="tabular-nums">${alert.target.toFixed(2)}</span>`
   const status = document.createElement('span')
   status.className = fired
-    ? 'ml-auto rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider bg-(--color-success-bg) text-(--color-success)'
-    : 'ml-auto rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wider bg-(--color-bg-elev) text-(--color-fg-mute)'
+    ? 'ml-auto rounded-[var(--radius-mark)] border border-(--color-border-control) px-1.5 py-0.5 text-[length:var(--text-mark)] uppercase text-(--color-success)'
+    : 'ml-auto rounded-[var(--radius-mark)] border border-(--color-border-control) px-1.5 py-0.5 text-[length:var(--text-mark)] uppercase text-(--color-fg-mute)'
   status.textContent = fired ? 'fired' : 'armed'
   const rm = document.createElement('button')
-  rm.className = 'text-(--color-fg-mute) hover:text-(--color-danger) text-xs px-1'
+  rm.className =
+    'text-(--color-fg-mute) hover:text-(--color-danger) text-[length:var(--text-meta)] px-1'
   rm.type = 'button'
   rm.textContent = '✕'
   rm.onclick = () => root.ticker.removeAlert(alert.id)
@@ -217,7 +218,7 @@ function openDetailsFor(symbol: string): void {
         .map((t) => {
           const li = document.createElement('li')
           li.className =
-            'flex items-center gap-3 font-mono text-xs tabular-nums px-2 py-1 rounded hover:bg-(--color-bg-sunk)'
+            'flex items-center gap-3 font-mono text-[length:var(--text-meta)] tabular-nums px-2 py-1 rounded-[var(--radius-mark)] hover:bg-(--color-bg-sunk)'
           li.innerHTML = `
             <span class="text-(--color-fg-mute) w-16">${new Date(t.ts).toLocaleTimeString()}</span>
             <span class="flex-1">${t.price.toFixed(2)}</span>
@@ -251,7 +252,7 @@ detailsCloseBtn.onclick = () => {
 root.ticker.alertFiredEmitter.on((ev) => {
   const toast = document.createElement('div')
   toast.className =
-    'fixed left-1/2 bottom-5 -translate-x-1/2 z-50 max-w-[90vw] px-4 py-3 rounded-xl bg-(--color-warning) text-black shadow-[var(--shadow-pop)] font-mono text-sm flex items-center gap-2'
+    'fixed left-1/2 bottom-5 -translate-x-1/2 z-50 max-w-[90vw] px-4 py-3 rounded-[var(--radius-surface)] bg-(--color-accent) text-(--color-accent-fg) shadow-[var(--shadow-float)] font-mono text-[length:var(--text-body)] flex items-center gap-2'
   toast.textContent = `🔔 ${ev.alert.symbol} ${ev.alert.direction} ${ev.alert.target.toFixed(2)} — now ${ev.price.toFixed(2)}`
   toastRoot.appendChild(toast)
   setTimeout(() => toast.remove(), 4500)

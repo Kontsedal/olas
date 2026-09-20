@@ -7,6 +7,7 @@ import { use, useRoot } from '@kontsedal/olas-react'
 import { ChevronsLeft, ChevronsRight, Sparkles } from 'lucide-react'
 import type { AppApi } from '../../app.controller'
 import { cx, IconButton, Skeleton } from '../../ui'
+import { identityColor } from '../../ui/identity'
 
 export function Sidebar() {
   const app = useRoot<AppApi>()
@@ -48,7 +49,9 @@ export function Sidebar() {
         ) : boards === undefined ? null : (
           boards.map((b) => {
             const isActive = b.id === active
-            const style = { ['--board-hue' as string]: String(b.hue) } as React.CSSProperties
+            const style = {
+              ['--board-color' as string]: identityColor(b.hue),
+            } as React.CSSProperties
             return (
               <button
                 type="button"

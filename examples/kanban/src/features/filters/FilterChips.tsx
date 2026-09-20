@@ -11,13 +11,6 @@ import { cx } from '../../ui'
 
 const ALL_PRIORITIES: Priority[] = ['urgent', 'high', 'med', 'low']
 
-const PRIORITY_HUE: Record<Priority, number> = {
-  urgent: 18,
-  high: 85,
-  med: 270,
-  low: 215,
-}
-
 export function FilterChips() {
   const app = useRoot<AppApi>()
   const labels = useQuery(app.labels)
@@ -34,7 +27,6 @@ export function FilterChips() {
           type="button"
           onClick={() => app.board.togglePriority(p)}
           className={cx('olas-chip', selPri.has(p) && 'olas-chip-on')}
-          style={{ ['--chip-hue' as string]: String(PRIORITY_HUE[p]) } as React.CSSProperties}
         >
           {p}
         </button>
@@ -45,7 +37,6 @@ export function FilterChips() {
           type="button"
           onClick={() => app.board.toggleLabel(l.id)}
           className={cx('olas-chip', selLab.has(l.id) && 'olas-chip-on')}
-          style={{ ['--chip-hue' as string]: String(l.hue) } as React.CSSProperties}
         >
           {l.name}
         </button>

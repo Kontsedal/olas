@@ -108,7 +108,6 @@ function LauncherButton({ open, onClick }: { open: boolean; onClick: () => void 
       onClick={onClick}
       className={`olas-devtools-launcher ${open ? 'olas-devtools-launcher-active' : ''}`}
     >
-      <span aria-hidden="true" className="olas-devtools-launcher-dot" />
       <span className="olas-devtools-launcher-label">Olas devtools</span>
     </button>
   )

@@ -57,6 +57,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/no-react-adapter-yet.md](decisions/no-react-adapter-yet.md) — why `@kontsedal/olas-react` is an empty shell
 - [decisions/canonical-vs-optimistic-writes.md](decisions/canonical-vs-optimistic-writes.md) — why `Query` has two write methods (`setData` optimistic, `write` canonical) rather than one with an options bag
 - [decisions/prose-rules.md](decisions/prose-rules.md) — the writing rules every `.md` follows, what `pnpm prose:lint` enforces, and what it flags that we leave alone
+- [decisions/ui-rules.md](decisions/ui-rules.md) — the ten rules every interface follows, the scales they are picked from, what makes a screen read as generated, and which of the ten anything checks
 
 ## Pitfalls
 

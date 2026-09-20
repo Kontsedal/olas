@@ -1,40 +1,43 @@
 @import "tailwindcss";
 
-@theme {
-  --color-bg:        oklch(0.16  0.020 260);
-  --color-bg-elev:   oklch(0.22  0.020 260);
-  --color-bg-sunk:   oklch(0.12  0.020 260);
-  --color-border:    oklch(0.30  0.020 260);
-  --color-fg:        oklch(0.94  0.010 260);
-  --color-fg-mute:   oklch(0.60  0.020 260);
-  --color-accent:    oklch(0.72  0.16  264);
-  --color-success:   oklch(0.72  0.18  142);
-  --color-success-bg:oklch(0.30  0.10  142);
-  --color-danger:    oklch(0.70  0.21  25);
-  --color-danger-bg: oklch(0.30  0.12  25);
-  --color-warning:   oklch(0.82  0.16  82);
-  --shadow-card:     0 1px 2px rgb(0 0 0 / 0.5), 0 4px 14px rgb(0 0 0 / 0.4);
-  --shadow-pop:      0 8px 24px rgb(0 0 0 / 0.5);
-  --font-mono:       ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", monospace;
-  --font-sans:       ui-sans-serif, system-ui, -apple-system, "Inter", "Segoe UI", sans-serif;
+/* The shared scales: type by role, three corner tiers, the control ladder,
+   space, motion and the solved palette. See `.wiki/decisions/ui-rules.md`. */
+@import "../../_shared/ui/tokens.css";
+
+/*
+ * This app's one opinion is a gold accent. A ticker's colour budget is
+ * already spent on the price ramp — green up, red down — so the accent has to
+ * live outside it, and gold is what is left that is not the house teal.
+ *
+ * `--color-warning` is GONE, and that is the point of the choice rather than
+ * an accident of it. Gold at hue 88 is where the warning token lived, and the
+ * app had exactly one warning: the toast an alert fires. An alert firing is
+ * this app's headline event, so it takes the accent. One token, one meaning —
+ * two tokens at the same hue meaning different things is the drift.
+ */
+:root {
+  --color-accent: oklch(0.5 0.102 88);
+  --color-accent-hover: oklch(0.44 0.09 88);
+  --color-accent-fg: oklch(1 0 0);
+  --color-accent-soft: oklch(0.95 0.03 88);
 }
 
-@media (prefers-color-scheme: light) {
-  @theme {
-    --color-bg:        oklch(0.985 0.005 260);
-    --color-bg-elev:   oklch(1     0    0);
-    --color-bg-sunk:   oklch(0.96  0.005 260);
-    --color-border:    oklch(0.88  0.005 260);
-    --color-fg:        oklch(0.18  0.02  260);
-    --color-fg-mute:   oklch(0.50  0.02  260);
-    --color-accent:    oklch(0.55  0.18  264);
-    --color-success:   oklch(0.55  0.20  142);
-    --color-success-bg:oklch(0.94  0.06  142);
-    --color-danger:    oklch(0.55  0.22  25);
-    --color-danger-bg: oklch(0.96  0.05  25);
-    --color-warning:   oklch(0.65  0.18  82);
-    --shadow-card:     0 1px 2px rgb(15 15 25 / 0.05), 0 4px 14px rgb(15 15 25 / 0.07);
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-accent: oklch(0.78 0.15 88);
+    --color-accent-hover: oklch(0.84 0.15 88);
+    --color-accent-fg: oklch(0.16 0.02 88);
+    --color-accent-soft: oklch(0.3 0.06 88);
   }
+}
+
+/* Only the families and the one shadow need to generate utilities; every
+   colour is reached with Tailwind's `(--token)` syntax, so the palette does
+   not need mirroring here. */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --shadow-float: 0 8px 24px oklch(0 0 0 / 0.12), 0 2px 6px oklch(0 0 0 / 0.06);
 }
 
 html,
@@ -42,5 +45,10 @@ body {
   background: var(--color-bg);
   color: var(--color-fg);
   font-family: var(--font-sans);
-  color-scheme: dark light;
+  font-size: var(--text-body);
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-accent);
+  outline-offset: var(--focus-offset);
 }

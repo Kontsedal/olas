@@ -35,12 +35,12 @@ export function Composer({
   }
 
   return (
-    <section className="mt-4 rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-4 shadow-[var(--shadow-card)] font-sans">
+    <section className="mt-4 rounded-[var(--radius-surface)] border border-(--color-border) bg-(--color-bg-elev) p-4 font-sans">
       <header className="flex items-center justify-between mb-3">
-        <h3 className="m-0 inline-flex items-center gap-2 text-sm font-semibold">
+        <h3 className="m-0 inline-flex items-center gap-2 text-[length:var(--text-body)] font-semibold">
           <MessageCircle className="size-4 text-(--color-accent)" />
           Comments
-          <span className="text-xs font-normal text-(--color-fg-mute)">
+          <span className="text-[length:var(--text-meta)] font-normal text-(--color-fg-mute)">
             · {commentsData?.length ?? 0}
           </span>
         </h3>
@@ -48,19 +48,19 @@ export function Composer({
           type="button"
           onClick={onClose}
           aria-label="Close composer"
-          className="rounded-md p-1 text-(--color-fg-mute) hover:bg-(--color-bg-sunk) hover:text-(--color-fg)"
+          className="rounded-[var(--radius-control)] p-1 text-(--color-fg-mute) hover:bg-(--color-bg-sunk) hover:text-(--color-fg)"
         >
           <X className="size-3.5" />
         </button>
       </header>
 
-      <form onSubmit={onSubmit} className="flex flex-col gap-2 text-sm">
+      <form onSubmit={onSubmit} className="flex flex-col gap-2 text-[length:var(--text-body)]">
         <input
           value={author.value}
           onChange={(e) => author.set(e.target.value)}
           onBlur={author.markTouched}
           placeholder="Your name"
-          className="rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30"
+          className="rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30"
         />
         <div className="relative">
           <textarea
@@ -69,7 +69,7 @@ export function Composer({
             onBlur={body.markTouched}
             rows={3}
             placeholder="Write a comment (server-validated, 220 ms debounce)"
-            className="w-full rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30 resize-y"
+            className="w-full rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30 resize-y"
           />
           {body.isValidating && (
             <Loader2 className="absolute right-2 top-2 size-4 animate-spin text-(--color-fg-mute)" />
@@ -85,7 +85,7 @@ export function Composer({
         {error !== undefined && (
           <div
             role="alert"
-            className="rounded-md bg-(--color-accent-bg) px-3 py-2 text-xs text-(--color-accent)"
+            className="rounded-[var(--radius-control)] bg-(--color-accent-soft) px-3 py-2 text-[length:var(--text-meta)] text-(--color-fg)"
           >
             {String((error as Error)?.message ?? error)}
           </div>
@@ -95,7 +95,7 @@ export function Composer({
           <button
             type="submit"
             disabled={isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-(--color-accent) px-3 py-1.5 text-xs font-medium text-white hover:brightness-110 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-[var(--radius-control)] bg-(--color-accent) px-3 py-1.5 text-[length:var(--text-meta)] font-medium text-white hover:brightness-110 disabled:opacity-50"
           >
             {isPending ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -109,21 +109,23 @@ export function Composer({
 
       <div className="mt-4 border-t border-(--color-border) pt-3">
         {commentsLoading ? (
-          <p className="text-xs text-(--color-fg-mute)">Loading comments…</p>
+          <p className="text-[length:var(--text-meta)] text-(--color-fg-mute)">Loading comments…</p>
         ) : commentsData && commentsData.length > 0 ? (
           <ul className="flex flex-col gap-3 list-none p-0 m-0">
             {commentsData.map((c) => (
               <li key={c.id}>
-                <div className="text-xs text-(--color-fg-mute) mb-0.5">
+                <div className="text-[length:var(--text-meta)] text-(--color-fg-mute) mb-0.5">
                   <strong className="text-(--color-fg)">{c.author}</strong> ·{' '}
                   {new Date(c.ts).toLocaleTimeString()}
                 </div>
-                <p className="m-0 text-sm">{c.body}</p>
+                <p className="m-0 text-[length:var(--text-body)]">{c.body}</p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-xs text-(--color-fg-mute)">No comments yet — be first.</p>
+          <p className="text-[length:var(--text-meta)] text-(--color-fg-mute)">
+            No comments yet — be first.
+          </p>
         )}
       </div>
     </section>
@@ -139,16 +141,20 @@ function ValidationStatus(props: {
   if (!props.touched) return null
   if (props.isValidating) {
     return (
-      <span className="text-xs text-(--color-fg-mute) inline-flex items-center gap-1">
+      <span className="text-[length:var(--text-meta)] text-(--color-fg-mute) inline-flex items-center gap-1">
         <Loader2 className="size-3 animate-spin" /> checking with server…
       </span>
     )
   }
   if (props.error !== undefined) {
-    return <span className="text-xs text-(--color-accent)">{props.error}</span>
+    return (
+      <span className="text-[length:var(--text-meta)] text-(--color-accent)">{props.error}</span>
+    )
   }
   if (props.isValid) {
-    return <span className="text-xs text-(--color-fg-mute)">✓ ready to post</span>
+    return (
+      <span className="text-[length:var(--text-meta)] text-(--color-fg-mute)">✓ ready to post</span>
+    )
   }
   return null
 }

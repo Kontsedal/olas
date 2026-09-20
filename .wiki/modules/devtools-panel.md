@@ -79,7 +79,7 @@ The package splits into three pieces:
 
 1. **`store.ts`** — pure logic. A `DevtoolsStore` exposes four `Signal`s (one per view). `handle(event)` is the dispatcher; it routes a `DebugEvent` to either `tree$.set(insertNode(...))` or `tree$.set(setNodeState(...))` or one of the bounded-log pushers. Tested in isolation; no React.
 2. **`DevtoolsPanel.tsx`** — React component. `useMemo(() => new DevtoolsStore(...), [maxEntries])`, then `useEffect(() => store.attach(root), [root, store])`. Tabs are local React state. Each view reads its signal via `@kontsedal/olas-react`'s `use()` and renders.
-3. **`format.ts` and `styles.ts`** — tiny helpers. `styles.ts` is a hard-coded CSS string injected via `<style>` inside the panel — no build-time CSS extraction needed.
+3. **`format.ts` and `styles.ts`** — `styles.ts` is a CSS string injected via `<style>` inside the panel, so there is no build-time CSS extraction and no stylesheet for a consumer to import. Because of that it carries the shared type, corner, motion and colour scales **by value** rather than importing `examples/_shared/ui/tokens.css`; the duplication is deliberate and both files say so. Its tokens are declared on `.olas-devtools`, `.olas-devtools-launcher` and `.olas-devtools-floating` together, because the launcher and the floating window sit outside the panel in the DOM and inherit nothing from it. A host re-themes any of it through the `--olas-*` properties. See [../decisions/ui-rules.md](../decisions/ui-rules.md).
 
 ## Why the tree has a virtual empty root
 

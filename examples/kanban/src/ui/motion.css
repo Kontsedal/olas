@@ -1,8 +1,30 @@
-/* Named keyframes used across primitives. */
+/* Named keyframes used across primitives.
+ *
+ * Motion confirms a change the user caused. What is here: a thing that
+ * appeared because the user opened it, and a skeleton saying "not yet".
+ * There is no entrance choreography, no scroll reveal and no stagger.
+ *
+ * What was removed: `olas-pulse-glow`, which pulsed a coloured halo, being a
+ * second copy of a fact in the same colour and moving; `olas-shimmer`, a
+ * gradient sweeping across a loading block; and one slide-in nothing used.
+ *
+ * The spinner is the one exception to "only the movement stops". Freezing a
+ * spinner leaves an icon that no longer says "working", so reduced motion
+ * slows it instead of stopping it.
+ *
+ * Every animation below carries its own `prefers-reduced-motion` answer,
+ * written per animation rather than as a blanket override, so the element
+ * still appears and only the movement stops.
+ */
 
 @keyframes olas-fade-in {
   from { opacity: 0; }
   to   { opacity: 1; }
+}
+
+@keyframes olas-toast-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
 }
 
 @keyframes olas-slide-in-right {
@@ -10,32 +32,23 @@
   to   { transform: translateX(0); opacity: 1; }
 }
 
-@keyframes olas-slide-in-up {
-  from { transform: translateY(8px); opacity: 0; }
+@keyframes olas-rise-in {
+  from { transform: translateY(6px); opacity: 0; }
   to   { transform: translateY(0); opacity: 1; }
 }
 
-@keyframes olas-toast-in {
-  from { transform: translateY(12px) scale(0.98); opacity: 0; }
-  to   { transform: translateY(0) scale(1); opacity: 1; }
-}
-
 @keyframes olas-pop-in {
-  from { transform: scale(0.96); opacity: 0; }
+  from { transform: scale(0.98); opacity: 0; }
   to   { transform: scale(1); opacity: 1; }
 }
 
-@keyframes olas-shimmer {
-  0%   { background-position: -200% 0; }
-  100% { background-position: 200% 0; }
+@keyframes olas-skeleton-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
 }
 
-@keyframes olas-pulse-glow {
-  0%, 100% { box-shadow: 0 0 0 0 oklch(0.72 0.20 var(--hue-accent) / 0.35); }
-  50%      { box-shadow: 0 0 0 6px oklch(0.72 0.20 var(--hue-accent) / 0.00); }
-}
-
-@keyframes olas-accent-flash {
-  0%   { background-color: var(--color-accent-soft); }
-  100% { background-color: var(--color-bg-elev); }
+@media (prefers-reduced-motion: reduce) {
+  /* The toast and the dialog still arrive; they stop sliding and scaling. */
+  .olas-toast { animation: olas-fade-in var(--motion-fast) var(--ease-out); }
+  .olas-dialog-panel { animation: olas-fade-in var(--motion-fast) var(--ease-out); }
 }

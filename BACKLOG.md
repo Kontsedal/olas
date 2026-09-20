@@ -177,16 +177,17 @@ The major exports carry one-line descriptions (e.g. `defineQuery`, `defineContro
 
 ## Examples
 
-### [idea] Extract `examples/_shared/ui/` design system
+### [idea] Extract the example UI *components* into `examples/_shared/ui/`
 
-The flagship kanban example has a complete in-app design system at
-`examples/kanban/src/ui/` — tokens (oklch palette + light/dark/density),
-motion keyframes, and ~14 React primitives (Button, Card, Avatar, Tag,
-Toast, Dialog, …). When stock-ticker or reader-ssr are next due for a UI
-uplift, lift these out to `examples/_shared/ui/` and have each example
-extend the tokens. Already deliberately kept kanban-local for now to
-avoid premature abstraction — see the `cryptic-questing-twilight.md`
-plan for the rationale.
+The **tokens** are now shared: `examples/_shared/ui/tokens.css` holds the type roles, the three
+corner tiers, the control ladder, space, motion and the solved palette, and all four examples
+import it. See [`.wiki/decisions/ui-rules.md`](.wiki/decisions/ui-rules.md).
+
+What is still per-app is the **components**. Kanban has Button, Input, Select, Tag, Badge, Avatar,
+Toast, Dialog and the rest in `examples/kanban/src/ui/`, written as plain CSS classes; the other
+three are Tailwind utility strings inline. Sharing components across those two idioms is the part
+that was never the easy half, and stock-ticker has no React at all. Worth doing only if a fifth
+example turns up wanting the same primitives — three call sites is not yet a component library.
 
 ### [idea] virtualized-table example lacks a controller test
 
