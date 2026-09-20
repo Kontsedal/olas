@@ -34,4 +34,4 @@ Two consequences flow from spec-first:
 
 ## What this doesn't mean
 
-The spec is not infallible — it has known gaps and ambiguities (notably around `setData` cross-client semantics, the "prefetch with no clients" case, and reactive `initial` for forms). When the spec is silent or ambiguous, the codebase + tests pin the chosen interpretation, and **that pinning is binding**. Future Claudes shouldn't re-litigate pinned interpretations without a strong reason; document them in a decision wiki page instead.
+The spec is not infallible — it has known gaps and ambiguities (around `setData` cross-client semantics, the "prefetch with no clients" case, and reactive `initial` for forms). When the spec is silent or ambiguous, the codebase + tests pin the chosen interpretation, and **that pinning is binding**. Future Claudes shouldn't re-litigate pinned interpretations without a strong reason; document them in a decision wiki page instead.

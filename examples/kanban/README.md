@@ -1,6 +1,6 @@
 # Flagship — kanban (React)
 
-A project tracker that exercises essentially every primitive in the Olas
+A project tracker that exercises nearly every primitive in the Olas
 library through *natural* features, not contrived demos. The intent is that a
 single feature open in the editor reads like a real app — and that the union
 of all features doubles as a coverage map for the library.
@@ -84,7 +84,7 @@ two browser windows and one acts as a remote actor:
 
 The two channels are intentionally separate, mirroring real deployments where
 the cache transport (e.g. a write-through CDN cache, an in-process pubsub)
-is independent of the realtime fan-out (e.g. a WebSocket / Pusher / Supabase).
+is independent of the realtime fan-out (e.g. a WebSocket, Pusher and Supabase).
 
 ## Run it
 

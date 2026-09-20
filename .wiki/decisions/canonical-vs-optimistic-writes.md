@@ -38,7 +38,7 @@ With only `setData`, such a caller had three options, all bad:
 2. Call `snapshot.finalize()` at every call site. Correct, invisible in review when forgotten, and a strange thing to require of a write that was never optimistic.
 3. Reach for `QueryClientPluginApi.setEntryData` — the canonical-write path that already existed but is **plugin-facing** (`client.ts:905`), routed by `queryId` + `keyArgs` rather than the typed handle, and not part of the application surface.
 
-Downstream evidence: one app accumulated eight such sites (server-push folds and execute-result patches) before the leak was noticed, and filed it as "mint a `writeTab` helper with `{ track: false }`" — i.e. it independently re-derived this method as userland glue it could not actually implement, since `track` was internal.
+Downstream evidence: one app accumulated eight such sites (server-push folds and execute-result patches) before the leak was noticed, and filed it as "mint a `writeTab` helper with `{ track: false }`" — i.e. it independently re-derived this method as userland glue it could not implement, since `track` was internal.
 
 ## Why not `setData(..., { track: false })`
 

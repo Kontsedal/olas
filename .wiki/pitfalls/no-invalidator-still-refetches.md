@@ -34,7 +34,7 @@ An entry does not need an invalidator to fetch. It fetches whenever a **subscrip
 
 - A first subscriber binding the entry (`bindEntry` → `isStaleNow()` → `startFetch`).
 - A second root binding the same key.
-- **`resume()` after a suspend** (spec §4.1) — the case that actually shipped downstream: a feature suspended while hidden, resumed when shown, and re-acquired a subscription whose entry had gone stale in between.
+- **`resume()` after a suspend** (spec §4.1) — the case that shipped downstream: a feature suspended while hidden, resumed when shown, and re-acquired a subscription whose entry had gone stale in between.
 
 The fetch starts at the moment of that acquire, so a write racing it loses. Nothing in the program says `invalidate`.
 
@@ -72,4 +72,4 @@ The trap above is unchanged for `setData`, and deliberately so. The asymmetry is
 
 ## Where it's documented
 
-`SPEC.md` §5.5 ("*'Nothing invalidates this query' does not mean 'no fetch is in flight'*") and §6.4, plus the TSDoc on `Query.setData` / `Query.cancel` (`query/types.ts`). All three were written *after* the downstream regression — before that, the spec mentioned only the invalidation-driven case, which is what made the false optimisation reachable.
+`SPEC.md` §5.5 ("*'Nothing invalidates this query' does not mean 'no fetch is in flight'*") and §6.4, plus the TSDoc on `Query.setData` and `Query.cancel` (`query/types.ts`). All three were written *after* the downstream regression — before that, the spec mentioned only the invalidation-driven case, which is what made the false optimisation reachable.

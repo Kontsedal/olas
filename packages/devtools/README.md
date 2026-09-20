@@ -31,7 +31,7 @@ function AppShell() {
 }
 ```
 
-`DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open / minimized state persist to `localStorage`.
+`DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open and minimized state persist to `localStorage`.
 
 If you'd rather host the panel yourself (e.g., fixed sidebar in a layout), import `DevtoolsPanel` directly and size it however you like. Styles are scoped to the `.olas-devtools-*` class prefix; no CSS imports needed.
 
@@ -88,7 +88,7 @@ class DevtoolsStore {
 
 ## Important: the panel sees only post-mount events
 
-The panel subscribes to `root.__debug` on mount. Events that fired before mount (e.g. the root controller's `controller:constructed`) are NOT in the tree. Mount the panel as early as possible if you want the full picture. The cache / mutation / field logs are bounded by `maxEntries` (default 100) anyway, and the controller tree drops the oldest fully-disposed subtrees beyond `maxDisposedNodes` (default 200, a `DevtoolsStore` option) so a long, churny session stays bounded.
+The panel subscribes to `root.__debug` on mount. Events that fired before mount (e.g. the root controller's `controller:constructed`) are NOT in the tree. Mount the panel as early as possible if you want the full picture. The cache, mutation and field logs are bounded by `maxEntries` (default 100) anyway, and the controller tree drops the oldest fully-disposed subtrees beyond `maxDisposedNodes` (default 200, a `DevtoolsStore` option) so a long, churny session stays bounded.
 
 If you need historical state, build a parallel `DevtoolsStore` early (next to `createRoot`) and pass it into a custom UI later.
 
@@ -96,9 +96,9 @@ If you need historical state, build a parallel `DevtoolsStore` early (next to `c
 
 Spec §20.9 lists the full `DebugEvent` union. Today the runtime emits:
 
-- **controller:** `constructed` / `suspended` / `resumed` / `disposed`
-- **cache:** `fetch-start` / `fetch-success` / `fetch-error` / `invalidated` / `gc`
-- **mutation:** `run` / `success` / `error` / `rollback`
+- **controller:** `constructed`, `suspended`, `resumed` and `disposed`
+- **cache:** `fetch-start`, `fetch-success`, `fetch-error`, `invalidated` and `gc`
+- **mutation:** `run`, `success`, `error` and `rollback`
 
 `cache:subscribed` and `field:validated` are declared in the type but not yet wired in the runtime. The panel renders them when they arrive; you can also feed them via `store.handle(event)` from your own instrumentation.
 

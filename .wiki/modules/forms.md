@@ -30,11 +30,11 @@ Form primitives — `Field<T>`, `Form<S>`, `FieldArray<I>` — plus stdlib valid
 ## Files
 
 - **`types.ts`** — `Validator<T>`, `ValidatorResult` (`string | null | FormIssue[]`), and `FormIssue` (`{ path: (string|number)[]; message }`). Validators may target descendant fields by path (T5.2).
-- **`validators.ts`** — stdlib functions + the Standard-Schema `validator()` adapter. Stdlib fns return `Validator<T>` and short-circuit on `null` / `undefined` so they compose with `required()`. `validator(schema)` returns **all** issues as `FormIssue[]` (each with its `path`) — `[]` on success.
-- **`field.ts`** — `FieldImpl<T>` class + `createField` factory + `debouncedValidator`. Field IS a `ReadSignal<T>` (delegates `.value` / `peek` / `subscribe` to an internal signal). Owns the validator runner. Three error channels merged into `errors`: `validatorErrors$` (own validators), `serverErrors$` (`setErrors`), `formErrors$` (parent-form-validator routing — T5.2).
+- **`validators.ts`** — stdlib functions + the Standard-Schema `validator()` adapter. Stdlib fns return `Validator<T>` and short-circuit on `null` and `undefined` so they compose with `required()`. `validator(schema)` returns **all** issues as `FormIssue[]` (each with its `path`) — `[]` on success.
+- **`field.ts`** — `FieldImpl<T>` class + `createField` factory + `debouncedValidator`. Field IS a `ReadSignal<T>` (delegates `.value`, `peek` and `subscribe` to an internal signal). Owns the validator runner. Three error channels merged into `errors`: `validatorErrors$` (own validators), `serverErrors$` (`setErrors`), `formErrors$` (parent-form-validator routing — T5.2).
 - **`form-types.ts`** — heavy type machinery: `FormSchema`, `FormValue<S>`, `FormErrors<S>`, `FieldArrayValue<I>`, `Form<S>`, `FieldArray<I>`. Plus the brand symbols.
-- **`form.ts`** — `FormImpl` and `FieldArrayImpl` + factories + brand-based predicates + the form-issue router (`resolveNode` / `routeFormIssues`).
-- **`index.ts`** — re-exports validators + the `Validator` / `ValidatorResult` / `FormIssue` types.
+- **`form.ts`** — `FormImpl` and `FieldArrayImpl` + factories + brand-based predicates + the form-issue router (`resolveNode` and `routeFormIssues`).
+- **`index.ts`** — re-exports validators + the `Validator`, `ValidatorResult` and `FormIssue` types.
 
 `form.ts` is the longest file (~450 lines). Read it side-by-side with `form-types.ts`.
 
@@ -85,7 +85,7 @@ effect(() => {
 
 The whole body runs inside an `effect`, so any signal read inside any validator becomes a tracked dependency — that's what makes cross-field rules like `(v) => v === password.value ? null : 'mismatch'` reactive. The async portion (`.then`) is outside the tracking scope. A validator that returns a `FormIssue[]` is flattened to its messages here (`messagesFromResult` — a leaf field has no descendants to route paths to).
 
-**`validateOn` gate.** A field can defer its first validation: `'change'` (default, runs immediately), `'blur'` (first run gated on `markTouched()`), `'submit'` (gated on `revalidate()` / `Form.validate()`). A reactive `validateUnlocked$` gate short-circuits the runner while locked; once unlocked it stays unlocked (subsequent changes re-validate), and `reset()` re-locks. Covered by `form.test.ts`.
+**`validateOn` gate.** A field can defer its first validation: `'change'` (default, runs immediately), `'blur'` (first run gated on `markTouched()`), `'submit'` (gated on `revalidate()` and `Form.validate()`). A reactive `validateUnlocked$` gate short-circuits the runner while locked; once unlocked it stays unlocked (subsequent changes re-validate), and `reset()` re-locks. Covered by `form.test.ts`.
 
 **`isValid` stability (T5.3).** `isValid` reads live `errors` when settled but **holds the last settled validity while `isValidating`** (a `lastValid$` signal updated at every settle point). Without this, a `debouncedValidator` cleared `validatorErrors$` on each async start and `isValid` strobed to `false` on every keystroke, flickering a bound submit button. A field with no prior settled run defaults to valid (no false-invalid flash on mount). This replaced the older "treat-as-invalid-while-validating" rule (spec §8.2 updated).
 
@@ -93,10 +93,10 @@ The whole body runs inside an `effect`, so any signal read inside any validator 
 
 ## Form-level validators that target fields (T5.2)
 
-A form-level validator (`FormOptions.validators`) or array-level validator (`FieldArrayOptions.validators`) may return a `FormIssue[]` instead of a `string`. `FormImpl.runTopLevelValidators` / `FieldArrayImpl.runTopLevelValidators` collect all results (sync + async, via `appendIssues`) and hand them to `routeFormIssues(this, issues, topLevelErrors$, lastTargets)` (`form.ts`):
+A form-level validator (`FormOptions.validators`) or array-level validator (`FieldArrayOptions.validators`) may return a `FormIssue[]` instead of a `string`. `FormImpl.runTopLevelValidators` and `FieldArrayImpl.runTopLevelValidators` collect all results (sync + async, via `appendIssues`) and hand them to `routeFormIssues(this, issues, topLevelErrors$, lastTargets)` (`form.ts`):
 
 - **empty-path** (and unresolvable) issues → the node's own `topLevelErrors$`.
-- **path** issues → `resolveNode(this, path)` walks keys (Form) / numeric indices (FieldArray) to the target node, whose `setFormErrors(msgs)` is called.
+- **path** issues → `resolveNode(this, path)` walks keys (Form) and numeric indices (FieldArray) to the target node, whose `setFormErrors(msgs)` is called.
 
 Each node type (`FieldImpl`, `FormImpl`, `FieldArrayImpl`) exposes `setFormErrors`. On a Field it feeds `formErrors$` (merged into `errors`); on a Form/FieldArray it feeds `parentFormErrors$`, merged into that node's **`topLevelErrors`** getter (now a `computed` over own + parent-injected) and factored into `isValid`. `routeFormIssues` clears any target written last run but not this one (tracked in `lastFormErrorTargets`), so a fixed rule removes its message. The router runs inside the validator `effect` but only *reads* the tracked form `value` and *writes* error signals (peeks elsewhere), so it adds no spurious dependencies and can't loop (errors aren't part of `value`). Pinned by `regressions.test.ts` (R-F5.2); the Standard-Schema path (`validator(schema)` → `FormIssue[]`) is pinned by `standard-schema.test.ts`.
 
@@ -129,4 +129,4 @@ See `../pitfalls/fieldarray-factory-uses-initial.md`.
 
 - `form.fieldAt('a.b.c')` path-typed lookup — spec §20.7 says this is "deferred to post-v1". Use `form.fields.a.fields.b.fields.c` chained access.
 
-Reactive `initial` **is** implemented (this page's prior "not reactive between resets" note was bootstrap-era drift): a `initial: () => …` thunk runs in a tracking scope and re-applies when its tracked signals change, gated by `resetOnInitialChange` (`'when-clean'` default / `'always'` / `'never'`). The `'when-clean'` guard consults `isDirty` — which now includes structural FieldArray edits (above). Spec §8.4, §8.5.
+Reactive `initial` **is** implemented (this page's prior "not reactive between resets" note was bootstrap-era drift): a `initial: () => …` thunk runs in a tracking scope and re-applies when its tracked signals change, gated by `resetOnInitialChange` (`'when-clean'` default, `'always'` and `'never'`). The `'when-clean'` guard consults `isDirty` — which now includes structural FieldArray edits (above). Spec §8.4, §8.5.

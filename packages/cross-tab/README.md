@@ -58,7 +58,7 @@ type CrossTabOptions = {
 
 ## How it works
 
-Every `setData` or `invalidate` on a `crossTab: true` query fires a `QueryClientPlugin` event (§13.2). This plugin posts the event onto a `BroadcastChannel`. Receiving tabs replay the write via the plugin api's `applyRemoteSetData` / `applyRemoteInvalidate` — both flagged `isRemote: true`, so the receiving tab's plugin doesn't echo back.
+Every `setData` or `invalidate` on a `crossTab: true` query fires a `QueryClientPlugin` event (§13.2). This plugin posts the event onto a `BroadcastChannel`. Receiving tabs replay the write via the plugin api's `applyRemoteSetData` and `applyRemoteInvalidate` — both flagged `isRemote: true`, so the receiving tab's plugin doesn't echo back.
 
 ```
 Tab A: query.setData(...) → QueryClient.setData → plugin.onSetData (isRemote: false)
@@ -96,7 +96,7 @@ Setting `crossTab: true` without a `queryId` logs a one-time `console.warn` (dev
 
 ## SSR
 
-When `BroadcastChannel === undefined` (Node, older browsers) and no `channelFactory` override is supplied, `crossTabPlugin(...)` returns a no-op plugin. The root still constructs cleanly; cross-tab is just disabled. This means you can wire the plugin unconditionally in shared code paths.
+When `BroadcastChannel === undefined` (Node, older browsers) and no `channelFactory` override is supplied, `crossTabPlugin(...)` returns a no-op plugin. The root still constructs cleanly; cross-tab is disabled. This means you can wire the plugin unconditionally in shared code paths.
 
 ## Interaction with `@kontsedal/olas-persist`
 
@@ -111,13 +111,13 @@ You can combine them on the same logical entity, but it's redundant — `@kontse
 
 Cross-tab sync is a broadcast, not a consensus protocol — think of it as "every tab refetched, but for free," not as a source of truth. There's no arbitration, no vector clocks, no server round-trip: each tab applies inbound writes in delivery order, and the last delivery wins for that tab. So two tabs that write the *same* entry concurrently can settle on different values until something reconciles them.
 
-That something is a server refetch, and it's a one-liner: after a write that matters, call `query.invalidate(...)` (it broadcasts too), and every tab pulls authoritative server truth and re-converges. The mutation `onError` / `onSuccess` → invalidate pattern gives you this for free.
+That something is a server refetch, and it's a one-liner: after a write that matters, call `query.invalidate(...)` (it broadcasts too), and every tab pulls authoritative server truth and re-converges. The mutation `onError` and `onSuccess` → invalidate pattern gives you this for free.
 
 ## Limitations (v1)
 
 - **No infinite queries.** `defineInfiniteQuery` syncs are intentionally skipped — peers can't apply page-array payloads (core's remote-apply paths early-return for infinite defs), so broadcasting them is pure channel noise. Plugin events still fire with `kind: 'infinite'`; this plugin drops them on both send and receive. Infinite cross-tab is tracked in `BACKLOG.md`.
 - **No structural diffs.** Every `setData` broadcasts the full post-update value. For chunky cache entries this is fine because `BroadcastChannel` is in-memory; for very large arrays it's a known cost.
-- **No pending-mutation arbitration.** If two tabs run optimistic mutations on the same entry concurrently, the last `setData` to arrive wins on both sides. Your mutation `onError` / `onSuccess` then re-syncs from the server, which restores convergence at the cost of a temporary divergence.
+- **No pending-mutation arbitration.** If two tabs run optimistic mutations on the same entry concurrently, the last `setData` to arrive wins on both sides. Your mutation `onError` and `onSuccess` then re-syncs from the server, which restores convergence at the cost of a temporary divergence.
 - **Optimistic writes cross tabs.** `setData` events fire regardless of cause, so optimistic state (and any rollback) is visible cross-tab. If you need optimistic UI to stay local, gate the write yourself.
 
 ## Further reading

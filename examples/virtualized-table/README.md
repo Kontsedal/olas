@@ -39,7 +39,7 @@ dispose on commit/cancel. The kanban example demonstrates that with
 ## Files
 
 - `src/controllers/table.ts` — `tableController`: the `Map<id, Signal<Issue>>`, the ordered-id signal, the title filter, `selection`, and the per-row `parallel` mutation. The whole app's behavior; no DOM imports.
-- `src/api.ts` — fake backend: `generateIssues(n)` plus a per-row update that randomly rejects (to exercise rollback), and the `Issue` / `Status` types.
+- `src/api.ts` — fake backend: `generateIssues(n)` plus a per-row update that randomly rejects (to exercise rollback), and the `Issue` and `Status` types.
 - `src/View/Table.tsx` — `@tanstack/react-virtual` over the ordered ids; mounts ~30 rows at a time.
 - `src/View/Row.tsx` — one row. Calls `api.table.rowSignal(id)` + `use(...)` to subscribe to its own signal and nothing else.
 - `src/View/App.tsx` — toolbar, bulk-action buttons, and the per-row render counters that prove fine-grained reactivity.
@@ -61,6 +61,6 @@ Open the printed local URL, scroll hard, and watch the per-row render counters s
 ## Read order
 
 1. `src/controllers/table.ts` — the "rows are data" controller, top to bottom. This is the point of the example.
-2. `src/View/Row.tsx` — how a single row subscribes to just its own signal.
+2. `src/View/Row.tsx` — how a single row subscribes to only its own signal.
 3. `src/View/Table.tsx` — the virtualizer wiring over the ordered ids.
 4. `src/View/App.tsx` + `src/main.tsx` — toolbar, bulk actions, and bootstrap.

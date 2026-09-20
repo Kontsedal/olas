@@ -119,8 +119,8 @@ The post-update walk that runs when the patch's `setEntryData` fires its `SetDat
 
 - **Regular and infinite queries are both walked.** Infinite payloads (`kind: 'infinite'`) traverse the `TPage[]` shape transparently — the walker's existing array branch handles page indices, and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData`. Cross-tab still skips infinite (different concern: payload size).
 - **One plugin instance per root.** Construct a fresh `entitiesPlugin([...])` per `createRoot(...)`.
-- **Entity must be registered.** `signal / get / upsert / update / invalidate / entries / bindings` throw when called with an `EntityDef` that wasn't passed to `entitiesPlugin([...])`. Catches the mistake at the call site instead of leaking orphan signals.
-- **`update` default is shallow-merge.** Use the function form (`update(id, prev => ...)`) for non-shallow / computed updates.
+- **Entity must be registered.** `signal, get, upsert, update, invalidate, entries and bindings` throw when called with an `EntityDef` that wasn't passed to `entitiesPlugin([...])`. Catches the mistake at the call site instead of leaking orphan signals.
+- **`update` default is shallow-merge.** Use the function form (`update(id, prev => ...)`) for non-shallow and computed updates.
 - **`update` is a no-op if the entity isn't in the store.** Warns in dev. Use `upsert` first if you want create-or-patch semantics.
 
 ## Memory characteristics

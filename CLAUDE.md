@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: ten published packages ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR + streaming SSR, `defineScope`, the dynamic-child trio `ctx.session` / `ctx.collection` / `ctx.lazyChild`), `@kontsedal/olas-react` (Provider + hooks + keep-alive + streaming hydration), `@kontsedal/olas-zod`, `@kontsedal/olas-persist` (`usePersisted` + `localStorageAdapter` + `indexedDbAdapter`), `@kontsedal/olas-devtools` (in-app panel + floating launcher), `@kontsedal/olas-cross-tab` (BroadcastChannel cache sync), `@kontsedal/olas-entities` (entity normalization plugin), `@kontsedal/olas-realtime` (realtime patcher + live streams), `@kontsedal/olas-mutation-queue` (durable persist + reload-safe replay for `persist: true` mutations), `@kontsedal/olas-router` (scope-based router bridge for TanStack Router / React Router v6). Plus the private `packages/integration` cross-package test suite. 901 tests across 62 files + the `examples/` apps (kanban, reader-ssr, stock-ticker, virtualized-table). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
+Current implementation status: ten published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 901 tests across 62 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker and virtualized-table. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -35,7 +35,7 @@ CI = `install → typecheck → lint → test → build`. Reproducing CI locally
 
 Packages version **independently** — `.changeset/config.json` has no `fixed` group, so a release bumps only the packages a changeset names, plus any whose peer range a bumped dependency fell out of. Version numbers across the suite are not expected to match. Don't "fix" a mismatch by adding bumps.
 
-Every user-visible change needs a changeset (`pnpm changeset`) naming the packages it actually touches. A docs-only change to a package README needs none.
+Every user-visible change needs a changeset (`pnpm changeset`) naming the packages it touches. A docs-only change to a package README needs none.
 
 The pipeline is two workflows, deliberately split:
 
@@ -125,10 +125,10 @@ confidence: high
 ```
 
 - **`covers`** — file paths or `path:start-end` ranges this page documents. When those lines change, lint should flag the page for re-verification. Be specific: cite ranges, not whole files, when only part of a file matters.
-- **`edges`** — typed links to other pages. Types: `uses` / `tested-by` / `supersedes` / `contradicts` / `documented-in` / `related` (last one only when nothing else fits).
+- **`edges`** — typed links to other pages. Types: `uses`, `tested-by`, `supersedes`, `contradicts`, `documented-in` and `related` (last one only when nothing else fits).
 - **`confidence`** — three levels with concrete tests:
   - `high` — page is verifiable against source AND has a referenced test (or spec section) pinning the behavior. Multi-source.
-  - `medium` — page is synthesis (a "how this works" narrative) derived from reading code, but no independent verification (peer review, separate test, spec § citation) has confirmed the synthesis. **Default for anything authored in the same session as the code it describes.**
+  - `medium` — the page is a "how this works" narrative derived from reading code, and no independent source has confirmed it. Peer review, a separate test or a spec § citation would each count as confirmation. **Default for anything authored in the same session as the code it describes.**
   - `candidate` — speculation. One file cited, no confirming test, no spec section. Lives in `.wiki/candidates/`. Excluded from authoritative queries.
 - **`last_verified`** — ISO date (YYYY-MM-DD). Update when you re-read the covered code and confirm the page is still accurate.
 
@@ -142,8 +142,8 @@ In page bodies, prefer **citations as `path:line` or `path:start-end`** over pro
 
 New information enters the wiki here.
 
-- **Commit ingest** — when finishing a non-trivial change, read the diff, identify affected pages by `covers:`, update them, bump `last_verified`. Add new pages for new modules / entities. Add a `log.md` entry: `## [YYYY-MM-DD HH:MM] ingest | <short summary>`.
-- **Conversation ingest** — when the user explains *why* something is the way it is, or describes a bug / constraint / past attempt, file it. Usually a pitfall or decision page. Don't let context die in chat.
+- **Commit ingest** — when finishing a non-trivial change, read the diff, identify affected pages by `covers:`, update them, bump `last_verified`. Add new pages for new modules and entities. Add a `log.md` entry: `## [YYYY-MM-DD HH:MM] ingest | <short summary>`.
+- **Conversation ingest** — when the user explains *why* something is the way it is, or describes a bug, constraint and past attempt, file it. Usually a pitfall or decision page. Don't let context die in chat.
 - **External ingest** — bug reports, runtime issues, surprising library behavior. Same treatment.
 
 ### Query
@@ -154,22 +154,22 @@ Before reading source code, read the wiki:
 2. Read those pages.
 3. Follow `covers:` citations to specific file ranges.
 4. Read only the cited ranges, not whole files.
-5. Answer / act.
+5. Answer and act.
 
 This inverts the normal "grep → read → synthesize" loop. The synthesis already exists; the wiki points you at the exact code.
 
-If a query produces a useful new synthesis (comparison, walk-through, inferred pattern), file it back as a page. The wiki compounds on use, not just on commits.
+If a query produces a useful new synthesis (comparison, walk-through, inferred pattern), file it back as a page. The wiki compounds on use, not only on commits.
 
 ### Lint
 
 Run `pnpm wiki:lint`. The script in `scripts/wiki-lint.ts` checks:
 
 - Required frontmatter fields present (`name`, `description`, `type`, `last_verified`, `confidence`).
-- `confidence` is one of `high` / `medium` / `candidate`.
+- `confidence` is one of `high`, `medium` or `candidate`.
 - `last_verified` is a valid ISO date.
 - Every `covers:` path exists. If a line range is given (`path:start-end` or `path:N`), the file is long enough.
 - Every `edges:` target resolves to an existing file (path relative to the page).
-- Edge `type` is one of `uses` / `tested-by` / `supersedes` / `contradicts` / `documented-in` / `related`.
+- Edge `type` is one of `uses`, `tested-by`, `supersedes`, `contradicts`, `documented-in` or `related`.
 - Orphans — pages not linked from `index.md` or any other page's edges/body.
 - Staleness — pages whose `last_verified` is older than 60 days.
 - Drift — covered files modified (per git log) after the page's `last_verified`.
@@ -180,7 +180,7 @@ Additionally, do passes that the linter can't automate:
 
 - Read covered code and confirm the page's claims still match.
 - Look for two pages making conflicting claims → flag via a `contradicts` edge.
-- Look for modules / public APIs without coverage.
+- Look for modules and public APIs without coverage.
 - Promote candidates with accumulated evidence to authoritative.
 - Re-confirm `high`-confidence pages dated before your session began (see bootstrap caveat above).
 
@@ -246,5 +246,5 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 
 - **Don't commit `dist/`.** `tsdown` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
 - **`@preact/signals-core` is a peer dep on `@kontsedal/olas-core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
-- **biome config in `biome.json`** (currently v2.x — see `package.json`) — two rules are intentionally off: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't re-enable them.
+- **biome config in `biome.json`**, currently v2.x per `package.json`. Two rules are intentionally off. `noExplicitAny` is off because the wrapper types need it. `noConfusingVoidType` is off because it matches the spec's effect signature `() => void | (() => void)`. Don't re-enable them.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".

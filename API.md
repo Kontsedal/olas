@@ -2,14 +2,14 @@
 
 Every public export across the Olas packages. One canonical entry per export, with signature, what-it-does, a minimal example, and the trade-offs. This is the catalog — for the friendly tour see [`README.md`](README.md), for design rationale see [`SPEC.md`](SPEC.md), for known footguns see [`.wiki/pitfalls/`](.wiki/pitfalls).
 
-If a behavior isn't covered here and you can't find it in SPEC.md, that's a docs bug — please file it.
+A behavior missing from both this page and SPEC.md is a docs bug. Please file it.
 
 ## Conventions used in this file
 
 - **Signature** — copy-paste-able TypeScript signature. Generics are spelled out, optional params are marked `?`.
 - **What it does** — one paragraph in plain English.
 - **Example** — minimal idiomatic snippet, typechecked.
-- **When to use / When not** — guidance, not rules. Used when the API has a near-neighbor it gets confused with.
+- **When to use and When not** — guidance, not rules. Used when the API has a near-neighbor it gets confused with.
 - **See also** — links to spec sections, wiki pitfalls, related APIs.
 
 `ReadSignal<T>` means a read-only signal; `Signal<T>` is read-write. Anything starting with `ctx.` is on the controller's `Ctx` object — lifetime-bound to that controller.
@@ -33,7 +33,7 @@ If a behavior isn't covered here and you can't find it in SPEC.md, that's a docs
   - [Forms — stdlib validators](#forms--stdlib-validators)
   - [Scopes](#scopes)
   - [Emitters](#emitters)
-  - [SSR — `dehydrate` / `hydrate`](#ssr--dehydrate--hydrate)
+  - [SSR — `dehydrate` and `hydrate`](#ssr--dehydrate--hydrate)
   - [Errors](#errors)
   - [Devtools event bus](#devtools-event-bus)
   - [Utilities](#utilities)
@@ -133,7 +133,7 @@ batch(() => {
 
 ### `untracked<T>(fn: () => T): T`
 
-Run `fn` without registering its signal reads as dependencies. Useful inside a `computed` / `effect` to "peek" at a value without re-running on its changes.
+Run `fn` without registering its signal reads as dependencies. Useful inside a `computed` and `effect` to "peek" at a value without re-running on its changes.
 
 ```ts
 import { signal, computed, untracked } from '@kontsedal/olas-core'
@@ -161,7 +161,7 @@ type Signal<T> = ReadSignal<T> & {
 type Computed<T> = ReadSignal<T>
 ```
 
-`Signal<T>` is read-write; `ReadSignal<T>` is read-only. Functions that should accept both reads and writes use `Signal<T>`; functions that just observe use `ReadSignal<T>`. `Computed<T>` is a `ReadSignal<T>`.
+`Signal<T>` is read-write; `ReadSignal<T>` is read-only. Functions that should accept both reads and writes use `Signal<T>`; functions that only observe use `ReadSignal<T>`. `Computed<T>` is a `ReadSignal<T>`.
 
 ---
 
@@ -181,7 +181,7 @@ const dTerm = debounced(term, 300)
 // dTerm.value lags term.value by up to 300ms after the last write.
 ```
 
-`TimingSignal<T>` is `ReadSignal<T>` plus `cancel()` (drop the pending emit), `flush()` (emit the pending value now), and `dispose()` (tear down the internal effect + timer). It exposes no `set()`. Pass `options.signal` OR call `dispose()` to release the `source` subscription — otherwise it lives for the process lifetime. `leading`/`trailing` default to `false`/`true`; `{ leading: false, trailing: false }` throws.
+`TimingSignal<T>` is `ReadSignal<T>` plus three methods and no `set()`. `cancel()` drops the pending emit. `flush()` emits the pending value now. `dispose()` tears down the internal effect and timer. Pass `options.signal` OR call `dispose()` to release the `source` subscription — otherwise it lives for the process lifetime. `leading`/`trailing` default to `false`/`true`; `{ leading: false, trailing: false }` throws.
 
 **See also:** `debouncedValidator(...)` for async validators specifically.
 
@@ -223,7 +223,7 @@ export const counter = defineController(() => {
 })
 ```
 
-**When not to use:** if a feature is just one derived signal and no lifecycle, a plain `computed` may be enough. Reach for `defineController` when you have async, mutations, fields, or multiple methods.
+**When not to use:** if a feature is only one derived signal and no lifecycle, a plain `computed` may be enough. Reach for `defineController` when you have async, mutations, fields, or multiple methods.
 
 **See also:** SPEC §3, §20.2.
 
@@ -269,7 +269,7 @@ type RootOptions<TDeps> = {
 - `deps` — required object; available everywhere as `ctx.deps`. Use it for api clients, routers, services, the current time.
 - `onError` — sink for *uncaught* errors from effects, mutations, caches, emitter handlers, construction. Throws inside `onError` are swallowed.
 - `hydrate` — replay a `DehydratedState` produced on the server.
-- `refetchOnWindowFocus` / `refetchOnReconnect` — root-wide defaults; per-query specs can override either way. Shorthand for the same-named `defaultQueryOptions` fields, which win if both are set.
+- `refetchOnWindowFocus` or `refetchOnReconnect` — root-wide defaults; per-query specs can override either way. Shorthand for the same-named `defaultQueryOptions` fields, which win if both are set.
 - `defaultQueryOptions` — root-wide query defaults; see below.
 - `plugins` — `QueryClientPlugin`s (cross-tab sync, entity normalization, mutation queue).
 - `scopes` — pre-seed scopes before the root factory runs.
@@ -295,9 +295,9 @@ const root = createRoot(app, {
 
 **When to use:** whenever your app's desired policy differs from the built-ins (`staleTime: 0`, `retry: 0`, `gcTime: 5min`). Without it, a single missed `staleTime` presents as "why does this refetch on every subscribe?" rather than as an error.
 
-Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (the latter for `staleTime` / `keepPreviousData` — the only overlapping fields on `LocalCacheOptions`).
+Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (the latter for `staleTime` and `keepPreviousData` — the only overlapping fields on `LocalCacheOptions`).
 
-**Not defaultable:** `refetchInterval` — a root-wide interval would start polling every query in the app; opt in per query, in either of its two forms (see `QuerySpec` below). Also note `refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries, which install no focus/reconnect subscription.
+**Not defaultable:** `refetchInterval` — a root-wide interval would start polling every query in the app; opt in per query, in either of its two forms (see `QuerySpec` below). Also note `refetchOnWindowFocus` or `refetchOnReconnect` are no-ops for infinite queries, which install no focus/reconnect subscription.
 
 **See also:** SPEC §5.9. `createTestController` accepts the same option, so controllers whose behavior depends on it are testable in isolation.
 
@@ -316,7 +316,7 @@ type Root<Api> = Api & {
 ```
 
 - `dispose()` — recursively dispose every child, every primitive, every effect. Idempotent.
-- `suspend()` / `resume()` — temporarily pause subscriptions without disposing. `maxIdle` auto-disposes if not resumed in time.
+- `suspend()` and `resume()` — temporarily pause subscriptions without disposing. `maxIdle` auto-disposes if not resumed in time.
 - `dehydrate()` — serialize the cache into a `DehydratedState`.
 - `waitForIdle()` — Promise that resolves when no fetches and no mutations are in flight.
 - `__debug` — devtools event bus; see [Devtools event bus](#devtools-event-bus).
@@ -358,7 +358,7 @@ Register a callback that runs when the controller is disposed. Use for one-off c
 
 ### `ctx.onSuspend(fn: () => void): void` / `ctx.onResume(fn: () => void): void`
 
-Run when the controller is suspended / resumed. Suspension pauses subscriptions; resume restores them.
+Run when the controller is suspended and resumed. Suspension pauses subscriptions; resume restores them.
 
 ### `ctx.child<Props, Api>(def, props, options?): Api`
 
@@ -401,7 +401,7 @@ const [editor, close] = ctx.session(cardEditor, { cardId })
 
 ### `ctx.collection<Item, K, ...>(options): Collection<K, Api>`
 
-Reconcile a reactive `source: ReadSignal<Item[]>` into a keyed set of child controllers: new keys construct a child, removed keys dispose theirs, unchanged keys are left alone (`propsOf` is **not** re-applied). Two forms — **homogeneous** (`{ source, keyOf, controller, propsOf }`, one def for every item) and **heterogeneous** (`{ source, keyOf, factory }`, where `factory(item)` picks the controller + props per item, rebuilding on a type-discriminant change).
+Reconcile a reactive `source: ReadSignal<Item[]>` into a keyed set of child controllers: new keys construct a child, removed keys dispose theirs, unchanged keys are left alone (`propsOf` is **not** re-applied). Two forms. **Homogeneous** takes `{ source, keyOf, controller, propsOf }` and uses one def for every item. **Heterogeneous** takes `{ source, keyOf, factory }`, where `factory(item)` picks the controller and props per item and rebuilds on a type-discriminant change.
 
 ```ts
 type Collection<K, Api> = {
@@ -518,7 +518,7 @@ type RefetchInterval<T> = number | ((data: T | undefined) => number)
 
   The resolved gap must be a positive finite number — in **either** form. Anything else (`0`, `NaN`, negative, `Infinity`), whether it's a literal or a thunk's return, stops the timer for that entry and dev-warns rather than spinning a hot loop; it restarts only on the entry's next 0→1 subscriber transition. A thunk must also not **throw** — a throw is caught and treated as a bad gap, with a dev warning carrying the error, because the resolution runs before the chain re-arms.
 
-  The thunk's first call is synchronous at the 0→1 subscribe, before the initial fetch settles, so handle `data === undefined`. It is **not reactive** — a signal read inside yields that tick's value and registers no dependency. And it's resolved **per entry, not per subscriber** (the timer belongs to the shared cache entry), which is why `UseOptions` has no `refetchInterval` and `DefaultQueryOptions` excludes it. `ctx.cache` / `LocalCache` has no interval at all. SPEC §5.9.
+  The thunk's first call is synchronous at the 0→1 subscribe, before the initial fetch settles, so handle `data === undefined`. It is **not reactive** — a signal read inside yields that tick's value and registers no dependency. And it's resolved **per entry, not per subscriber** (the timer belongs to the shared cache entry), which is why `UseOptions` has no `refetchInterval` and `DefaultQueryOptions` excludes it. `ctx.cache` and `LocalCache` has no interval at all. SPEC §5.9.
 
 **Gotcha:** the value of `spec.key(...)` is what's hashed; the *original* `args` are what the fetcher receives. They're not the same thing — see [`.wiki/pitfalls/callargs-vs-keyargs.md`](.wiki/pitfalls/callargs-vs-keyargs.md).
 
@@ -588,9 +588,9 @@ type AsyncState<T> = {
 }
 ```
 
-Subscribers can read any of the 9 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` / `Query`; a `ctx.cache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
+Subscribers can read any of the 9 signals individually, or use `useQuery(state)` in React to batch them into one render. (`cancel()` is present on a query `subscription` and `Query`; a `ctx.cache` `LocalCache` shares the rest of the `AsyncState` surface but not `cancel`.)
 
-**`isPaused`** is `true` while a fetch is deferred waiting for connectivity — either an `online`-mode fetch that hit `navigator.onLine === false`, or an `offlineFirst` fetch that got a network error (`fetch`'s `TypeError`) while offline. It resumes automatically on the next `online` event. Nothing is in flight while paused (`isFetching` is `false`) and `status` stays `idle` / last-success rather than flipping to `error`.
+**`isPaused`** is `true` while a fetch is deferred waiting for connectivity — either an `online`-mode fetch that hit `navigator.onLine === false`, or an `offlineFirst` fetch that got a network error (`fetch`'s `TypeError`) while offline. It resumes automatically on the next `online` event. Nothing is in flight while paused (`isFetching` is `false`) and `status` stays `idle` or last-success rather than flipping to `error`.
 
 ### Type: `UseOptions<Args>`
 
@@ -605,7 +605,7 @@ type UseOptions<Args extends readonly unknown[]> = {
 
 ## Async data — infinite queries
 
-Cursor / page-based pagination accumulating into `pages: TPage[]`.
+Cursor and page-based pagination accumulating into `pages: TPage[]`.
 
 ### `defineInfiniteQuery<Args, PageParam, TPage, TItem?>(spec): InfiniteQuery<Args, TPage, TItem>`
 
@@ -713,13 +713,13 @@ type MutationSpec<V, R> = {
 type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
 ```
 
-- **`mutate(vars, signal)`** — the write. Honor `signal` so superseded / disposed runs can abort.
+- **`mutate(vars, signal)`** — the write. Honor `signal` so superseded and disposed runs can abort.
 - **`onMutate(vars)`** — runs *before* `mutate`. Return a `Snapshot` from `query.setData(...)` to apply an optimistic update; the snapshot is auto-rolled-back on abort, manually rolled back via `snapshot.rollback()` on `onError`.
 - **Concurrency modes:**
   - `parallel` *(default)* — runs are independent. `isPending` is true if any are in-flight.
   - `latest-wins` — a new `.run()` aborts the in-flight one.
   - `serial` — runs queue and execute one at a time.
-- **`detached`** — when `true`, `dispose()` stops cancelling: in-flight runs finish, queued `serial` runs drain, `run(...)` still works afterwards, and `onSuccess` / `onError` / `onSettled` still fire. Use it for **writes** whose completion the user has already been promised — a licence activation behind a modal the user can close, a destructive action whose confirm may be answered after its panel is gone. The callbacks then run after the controller is torn down, so keep them to client-level work (`query.invalidate()`, a toast) and away from the controller's own signals and children. SPEC §6.5.
+- **`detached`** — when `true`, `dispose()` stops cancelling: in-flight runs finish, queued `serial` runs drain, `run(...)` still works afterwards, and `onSuccess`, `onError` and `onSettled` still fire. Use it for **writes** whose completion the user has already been promised — a licence activation behind a modal the user can close, a destructive action whose confirm may be answered after its panel is gone. The callbacks then run after the controller is torn down, so keep them to client-level work (`query.invalidate()`, a toast) and away from the controller's own signals and children. SPEC §6.5.
 
 **Gotcha:** rollback is **automatic only on abort** (latest-wins supersede, dispose). For normal `mutate` rejections, call `snapshot?.rollback()` in `onError` explicitly. See [`.wiki/pitfalls/latest-wins-rollback-order.md`](.wiki/pitfalls/latest-wins-rollback-order.md).
 
@@ -740,9 +740,9 @@ type Mutation<V, R> = {
 }
 ```
 
-`status` is the latest run's outcome; React's `useMutation` derives `isIdle` / `isSuccess` / `isError` from it, so a `void` mutation still reports `isSuccess` after it resolves (it isn't stuck on `isIdle`).
+`status` is the latest run's outcome; React's `useMutation` derives `isIdle`, `isSuccess` and `isError` from it, so a `void` mutation still reports `isSuccess` after it resolves (it isn't stuck on `isIdle`).
 
-`reset()` **cancels**: it aborts every in-flight run (awaiters reject with an `AbortError` — use `isAbortError`) and rejects queued `serial` runs so nobody hangs, then clears `data` / `error` / `lastVariables` and returns `status` to `'idle'` with `isPending` false. SPEC §6.2 lists it among the abort triggers.
+`reset()` **cancels**: it aborts every in-flight run (awaiters reject with an `AbortError` — use `isAbortError`) and rejects queued `serial` runs so no caller hangs, then clears `data`, `error` and `lastVariables` and returns `status` to `'idle'` with `isPending` false. SPEC §6.2 lists it among the abort triggers.
 
 **Gotcha when porting from react-query:** rq's `reset()` detaches the observer and lets the in-flight request finish. Olas aborts it. A mechanical `reset()` → `reset()` port silently changes whether the write lands.
 
@@ -782,7 +782,7 @@ type Snapshot = {
 }
 ```
 
-Returned by `query.setData(...)` / `localCache.setData(...)`.
+Returned by `query.setData(...)` and `localCache.setData(...)`.
 
 - `rollback()` — restore the previous data; also clears `hasPendingMutations` on the entry if no other snapshots are live.
 - `finalize()` — commit the snapshot as the new truth. The mutation runner auto-calls this on success; user code rarely needs to.
@@ -795,7 +795,7 @@ Both are idempotent and mutually exclusive — whichever happens first wins, sub
 
 ### `ctx.field<T>(initial, validators?): Field<T>`
 
-Create a single field. The `initial` value seeds the field; `validators` is an array of `Validator<T>` functions run on every change (and on `validate()` / `revalidate()`).
+Create a single field. The `initial` value seeds the field; `validators` is an array of `Validator<T>` functions run on every change (and on `validate()` and `revalidate()`).
 
 ```ts
 import { defineController, required, minLength } from '@kontsedal/olas-core'
@@ -841,9 +841,9 @@ type Validator<T> = (value: T, signal: AbortSignal) =>
   | Promise<string | null | FormIssue[]>
 ```
 
-Return `null` (or `[]`) for "valid", a non-empty string for "invalid (here's the error)". Sync validators just return; async validators return a `Promise`. The `signal` aborts when the value changes mid-run.
+Return `null` (or `[]`) for "valid", a non-empty string for "invalid (here's the error)". Sync validators return; async validators return a `Promise`. The `signal` aborts when the value changes mid-run.
 
-Return a `FormIssue[]` to target **specific fields** from a form- or array-level validator (cross-field rules, whole-form schemas): each issue's `path` routes its `message` onto the matching descendant field/form/array (an empty `path` means the node itself — `topLevelErrors`). On a leaf `Field`, `FormIssue[]` collapses to its messages (a leaf has no descendants). See `Form` below and SPEC §8.3.
+Return a `FormIssue[]` to target **specific fields** from a form-level or array-level validator, such as a cross-field rule or a whole-form schema. Each issue's `path` routes its `message` onto the matching descendant field, form or array. An empty `path` means the node itself, so the message lands on `topLevelErrors`. On a leaf `Field`, `FormIssue[]` collapses to its messages (a leaf has no descendants). See `Form` below and SPEC §8.3.
 
 ### `debouncedValidator<T>(fn, ms): (value, signal) => Promise<string | null>`
 
@@ -1018,7 +1018,7 @@ Two `defineScope` calls — even with the same type — produce *distinct* scope
 
 ### `ctx.provide<T>(scope, value): void`
 
-Provide a value for a scope on this controller. Descendant controllers (via `ctx.child` / `ctx.attach`) can read it via `ctx.inject`.
+Provide a value for a scope on this controller. Descendant controllers (via `ctx.child` and `ctx.attach`) can read it via `ctx.inject`.
 
 ### `ctx.inject<T>(scope): T`
 
@@ -1050,7 +1050,7 @@ type Scope<T> = { /* internal */ }
 
 ## Emitters
 
-Typed pub/sub for cross-controller events. The emitter itself is just a value — pass it via `ctx.deps` or `ctx.provide(scope)`.
+Typed pub/sub for cross-controller events. The emitter itself is a value — pass it via `ctx.deps` or `ctx.provide(scope)`.
 
 ### `createEmitter<T = void>(): Emitter<T>`
 
@@ -1150,7 +1150,7 @@ type ErrorContext = {
 
 ### `isAbortError(err): boolean`
 
-Returns `true` for `DOMException` with `name === 'AbortError'`. Use in `mutate` / `fetcher` catches when you want to distinguish user-aborts from real failures.
+Returns `true` for `DOMException` with `name === 'AbortError'`. Use in `mutate` and `fetcher` catches when you want to distinguish user-aborts from real failures.
 
 ---
 
@@ -1170,7 +1170,7 @@ type DebugBus = {
 **Production behaviour.** In `@kontsedal/olas-core`'s production build, the emission
 sites are removed by the bundler. `subscribe` accepts and returns a no-op
 unsub; no events fire. Use the devtools subscription in dev only — see
-SPEC §23 *Devtools / `__debug` and production builds*.
+SPEC §23 *Devtools and `__debug` and production builds*.
 
 ### Type: `DebugEvent` (discriminated union)
 
@@ -1219,7 +1219,7 @@ Test-only helpers. Importing from a non-test file is a smell — the `/testing` 
 
 Construct an isolated root wrapping a single controller. Returns the controller's API plus the standard `Root` lifecycle controls. Equivalent to a hand-rolled "wrap in a root" boilerplate.
 
-`defaultQueryOptions` mirrors `RootOptions` so staleTime/retry-dependent behavior is testable without hand-rolling a root. Note each call builds its **own** root — and therefore its own cache — so two `createTestController` calls never share an entry; test cache-lifetime behavior (gcTime, dedup) inside a single root via `ctx.session` / `ctx.attach`.
+`defaultQueryOptions` mirrors `RootOptions` so staleTime/retry-dependent behavior is testable without hand-rolling a root. Note each call builds its **own** root — and therefore its own cache — so two `createTestController` calls never share an entry; test cache-lifetime behavior (gcTime, dedup) inside a single root via `ctx.session` and `ctx.attach`.
 
 ```ts
 import { createTestController } from '@kontsedal/olas-core/testing'
@@ -1246,7 +1246,7 @@ render(<NameInput field={name} />)
 
 ### `fakeAsyncState<T>(overrides?): AsyncState<T>`
 
-Same idea for `AsyncState<T>`. Pass overrides for any of the signal-backed fields plus `refetch` / `reset` / `firstValue` methods. Defaults: `status: 'idle'` unless `data` is provided (then `'success'`).
+Same idea for `AsyncState<T>`. Pass overrides for any of the signal-backed fields plus `refetch`, `reset` and `firstValue` methods. Defaults: `status: 'idle'` unless `data` is provided (then `'success'`).
 
 ```ts
 import { fakeAsyncState } from '@kontsedal/olas-core/testing'
@@ -1287,7 +1287,7 @@ function Header() {
 
 ### `useController<Api>(root: Root<Api>): Api`
 
-Back-compat alias for `useRoot()`. Takes the root explicitly, so it's usable outside a provider (notably in tests).
+Back-compat alias for `useRoot()`. Takes the root explicitly, so it's usable outside a provider (in tests).
 
 ### `HydrationBoundary({ def, options, children, streaming? })`
 
@@ -1454,7 +1454,7 @@ The default. Returns `null` from `get` if `localStorage` is undefined (SSR-safe)
 
 ### `indexedDbAdapter(options?): StorageAdapter`
 
-Async IndexedDB-backed adapter (single key/value object store). `options?: { databaseName?, storeName?, channelName?, indexedDB?, broadcastChannel? }`. IDB has no native change event, so `onChange` is layered via `BroadcastChannel`. Writes resolve on the transaction's **commit** (not the request's `onsuccess`), so quota / commit failures reject and reach `onError('write')`. SSR-safe (no `IDBFactory` → every op no-ops). Pick it over `localStorage` for larger payloads or where async storage is acceptable.
+Async IndexedDB-backed adapter (single key/value object store). `options?: { databaseName?, storeName?, channelName?, indexedDB?, broadcastChannel? }`. IDB has no native change event, so `onChange` is layered via `BroadcastChannel`. Writes resolve on the transaction's **commit** (not the request's `onsuccess`), so quota or commit failures reject and reach `onError('write')`. SSR-safe (no `IDBFactory` → every op no-ops). Pick it over `localStorage` for larger payloads or where async storage is acceptable.
 
 ---
 
@@ -1481,7 +1481,7 @@ Same, but returns a `Promise<string | null>`. Use when the schema has async `.re
 
 ### `formFromZod<T>(ctx, schema, options?): Form<...>`
 
-Walk a `z.object(...)` / `z.array(...)` / leaf tree and emit the matching `Form` / `FieldArray` / `Field` structure with validators auto-attached.
+Walk a `z.object(...)`, `z.array(...)` and leaf tree and emit the matching `Form`, `FieldArray` and `Field` structure with validators auto-attached.
 
 ```ts
 import { z } from 'zod'
@@ -1556,7 +1556,7 @@ const root = createRoot(app, {
 })
 ```
 
-Surface lives in [`packages/cross-tab/README.md`](packages/cross-tab/README.md). Key points: each query must declare a stable `queryId` (`defineQuery({ queryId: 'users.byId', ... })`); per-query opt-in is `crossTab?: boolean | 'data'` (the dead `'infinite'`/`'both'` values were removed in favor of honest behavior — infinite payloads can't be applied by a peer; see `BACKLOG.md`); `source: 'fetch'` payloads are skipped (only `setData` and remote-origin events sync), and the `shouldBroadcast` filter applies on **receive** as well as send. Conflict model is **last-delivery-wins per tab with no arbitration** — simultaneous writes in two tabs can diverge; use server-refetch (`invalidate`) for authoritative re-convergence.
+Surface lives in [`packages/cross-tab/README.md`](packages/cross-tab/README.md). Key points: each query must declare a stable `queryId`, as in `defineQuery({ queryId: 'users.byId', ... })`. Per-query opt-in is `crossTab?: boolean | 'data'`. The dead `'infinite'` and `'both'` values were removed because a peer cannot apply an infinite payload; see `BACKLOG.md`. `source: 'fetch'` payloads are skipped (only `setData` and remote-origin events sync), and the `shouldBroadcast` filter applies on **receive** as well as send. Conflict model is **last-delivery-wins per tab with no arbitration** — simultaneous writes in two tabs can diverge; use server-refetch (`invalidate`) for authoritative re-convergence.
 
 ---
 
@@ -1598,7 +1598,7 @@ Composables over a consumer-supplied `RealtimeService` on `ctx.deps.realtime`:
 - `useRealtimeConnection(ctx): ReadSignal<ConnectionState>` where `ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'`. Backed by the optional `RealtimeService.onConnectionChange?`. With a reporter it starts optimistically `'connected'` and tracks changes; **without one it reports `'unknown'`** (the hook can't observe state — it doesn't lie `'connected'`).
 - `onReconnect(ctx, fn)` — run `fn` on a transition back to `'connected'` (not on the initial value). The canonical "invalidate queries that missed updates during the disconnect" trigger.
 
-Full surface lives in [`packages/realtime/README.md`](packages/realtime/README.md). The package ships no transport — wire your own `RealtimeService` (WebSocket / SSE / Pusher / Ably / Supabase Realtime / …) on `ctx.deps`.
+Full surface lives in [`packages/realtime/README.md`](packages/realtime/README.md). The package ships no transport — wire your own `RealtimeService` (WebSocket, SSE, Pusher, Ably and Supabase Realtime / …) on `ctx.deps`.
 
 ---
 
@@ -1639,13 +1639,13 @@ type MutationQueueOptions = {
 type ReplaySettleApi = { invalidate(query: Query<any, any>, keyArgs?: readonly unknown[]): void }
 ```
 
-Replays on init, on the `online` event (reconnect), and on `replayNow()` — coordinated cross-tab via the Web Locks API (best-effort `localStorage`-lease fallback), so two tabs don't double-POST. `onReplaySettle` fires after a successful replay so you can `invalidate` affected queries (without it, subscribers stay stale). **Best-effort, not "durable":** at-least-once-until-success with the server's `idempotencyKey` as the authoritative gate; the enqueue write is fire-and-forget, and causal ordering is guaranteed only within a `mutationId`. Full contract + limits: [package README](packages/mutation-queue/README.md).
+Replays on init, on the `online` event at reconnect, and on `replayNow()`. The Web Locks API coordinates this across tabs so two of them don't double-POST, with a best-effort `localStorage`-lease fallback. `onReplaySettle` fires after a successful replay so you can `invalidate` affected queries. Without it, subscribers stay stale. **Best-effort, not "durable":** at-least-once-until-success with the server's `idempotencyKey` as the authoritative gate; the enqueue write is fire-and-forget, and causal ordering is guaranteed only within a `mutationId`. Full contract + limits: [package README](packages/mutation-queue/README.md).
 
 <a id="olasrouter"></a>
 
 # @kontsedal/olas-router
 
-Bridge TanStack Router / React Router v6 route state into scope-injectable signals.
+Bridge TanStack Router and React Router v6 route state into scope-injectable signals.
 
 ### `createRouterAdapter(initial?: RouteState): RouterAdapter`
 
@@ -1661,7 +1661,7 @@ type RouterAdapter = {
 }
 ```
 
-Pass `adapter.scopes` to `createRoot({ ..., scopes: adapter.scopes })`, mount `<adapter.Bridge params={…} search={…} pathname={…}>` inside `<OlasProvider>`, and read route state in controllers via `ctx.inject(RouteParamsScope)` / `RouteSearchScope` / `RoutePathnameScope`. On the **server**, seed with `createRouterAdapter(initial)` — the Bridge only pushes in a client-only `useLayoutEffect`, so without seeding the route signals are empty for the whole server render. First client render is likewise empty until the effect runs — guard route-dependent queries with `enabled: () => params.value.id !== undefined`. Scopes resolve to: `RouteParamsScope` → `Record<string,string|undefined>`, `RouteSearchScope` → `Record<string,unknown>`, `RoutePathnameScope` → `string`. Full surface: [package README](packages/router/README.md).
+Pass `adapter.scopes` to `createRoot({ ..., scopes: adapter.scopes })`, mount `<adapter.Bridge params={…} search={…} pathname={…}>` inside `<OlasProvider>`, and read route state in controllers via `ctx.inject(RouteParamsScope)`, `RouteSearchScope` and `RoutePathnameScope`. On the **server**, seed with `createRouterAdapter(initial)` — the Bridge only pushes in a client-only `useLayoutEffect`, so without seeding the route signals are empty for the whole server render. First client render is likewise empty until the effect runs — guard route-dependent queries with `enabled: () => params.value.id !== undefined`. Scopes resolve to: `RouteParamsScope` → `Record<string,string|undefined>`, `RouteSearchScope` → `Record<string,unknown>`, `RoutePathnameScope` → `string`. Full surface: [package README](packages/router/README.md).
 
 ---
 

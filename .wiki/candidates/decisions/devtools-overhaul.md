@@ -17,7 +17,7 @@ confidence: candidate
 > (causal timeline) have shipped — the tasks marked ✅ below are implemented; the rest
 > are still proposals. See `modules/devtools.md`, `modules/devtools-panel.md`, and
 > `flows/devtools-causal-timeline.md`, plus the [Landed](#landed-2026-07-28) note. The
-> remainder of 8A (T8.2 virtualize, T8.3 omnibox) and all of 8B (except T8.4) / 8C / 8D
+> remainder of 8A (T8.2 virtualize, T8.3 omnibox) and all of 8B (except T8.4), 8C and 8D
 > remain a *future* design. This page stays in `candidates/` until all of 8A lands (its
 > promotion criterion, below). The remediation's **T6.3** already fixed the outright
 > devtools *bugs* (false `[Circular]`, unbounded tree, per-keystroke re-stringify,
@@ -26,7 +26,7 @@ confidence: candidate
 ## Landed (2026-07-28)
 
 **T8.1 — event backbone (partial: no poll-kill-via-synthetic-event; done via store seed).**
-`DebugEvent` gained optional `seq` / `t` / `causeId`; `cache:set-data` (source + data) and
+`DebugEvent` gained optional `seq`, `t` and `causeId`; `cache:set-data` (source + data) and
 `snapshot:push`/`rollback`/`finalize`; a dev-only ambient cause (`__runWithCause`) threads a
 mutation's `runId` into the writes it triggers, and fetches share a `fetchId`. The 800ms
 inspector poll is gone — the store seeds `cacheState$` from `queryEntries()` on attach and
@@ -55,11 +55,11 @@ Olas owns the whole vertical — signals, controllers, lifecycle, query cache, m
 forms, plugins — through one dev-event bus (`root.__debug`). No competitor (Redux
 DevTools, TanStack Query devtools, MobX tools) can correlate across those layers; each
 sees one slice. The exceptional panel answers the three questions every debugging
-session is actually about, in one place:
+session is about, in one place:
 
 1. **"Why did this change?"** — click any state, see the causal chain that produced it
    (mutation → optimistic `setData` → fetch settle → entities backprop → cross-tab echo).
-2. **"Why did this render / refetch?"** — subscription and effect tracing.
+2. **"Why did this render or refetch?"** — subscription and effect tracing.
 3. **"What happens if…?"** — act on live state: refetch, invalidate, edit cache, force
    error/loading, suspend/resume controllers, go offline.
 
@@ -76,7 +76,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   'mutate'|'set'|'remote'|'fetch'`, reusing the §13.2 plugin vocabulary),
   `cache:invalidate`, `cache:gc`, `cache:subscribe`/`unsubscribe` (per entry, with
   subscriber controller path), `mutation:enqueue/run/settle` (add a stable `runId`),
-  `snapshot:push/rollback/finalize` (the optimistic stack), `form:field-change` /
+  `snapshot:push/rollback/finalize` (the optimistic stack), `form:field-change` and
   `form:validate-settle` (name-pathed, value elided by default — see T8.7),
   `scope:provide/inject`, and a generic `plugin:event` envelope (see T8.8). The store
   consumes ONLY events; delete the poller. Keep one initial-snapshot request (extend the
@@ -87,8 +87,8 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   correlation backbone is cheap at emit time and *impossible to reconstruct later* — do
   not skip it. Acceptance: kanban running, panel open — no `setInterval`, all cache
   changes appear within one frame, events strictly `seq`-ordered.
-- **T8.2 — virtualize everything; bound all memory.** Windowed rendering for tree /
-  timeline / cache list (reuse `examples/virtualized-table`'s approach, no new dep).
+- **T8.2 — virtualize everything; bound all memory.** Windowed rendering for tree,
+  timeline and cache list (reuse `examples/virtualized-table`'s approach, no new dep).
   Event log → ring buffer (default 10k, configurable) with a dropped-count indicator.
   Disposed controllers retained-but-capped (from T6.3), greyed with dispose-time state
   frozen. Replace per-event immutable path-clone + linear `findIndex` with a keyed
@@ -127,12 +127,12 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
 ## 8C — act on state: the panel does things
 
 - **T8.6 — debug control API + cache actions.** A `__DEV__`-only `DebugControls` next to
-  the bus on `root.__debug`: `refetch / invalidate / removeEntry / setEntryData /
-  forceEntryState('loading'|'error') / suspendController / resumeController /
+  the bus on `root.__debug`: `refetch, invalidate, removeEntry, setEntryData,
+  forceEntryState('loading'|'error'), suspendController, resumeController,
   disposeController`, implemented over existing internals (`forceEntryState` sets the
   entry's signals directly and marks it "forced" until the next real fetch). Panel: per
-  entry — Refetch / Invalidate / Remove / Edit-as-JSON (validated) / Force loading /
-  Force error; per controller — Suspend / Resume / Dispose (confirm); per form — Reset,
+  entry — Refetch, Invalidate, Remove, Edit-as-JSON (validated), Force loading or
+  Force error; per controller — Suspend, Resume and Dispose (confirm); per form — Reset,
   per field — set value. **Guardrail:** every control action emits its own timeline event
   tagged `source: 'devtools'` so self-inflicted changes are never mistaken for app
   behavior. Acceptance: in reader-ssr, forcing an entry error renders the app's error UI;
@@ -157,8 +157,8 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
 - **T8.9 — session traces: export, import, share.** Record → stop → export the event ring
   + initial snapshot as one JSON file (versioned `{ format: 1, … }`). The panel can
   IMPORT + replay it read-only (scrub the timeline, inspect any moment's derived state).
-  This turns "it breaks sometimes on my machine" into an attachable artifact — arguably
-  the single highest-leverage feature for a young library's bug reports. Acceptance:
+  This turns "it breaks sometimes on my machine" into an attachable artifact —
+  the feature that does the most for a young library's bug reports. Acceptance:
   export from kanban, import into a fresh session, scrub to a mutation, read its
   cause-chain.
 - **T8.10 — UX pass.** Keyboard (`/` search, `j/k` timeline walk, `Esc` close); panel

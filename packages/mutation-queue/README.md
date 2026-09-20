@@ -61,7 +61,7 @@ root.create.run({ sku: 'A-1' })
 // → on reload before success: entry replayed on next `init`
 ```
 
-That's the whole moving picture. The plugin is a [`QueryClientPlugin`](../../SPEC.md#208-root--options): it observes the mutation runner's `onMutationEnqueue` / `onMutationSettle` events, persists each pending entry under `<keyPrefix>/<mutationId>/<runId>`, and replays survivors on `init`.
+That's the whole moving picture. The plugin is a [`QueryClientPlugin`](../../SPEC.md#208-root--options): it observes the mutation runner's `onMutationEnqueue` and `onMutationSettle` events, persists each pending entry under `<keyPrefix>/<mutationId>/<runId>`, and replays survivors on `init`.
 
 ## API
 
@@ -140,7 +140,7 @@ Replay blocks on `navigator.onLine === true` before any `mutate` call. Tabs that
 
 ### Cross-tab replay coordination
 
-Two tabs replaying the same entries on parallel reloads would double-POST. The queue serializes replay across tabs with the **Web Locks API** (`navigator.locks`): a tab that can't get the lock skips the pass — the holding tab replays every entry under the shared prefix (they share storage). Where Web Locks is unavailable (older Safari), it falls back to a **best-effort, TTL'd `localStorage` lease**; in Node / SSR (a single context) it just runs. This reduces — but, with the lease fallback, doesn't fully eliminate — duplicate replays, which is why server-side `idempotencyKey` dedupe remains the authoritative gate.
+Two tabs replaying the same entries on parallel reloads would double-POST. The queue serializes replay across tabs with the **Web Locks API** (`navigator.locks`): a tab that can't get the lock skips the pass — the holding tab replays every entry under the shared prefix (they share storage). Where Web Locks is unavailable (older Safari), it falls back to a **best-effort, TTL'd `localStorage` lease**; in Node and SSR (a single context) it runs. This reduces — but, with the lease fallback, doesn't fully eliminate — duplicate replays, which is why server-side `idempotencyKey` dedupe remains the authoritative gate.
 
 ## Combining with `@kontsedal/olas-persist`
 
@@ -169,4 +169,4 @@ Use both together when optimistic state must outlive a reload AND the server-sid
 - [SPEC §20.8](../../SPEC.md#208-root--options) — the `QueryClientPlugin` type this plugin implements.
 - [SPEC §13.2](../../SPEC.md#132-cross-tab-in-memory-cache-sync) — the plugin event surface (`SetDataEvent`, `QueryClientPluginApi`).
 - [`../../RECIPES.md`](../../RECIPES.md) — Persisted mutations recipe.
-- [`../persist/README.md`](../persist/README.md) — `localStorageAdapter` / `indexedDbAdapter`.
+- [`../persist/README.md`](../persist/README.md) — `localStorageAdapter` and `indexedDbAdapter`.

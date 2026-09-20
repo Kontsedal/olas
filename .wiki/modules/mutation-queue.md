@@ -21,7 +21,7 @@ A `QueryClientPlugin` that persists `defineMutation({ persist: true })` runs to 
 
 - `onMutationEnqueue` → `writeEntry` (fire-and-forget; a sync hook can't await — see loss window below).
 - `onMutationSettle`: `success` → delete + clear dedupe key; `error` → delete + clear + `onReplayError` ONLY at `attempts >= maxAttempts`, else retain; `cancelled` → retain entry AND dedupe key.
-- `init` / `online` event / `replayNow()` → all funnel through `runReplay` (guarded by `replaying`, wrapped in `withReplayLock`) → `replayAll`.
+- `init` and `online` event and `replayNow()` → all funnel through `runReplay` (guarded by `replaying`, wrapped in `withReplayLock`) → `replayAll`.
 
 ## The three disqualifiers fixed in T6.2
 
@@ -32,12 +32,12 @@ A `QueryClientPlugin` that persists `defineMutation({ persist: true })` runs to 
 ## Other T6.2 honesty fixes
 
 - **seq seeded from `Date.now()`** at construction (`let seqCounter = Date.now()`), so a post-restart enqueue that races `init` still sorts after prior-session entries — the old design primed `seq` from disk inside `replayAll` (async), so a racing enqueue got `seq: 1` and jumped the queue. The in-`replayAll` priming loop remains as a same-millisecond-cross-tab safety net (can only raise).
-- **`activeKeys` cleared only on entry drop** (success / error-after-exhaustion), NOT on `cancelled` or non-terminal error — else a re-enqueue after a reload-mid-run cancel double-writes a durable entry for the same logical mutation.
+- **`activeKeys` cleared only on entry drop** (success and error-after-exhaustion), NOT on `cancelled` or non-terminal error — else a re-enqueue after a reload-mid-run cancel double-writes a durable entry for the same logical mutation.
 - **Enqueue loss window** documented: the fire-and-forget `writeEntry` can reject (quota, or an IDB commit abort now that the adapter surfaces those — see `persist.md`, T6.1); the in-process run proceeds, the failure hits `onWarn`, but a crash before commit loses that entry.
 
 ## Already-present option surface (was untested → now tested)
 
-`dedupeBy` (idempotency collapse), `ttlMs` (drop-expired + `ttl-expired` `onReplayError`), `backoffMs`/`maxBackoffMs` (exponential cross-load backoff via `sleep`), `onReplayAttempt` (non-final failure), `migrate` (prior-`PROTOCOL_VERSION` port in `parseEntry`), `maxEntryBytes` (soft cap → `onWarn`), the `waitForOnline` gate, and `seq` ordering — all covered in `plugin.test.ts` (T6.2). Direct-call tests (`plugin.onMutationEnqueue(...)` / `onMutationSettle(...)`) exercise the dedupe/cancel contract; a `vi.stubGlobal`'d `navigator`/`window` drives the online gate.
+`dedupeBy` (idempotency collapse), `ttlMs` (drop-expired + `ttl-expired` `onReplayError`), `backoffMs`/`maxBackoffMs` (exponential cross-load backoff via `sleep`), `onReplayAttempt` (non-final failure), `migrate` (prior-`PROTOCOL_VERSION` port in `parseEntry`), `maxEntryBytes` (soft cap → `onWarn`), the `waitForOnline` gate, and `seq` ordering — all covered in `plugin.test.ts` (T6.2). Direct-call tests (`plugin.onMutationEnqueue(...)` and `onMutationSettle(...)`) exercise the dedupe/cancel contract; a `vi.stubGlobal`'d `navigator`/`window` drives the online gate.
 
 ## Limitations
 

@@ -11,7 +11,7 @@ Olas's lean SSR story: `waitForIdle → dehydrate` on the server, `createRoot(..
 - **`useSuspendOnHidden`** — suspends the root when the tab is hidden (effects torn down, cache preserved); resumes on visible. See `tests/useSuspendOnHidden.test.tsx`. Spec §20.10.
 - **`usePersisted`** — reading progress (`lastArticleId`) saved to localStorage; SSR runs with `storage: undefined` and the persist adapter gracefully no-ops. Spec §13.
 - **`ctx.emitter` + `ctx.on`** — analytics events flow through a controller-owned emitter to a `ctx.deps.analytics` adapter.
-- **`onError` root option + `ErrorContext`** — errors from any effect / cache / mutation route through a single, typed handler.
+- **`onError` root option + `ErrorContext`** — errors from any effect, cache and mutation route through a single, typed handler.
 
 ## Files
 

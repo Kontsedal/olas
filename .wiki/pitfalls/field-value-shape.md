@@ -33,7 +33,7 @@ Same for `FieldArray`.
 
 ## Why it's this way
 
-Per spec §20.7: "Field<T> *is* a ReadSignal<T> — `use(field)` in the UI works, `field.value` reads, `field.set(x)` writes." Making Field behave like a signal lets `useField(field)` and `<input value={field.value} onChange={e => field.set(e.target.value)} />` Just Work.
+Per spec §20.7: "Field<T> *is* a ReadSignal<T> — `use(field)` in the UI works, `field.value` reads, `field.set(x)` writes." Making Field behave like a signal lets `useField(field)` and `<input value={field.value} onChange={e => field.set(e.target.value)} />` work without extra wiring.
 
 Forms aren't signals — they're aggregates. Making them implement ReadSignal would force `form.subscribe(handler)` to fire whenever any leaf changes, which is rarely what you want; you usually subscribe to specific fields.
 
@@ -77,7 +77,7 @@ Same fix applies to `FieldArray.computeValue` (line ~290 of `form.ts`).
 
 ## How to spot this when reviewing changes
 
-Any time you write `child.value.value` in form-traversal code, ask: is `child` definitely a Form or FieldArray? If it could be a Field, this is wrong — use `(child as Field<unknown>).value` instead. The `isForm` / `isFieldArray` / `isField` predicates from `form.ts` exist to make this branch explicit.
+Any time you write `child.value.value` in form-traversal code, ask: is `child` definitely a Form or FieldArray? If it could be a Field, this is wrong — use `(child as Field<unknown>).value` instead. The `isForm`, `isFieldArray` or `isField` predicates from `form.ts` exist to make this branch explicit.
 
 ## Future: should we fix this asymmetry?
 

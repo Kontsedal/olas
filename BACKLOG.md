@@ -17,7 +17,7 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 ## Conventions
 
 - Group by area (Packages, Storage, Devtools, Forms, …). Pure-idea items can live under "Loose ends" until they earn a category.
-- Cite `SPEC.md §X.Y` when an item amends the spec; that signals "spec change required, not just an implementation."
+- Cite `SPEC.md §X.Y` when an item amends the spec; that signals "spec change required, not only an implementation."
 - If a backlog item is implied by an existing spec line, quote the line.
 
 ---
@@ -55,7 +55,7 @@ Signal-as-store. Same scoping as Vue.
 
 Examples:
 
-- fetcher / `mutate` body must use the `signal` parameter.
+- fetcher and `mutate` body must use the `signal` parameter.
 - Controller factory must not be `async`.
 - Do not import `@kontsedal/olas-core/testing` outside test files.
 
@@ -71,7 +71,7 @@ Examples:
 
 ### [idea] Cross-tab sync for infinite queries
 
-[from T6.4] `@kontsedal/olas-cross-tab` and core's remote-apply paths (`applyRemoteSetData` / `applyRemoteInvalidate`) only handle regular (`'query'`) defs — infinite queries early-return, so their page arrays can't be applied cross-tab. The `crossTab: 'infinite'` / `'both'` option values were removed (they broadcast noise no peer could apply). Real support needs a receive path that reconstructs an infinite entry's page array + params (heavier payload, and the receiving tab may have a different page count / cursor), plus a size guard since page arrays can be large. Until then, cross-tab infinite lists should refetch (`invalidate`) rather than sync.
+[from T6.4] `@kontsedal/olas-cross-tab` and core's remote-apply paths (`applyRemoteSetData` and `applyRemoteInvalidate`) only handle regular (`'query'`) defs — infinite queries early-return, so their page arrays can't be applied cross-tab. The `crossTab: 'infinite'` and `'both'` option values were removed (they broadcast noise no peer could apply). Real support needs a receive path that reconstructs an infinite entry's page array + params (heavier payload, and the receiving tab may have a different page count and cursor), plus a size guard since page arrays can be large. Until then, cross-tab infinite lists should refetch (`invalidate`) rather than sync.
 
 ### [idea] Cross-`mutationId` causal ordering in the mutation queue
 
@@ -85,7 +85,7 @@ Examples:
 
 ### [idea] Route `formFromZod` root `.refine({ path })` issues onto fields
 
-[noticed during T5.2] Core's `validator()` now returns `FormIssue[]` with paths, and form-level validators route them onto fields. But `formFromZod` still lifts root refines via `rootOnlyZodValidator`, which keeps only **empty-path** issues — so `z.object({...}).refine(fn, { path: ['confirm'] })` is dropped rather than landing on `confirm`. Routing them means distinguishing "root refine targeting a field" from a leaf-schema failure at the same path (leaf validators already own the latter), else the message double-reports. Options: filter root issues to `code: 'custom'` refinements and return them as `FormIssue[]`, or drop per-leaf `zodValidator`s and drive everything from one whole-form `validator(schema)` (bigger change — affects per-leaf `validateOn` / async semantics). Needs its own tests.
+[noticed during T5.2] Core's `validator()` now returns `FormIssue[]` with paths, and form-level validators route them onto fields. But `formFromZod` still lifts root refines via `rootOnlyZodValidator`, which keeps only **empty-path** issues — so `z.object({...}).refine(fn, { path: ['confirm'] })` is dropped rather than landing on `confirm`. Routing them means distinguishing "root refine targeting a field" from a leaf-schema failure at the same path (leaf validators already own the latter), else the message double-reports. Options: filter root issues to `code: 'custom'` refinements and return them as `FormIssue[]`, or drop per-leaf `zodValidator`s and drive everything from one whole-form `validator(schema)` (bigger change — affects per-leaf `validateOn` and async semantics). Needs its own tests.
 
 ## Queries / data layer
 
@@ -95,7 +95,7 @@ A disabled query (`enabled: () => false`) is `status: 'idle'` with no data, so a
 
 ### [idea] `peek` / `write` for infinite queries
 
-`Query` gained `peek` (synchronous non-creating read, §5.5) and `write` (canonical no-snapshot patch, §6.4). `InfiniteQuery` has neither, so the leak `write` fixes is still reachable there: a fire-and-forget `infiniteQuery.setData(...)` (folding a server push into a page array — the shape the realtime recipe uses) leaves a live snapshot per call. The plumbing exists on both sides — `InfiniteEntry.setData` already takes `{ track: false }` and `setEntryData` already routes infinite writes through it — so this is mostly `peekPages` / `writePages` on the client plus two handle methods. Open question worth settling first: `peek` on an infinite query should probably return the **pages array** (`TPage[] | undefined`, matching what `setData`'s updater sees) rather than the flattened `items`, but the flattened form is what most callers want to read.
+`Query` gained `peek` (synchronous non-creating read, §5.5) and `write` (canonical no-snapshot patch, §6.4). `InfiniteQuery` has neither, so the leak `write` fixes is still reachable there: a fire-and-forget `infiniteQuery.setData(...)` (folding a server push into a page array — the shape the realtime recipe uses) leaves a live snapshot per call. The plumbing exists on both sides — `InfiniteEntry.setData` already takes `{ track: false }` and `setEntryData` already routes infinite writes through it — so this is mostly `peekPages` and `writePages` on the client plus two handle methods. Open question worth settling first: `peek` on an infinite query should probably return the **pages array** (`TPage[] | undefined`, matching what `setData`'s updater sees) rather than the flattened `items`, but the flattened form is what most callers want to read.
 
 ### [idea] `subscription.refetch()` rejects when the subscription is detached
 
@@ -109,7 +109,7 @@ Dropped on purpose: a component that creates a cache subscription owns data life
 
 ### [idea] Full updater-replay rebasing for concurrent optimistic rollback
 
-[from SPEC §6.4] Rollback today is snapshot-based with **chain-splice** ordering (T3.1): each `Snapshot` captures a baseline value, rolling back the top restores it, and rolling back a non-top layer threads its baseline down the chain so all-layers-rolled-back returns to the pre-mutation value. What it does **not** do: re-run the surviving layers' updater functions against a new baseline. So when A(+1) and B(+10) both apply and A fails first, the visible value stays 11 (both deltas) until B settles, rather than dropping to 10 (B's delta alone). True rebasing would store the updater fns (not just the pre-value), and on any rollback replay the still-live updaters in order over the current server/base value. Cost: `setData` must keep the updater closure alive for the snapshot's lifetime, and replay must be pure/idempotent. Worth it only if the "stale delta on screen until unwind" behavior bites a real app; `concurrency: 'serial'` sidesteps it for conflicting writes today.
+[from SPEC §6.4] Rollback today is snapshot-based with **chain-splice** ordering (T3.1): each `Snapshot` captures a baseline value, rolling back the top restores it, and rolling back a non-top layer threads its baseline down the chain so all-layers-rolled-back returns to the pre-mutation value. What it does **not** do: re-run the surviving layers' updater functions against a new baseline. So when A(+1) and B(+10) both apply and A fails first, the visible value stays 11 (both deltas) until B settles, rather than dropping to 10 (B's delta alone). True rebasing would store the updater fns (not only the pre-value), and on any rollback replay the still-live updaters in order over the current server/base value. Cost: `setData` must keep the updater closure alive for the snapshot's lifetime, and replay must be pure/idempotent. Worth it only if the "stale delta on screen until unwind" behavior bites a real app; `concurrency: 'serial'` sidesteps it for conflicting writes today.
 
 ### [idea] Rebase infinite-query optimistic snapshots on page-fetch success
 
@@ -125,7 +125,7 @@ Dropped on purpose: a component that creates a cache subscription owns data life
 
 ### [dropped] Next.js app-router / RSC support
 
-Next.js is fundamentally misaligned with olas's philosophy: the controller-tree model assumes a client-driven, signal-reactive runtime where lifecycle, dispose, and `ctx.use` keying live in user space. RSC inverts that — the server owns rendering, components are render functions of props, and the framework dictates data-fetching boundaries. Trying to bolt olas onto that model would either (a) make olas a thin pass-through to whatever Next.js already does, defeating the point, or (b) require a parallel server-side controller runtime, doubling the surface area for an audience that's already well served by TanStack Query and `'use server'` actions.
+Next.js is misaligned with olas's philosophy: the controller-tree model assumes a client-driven, signal-reactive runtime where lifecycle, dispose, and `ctx.use` keying live in user space. RSC inverts that — the server owns rendering, components are render functions of props, and the framework dictates data-fetching boundaries. Trying to bolt olas onto that model would either (a) make olas a thin pass-through to whatever Next.js already does, defeating the point, or (b) require a parallel server-side controller runtime, doubling the surface area for an audience that's already well served by TanStack Query and `'use server'` actions.
 
 **We don't need Next.js.** Olas is for logic-heavy client-driven apps (Linear/Notion class) where the controller tree carries real weight. Pages-router SSR via `dehydrate`/`hydrate` (already shipped, spec §11) covers the SSR case for the apps that benefit from it. RSC consumers should reach for the framework's native data-fetching story.
 
@@ -160,7 +160,7 @@ in the inspector and "who's watching this" in the timeline. Part of overhaul T8.
 T8.1 wired `cache:fetch-*` + `snapshot:*` only for regular queries — `InfiniteEntry` has
 no `EntryEvents` hooks, so infinite fetches/optimistic writes don't appear on the timeline
 (only `setInfiniteData` emits `cache:set-data`). Add the same hook bundle to `InfiniteEntry`
-(per-direction: initial / next / prev) and wire it in `InfiniteClientEntry`.
+(per-direction: initial, next and prev) and wire it in `InfiniteClientEntry`.
 
 ### [idea] Timeline group ordering by most-recent activity
 
@@ -213,7 +213,7 @@ alone rather than fixed mid-task:
 
 - `pitfalls/latest-wins-rollback-order.md` → `mutation.ts:138-154` lands on the `MutationRun` type
   doc; the synchronous rollback it describes is the `case 'latest-wins'` block.
-- `pitfalls/raceabort-for-misbehaving-mutate.md` → `mutation.ts:184-247` lands on `RunHandle` /
+- `pitfalls/raceabort-for-misbehaving-mutate.md` → `mutation.ts:184-247` lands on `RunHandle` and
   `SerialEntry`, and `:347-374` on the `onMutate`-throw path. `raceAbort` itself is at the bottom of
   the file.
 - `modules/devtools.md` → `mutation.ts:230-246` lands on the constructor parameter list, not the

@@ -47,7 +47,7 @@ type LifecycleEntry =
   | { kind: 'onResume',           fn: () => void }
 ```
 
-`subscription-cache` is `ctx.use(...)`'s entry — distinct from `cleanup` because `suspend()` / `resume()` need to pause/restart the underlying `ClientEntry` (refetchInterval + focus/online listeners + release of the entry from this subscriber). Spec §4.1.
+`subscription-cache` is `ctx.use(...)`'s entry — distinct from `cleanup` because `suspend()` and `resume()` need to pause/restart the underlying `ClientEntry` (refetchInterval + focus/online listeners + release of the entry from this subscriber). Spec §4.1.
 
 `factory` on the `effect` variant is the user's effect function (wrapped with `dispatchError`). We retain it so suspend → resume can re-instantiate the effect via `standaloneEffect(factory)`.
 
@@ -65,7 +65,7 @@ type LifecycleEntry =
 
 **Resume re-activation guard (T2.2).** `resume()` sets `state = 'active'` before the forward loop, so an effect registered *during* resume (e.g. from an `onResume` handler calling `ctx.effect`) is activated immediately by `ctx.effect` (its `dispose` is non-null). The loop then reaches that freshly-pushed node — the `effect` case re-activates **only when `entry.dispose === null`** (i.e. only effects that `suspend()` cleared), so it never overwrites a live `dispose` ref. Without the guard the effect ran twice per change and one copy survived `dispose()`. Pinned by `regressions.test.ts` R-L2.2 (and B9 covers the symmetric `onSuspend`-registered case).
 
-**Explicit-suspension flag (T2.6).** The `child` lifecycle entry carries `explicitlySuspended?: boolean`. `attach.suspend()` / `collection.suspendItem()` set it; `attach.resume()` / `resumeItem()` clear it. The `resume()` cascade's `case 'child'` **skips** entries with the flag set, so a whole-tree resume (KeepAlive) doesn't wake a child that was explicitly suspended (e.g. a scrolled-out virtualized row). `attach.resume()` / `resumeItem()` called while the parent `isSuspended()` clears the flag but does NOT activate — the child rejoins the parent's next resume cascade instead of running inside a frozen tree. Pinned by `regressions.test.ts` R-L2.6.
+**Explicit-suspension flag (T2.6).** The `child` lifecycle entry carries `explicitlySuspended?: boolean`. `attach.suspend()` or `collection.suspendItem()` set it; `attach.resume()` or `resumeItem()` clear it. The `resume()` cascade's `case 'child'` **skips** entries with the flag set, so a whole-tree resume (KeepAlive) doesn't wake a child that was explicitly suspended (e.g. a scrolled-out virtualized row). `attach.resume()` or `resumeItem()` called while the parent `isSuspended()` clears the flag but does NOT activate — the child rejoins the parent's next resume cascade instead of running inside a frozen tree. Pinned by `regressions.test.ts` R-L2.6.
 
 ## Path naming
 
@@ -73,4 +73,4 @@ type LifecycleEntry =
 
 ## `ctx.attach(def, props)` handle
 
-Returns `{ api, dispose, suspend, resume }`. `dispose` tears the child down early and removes the lifecycle entry from the parent (so a later parent-dispose doesn't double-dispose). `suspend` / `resume` cascade through the child's own lifecycle entries — same code path as `root.suspend()` / `root.resume()`. All four are idempotent and try/catch-wrapped via `dispatchError` with `kind: 'effect'`. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. Spec §4.1, §16.5.
+Returns `{ api, dispose, suspend, resume }`. `dispose` tears the child down early and removes the lifecycle entry from the parent (so a later parent-dispose doesn't double-dispose). `suspend` and `resume` cascade through the child's own lifecycle entries — same code path as `root.suspend()` and `root.resume()`. All four are idempotent and try/catch-wrapped via `dispatchError` with `kind: 'effect'`. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. Spec §4.1, §16.5.

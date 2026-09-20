@@ -57,7 +57,7 @@ one-liners live in `BACKLOG.md`.
 
 - **`@kontsedal/olas-offline`** — an offline-first reconnection layer over
   `mutation-queue` + `persist`: navigator-online detection, a connection-state signal,
-  conflict-resolution helpers, mid-session (not just cross-reload) retry with backoff.
+  conflict-resolution helpers, mid-session (not only cross-reload) retry with backoff.
   The natural home for logic currently smeared across mutation-queue's replay and
   realtime's `onReconnect`.
 - **Infinite-query first-class completeness** — a cluster the remediation deliberately
@@ -74,7 +74,7 @@ one-liners live in `BACKLOG.md`.
 - **Devtools browser extension** — an out-of-page consumer of `root.__debug` (complements,
   doesn't replace, the in-app panel). Best pursued *after* the overhaul above, since it
   reuses the same event bus + trace format.
-- **Ecosystem adapters & tooling** — `@kontsedal/olas-vue` / `-svelte` (signal interop),
+- **Ecosystem adapters & tooling** — `@kontsedal/olas-vue` and `-svelte` (signal interop),
   `@kontsedal/olas-eslint-plugin` (catch correctness rules the type system can't — e.g.
   "fetcher must use its `signal`"), `@kontsedal/olas-vite-plugin` (HMR full-root-rebuild
   automation). Additive, framework-neutral by design.

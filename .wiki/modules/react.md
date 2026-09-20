@@ -20,7 +20,7 @@ confidence: high
 
 # `@kontsedal/olas-react`
 
-The React adapter. Pure binding layer on top of `useSyncExternalStore` — no controller construction happens here; React just reads signals. The root is created once outside React (typically in `main.tsx`) and resolved via context. Spec §16, §20.10.
+The React adapter. Pure binding layer on top of `useSyncExternalStore` — no controller construction happens here; React only reads signals. The root is created once outside React (typically in `main.tsx`) and resolved via context. Spec §16, §20.10.
 
 ## Public surface
 
@@ -73,7 +73,7 @@ The fix lives in `subscribeOnChange` (`hooks.ts:11-21`): wrap the handler with a
 
 A naive `useQuery` would call `useSyncExternalStore` once per signal in `AsyncState<T>`. That works but means N re-render triggers when several signals change in a `batch()`, and the version-counter shortcut it originally used defeated uSES's tear detection (see below).
 
-The pattern (`hooks.ts`, shared by `useQuery` / `useField` / `useFieldInput` / `useMutation`):
+The pattern (`hooks.ts`, shared by `useQuery`, `useField`, `useFieldInput` and `useMutation`):
 
 1. A memoized core `computed(() => ({ …read every relevant signal's `.value`… }))`, keyed on the subscription target via `useMemo`. Reading each `.value` inside makes the computed re-evaluate — and mint a NEW plain-values object — exactly when any dep changes, and return the SAME object reference when nothing did.
 2. `subscribe(onChange)` = `snapshot.subscribeChanges(onChange)` — one subscription on the computed.
@@ -105,7 +105,7 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 
 ## `HydrationBoundary` — root ownership (T4.1)
 
-Unlike `<OlasProvider>` (which takes a root created outside React), `HydrationBoundary` **creates and owns** the root for client-side SSR hydration. `createRoot` is side-effectful (fetches, timers, focus/online listeners), so it must NOT run in `useMemo` / a `useState` initializer — StrictMode re-invokes those and orphans a live root (the original bug). Instead (`context.ts`):
+Unlike `<OlasProvider>` (which takes a root created outside React), `HydrationBoundary` **creates and owns** the root for client-side SSR hydration. `createRoot` is side-effectful (fetches, timers, focus/online listeners), so it must NOT run in `useMemo` and a `useState` initializer — StrictMode re-invokes those and orphans a live root (the original bug). Instead (`context.ts`):
 
 - The root is created **lazily during render** in a `useRef` (`if (rootRef.current === null) …`) — a ref mutated in render creates exactly one root across StrictMode's double render.
 - `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render). The root is recreated only when the **`def` identity** changes (dispose old + create new, in render).
@@ -113,4 +113,4 @@ Unlike `<OlasProvider>` (which takes a root created outside React), `HydrationBo
 
 ## Fakes for UI tests
 
-`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` / `AsyncState<T>` so a test can pass them straight into a `useField`/`useQuery`-consuming component without building a real controller. See `testing.ts:31-132`.
+`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` or `AsyncState<T>` so a test can pass them straight into a `useField`/`useQuery`-consuming component without building a real controller. See `testing.ts:31-132`.

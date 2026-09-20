@@ -45,7 +45,7 @@ The core deliberately ships hooks the React adapter needs:
 
 ## What's NOT prepared
 
-- No `defineScope` / `ctx.provide` / `ctx.inject` machinery yet. Adding scopes requires a small extension to `RootShared` (or `ControllerInstance`) to walk parent chain for `inject`, plus storage on the instance for provided values.
+- No `defineScope`, `ctx.provide` and `ctx.inject` machinery yet. Adding scopes requires a small extension to `RootShared` (or `ControllerInstance`) to walk parent chain for `inject`, plus storage on the instance for provided values.
 - No example app — there's no integration test that drives a controller through a real React component yet.
 
 ## Why decouple this from the core
@@ -59,4 +59,4 @@ When Phase 10 lands, add:
 - `.wiki/entities/scope.md`
 - `.wiki/flows/use-root.md` (provider → context → hook)
 
-Test ordering: drive scopes in `@kontsedal/olas-core` first (which needs `ctx.provide` / `ctx.inject` + `ControllerInstance` parent-chain walks). Then add the React adapter as a thin layer on top.
+Test ordering: drive scopes in `@kontsedal/olas-core` first (which needs `ctx.provide` and `ctx.inject` + `ControllerInstance` parent-chain walks). Then add the React adapter as a thin layer on top.

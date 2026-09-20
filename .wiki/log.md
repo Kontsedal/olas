@@ -8,7 +8,7 @@ Format: `## [YYYY-MM-DD HH:MM] <kind> | <short summary>` where `<kind>` ∈ {ing
 
 ## [2026-05-18 17:55] ingest | bootstrap
 
-Initial wiki creation. Authored the schema (`../CLAUDE.md`), `index.md`, `overview.md`, `glossary.md`, and the first round of modules / entities / flows / decisions / pitfalls.
+Initial wiki creation. Authored the schema (`../CLAUDE.md`), `index.md`, `overview.md`, `glossary.md`, and the first round of modules, entities, flows, decisions and pitfalls.
 
 Coverage at bootstrap:
 - All four packages have a module page.
@@ -30,7 +30,7 @@ Asked "do I like the wiki?", produced an honest critique, then refined based on 
 What changed:
 
 - **`scripts/wiki-lint.ts` added** + `pnpm wiki:lint` wired in `package.json`. Checks frontmatter shape, `covers:` path existence + line-range bounds, `edges:` target existence + type, orphans, staleness (>60d), and drift (covered file modified after `last_verified`). Exits 1 on errors, 0 on warnings.
-- **Schema (CLAUDE.md) sharpened.** Confidence levels now have concrete tests, not just descriptions. Lint section rewritten to document what the linter actually checks plus what it can't automate. Added an explicit "bootstrap caveat" — pages dated 2026-05-18 were authored alongside the code; future sessions should treat them as `medium` for trust purposes until they re-verify.
+- **Schema (CLAUDE.md) sharpened.** Confidence levels now have concrete tests, not only descriptions. Lint section rewritten to document what the linter checks plus what it can't automate. Added an explicit "bootstrap caveat" — pages dated 2026-05-18 were authored alongside the code; future sessions should treat them as `medium` for trust purposes until they re-verify.
 - **Confidence demoted on 6 pages** (high → medium) where my synthesis exceeded the strength of the evidence. They're still useful descriptions, but they're my interpretations of how things work, not externally-verified facts. Demoted:
   - `modules/controller.md`, `modules/query.md`, `modules/forms.md`
   - `flows/query-subscription.md`, `flows/mutation-concurrency.md`
@@ -69,7 +69,7 @@ Gates: typecheck/lint/test (205 passed)/build green. Wiki lint passes after this
 Unimplemented after Phase 10:
 - Phase 13 (devtools extension)
 - Phase 14 (polish & docs)
-- `ctx.collection` / `ctx.session` / `ctx.lazyChild` (deferred per §20.2 — listed under "What's NOT yet on Ctx" in `entities/ctx.md`).
+- `ctx.collection`, `ctx.session` and `ctx.lazyChild` (deferred per §20.2 — listed under "What's NOT yet on Ctx" in `entities/ctx.md`).
 
 ## [2026-05-18 20:00] ingest | Phase 14 — polish & docs
 
@@ -101,11 +101,11 @@ Spec §13 ships as an in-app `<DevtoolsPanel>` rather than a browser extension. 
 
 What shipped:
 
-- **New `@kontsedal/olas-devtools` package.** Drop-in React panel + lower-level `DevtoolsStore`. Four tabs: Tree (live controller tree from construct/suspend/resume/dispose events), Cache (fetch lifecycle + invalidate/gc), Mutations (run/success/error/rollback), Fields (validation outcomes — runtime not yet emitting these but the rendering is wired). Inline-scoped CSS so it's truly drop-in. Bounded logs (default 100/each); a Clear button empties them but preserves the live tree.
-- **Runtime devtools wiring.** Before this phase the runtime emitted only `controller:*` events; the `DebugEvent` union listed `cache:*` / `mutation:*` / `field:*` but nothing fired them. Now wired:
-  - `cache:fetch-start / fetch-success / fetch-error` — via a new `EntryEvents` callback bundle that `ClientEntry` constructs from `client.devtools` and passes into `Entry`. The bundle is `undefined` when no devtools, so the cost is one extra constructor field.
-  - `cache:invalidated / gc` — `QueryClient.invalidate / invalidateAll / dropEntry`.
-  - `mutation:run / success / error / rollback` — `MutationImpl`. Rollback uses a wrapped `Snapshot` so both auto-rollback (supersede/dispose) AND user-driven `snapshot.rollback()` inside `onError` fire the event once per snapshot.
+- **New `@kontsedal/olas-devtools` package.** Drop-in React panel + lower-level `DevtoolsStore`. Four tabs: Tree (live controller tree from construct/suspend/resume/dispose events), Cache (fetch lifecycle + invalidate/gc), Mutations (run/success/error/rollback), Fields (validation outcomes — runtime not yet emitting these but the rendering is wired). Inline-scoped CSS so it's drop-in. Bounded logs (default 100/each); a Clear button empties them but preserves the live tree.
+- **Runtime devtools wiring.** Before this phase the runtime emitted only `controller:*` events; the `DebugEvent` union listed `cache:*`, `mutation:*` and `field:*` but nothing fired them. Now wired:
+  - `cache:fetch-start, fetch-success and fetch-error` — via a new `EntryEvents` callback bundle that `ClientEntry` constructs from `client.devtools` and passes into `Entry`. The bundle is `undefined` when no devtools, so the cost is one extra constructor field.
+  - `cache:invalidated and gc` — `QueryClient.invalidate, invalidateAll and dropEntry`.
+  - `mutation:run, success, error and rollback` — `MutationImpl`. Rollback uses a wrapped `Snapshot` so both auto-rollback (supersede/dispose) AND user-driven `snapshot.rollback()` inside `onError` fire the event once per snapshot.
   - `cache:subscribed` and `field:validated` remain spec'd but unwired (would require threading subscriber/field paths into more types — moderate cost, low value vs the visibility we already get).
 
 What changed in the wiki:
@@ -144,7 +144,7 @@ Findings surfaced while writing these (now filed on the examples wiki page):
 3. **`formFromZod` does not promote array-level `.min(N)` to a FieldArray validator** — `packages/zod/src/index.ts:131-137`. Leaf and nested object rules work; array-level rules silently drop.
 4. **`getByLabelText` matches both wrapping `<label>` and `aria-label`** when both are present — use one or the other.
 
-CI status: every example passes its own `typecheck` and `test`. The root `pnpm typecheck` (which globs `examples/*`) is also green. Production builds verified for stock-ticker (60 KB / 14 KB gzip), kanban (276 KB / 77 KB gzip), and reader-ssr (client 202 KB / 60 KB gzip + server bundle).
+CI status: every example passes its own `typecheck` and `test`. The root `pnpm typecheck` (which globs `examples/*`) is also green. Production builds verified for stock-ticker (60 KB, 14 KB gzipped), kanban (276 KB, 77 KB gzipped), and reader-ssr (client 202 KB, 60 KB gzipped, plus the server bundle).
 
 ## [2026-05-19 12:10] ingest | tsup → tsdown; drop ignoreDeprecations
 
@@ -152,7 +152,7 @@ Removed `"ignoreDeprecations": "6.0"` from `tsconfig.base.json`. The previous de
 
 Mechanical changes:
 - 5× `tsup.config.ts` → `tsdown.config.ts`. Same shape, with three renames:
-  - `outExtension({ format })` → `outExtensions: ({ format }) => ...` (plural, and `format` is now the rolldown-internal value `"es"` / `"cjs"`, not tsup's `"esm"` / `"cjs"`).
+  - `outExtension({ format })` → `outExtensions: ({ format }) => ...` (plural, and `format` is now the rolldown-internal value `"es"` and `"cjs"`, not tsup's `"esm"` and `"cjs"`).
   - `external: [...]` → `deps: { neverBundle: [...] }`.
   - `target: 'es2020'` → `target: 'es2022'` (now matches `tsconfig.base.json`; previously divergent for no reason).
 - Each `packages/*/package.json` `build` script: `tsup` → `tsdown`.
@@ -179,7 +179,7 @@ Both flags were declared in `QuerySpec` (spec §5.9) but the runtime ignored the
 Design:
 
 - New module `packages/core/src/query/focus-online.ts` — lazy single window/document listener per event (`focus` + `visibilitychange` for focus; `online` for reconnect). Lazy install on first subscriber; subscribers form a `Set<() => void>` and the listener fans out. `typeof window === 'undefined'` guard makes it SSR-safe (no-op subscribe/unsubscribe).
-- `ClientEntry` (in `client.ts`) stores `refetchOnWindowFocus` / `refetchOnReconnect` from the spec. On the 0→1 subscriber transition (alongside the existing `refetchInterval` start), it subscribes; on release-to-0 and on dispose, it unsubscribes. On event fire, the handler calls `entry.isStaleNow()` first and skips the refetch if the data is still inside `staleTime`. This matches TanStack-style behavior: focus is a *hint*, not an unconditional refetch.
+- `ClientEntry` (in `client.ts`) stores `refetchOnWindowFocus` and `refetchOnReconnect` from the spec. On the 0→1 subscriber transition (alongside the existing `refetchInterval` start), it subscribes; on release-to-0 and on dispose, it unsubscribes. On event fire, the handler calls `entry.isStaleNow()` first and skips the refetch if the data is still inside `staleTime`. This matches TanStack-style behavior: focus is a *hint*, not an unconditional refetch.
 
 Why a separate module (not inline in `client.ts`):
 
@@ -189,7 +189,7 @@ Coverage:
 
 - 8 new tests in `packages/core/tests/query-focus-online.test.ts` (jsdom env). Cover: focus refetch when stale; skip when fresh (within `staleTime`); default-off behavior when flag is unset; unsubscribe on dispose (event after `root.dispose()` does not refetch); `document.visibilitychange` → `visible` also triggers; reconnect refetch on `online`; both flags coexisting on one query.
 
-Lib test count 236 → 244. Wiki: `entities/query-client.md` covers updated (now includes `focus-online.ts`), `last_verified` bumped, body block on `ClientEntry`'s per-root fields adds an `unsubFocus` / `unsubOnline` entry. Status sentence in CLAUDE.md and the test count in README / `.wiki/overview.md` bumped accordingly.
+Lib test count 236 → 244. Wiki: `entities/query-client.md` covers updated (now includes `focus-online.ts`), `last_verified` bumped, body block on `ClientEntry`'s per-root fields adds an `unsubFocus` and `unsubOnline` entry. Status sentence in CLAUDE.md and the test count in README and `.wiki/overview.md` bumped accordingly.
 
 Spec impact: none — this is implementing already-spec'd behavior. The `RootOptions` root-wide override mentioned by spec §5.9 ("opt-in per query or root-wide") is still not implemented; only per-query opt-in is wired. Filing as a separate follow-up if needed.
 
@@ -207,7 +207,7 @@ Test coverage adds (jsdom env):
 3. **`spec.refetchOnWindowFocus: false` beats root `refetchOnWindowFocus: true`** — the per-query opt-out is honored.
 4. **`spec.refetchOnWindowFocus: true` is honored when root default is unset** — guards against resolution-order regressions.
 
-Lib test count 244 → 248. Status / README / overview counts bumped; the `entities/query-client.md` `unsubFocus`/`unsubOnline` paragraph updated to spell out the precedence rule.
+Lib test count 244 → 248. Status, README and overview counts bumped; the `entities/query-client.md` `unsubFocus`/`unsubOnline` paragraph updated to spell out the precedence rule.
 
 
 ## [2026-05-19 14:58] ingest | @kontsedal/olas-realtime package landed
@@ -224,7 +224,7 @@ is consumer-implemented via AmbientDeps augmentation; package ships no default.
   `flushMs` coalesced flush, `pause/resume/clear`. Buffer preserved across
   pause; subscription cycled via `ctx.effect` reading `isPaused.value`.
 
-10 new tests (5 patcher, 5 live-stream). vitest alias added; biome / typecheck
+10 new tests (5 patcher, 5 live-stream). vitest alias added; biome and typecheck
 / wiki-lint pass. BACKLOG entry flipped from `[idea]` to `[in-progress]`.
 
 ## [2026-05-19 15:50] ingest | @kontsedal/olas-cross-tab package + QueryClientPlugin surface landed
@@ -238,11 +238,11 @@ amendment lands at §13.2 (sibling to §13.1 persist), plus updates to
 
 New types exported from `@kontsedal/olas-core`:
 
-- `QueryClientPlugin` — `init` / `onSetData` / `onInvalidate` / `onGc` /
+- `QueryClientPlugin` — `init`, `onSetData`, `onInvalidate`, `onGc` and
   `dispose`. All optional; wrapped in try/catch by `QueryClient`.
 - `QueryClientPluginApi` — `applyRemoteSetData(queryId, keyArgs, data)`,
   `applyRemoteInvalidate(queryId, keyArgs)`, `subscribedKeys(queryId)`.
-- `SetDataEvent` / `InvalidateEvent` / `GcEvent` — discriminated by
+- `SetDataEvent`, `InvalidateEvent` and `GcEvent` — discriminated by
   `kind: 'data' | 'infinite'`. `SetDataEvent` and `InvalidateEvent`
   carry `isRemote: boolean` — `true` when the write came in via
   `applyRemote*`, so plugins know to skip rebroadcast.
@@ -267,7 +267,7 @@ refetch later, and seeding rows the user never subscribed to is leaky.
 `crossTabPlugin({ channelName, onWarn?, channelFactory? })`. Three echo-
 prevention layers: (1) sender-side `isRemote` skip in core, (2) own-
 source drop via random `sourceId`, (3) `(sourceId, msgId)` dedup against
-out-of-order / duplicate delivery. Non-cloneable payloads trigger
+out-of-order and duplicate delivery. Non-cloneable payloads trigger
 `onWarn` and drop. Channel name versioning is user-supplied — `v` field
 on the wire protocol is for protocol-shape evolution.
 
@@ -322,8 +322,8 @@ own query value. Documented in `modules/cross-tab.md`.
 - SPEC §13.2 added (sibling to §13.1 persist). §5.2 example QuerySpec
   gains the two new fields. §20.4 type definitions for `QuerySpec` and
   `InfiniteQuerySpec` updated. §20.8 adds `plugins?`, plus the
-  `QueryClientPlugin` / `QueryClientPluginApi` / `SetDataEvent` /
-  `InvalidateEvent` / `GcEvent` type listings. §20.9 `ErrorContext.kind`
+  `QueryClientPlugin`, `QueryClientPluginApi`, `SetDataEvent`,
+  `InvalidateEvent` and `GcEvent` type listings. §20.9 `ErrorContext.kind`
   adds `'plugin'`.
 
 ### Gates
@@ -340,7 +340,7 @@ Whole-repo doc pass triggered by drift after today's release batch
 ### Top-level docs
 
 - `README.md` — package count 8→10 (added `mutation-queue`, `router`),
-  test count "436 / 37 files" → "621 / 55 files", Install snippet expanded.
+  test count "436 and 37 files" → "621 and 55 files", Install snippet expanded.
 - `CLAUDE.md` — `Read this first` package-status paragraph rewritten;
   workspace-layout block now lists all ten published packages plus the
   private `integration/` suite; test counts refreshed.
@@ -368,8 +368,8 @@ bumped to 2026-05-22 on:
   `modules/realtime.md`, `modules/entities.md` — read against code; no
   drift; bumped.
 - `flows/ssr.md` — added a "Streaming SSR (v0.0.14+)" section covering
-  `createStreamingHydrator` / `createStreamingTransform` /
-  `OLAS_BOOTSTRAP_SCRIPT` / `HydrationBoundary`.
+  `createStreamingHydrator`, `createStreamingTransform`,
+  `OLAS_BOOTSTRAP_SCRIPT` and `HydrationBoundary`.
 - `flows/construction-rollback.md`, `flows/query-subscription.md`,
   `flows/use-root.md` — read; no drift; bumped.
 - `entities/entry.md`, `entities/query-client.md`,
@@ -411,7 +411,7 @@ session.
 Deep-audit remediation (see `REMEDIATION.md`), phases 0 (infra) and 1 (query criticals).
 
 - **T0.1** — `scripts/wiki-lint.ts` was blind on a CRLF (Windows) checkout: LF-only frontmatter regex + backslash path comparisons made every page read as frontmatter-less. Fixed both; the linter now surfaces real staleness/drift (previously masked). Note: bootstrap pages are broadly stale (>60d) — resolved per-phase as their covered code is re-verified, not by a blanket bump.
-- **T1.1** — `Entry.setData` / `InfiniteEntry.setData` gained a `track` option. Plugin/remote canonical writes (`applyRemoteSetData`, `setEntryData`) no longer push optimistic snapshots or wedge `hasPendingMutations`. Updated `entities/entry.md`, SPEC §6.4/§13.2. Pinned by `regressions.test.ts` R-Q1.1.
+- **T1.1** — `Entry.setData` and `InfiniteEntry.setData` gained a `track` option. Plugin/remote canonical writes (`applyRemoteSetData`, `setEntryData`) no longer push optimistic snapshots or wedge `hasPendingMutations`. Updated `entities/entry.md`, SPEC §6.4/§13.2. Pinned by `regressions.test.ts` R-Q1.1.
 - **T1.2** — SSR hydration namespaced by query identity (`__id = queryId ?? auto`) not key-hash, killing cross-query data theft. Updated `flows/ssr.md`, SPEC §15. Pinned by R-Q1.2.
 
 ### Gates
@@ -444,14 +444,14 @@ Phase 3 — query cache majors + a 10-item minor batch (`packages/core/src/query
 - **T3.1** — out-of-order optimistic rollback **chain-splices** instead of blindly restoring `record.prev`; rolling back every layer in any order returns to the pre-mutation baseline. `Entry` + `InfiniteEntry`. SPEC §6.4; `entities/entry.md`. Full updater-replay rebasing → BACKLOG.
 - **T3.2** — `refetchInterval` **joins** an in-flight fetch (`isFetching.peek()`) instead of aborting it (was a livelock when fetch > interval). Both interval sites. `entities/query-client.md`.
 - **T3.3** — infinite `fetchNextPage`/`fetchPreviousPage` onSuccess now set `status:'success'`; `runFetch` finally repairs a wedged `'pending'`. Un-wedges Suspense after paging over a mid-flight refetch.
-- **T3.4** — new `query.cancel` / `cancelAll` + `subscription.cancel` (+ infinite parity), backed by `Entry.cancel` / `InfiniteEntry.cancel`; `applySuccess` rebases live snapshots onto server truth so a later rollback can't resurrect pre-fetch data. SPEC §5.5/§6.4; API.md; README optimistic recipe.
+- **T3.4** — new `query.cancel` and `cancelAll` + `subscription.cancel` (+ infinite parity), backed by `Entry.cancel` and `InfiniteEntry.cancel`; `applySuccess` rebases live snapshots onto server truth so a later rollback can't resurrect pre-fetch data. SPEC §5.5/§6.4; API.md; README optimistic recipe.
 - **T3.5** — `networkMode:'offlineFirst'` parks a fetch-`TypeError`-while-offline and retries on reconnect; new **`isPaused`** signal on `AsyncState` (added to every producer — Entry/InfiniteEntry/both subs/LocalCache/fakeAsyncState). SPEC §5.3/§5.5; API.md.
-- **T3.6** — optimistic `snapshot.rollback()` re-emits a `SetDataEvent` (guarded on an actual data change) so cross-tab / entity peers drop failed optimistic state. `entities/query-client.md`.
+- **T3.6** — optimistic `snapshot.rollback()` re-emits a `SetDataEvent` (guarded on an actual data change) so cross-tab and entity peers drop failed optimistic state. `entities/query-client.md`.
 - **T3.7** — infinite refetch re-fetches **all** loaded pages (`runRefetchAll`), not collapse-to-page-one; atomic update, no truncation flash. SPEC §5.7. Infinite SSR dehydrate deferred → BACKLOG + SPEC §15 + react README.
 - **T3.8** — `stableHash` reads the raw holder property (`this[key]`) so Date tagging + the class-instance throw aren't dead code (`toJSON` runs before the replacer).
 - **T3.9** (commits a–e2) — onMutate-throw aborts the run; `subscription.refetch()` resolves (not AbortError-rejects) on supersede; exponential retry-backoff default; `dispose()` resets `isFetching`; focus/visibilitychange debounce + isFetching join; `invalidate` marks-stale-only when subscriber-less (`markStale`/`forcedStale` + `client.invalidateEntry`); query + mutation registries shared on `globalThis` (dual-package hazard); duplicate `queryId` dev-warn; `_unregisterMutationById` moved to `/testing`; streaming `flush()` skips un-serializable entries.
 
-New public surface: `Query.cancel` / `cancelAll`, `subscription.cancel`, `AsyncState.isPaused`. New `Entry`/`InfiniteEntry` methods: `cancel`, `markStale`. Regression tests R-Q3.1…R-Q3.9 in `regressions.test.ts` (+ `stableHash` cases in `query.test.ts`; offlineFirst / focus-double-fire in `query-focus-online.test.ts`; streaming guard in react `streaming.test.tsx`).
+New public surface: `Query.cancel` and `cancelAll`, `subscription.cancel`, `AsyncState.isPaused`. New `Entry`/`InfiniteEntry` methods: `cancel`, `markStale`. Regression tests R-Q3.1…R-Q3.9 in `regressions.test.ts` (+ `stableHash` cases in `query.test.ts`; offlineFirst and focus-double-fire in `query-focus-online.test.ts`; streaming guard in react `streaming.test.tsx`).
 
 ### Gates
 
@@ -479,11 +479,11 @@ New public surface: `Mutation.status`. Tests in `packages/react/tests/*` (hydrat
 
 Phase 5 — `packages/core/src/forms/` (field, form, validators). Three commits.
 
-- **T5.1** — `FieldArray` tracks **structural dirtiness** (`structurallyDirty$`, flipped by `add`/`insert`/`remove`/`move`/`clear`, reset by `reset()` / `replaceInitialItems`). `isDirty = structural || anyItemDirty`. Before this, a reactive `initial: () => queryData` + default `resetOnInitialChange: 'when-clean'` re-seated the array on a background refetch and silently **deleted rows the user just added**. Pinned `R-F5.1`. SPEC §8.5; `modules/forms.md`.
+- **T5.1** — `FieldArray` tracks **structural dirtiness** (`structurallyDirty$`, flipped by `add`/`insert`/`remove`/`move`/`clear`, reset by `reset()` and `replaceInitialItems`). `isDirty = structural || anyItemDirty`. Before this, a reactive `initial: () => queryData` + default `resetOnInitialChange: 'when-clean'` re-seated the array on a background refetch and silently **deleted rows the user just added**. Pinned `R-F5.1`. SPEC §8.5; `modules/forms.md`.
 - **T5.2** — form-/array-level validators can **target specific fields**. `Validator<T>` widened to also return `FormIssue[]` (`{ path, message }`); `runTopLevelValidators` collects issues (`appendIssues`) and `routeFormIssues(this, …)` routes empty-path → the node's `topLevelErrors`, path → `resolveNode`'s descendant via `setFormErrors`. Fields gain a **third error channel** `formErrors$` (merged into `errors`); Form/FieldArray merge parent-injected errors into `topLevelErrors` (now a computed) + `isValid`. Cleared/re-applied each run (`lastFormErrorTargets`). Standard-Schema `validator()` rewritten to return **all** issues as `FormIssue[]` with paths; `zodValidator` inherits it. `debouncedValidator` narrowed to a precise `string | null` return so direct callers still type-check. Pinned `R-F5.2` + `standard-schema.test.ts`. SPEC §8.1/§8.3/§20.7; API.md; `modules/forms.md` + `zod.md`. BACKLOG: formFromZod root `.refine({path})` routing.
 - **T5.3** — minor batch: `validateOn: 'blur'|'submit'` now tested (were zero); `dirtyFields`/`clearSubtree` tested; `required(false)` now **passes** (a boolean is a legit value) + new **`mustBeTrue`** validator for consent checkboxes; `isValid` **holds last-known validity while `isValidating`** (`lastValid$`) so a `debouncedValidator` no longer strobes a submit button (replaces the old "invalid-while-validating" rule — SPEC §8.2 + docstring updated); `Form.reset()` re-applies initial **inside** the batch (no tearing); thrown-validator messages are **generic in prod** (`'Validation failed'`, real error still routed via `onValidatorError`), dev keeps the message. New tests in `form.test.ts` + `validators.test.ts`; `controller.test.ts` isValid-while-pending assertion updated.
 
-New public surface: `FormIssue` / `ValidatorResult` types, `mustBeTrue` validator. `Validator<T>` return widened.
+New public surface: `FormIssue` and `ValidatorResult` types, `mustBeTrue` validator. `Validator<T>` return widened.
 
 ### Gates
 
@@ -514,7 +514,7 @@ gate-verified; T6.1/T6.2/T6.7 done directly.
   double-write), README demoted to **best-effort**. +11 tests + new
   `.wiki/modules/mutation-queue.md`. BACKLOG: cross-mutationId causal ordering.
 - **T6.3 devtools** (`c4eb61e`) — JsonView cycle guard is now an immutable
-  ancestors-only `ReadonlySet` per level (a DAG `{a:obj,b:obj}` / collapse→expand
+  ancestors-only `ReadonlySet` per level (a DAG `{a:obj,b:obj}` and collapse→expand
   / StrictMode no longer false-flag `[Circular]`; true cycles still caught);
   `store.ts` prunes disposed subtrees past `maxDisposedNodes` (default 200) +
   FIFO mutation-start queue per `path#name` (the debug bus has no per-run id — a
@@ -525,7 +525,7 @@ gate-verified; T6.1/T6.2/T6.7 done directly.
   the same `shouldBroadcast` filter as send; README documents the honest
   last-delivery-wins conflict model. BACKLOG: infinite cross-tab.
 - **T6.5 zod** (`8cc13f0`) — `zodValidatorAsync` removes the abort listener in
-  `finally` + swallows the losing race promise (no unhandled rejection / leaked
+  `finally` + swallows the losing race promise (no unhandled rejection and leaked
   listener); `isForeignZod`/`warnDuplicateZod` dev-warn on a duplicate-zod-copy
   schema; `ZodDate` default → `undefined` (was `null` into a Date field),
   `.transform()`/`.pipe()` seeds from the INPUT schema, unions → `undefined`;
@@ -557,14 +557,14 @@ lint .` clean (275 files); `pnpm test` → 751/751 across 57 files; `pnpm wiki:l
 ## [2026-07-25 23:48] ingest | REMEDIATION.md phase 7 (delivery, docs, release) — publish deferred
 
 Phase 7 — delivery/docs/release. Three commits (`ba0b9cb`, `2800e1a`, `e6b0c94`),
-all executed by `fork` subagents + independently gate-verified. **No publish /
-version bump / tag / push** — the actual `npm publish` is deferred to the
+all executed by `fork` subagents + independently gate-verified. **No publish,
+version bump, tag or push** — the actual `npm publish` is deferred to the
 maintainer (outward-facing, needs authorization); T7.1's Publish sub-item stays
 `[ ]` on purpose.
 
 - **T7.1 release prep** (`ba0b9cb`) — fixed the stale `# @olas/*` CHANGELOG
   headers → `@kontsedal/*`; back-filled a consolidated 0.0.7–0.0.15 block per
-  package (honestly flagged as bumped-but-never-published — npm froze at 0.0.6);
+  package (flagged as bumped-but-never-published — npm froze at 0.0.6);
   a `patch` changeset for the remediation across all 10 published packages; a
   `main`-only, `NPM_TOKEN`-gated `.github/workflows/release.yml` (changesets/
   action — can't fire by accident without the secret). No `changeset version`.
@@ -573,7 +573,7 @@ maintainer (outward-facing, needs authorization); T7.1's Publish sub-item stays
   `engines`, now added: `node >=18` on all 10 published packages); a zero-dep
   dist smoke test (`scripts/verify-dist.mjs`, `pnpm smoke:dist`: ESM import + CJS
   require each built entry + a `__DEV__`-leak grep — none leaks, tsdown defines
-  it correctly); coverage thresholds in `vitest.config.ts` seeded just below
+  it correctly); coverage thresholds in `vitest.config.ts` seeded below
   current (~83/71/86/87 → 80/68/82/83) with CI on `pnpm test:coverage`.
 - **T7.3 documentation debt** (`e6b0c94`) — API.md brought current from ~0.0.4:
   new `@kontsedal/olas-mutation-queue` + `@kontsedal/olas-router` sections,
@@ -618,11 +618,11 @@ green); `pnpm wiki:lint` 0 errors (50 pages).
 Landed the foundation + headline of the Phase 8 devtools overhaul (was
 `candidates/decisions/devtools-overhaul.md`).
 
-**Core (T8.1).** `DebugEvent` now carries optional `seq` / `t` / `causeId`
+**Core (T8.1).** `DebugEvent` now carries optional `seq`, `t` and `causeId`
 (distributive `Body & Meta`, so `switch` still narrows); `DevtoolsEmitter.emit`
 + replay stamp `seq`/`t` centrally. New events: `cache:set-data`
 (`source` + post-write `data`) and `snapshot:push`/`rollback`/`finalize`. A
-dev-only ambient cause (`__runWithCause` / `__currentCauseId`) threads a
+dev-only ambient cause (`__runWithCause` and `__currentCauseId`) threads a
 mutation's `runId` into the optimistic writes + snapshot events it triggers;
 fetches share a per-fetch `fetchId`. Wired in `entry.ts` (new `EntryEvents`
 hooks + `globalFetchSeq`), `client.ts` (`emitDevtoolsSetData` + the events
@@ -660,7 +660,7 @@ causeId with +Δms deltas), and the set-data source/diff all render correctly.
 `this.schedule`; calling `this.schedule(fn)` invoked rAF with `this === store`
 → `TypeError: Illegal invocation`, swallowed by `DevtoolsEmitter.emit`'s empty
 catch, leaving `flushHandle` stuck at `-1`. Effect: Tree + Inspector (set
-synchronously) worked, but every coalesced signal (cache / mutations / fields /
+synchronously) worked, but every coalesced signal (cache, mutations, fields and
 timeline) stayed permanently empty with no console error. jsdom's rAF ignores
 `this`, so the whole RTL suite passed. Fixed by wrapping rAF/cancelRAF in arrows
 (`store.ts`); added a regression test that installs a strict `this`-checking rAF
@@ -743,8 +743,8 @@ gate; gcTime via session open/close plus a long-gcTime control).
 
 ## [2026-07-31 09:05] ingest | Mutation.reset() TSDoc claimed the opposite of its behavior
 
-Docs-only correction. `Mutation.reset()`'s one-line TSDoc read "Clear `data` /
-`error` / `lastVariables` / `status` **without aborting in-flight runs**". The
+Docs-only correction. `Mutation.reset()`'s one-line TSDoc read "Clear `data`,
+`error`, `lastVariables` and `status` **without aborting in-flight runs**". The
 implementation has aborted in-flight runs since the file's first commit
 (`mutation.ts:505-525`), SPEC §6.2 lists `reset()` among the abort triggers, and
 two tests pin it (`mutation.test.ts:54`; regression B2 for the queued-`serial`
@@ -754,7 +754,7 @@ behavior the whole time; the lie lived only in the shipped `.d.ts`, which is
 exactly where consumers read it (editor hover).
 
 Worth keeping: the reason it survived ten weeks and three releases is that it is
-*plausible*. react-query's `reset()` really does detach the observer and let the
+*plausible*. react-query's `reset()` does detach the observer and let the
 in-flight request finish, so anyone porting from rq reads the wrong line and
 finds it confirming what they already believed. The change request that prompted
 this reported a consumer shipping a backwards code comment off the line; that is
@@ -762,7 +762,7 @@ second-hand and nothing in this repo corroborates it, so treat it as motivation
 rather than as a recorded fact. Either way the correction carries an explicit
 "do not map an rq `reset()` onto this" warning in three places — the TSDoc,
 `API.md`'s Mutations section, and `MIGRATING.md`'s "patterns that don't
-translate one-to-one" list — rather than just deleting the wrong clause.
+translate one-to-one" list — rather than only deleting the wrong clause.
 
 Generalizable lesson for docs-only sweeps: a sweep that rewrites doc comments
 without re-reading the bodies below them can invert a contract, and nothing in
@@ -777,7 +777,7 @@ No code changed. `pnpm test` → 813/813 across 59 files (unchanged);
 
 `QuerySpec.refetchInterval` and `InfiniteQuerySpec.refetchInterval` are now
 `RefetchInterval<T> = number | ((data: T | undefined) => number)` (new exported
-type in `query/types.ts`, next to `RetryPolicy` / `RetryDelay`). SPEC §5.9 gained
+type in `query/types.ts`, next to `RetryPolicy` and `RetryDelay`). SPEC §5.9 gained
 a "`refetchInterval` — fixed or data-driven" subsection carrying the contract.
 
 Motivation is one shape: poll fast while there's work, slowly when idle. With
@@ -827,7 +827,7 @@ prevent (an unguarded call in a self-rescheduling chain = a permanently dead
 subsystem, silently). Guarding it is four lines; deferring it would have shipped
 a silent-death path in a brand-new API. Generalizable: in a self-rescheduling
 chain, every expression evaluated before the re-arm is load-bearing and must be
-total. Applied literally on review — the data read had been sitting in argument
+total. Applied to the letter on review — the data read had been sitting in argument
 position (`resolveRefetchInterval(interval, this.entry.data.peek())`), i.e.
 outside the try it was supposed to be protected by. `entry.data` is a `computed`
 on infinite entries and a computed can throw, so the read now goes in as a thunk
@@ -846,7 +846,7 @@ re-warns once per 0→1 cycle (a StrictMode double-mount prints two).
 
 Deliberately unchanged: `DefaultQueryOptions` still excludes `refetchInterval`,
 `UseOptions` still has no interval (the timer is per **entry**, so per-subscriber
-intervals would need a "whose interval wins" rule), and `ctx.cache` /
+intervals would need a "whose interval wins" rule), and `ctx.cache` with
 `LocalCache` gains nothing here. All three are now stated in §5.9 rather than
 inferable.
 
@@ -856,9 +856,9 @@ the only jsdom query test file. Also swept SPEC §20.4's two spec listings, whic
 had drifted well past `refetchInterval` (missing entirely on `InfiniteQuerySpec`
 despite the field being implemented and tested): `QuerySpec.fetcher` still
 showed the pre-`FetchCtx` `(...args, signal)` signature, both listings were
-missing `networkMode` / `structuralShare`, `InfiniteQuerySpec` was missing
+missing `networkMode` and `structuralShare`, `InfiniteQuerySpec` was missing
 `keepPreviousData`, and both showed `crossTab?: boolean` rather than
-`boolean | 'data'`. `FetchCtx` / `InfiniteFetchCtx` are now written out there
+`boolean | 'data'`. `FetchCtx` or `InfiniteFetchCtx` are now written out there
 instead of being inlined wrong.
 
 Type-level note for the changelog: `QuerySpec<Args, T>` is now **invariant** in
@@ -917,7 +917,7 @@ worth doing on any PR that adds a non-patch changeset.
 
 ## [2026-08-08 22:44] schema-change | invalidate / invalidateAll now return Promise<void>
 
-`Query.invalidate` / `invalidateAll`, the `InfiniteQuery` equivalents, and
+`Query.invalidate` and `invalidateAll`, the `InfiniteQuery` equivalents, and
 `LocalCache.invalidate` changed return type `void` → `Promise<void>`, resolving when the
 refetch(es) they trigger have **settled** (immediately for a subscriber-less entry;
 `Promise.all` across a query's `__clients` and across all entries for `invalidateAll`).
@@ -926,7 +926,7 @@ They never reject — a fetch error routes to the root's `onError` and stays on 
 `try/catch`, matching TanStack's `invalidateQueries`. Non-breaking: existing fire-and-forget
 callers ignoring the return still work. The plumbing already existed — `Entry.invalidate()`
 returns `Promise<T>`; `client.invalidateEntry` now returns that (mapped to `void`, errors
-swallowed for the awaiter) instead of discarding it, and `define.ts` / `local.ts` propagate
+swallowed for the awaiter) instead of discarding it, and `define.ts` and `local.ts` propagate
 it. Touched: `query/client.ts` (invalidateEntry + the 4 methods), `query/define.ts` (both
 handles), `query/local.ts` (LocalCache), `query/types.ts` + `query/infinite.ts` (types),
 `SPEC.md` §5.7 + the three type blocks. Updated `modules/query.md`,
@@ -975,14 +975,14 @@ an entry refetches whenever a subscription acquires it **while stale**: first su
 second root on the same key, or `resume()` after a suspend, all `staleTime`-driven with no
 invalidator in the program. Transient, self-healing, review-surviving; caught only by
 mutation-testing the `cancel()` back in. Now stated in SPEC §5.5 + §6.4 and in the TSDoc
-on `setData` / `cancel`, and filed as `pitfalls/no-invalidator-still-refetches.md`.
+on `setData` and `cancel`, and filed as `pitfalls/no-invalidator-still-refetches.md`.
 
 **Also corrected while adjacent** (pre-existing drift, all doc-only): `API.md`'s
-`Query<Args, T>` block still typed `invalidate` / `invalidateAll` as `void` (0.5.0 made
-them `Promise<void>`) and omitted `cancel` / `cancelAll` though the prose listed them; its
+`Query<Args, T>` block still typed `invalidate` and `invalidateAll` as `void` (0.5.0 made
+them `Promise<void>`) and omitted `cancel` and `cancelAll` though the prose listed them; its
 `ctx.use` options bag omitted `keepDataWhileDisabled` (0.5.0); SPEC's §21 appendix `Query`
-block omitted `cancel` / `cancelAll`; `CLAUDE.md`'s implementation-status line said 621
-tests across 55 files (now 843 / 59).
+block omitted `cancel` and `cancelAll`; `CLAUDE.md`'s implementation-status line said 621
+tests across 55 files (now 843 and 59).
 
 **New**: `RECIPES.md` gains the **`readsFactory`** recipe — the supported answer for a
 React context/hook that needs server data and owns no controller (a controller owns the
@@ -1005,7 +1005,7 @@ four load-bearing behaviours was mutation-verified red: tracked `write` (→ the
 no-snapshot cases fail), entry-creating `peek` (→ the non-creation case fails),
 `.value`-instead-of-`.peek()` (→ the no-dependency case fails), and a `write` that skips
 `emitSetData` (→ the plugin-event case fails). Gate: typecheck clean, `biome lint .`
-clean, 843 tests / 59 files, build clean. `pnpm lint` still reports formatter errors on 5
+clean, 843 tests and 59 files, build clean. `pnpm lint` still reports formatter errors on 5
 root config files — the known Windows CRLF issue already in BACKLOG.md, untouched by this
 change (staged diff contains zero CR).
 
@@ -1025,7 +1025,7 @@ Added bound regular/infinite query actions and ambiguity guards, scoped mutation
 
 ## 2026-09-20 — follow-ups from the 0.9 review
 
-Reviewing the 0.9 branch against the five reported defects: all five were genuinely fixed, but the
+Reviewing the 0.9 branch against the five reported defects: all five were fixed, but the
 stale-timer fix stopped one class short.
 
 - **`gcTime` had the same defect `staleTime` did.** `scheduleStaleTimeout` fixed staleness while the
@@ -1093,7 +1093,7 @@ Two release-process changes, both reversing earlier decisions recorded in this l
   releases that contained nothing. Removed; packages now version independently. Verified with
   throwaway changesets against this tree: a core minor + a zod patch produces core 0.9.0, zod 0.8.1
   and leaves the other eight alone, and the real changeset on this branch bumps only core and
-  mutation-queue — the two that actually changed.
+  mutation-queue — the two that changed.
 - Lockstep was also what made the missing peer-range ceilings harmless ("cosmetic while all ten ship
   in lockstep", 2026-07-31). Dropping it makes them load-bearing, so every internal peer range gained
   `<1.0.0`. Verified both directions: an in-range bump leaves ceilings intact and cascades nothing; an

@@ -8,11 +8,11 @@ This document is intentionally abstract. It describes the idea, not a specific i
 
 ## The core idea
 
-Most interactions with a coding agent look like RAG over a filesystem: the agent grep-searches the repo, reads a handful of files, holds them in context just long enough to answer the question, and discards everything when the session ends. Next session, it does the same work over again. Nothing accumulates. Every explanation you give — *"the reason we do X is because of Y"*, *"we tried Z, it didn't work because…"* — dies in chat history the moment the conversation closes.
+Most interactions with a coding agent look like RAG over a filesystem: the agent grep-searches the repo, reads a handful of files, holds them in context only long enough to answer the question, and discards everything when the session ends. Next session, it does the same work over again. Nothing accumulates. Every explanation you give — *"the reason we do X is because of Y"*, *"we tried Z, it didn't work because…"* — dies in chat history the moment the conversation closes.
 
 The codebase wiki pattern is different. The agent **incrementally builds and maintains a persistent wiki alongside the code** — a structured, interlinked collection of markdown pages capturing what the codebase is, why it's that way, and what's known to be true about it. When code changes, the agent updates affected pages. When you explain something, the agent files it. When the agent infers something it isn't sure about, the inference goes into a staging area until evidence accumulates.
 
-The key shift: **the wiki is a persistent, compounding artifact that lives in the repo.** The architecture has already been mapped. The pitfalls have already been documented. The cross-references between modules already exist. The wiki keeps getting richer with every PR merged, every bug fixed, every design decision explained — and crucially, it stays *current*, because the cost of maintenance is paid by the agent, not by you.
+The key shift: **the wiki is a persistent, compounding artifact that lives in the repo.** The architecture has already been mapped. The pitfalls have already been documented. The cross-references between modules already exist. The wiki keeps getting richer with every PR merged, every bug fixed, every design decision explained — and it stays *current*, because the cost of maintenance is paid by the agent, not by you.
 
 You almost never write the wiki yourself. The agent writes it. Your job is to direct attention, confirm or reject inferences, and ask the right questions. The agent's job is the bookkeeping: summarizing, cross-referencing, filing, keeping pages in sync with code, flagging contradictions.
 
@@ -61,7 +61,7 @@ The page types below are a starting taxonomy. Most codebases need most of them; 
 
 **Decision pages.** The *why* behind the code. Often distilled from ADRs, PR discussions, or your own explanations. "Why we chose X over Y", "what we tried that didn't work", "what constraint forces this design". Decisions are the wiki content with the longest shelf life — code refactors don't invalidate them.
 
-**Pitfall pages.** Bug patterns, footguns, surprising behaviors, lessons learned the hard way. Every time you fix a bug whose cause wasn't obvious from the code, that's a pitfall page. Every time you say "watch out for…", that's a pitfall page.
+**Pitfall pages.** Bug patterns, footguns, surprising behaviors, lessons learned the hard way. A bug whose cause was hidden in the code earns a pitfall page. So does anything you would preface with "watch out for".
 
 **Glossary.** Domain vocabulary that doesn't appear in code but is critical to understanding it. Especially valuable for codebases with heavy domain logic or jargon.
 
@@ -95,7 +95,7 @@ The agent reads the wiki before reading code. When a question arrives, the flow 
 
 This inverts the usual order. Without a wiki, the agent reads code and then synthesizes. With a wiki, the synthesis already exists and points the agent to the exact code it needs. The token cost on complex questions drops substantially because exploration is replaced by directed lookup.
 
-Good query answers can themselves become wiki pages. A comparison the agent generated, an analysis, a connection it discovered — these are valuable and shouldn't vanish into chat. Filing them back makes the wiki compound on use, not just on commits.
+Good query answers can themselves become wiki pages. A comparison the agent generated, an analysis, a connection it discovered — these are valuable and shouldn't vanish into chat. Filing them back makes the wiki compound on use, not only on commits.
 
 ### Lint
 
@@ -153,7 +153,7 @@ A useful starter taxonomy:
 - `documented-in` — page A is a summary of an external doc, ADR, or PR.
 - `related` — fallback when none of the above apply (use sparingly).
 
-Edges go in frontmatter, not just inline links:
+Edges go in frontmatter, not only inline links:
 
 ```yaml
 edges:
@@ -199,7 +199,7 @@ This single mechanism prevents most "wiki rot" failure modes. The wiki stays tru
 
 ## Confidence and decay
 
-Every page carries a confidence level in its frontmatter (`high` / `medium` / `candidate`) and a `last_verified` date. Lint uses both:
+Every page carries a confidence level in its frontmatter (`high`, `medium` or `candidate`) and a `last_verified` date. Lint uses both:
 
 - Pages older than N months without re-verification get downgraded.
 - Pages whose covered files have changed since `last_verified` get downgraded.
@@ -234,7 +234,7 @@ A schema document should specify:
 - When and how to lint.
 - The edge type taxonomy.
 
-The schema is the single highest-leverage file in this pattern. A few hundred words there determines whether the agent does this consistently or sporadically. Iterate on it as you learn what works for your codebase.
+The schema is the file that decides the most in this pattern. A few hundred words there determine whether the agent works consistently. Iterate on it as you learn what works for your codebase.
 
 ---
 

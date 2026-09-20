@@ -13,6 +13,6 @@ Harden cache identity and root isolation for 0.9.0.
 - Scope mutation-queue replay invalidation to the plugin's owning root, and rename `ReplaySettleApi.invalidate`'s second parameter from `keyArgs` to `callArgs` — it always took the query's own arguments, not the tuple `key()` returns. The queue now requires core >=0.9.0.
 - Include implementation entry points and TSX files in coverage, retaining the existing thresholds.
 
-Note that unbound `query.peek()` now throws under multiple roots where 0.8 neither threw nor warned; audit hot-path `peek` call sites when upgrading.
+Unbound `query.peek()` now throws under multiple roots where 0.8 neither threw nor warned; audit hot-path `peek` call sites when upgrading.
 
 See MIGRATING.md for the 0.8 to 0.9 API changes.

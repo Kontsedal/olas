@@ -91,7 +91,7 @@ Subscribers to `isStale` now see the flip happen at the right moment.
 
 ## A separate helper for "check stale right now"
 
-When code needs the imperative answer ("is this stale RIGHT NOW for purposes of deciding whether to refetch on subscribe?"), use `entry.isStaleNow()` — it computes `Date.now() - lastUpdatedAt >= staleTime` on the spot. This is what `bindEntry` and `prefetch` use; the reactive `isStale` signal is for UI / consumer subscriptions.
+When code needs the imperative answer ("is this stale RIGHT NOW for purposes of deciding whether to refetch on subscribe?"), use `entry.isStaleNow()` — it computes `Date.now() - lastUpdatedAt >= staleTime` on the spot. This is what `bindEntry` and `prefetch` use; the reactive `isStale` signal is for UI or consumer subscriptions.
 
 ```ts
 isStaleNow(): boolean {
@@ -103,14 +103,14 @@ isStaleNow(): boolean {
 
 ## The second half of the trap: don't hand the timer a raw delay (0.9)
 
-Having established that you need a timer, the obvious next line — `setTimeout(fn, this.staleTime)` — is wrong for any duration the *user* supplies, and it fails in the direction nobody checks. `setTimeout` takes a signed 32-bit delay: a non-finite value is coerced toward 1ms rather than "never", and a finite value above 2,147,483,647 overflows and also fires almost immediately. So the two settings that mean "keep this the longest" behave as the shortest:
+Having established that you need a timer, the obvious next line — `setTimeout(fn, this.staleTime)` — is wrong for any duration the *user* supplies, and it fails in the direction a test rarely covers. `setTimeout` takes a signed 32-bit delay: a non-finite value is coerced toward 1ms rather than "never", and a finite value above 2,147,483,647 overflows and also fires almost immediately. So the two settings that mean "keep this the longest" behave as the shortest:
 
 ```ts
 staleTime: Infinity   # intent: never goes stale.   Actual (pre-0.9): stale in ~1ms
 gcTime: Infinity      # intent: cache for the session. Actual (pre-0.9): collected in ~1ms
 ```
 
-This is a *silent* failure — data still renders, it just refetches constantly — which is why both survived until an audit. `scheduleExpiry` (`expiry-timer.ts`) is the fix and the only place a duration should meet a timer:
+This is a *silent* failure — data still renders, it refetches constantly — which is why both survived until an audit. `scheduleExpiry` (`expiry-timer.ts`) is the fix and the only place a duration should meet a timer:
 
 - non-finite → schedules **nothing**, returns `null`. The callers already treat `timer == null` as "no expiry pending", so `Infinity` falls out as "never" with no special case at the call site.
 - finite → walked in chunks against an absolute deadline, so a long delay stays accurate across chunk boundaries.
@@ -122,4 +122,4 @@ Every user-supplied duration in core routes through it: the staleness timer (`En
 
 ## When to be careful
 
-Anywhere "is something stale / expired" is exposed as a reactive signal, you need a timer. `Date.now()`-derived computeds are inert. And any timer whose delay comes from user config needs `scheduleExpiry`, not `setTimeout` — the failure mode is the opposite of what the setting says, and it is invisible.
+Anywhere "is something stale and expired" is exposed as a reactive signal, you need a timer. `Date.now()`-derived computeds are inert. And any timer whose delay comes from user config needs `scheduleExpiry`, not `setTimeout` — the failure mode is the opposite of what the setting says, and it is invisible.

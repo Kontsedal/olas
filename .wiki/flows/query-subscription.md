@@ -80,7 +80,7 @@ Key tricks:
 
 - `keyFn()` runs **inside the tracking scope**. Any signal it reads becomes a dep — the effect re-runs when those signals change. That's how `props.id` flipping causes an entry swap.
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
-- We refetch on subscribe only if status is `idle` / stale / errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
+- We refetch on subscribe only if status is `idle`, stale or errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
 
 ### 3. `client.bindEntry(query, args)` — `client.ts:771`
 

@@ -114,8 +114,8 @@ The Olas root owns its own QueryClient (one per root). Two roots have isolated c
 
 ### Patterns that don't translate one-to-one
 
-- **The default values differ, not just the API.** TanStack defaults to `retry: 3` and `refetchOnWindowFocus: true`; Olas defaults to `retry: 0`, `refetchOnWindowFocus: false`, `staleTime: 0`. Porting a `QueryClient` config means restating your policy in `createRoot(…, { defaultQueryOptions })` — otherwise queries silently stop retrying and (with `staleTime: 0`) refetch on every subscribe. This is a behavior change that produces no type error, so do it first.
-- **TanStack `useQuery` returns the same `data | undefined` and you handle both.** Olas `ctx.use(q)` returns an `AsyncState<T>` with eight signals (`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`) plus `refetch` / `reset` / `firstValue`. In React, `useQuery(subscription)` bundles them into one render trigger.
+- **The default values differ, not only the API.** TanStack defaults to `retry: 3` and `refetchOnWindowFocus: true`; Olas defaults to `retry: 0`, `refetchOnWindowFocus: false`, `staleTime: 0`. Porting a `QueryClient` config means restating your policy in `createRoot(…, { defaultQueryOptions })` — otherwise queries silently stop retrying and (with `staleTime: 0`) refetch on every subscribe. This is a behavior change that produces no type error, so do it first.
+- **TanStack `useQuery` returns the same `data | undefined` and you handle both.** Olas `ctx.use(q)` returns an `AsyncState<T>` with eight signals (`data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`) plus `refetch`, `reset` and `firstValue`. In React, `useQuery(subscription)` bundles them into one render trigger.
 - **Suspense.** TanStack has `useSuspenseQuery`. Olas doesn't ship a Suspense integration — use `subscription.firstValue()` to await first data, or render `isLoading ? <Spinner /> : <View />`.
 - **`mutation.reset()` cancels; TanStack's doesn't.** rq's `reset()` detaches the observer and lets the in-flight request finish. Olas aborts every in-flight run and rejects queued `serial` runs (SPEC §6.2). Same name, same signature, no type error — but a write you expected to land won't. Audit every `reset()` you port.
 - **DevTools.** TanStack devtools is mature; Olas ships `@kontsedal/olas-devtools` — `<DevtoolsLauncher root={root} />` gives you a floating panel with controller-tree, cache timeline, and mutation log. No separate browser extension (yet — tracked in `BACKLOG.md`).
@@ -167,13 +167,13 @@ const count = use(visibleCount)
 
 ### Where actions help: they help less here
 
-If you genuinely need actions (replayable history, time-travel, action logs), you can fire devtools events from mutation `onSuccess` / `onError` and reconstruct externally. But for the typical "form submit fires a mutation, optimistic update, server confirms or rolls back" loop, RTK's `createAsyncThunk` is replaced by `ctx.mutation` with `onMutate` returning the rollback context — same data flow, less boilerplate.
+If you need actions (replayable history, time-travel, action logs), you can fire devtools events from mutation `onSuccess` and `onError` and reconstruct externally. But for the typical "form submit fires a mutation, optimistic update, server confirms or rolls back" loop, RTK's `createAsyncThunk` is replaced by `ctx.mutation` with `onMutate` returning the rollback context — same data flow, less boilerplate.
 
 ---
 
 ## From "hooks at the top of the page"
 
-The path many React projects take: every feature is a `useFoo()` hook that calls `useState` / `useQuery` / `useEffect` at the top of a component, and the component renders.
+The path many React projects take: every feature is a `useFoo()` hook that calls `useState`, `useQuery` and `useEffect` at the top of a component, and the component renders.
 
 This works until:
 - The same logic is needed in two components.
@@ -214,8 +214,8 @@ Trade-offs: more files, more types, more setup. Payoff: lifecycle is explicit, t
 ## When NOT to migrate
 
 - Small apps with a few screens, no shared logic, no testable business rules. Hooks-at-the-top-of-pages is fine; don't pay the abstraction cost for nothing.
-- Pure design systems / component libraries. Olas is for app logic, not UI primitives.
-- Heavy mutable performance loops (canvas, animation). Signals are fast but not zero-cost; raw mutable refs win for tight inner loops. Keep them in components and commit to controllers at gesture boundaries (spec §16.5 "Gesture / transient UI state").
+- Pure design systems and component libraries. Olas is for app logic, not UI primitives.
+- Heavy mutable performance loops (canvas, animation). Signals are fast but not zero-cost; raw mutable refs win for tight inner loops. Keep them in components and commit to controllers at gesture boundaries (spec §16.5 "Gesture and transient UI state").
 
 ---
 

@@ -29,9 +29,9 @@ confidence: medium
 
 ## DevtoolsEmitter
 
-One per root. Held inside `RootShared.devtools`. Emits are routed from `ControllerInstance`, from `QueryClient` (invalidate / gc / set-data), and from inside `Entry` / `MutationImpl` at the relevant lifecycle points.
+One per root. Held inside `RootShared.devtools`. Emits are routed from `ControllerInstance`, from `QueryClient` (invalidate, gc and set-data), and from inside `Entry` and `MutationImpl` at the relevant lifecycle points.
 
-- `emit(event)` — short-circuits when `handlers.size === 0` (one Set size check), AFTER `recordLifecycle`. So having the bus in production with no subscriber is effectively free.
+- `emit(event)` — short-circuits when `handlers.size === 0` (one Set size check), AFTER `recordLifecycle`. So the bus in production with no subscriber costs one Set size check.
 - **`seq`/`t` stamping.** `emit` and the subscribe-time replay both route through `stamp(event)` (`devtools.ts:203-211`), which returns a `{ ...event, seq: ++this.seq, t: Date.now() }` COPY (never mutates the caller's inline event) — a caller-supplied `causeId` is preserved, `seq`/`t` are always (re)assigned by the emitter, which owns them. `seq` is per-root monotonic; a late subscriber's replayed snapshot events get fresh (higher) `seq`s so they still sort before its subsequent live events.
 - `subscribe(handler)` — replays the live-controller snapshot (each event `stamp`ed), then fires on every event; returns unsub. Exposed publicly via `root.__debug.subscribe(...)`.
 - Handler exceptions are caught — a buggy devtools handler must not break the program.
@@ -42,11 +42,11 @@ One per root. Held inside `RootShared.devtools`. Emits are routed from `Controll
   consumer code doesn't need a build flag — but no events ever arrive. The
   four `controller:*` lifecycle hooks that feed `recordLifecycle` are
   inside the same guard, so the live-controller snapshot is empty too.
-  See SPEC §23 *Devtools / `__debug` and production builds*.
+  See SPEC §23 *Devtools and `__debug` and production builds*.
 
 ## How events reach the bus
 
-Lifecycle events from `ControllerInstance` go straight through `rootShared.devtools.emit(...)` — see `instance.ts:101-107, 145-147, 213-215, 250-252` (each call site wrapped in `if (__DEV__)` so production builds elide it; see SPEC §23 *Devtools / `__debug` and production builds*).
+Lifecycle events from `ControllerInstance` go straight through `rootShared.devtools.emit(...)` — see `instance.ts:101-107, 145-147, 213-215, 250-252` (each call site wrapped in `if (__DEV__)` so production builds elide it; see SPEC §23 *Devtools and `__debug` and production builds*).
 
 **Cache events** (Phase 13; extended T8.1). `QueryClient` holds a `devtools?: DevtoolsEmitter`. `ClientEntry`'s constructor builds an `EntryEvents` callback bundle (`client.ts:98-140`) and passes it to `Entry`:
 
@@ -55,9 +55,9 @@ Lifecycle events from `ControllerInstance` go straight through `rootShared.devto
 - `onFetchError(durationMs, error, fetchId)` in `applyFailure()` → `cache:fetch-error`.
 - `onSnapshotPush/Rollback/Finalize()` from `Entry.setData`'s snapshot closures → `snapshot:push/rollback/finalize`.
 
-`fetchId` is a globally-unique per-fetch token (`entry.ts` module counter `globalFetchSeq`) shared across a fetch's start + settle + the set-data it writes, so they group under one `causeId`. The bundle is `undefined` if `devtools` is `undefined`. `QueryClient.setData` / `setInfiniteData` / `applyRemoteSetData` / `applyDehydratedEntry` / `setEntryData` also emit `cache:set-data` via the private `emitDevtoolsSetData` helper (`source` derived from the ambient cause — see below — or passed explicitly for `'remote'`). `QueryClient.invalidate` / `invalidateAll` / `dropEntry` emit `cache:invalidated` / `cache:gc` directly.
+`fetchId` is a globally-unique per-fetch token (`entry.ts` module counter `globalFetchSeq`) shared across a fetch's start + settle + the set-data it writes, so they group under one `causeId`. The bundle is `undefined` if `devtools` is `undefined`. `QueryClient.setData`, `setInfiniteData`, `applyRemoteSetData`, `applyDehydratedEntry` and `setEntryData` also emit `cache:set-data` via the private `emitDevtoolsSetData` helper (`source` derived from the ambient cause — see below — or passed explicitly for `'remote'`). `QueryClient.invalidate`, `invalidateAll` and `dropEntry` emit `cache:invalidated` and `cache:gc` directly.
 
-**Mutation events** (Phase 13; `causeId` T8.1). `MutationImpl` takes an optional `DevtoolsEmitter` constructor argument from `ctx.mutation` (via `instance.ts`). Each `executeRun` mints a `runId` up front (`makeRunId()`, generated when persistable OR `__DEV__`) used as BOTH the persistable run id AND the devtools `causeId`. The private `emit(event, causeId?)` (`mutation.ts:230-246`) stamps it onto `mutation:run/success/error/rollback`. `mutation:run` fires after `onMutate` succeeds and counters are bumped; `mutation:success` before user `onSuccess`; `mutation:error` before user `onError`; `mutation:rollback` via a wrapped `Snapshot` — both auto-rollback (supersede / dispose / error) AND user-driven `snapshot.rollback()` emit it, exactly once per snapshot.
+**Mutation events** (Phase 13; `causeId` T8.1). `MutationImpl` takes an optional `DevtoolsEmitter` constructor argument from `ctx.mutation` (via `instance.ts`). Each `executeRun` mints a `runId` up front (`makeRunId()`, generated when persistable OR `__DEV__`) used as BOTH the persistable run id AND the devtools `causeId`. The private `emit(event, causeId?)` (`mutation.ts:230-246`) stamps it onto `mutation:run/success/error/rollback`. `mutation:run` fires after `onMutate` succeeds and counters are bumped; `mutation:success` before user `onSuccess`; `mutation:error` before user `onError`; `mutation:rollback` via a wrapped `Snapshot` — both auto-rollback (supersede, dispose or error) AND user-driven `snapshot.rollback()` emit it, exactly once per snapshot.
 
 ## `ctx.debug({...})` — controller variables
 
@@ -69,13 +69,13 @@ Timing: `ctx.debug` runs *during* the factory (state `constructing`), before `co
 
 `seq` + `t` are stamped centrally (see `stamp` above). `causeId` groups all events from one cause into a chain in the devtools timeline:
 
-- **Mutation cause.** `executeRun`'s `runId` is passed to every `mutation:*` emit. To make the events its `onMutate`/rollback *trigger* (the optimistic `cache:set-data`, the `snapshot:*`) inherit the same id WITHOUT threading it through `setData`/`Entry` signatures, core uses a **dev-only ambient cause**: `__runWithCause(runId, fn)` / `__currentCauseId()` (appended after the class in `devtools.ts`). `MutationImpl` wraps `onMutate` and the snapshot rollback/finalize in `__runWithCause(runId, ...)`; the QueryClient's set-data / snapshot emit closures read `__currentCauseId()` at emit time. Synchronous by design — the correlated writes all happen on the stack while the cause is active. Passthrough (zero cost) outside dev builds.
+- **Mutation cause.** `executeRun`'s `runId` is passed to every `mutation:*` emit. To make the events its `onMutate`/rollback *trigger* (the optimistic `cache:set-data`, the `snapshot:*`) inherit the same id WITHOUT threading it through `setData`/`Entry` signatures, core uses a **dev-only ambient cause**: `__runWithCause(runId, fn)` and `__currentCauseId()` (appended after the class in `devtools.ts`). `MutationImpl` wraps `onMutate` and the snapshot rollback/finalize in `__runWithCause(runId, ...)`; the QueryClient's set-data and snapshot emit closures read `__currentCauseId()` at emit time. Synchronous by design — the correlated writes all happen on the stack while the cause is active. Passthrough (zero cost) outside dev builds.
 - **Fetch cause.** The `fetchId` minted per `startFetch` is the `causeId` for that fetch's `cache:fetch-*` + `cache:set-data`.
 - **Un-attributable writes.** A bare `query.setData(...)` outside any mutation has no ambient cause → `source: 'set'`, no `causeId`.
 
 The whole chain for a failing optimistic mutation — `mutation:run` → `snapshot:push` → `cache:set-data(mutate)` → `snapshot:rollback` → `cache:set-data(mutate)` → `mutation:rollback` → `mutation:error` — shares one `causeId`. See [../flows/devtools-causal-timeline.md](../flows/devtools-causal-timeline.md).
 
-**Field validation events** are wired. `ctx.field` calls `bindFieldDevtoolsOwner` so standalone fields publish `field:validated` with the owning controller path + a synthetic `(field)` name. `ctx.form` / `ctx.fieldArray` walk their trees via `bindTreeToDevtools` to publish events with the leaf's dotted path inside the form. See `forms/field.ts` (`bindFieldDevtoolsOwner`) and `forms/form.ts` (`bindTreeToDevtools`).
+**Field validation events** are wired. `ctx.field` calls `bindFieldDevtoolsOwner` so standalone fields publish `field:validated` with the owning controller path + a synthetic `(field)` name. `ctx.form` and `ctx.fieldArray` walk their trees via `bindTreeToDevtools` to publish events with the leaf's dotted path inside the form. See `forms/field.ts` (`bindFieldDevtoolsOwner`) and `forms/form.ts` (`bindTreeToDevtools`).
 
 ## What's emitted today
 

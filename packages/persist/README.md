@@ -48,13 +48,13 @@ function usePersisted<T>(
 type PersistErrorOp = 'load' | 'deserialize' | 'serialize' | 'write' | 'migrate' | 'remoteChange'
 ```
 
-Defaults: `JSON.stringify` / `JSON.parse`. Override `serialize` / `deserialize` for custom shapes (Dates, Maps, etc.). Cleanup is registered via `ctx.onDispose`.
+Defaults: `JSON.stringify` and `JSON.parse`. Override `serialize` and `deserialize` for custom shapes (Dates, Maps, etc.). Cleanup is registered via `ctx.onDispose`.
 
 **Schema versioning.** Set `version: N` to wrap writes in a `{"v":N,"d":<serialized>}` envelope. On load, a payload with a different `version` (or a legacy un-versioned one, `fromVersion: undefined`) is handed to `migrate(raw, fromVersion)`, which returns the upgraded value (re-persisted as an envelope) or `undefined` to drop the entry.
 
 **Error routing.** Every fallible op routes through `onError(err, op, key)` — storage `get`/`set` (quota, closed db, aborted IDB commit), `serialize`/`deserialize`, `migrate` throws, and cross-tab payload corruption. Without `onError`, errors are swallowed. The IndexedDB adapter resolves writes on the transaction's **commit** (not the request's `onsuccess`), so a quota failure surfaces here rather than silently vanishing.
 
-> **Note on serializer parity with `@kontsedal/olas-cross-tab`.** `@kontsedal/olas-persist` defaults to JSON; `@kontsedal/olas-cross-tab` uses structured clone via `BroadcastChannel`. They differ in what survives a round-trip: `Date` becomes a string under JSON but survives cross-tab; `Map`/`Set` are dropped by JSON but survive cross-tab; functions and symbols are dropped by both. If you use both packages on the same value, supply a `serialize` / `deserialize` pair to persist that matches cross-tab's structured-clone semantics.
+> **Note on serializer parity with `@kontsedal/olas-cross-tab`.** `@kontsedal/olas-persist` defaults to JSON; `@kontsedal/olas-cross-tab` uses structured clone via `BroadcastChannel`. They differ in what survives a round-trip: `Date` becomes a string under JSON but survives cross-tab; `Map`/`Set` are dropped by JSON but survive cross-tab; functions and symbols are dropped by both. If you use both packages on the same value, supply a `serialize` and `deserialize` pair to persist that matches cross-tab's structured-clone semantics.
 
 > **Cross-tab delete.** When another tab calls `localStorage.removeItem(key)` (or your custom adapter signals `null` through `onChange`), the local source is reset to `undefined`. Consumers whose `T` excludes `undefined` should treat this as "value gone, fall back to your own initial".
 

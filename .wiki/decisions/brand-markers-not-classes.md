@@ -39,7 +39,7 @@ In UI tests, you might want to hand a "fake form" to a component that calls `isF
 
 ## Why a literal `__olas: 'query'` for queries, not a Symbol?
 
-Queries cross the network boundary in SSR (`dehydrate()` would NOT serialize the brand, but the brand is checked at runtime in `ctx.use`). Symbols don't serialize through `JSON.stringify`. We don't actually need cross-process equality for query brands — they're never sent over the wire — but the literal string form is also nicer in error messages, devtools events, and grep output.
+Queries cross the network boundary in SSR (`dehydrate()` would NOT serialize the brand, but the brand is checked at runtime in `ctx.use`). Symbols don't serialize through `JSON.stringify`. We don't need cross-process equality for query brands — they're never sent over the wire — but the literal string form is also nicer in error messages, devtools events, and grep output.
 
 For forms, the brand is on an object held in user memory only, so a `Symbol.for(...)` is fine and gives us the bundling-resilience property.
 

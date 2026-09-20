@@ -60,7 +60,7 @@ Spec §3.4: **any time during the controller's active lifetime, not only the ini
 
 Individual primitives also expose `.dispose()` — idempotent, safe to call early. The owning controller will call it again on its own dispose; both calls are no-ops after the first.
 
-**After dispose, every `ctx.*` factory throws** `[olas] ctx.<name>() called after the controller was disposed` (guarded by `assertLive` in `buildCtx`). A captured `ctx` reused past its owner's lifetime is a programming error; without the guard the factory would push into a cleared lifecycle list and leak a live child / subscription / effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
+**After dispose, every `ctx.*` factory throws** `[olas] ctx.<name>() called after the controller was disposed` (guarded by `assertLive` in `buildCtx`). A captured `ctx` reused past its owner's lifetime is a programming error; without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
 
 ## `ctx.deps` — DI surface
 
@@ -80,10 +80,10 @@ The TS overloads in `Ctx<TDeps>` declare two signatures: one for `Query`, one fo
 
 ## `ctx.attach` vs `ctx.child`
 
-`ctx.child(def, props)` returns just `api` — the child's lifecycle is fully owned by the parent (dispose cascades, no manual control). `ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`: the child is still parent-owned (dispose cascades automatically), but the caller gets explicit handles to tear it down early or freeze/thaw it. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. See `controller-instance.md` for cascade semantics.
+`ctx.child(def, props)` returns only `api` — the child's lifecycle is fully owned by the parent (dispose cascades, no manual control). `ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`: the child is still parent-owned (dispose cascades automatically), but the caller gets explicit handles to tear it down early or freeze/thaw it. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. See `controller-instance.md` for cascade semantics.
 
 ## Dynamic-child surface
 
 `ctx.session(...)`, `ctx.collection(...)`, and `ctx.lazyChild(...)` cover the three dynamic-child cases — singleton-with-key (e.g. tenant switch), keyed homogeneous list (e.g. board cards), and code-split-loaded child (e.g. modal). Construction failures route through `onError({ kind: 'construction' })`. See [`modules/controller.md`](../modules/controller.md) and `packages/core/tests/dynamic-children.test.ts`.
 
-`provide` / `inject` cover cross-tree dependency injection — see [`scope.md`](scope.md) for the semantics and [`modules/react.md`](../modules/react.md) for the React adapter that composes with them.
+`provide` and `inject` cover cross-tree dependency injection — see [`scope.md`](scope.md) for the semantics and [`modules/react.md`](../modules/react.md) for the React adapter that composes with them.

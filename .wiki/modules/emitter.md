@@ -26,5 +26,5 @@ Either form has the same shape.
 ## Implementation notes
 
 - Handlers iterate over a **snapshot** (`Array.from(this.handlers)`) so a handler that unsubscribes itself or another mid-emit doesn't crash. The unsubscribed handler still runs for the current emit if it was in the snapshot — newly added handlers fire from the next emit onward.
-- After `dispose()`, `emit` is a no-op and `on` / `once` return a no-op unsubscribe function.
+- After `dispose()`, `emit` is a no-op and `on` and `once` return a no-op unsubscribe function.
 - `emit` is typed conditionally: `T extends void` → zero-arg; otherwise one-arg.

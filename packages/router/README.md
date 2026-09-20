@@ -1,8 +1,8 @@
 # @kontsedal/olas-router
 
-Router-agnostic bridge for `@kontsedal/olas-core`. Exposes route params / search / pathname as `Scope`-resolved `ReadSignal`s so any controller can `ctx.inject(RouteParamsScope)` and react to URL changes — without controllers ever importing your router.
+Router-agnostic bridge for `@kontsedal/olas-core`. Exposes route params, search and pathname as `Scope`-resolved `ReadSignal`s so any controller can `ctx.inject(RouteParamsScope)` and react to URL changes — without controllers ever importing your router.
 
-Works with any **client-side** React router. TanStack Router and React Router v6 are the wire-ups documented below; the same pattern works for `@reach/router`, your own custom router, or anything that hands you `params` / `search` / `pathname` per render. (Next.js / RSC is out of scope by design — see [Scope](#scope-client-side-routers-only) at the bottom.)
+Works with any **client-side** React router. TanStack Router and React Router v6 are the wire-ups documented below; the same pattern works for `@reach/router`, your own custom router, or anything that hands you `params`, `search` and `pathname` per render. (Next.js and RSC is out of scope by design — see [Scope](#scope-client-side-routers-only) at the bottom.)
 
 ## Install
 
@@ -117,7 +117,7 @@ const RoutePathnameScope: Scope<ReadSignal<string>>
 
 ## How it works
 
-The adapter holds three internal signals. `Bridge` is a `useLayoutEffect` that calls `signal.set(...)` for each slot whose value shallow-changed (routers re-allocate `params` / `search` on every render, so a vanilla `Object.is` check would write on every commit). All writes are wrapped in `batch(...)` so a controller depending on multiple slots never observes an intermediate state. `useLayoutEffect` runs before the browser paints, so the pre-Bridge value is visible for at most the very first commit on the client (and not at all on the server if you seed — below).
+The adapter holds three internal signals. `Bridge` is a `useLayoutEffect` that calls `signal.set(...)` for each slot whose value shallow-changed (routers re-allocate `params` and `search` on every render, so a vanilla `Object.is` check would write on every commit). All writes are wrapped in `batch(...)` so a controller depending on multiple slots never observes an intermediate state. `useLayoutEffect` runs before the browser paints, so the pre-Bridge value is visible for at most the very first commit on the client (and not at all on the server if you seed — below).
 
 ```
 your router  →  <adapter.Bridge params={...} search={...} pathname={...}>
@@ -133,7 +133,7 @@ your router  →  <adapter.Bridge params={...} search={...} pathname={...}>
 
 `createRouterAdapter()` allocates its signals **per call**. Two roots that both `createRoot({ scopes: makeAdapter().scopes })` get independent route state — vital for per-request SSR isolation and for tests that mount multiple roots in parallel.
 
-**Seed route state on the server.** `Bridge` pushes state in a `useLayoutEffect`, which never runs during SSR. So without seeding, `params` / `search` / `pathname` are empty (`{}` / `''`) for the *entire* server render — a controller that reads `params.value.userId` sees `undefined`, fetches nothing (or the wrong thing), and the server HTML is wrong. Pass `initial` derived from the request URL:
+**Seed route state on the server.** `Bridge` pushes state in a `useLayoutEffect`, which never runs during SSR. So without seeding, `params`, `search` and `pathname` are empty (`{}` and `''`) for the *entire* server render — a controller that reads `params.value.userId` sees `undefined`, fetches nothing (or the wrong thing), and the server HTML is wrong. Pass `initial` derived from the request URL:
 
 ```ts
 // server, per request
@@ -185,7 +185,7 @@ Bind the query to the root you're prefetching *into*. On the client there is one
 
 ## Scope: client-side routers only
 
-Next.js / RSC is intentionally not supported. The framework owns navigation and data fetching from *outside* the React tree, which conflicts with the Olas model — controllers live above your render tree. See [`../../BACKLOG.md`](../../BACKLOG.md) for the long-form reasoning.
+Next.js and RSC is intentionally not supported. The framework owns navigation and data fetching from *outside* the React tree, which conflicts with the Olas model — controllers live above your render tree. See [`../../BACKLOG.md`](../../BACKLOG.md) for the long-form reasoning.
 
 ## Further reading
 

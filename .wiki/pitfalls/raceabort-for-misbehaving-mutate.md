@@ -16,7 +16,7 @@ confidence: high
 
 ## The trap
 
-`AbortSignal` is cooperative — the holder of the signal must check / honor it. If a user's `mutate` function ignores its signal:
+`AbortSignal` is cooperative — the holder of the signal must check and honor it. If a user's `mutate` function ignores its signal:
 
 ```ts
 ctx.mutation({

@@ -16,7 +16,7 @@ confidence: high
 
 # `timing/`
 
-`debounced(source, ms, options?)` and `throttled(source, ms, options?)` — return a `TimingSignal<T>` (a `ReadSignal<T>` plus `cancel()` / `flush()` / `dispose()`) that mirrors `source` with the corresponding timing. Spec §9, §20.1.
+`debounced(source, ms, options?)` and `throttled(source, ms, options?)` — return a `TimingSignal<T>` (a `ReadSignal<T>` plus `cancel()`, `flush()` or `dispose()`) that mirrors `source` with the corresponding timing. Spec §9, §20.1.
 
 ## Lifecycle
 

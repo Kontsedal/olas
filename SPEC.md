@@ -14,7 +14,7 @@ Everything that decides *what happens* belongs in a controller:
 - **Events** — domain events (`'note saved'`, `'user invited'`) that other parts of the app react to.
 - **Validation** — form rules, business invariants, async server-side checks (username taken, etc.).
 - **Derived data** — anything computed from server or client state.
-- **Workflow / orchestration** — multi-step flows, navigation triggers, conditional logic, "after X happens, do Y."
+- **Workflow and orchestration** — multi-step flows, navigation triggers, conditional logic, "after X happens, do Y."
 
 If it has a *decision* or a *side effect*, it's in a controller. If it can be wrong in a way that matters, it's in a controller.
 
@@ -43,7 +43,7 @@ Once the boundary is mechanical, four things become true:
 1. **You write 100% of app logic in plain TypeScript** — no framework hooks, no DOM, no React/Vue/Svelte concepts touch your business code.
 2. **You test logic with plain unit tests against mock data** — no JSDOM, no `renderHook`, no `act` wrappers. Construct a controller in Node, call its methods, assert on signal values.
 3. **You test UI by injecting fake controllers** — components take controllers as props or pull them from a provider; in tests, you hand them objects with the right signal shape. UI never touches the network.
-4. **You can swap frameworks by swapping a thin adapter** — the React / Vue / Svelte adapter is the only code that knows about the UI framework. Everything else is pure TS and runs anywhere.
+4. **You can swap frameworks by swapping a thin adapter** — the React, Vue and Svelte adapter is the only code that knows about the UI framework. Everything else is pure TS and runs anywhere.
 
 ## Why this is worth the rules
 
@@ -71,7 +71,7 @@ If those describe your app, the upfront cost of learning the controller tree pay
 - Code-on-server apps using full-page renders or RSC — Olas runs in the browser.
 - Tiny side projects where "I just want `useState` to work" — use Zustand or Jotai.
 
-The library is opinionated, the vocabulary is sizable (~20 primitives), and the testing payoff requires actually writing tests. Below a certain size, that's a bad trade.
+The library is opinionated, the vocabulary is sizable (~20 primitives), and the testing payoff requires writing tests. Below a certain size, that's a bad trade.
 
 If you're picking a tool for the next thing, ask: *will this codebase still be alive in three years, and will engineers I haven't hired yet be working on it?* If yes — Olas is built for that horizon. If no — pick something smaller.
 
@@ -79,7 +79,7 @@ If you're picking a tool for the next thing, ask: *will this codebase still be a
 
 ## 1. Core principles
 
-1. **Logic / UI split is hard.** Logic *cannot* import from UI; UI subscribes to controllers via a tiny adapter.
+1. **Logic and UI split is hard.** Logic *cannot* import from UI; UI subscribes to controllers via a tiny adapter.
 2. **Composition, not inheritance.** Controllers are factory functions that take a `ctx` and return their public API. No classes, no `this`, no decorators.
 3. **Explicit tree.** Parents construct children and pass them whatever they need. No implicit lookup, no global registries, no sibling/ancestor access.
 4. **Synchronous construction.** Factories never return a promise. Async work happens inside caches, mutations, or effects. This keeps the tree statically traceable.
@@ -168,11 +168,11 @@ At a glance, the primitives split into these groups:
 
 2. **What's not on `ctx`.** Anything that doesn't need lifecycle binding is a standalone function: `signal`, `computed`, `effect` (standalone), `batch`, `createEmitter`, `defineQuery`, `defineInfiniteQuery`, `defineScope`, `selection`, `debounced`, `throttled`, `debouncedValidator`, `isAbortError`, `createTestController`. Most utility code never sees `ctx`.
 
-We considered splitting `ctx` into `CtxQuery` / `CtxForm` / `CtxLifecycle` and rejected it: most helpers mix concerns, three parameters is worse than one, and there's no clean axis to split along. The trade-off is intentional.
+We considered splitting `ctx` into `CtxQuery`, `CtxForm` and `CtxLifecycle` and rejected it: most helpers mix concerns, three parameters is worse than one, and there's no clean axis to split along. The trade-off is intentional.
 
 ### 3.3 Reusable composables
 
-Composables are just functions that take a `ctx`. No special framework concept.
+Composables are functions that take a `ctx`. No special framework concept.
 
 ```ts
 function usePagination(ctx: Ctx, opts: { pageSize: number }) {
@@ -232,7 +232,7 @@ When the controller itself disposes, it disposes every primitive it owns (includ
 
 Caveats:
 - Things created after construction count toward `path` and devtools events, but their `path` ends with an auto-generated slot index (no name).
-- For *child controllers* that come and go, prefer `ctx.collection` / `ctx.dynamicCollection` / `ctx.session` over hand-rolling Maps of `ctx.child` — those handle the diff and lifecycle for you. The Map-of-primitives pattern shown above is for non-controller primitives (fields, caches, mutations).
+- For *child controllers* that come and go, prefer `ctx.collection`, `ctx.dynamicCollection` and `ctx.session` over hand-rolling Maps of `ctx.child` — those handle the diff and lifecycle for you. The Map-of-primitives pattern shown above is for non-controller primitives (fields, caches, mutations).
 
 ---
 
@@ -272,7 +272,7 @@ Register the hook before the effect and `flush()` emits into nothing.
 
 ### 4.1 Advanced — suspend & resume
 
-Some controllers also support `suspend()` / `resume()`. This is for "definitely coming back, definitely soon" cases — tab UIs where you're switching between two visible tabs, modals you minimize and re-open in seconds. Suspending preserves state and subscriptions; resuming is faster than dispose-and-reconstruct.
+Some controllers also support `suspend()` and `resume()`. This is for "definitely coming back, definitely soon" cases — tab UIs where you're switching between two visible tabs, modals you minimize and re-open in seconds. Suspending preserves state and subscriptions; resuming is faster than dispose-and-reconstruct.
 
 | Transition | Triggers                                 | Effect                                                        |
 | ---------- | ---------------------------------------- | ------------------------------------------------------------- |
@@ -286,7 +286,7 @@ Some controllers also support `suspend()` / `resume()`. This is for "definitely 
 - A fetch that was already in flight when suspend was called continues to completion (we don't abort, since the result may be immediately useful on resume).
 - On resume, any cache past its `staleTime` refetches.
 
-**Explicit child suspension survives tree cascades.** A child suspended explicitly via `attach.suspend()` or `collection.suspendItem(key)` stays suspended through a whole-tree `suspend()` → `resume()` cycle (what `<KeepAlive>` performs). Only its matching `attach.resume()` / `resumeItem(key)` wakes it — otherwise a virtualized list's scrolled-out rows would all resume on a single tree resume. Symmetrically, `attach.resume()` / `resumeItem()` called while the parent is still suspended does not activate the child inside a frozen tree — it clears the explicit mark and the child rejoins the parent's next resume cascade.
+**Explicit child suspension survives tree cascades.** A child suspended explicitly via `attach.suspend()` or `collection.suspendItem(key)` stays suspended through a whole-tree `suspend()` → `resume()` cycle (what `<KeepAlive>` performs). Only its matching `attach.resume()` and `resumeItem(key)` wakes it — otherwise a virtualized list's scrolled-out rows would all resume on a single tree resume. Symmetrically, `attach.resume()` and `resumeItem()` called while the parent is still suspended does not activate the child inside a frozen tree — it clears the explicit mark and the child rejoins the parent's next resume cascade.
 
 ### 4.2 Suspend vs dispose — picking the right one
 
@@ -328,7 +328,7 @@ Use this for back/forward navigation caches, hidden tabs that *might* be reopene
 - **Local cache** (`ctx.cache`): anonymous, scoped to controller. Disposed with the controller.
 - **Query** (`defineQuery` + `ctx.use`): named, keyed, shared across the tree, lives on the root's query client.
 
-Both go through the same internal machinery. Local caches just get an opaque internal key.
+Both go through the same internal machinery. Local caches get an opaque internal key.
 
 **Request deduplication.** Two (or twenty) subscribers to the same query key share **one** cache entry and **one** in-flight fetch. The fetcher runs once per distinct key, regardless of how many `ctx.use(...)` subscriptions exist. This is implicit from the keyed-entry design and applies equally to `Query`, `ParamCache`, and `InfiniteQuery`.
 
@@ -357,15 +357,15 @@ export const userQuery = defineQuery({
 - `retry: number` — retry up to N times.
 - `retry: (attempt, err) => boolean` — decide per-attempt; lets you skip retries on 4xx errors.
 - `retryDelay: number | (attempt) => number` — ms between attempts; default `1000`.
-- Retries respect `AbortSignal` — controller dispose / key change cancels the whole retry chain.
-- A retried fetch counts as one logical fetch for `isFetching` / race protection / inflight counter; only the final outcome (success after retries, or final error) reaches consumers.
-- Mutations support the same `retry` / `retryDelay` fields on `MutationSpec`.
+- Retries respect `AbortSignal` — controller dispose and key change cancels the whole retry chain.
+- A retried fetch counts as one logical fetch for `isFetching` and race protection and inflight counter; only the final outcome (success after retries, or final error) reaches consumers.
+- Mutations support the same `retry` and `retryDelay` fields on `MutationSpec`.
 
 **Resetting.** `subscription.reset()` clears `error` and `status` back to `'idle'` without dropping `data` (useful to dismiss an error toast without forcing a refetch). `subscription.refetch()` re-fetches regardless of stale-state. To both clear and re-fetch: `reset(); refetch();`.
 
 When `keepPreviousData: true` and the key changes (e.g. id signal flips from `'a'` to `'b'`), the subscription keeps showing the previous entry's `data` until the new entry's first fetch resolves. `isFetching` is true, `isLoading` is false (we already have *some* data). Without this, key transitions briefly show `data === undefined`, causing UI flashes in tab and pagination UIs.
 
-**Conditional / disabled queries.** Bootstrap flows often need "fetch X only once Y is available" (e.g. fetch the news feed once `session.currentUser` resolves). `ctx.use` accepts an `enabled` thunk that runs in a tracking scope:
+**Conditional and disabled queries.** Bootstrap flows often need "fetch X only once Y is available" (e.g. fetch the news feed once `session.currentUser` resolves). `ctx.use` accepts an `enabled` thunk that runs in a tracking scope:
 
 ```ts
 const session = ctx.use(sessionQuery)
@@ -378,7 +378,7 @@ const feed = ctx.use(newsfeedQuery, {
 
 While `enabled` returns `false`, the subscription holds `status: 'idle'`, `data: undefined`, no network fetch fires, and `isLoading` stays `false`. When `enabled` flips to `true`, the key is evaluated and fetching starts normally. Flipping back to `false` does **not** dispose the entry — subsequent re-enables reuse the cached data subject to `staleTime`.
 
-**`keepDataWhileDisabled` (opt-in).** Pass `ctx.use(query, { enabled, keepDataWhileDisabled: true })` to keep the subscription reporting its **last `data`** (snapshotted at the moment `enabled` went false) instead of blanking to `undefined` — the react-query "a disabled observer still reads the cache" shape, for porting flows that flash empty otherwise. The entry is still released (refcount / GC unchanged) and `status` stays `'idle'`; only `data` survives. `error` is not retained. On re-enable the live entry's data takes over. Default `false`.
+**`keepDataWhileDisabled` (opt-in).** Pass `ctx.use(query, { enabled, keepDataWhileDisabled: true })` to keep the subscription reporting its **last `data`** (snapshotted at the moment `enabled` went false) instead of blanking to `undefined` — the react-query "a disabled observer still reads the cache" shape, for porting flows that flash empty otherwise. The entry is still released (refcount and GC unchanged) and `status` stays `'idle'`; only `data` survives. `error` is not retained. On re-enable the live entry's data takes over. Default `false`.
 
 For the common case (no `enabled`), continue to pass a bare thunk: `ctx.use(query, () => [id])`. The options object form is only needed when you want `enabled`.
 
@@ -450,7 +450,7 @@ Every fetcher receives an `AbortSignal` as its last argument. The cache aborts a
 - `refetch()` is called while a previous fetch is still pending — the previous one is aborted.
 - The subscriber count drops to 0 *and* `gcTime` is `0` (immediate gc).
 
-Fetchers are responsible for passing the signal to their I/O (`fetch(url, { signal })`, axios cancel tokens, etc.). If a fetcher ignores it, the cache will simply discard the eventual result.
+Fetchers are responsible for passing the signal to their I/O (`fetch(url, { signal })`, axios cancel tokens, etc.). If a fetcher ignores it, the cache will discard the eventual result.
 
 **Explicit cancellation.** `query.cancel(...keyArgs)` (and `subscription.cancel()` for the bound entry) aborts the in-flight fetch on demand: it supersedes the request so its result can never land, restores a settled status (`'success'` if data exists, else `'idle'`), and leaves `data` untouched. `query.cancelAll()` cancels every keyed entry of the query. The canonical use is the optimistic-write recipe (§6.4): cancel outgoing refetches *before* an optimistic `setData`, so a slower in-flight response can't land and clobber the optimistic value. `query.replace(...)` needs no such call — it supersedes the in-flight fetch itself, because a whole-record write is newer than any request issued before it (§6.4). `query.write(...)` does not: it patches, and a patch has no claim on the fields it left alone. Complementarily, on a **successful** fetch any live optimistic snapshots are rebased onto the fresh result, so a later rollback restores server truth rather than resurrecting pre-fetch data.
 
@@ -461,10 +461,10 @@ Fetchers are responsible for passing the signal to their I/O (`fetch(url, { sign
 **Network mode & `isPaused`.** A query's `networkMode` (spec'd on `QuerySpec`) controls how fetches interact with `navigator.onLine`:
 
 - `online` (default) — a fetch requested while offline is **deferred**, not run; it resumes automatically on the next reconnect. The entry reports `isPaused: true` while deferred.
-- `always` — never gate on connectivity; the fetcher runs whenever requested (localhost / IPC / service-worker sources that don't surface through `navigator.onLine`).
-- `offlineFirst` — start the fetch regardless. If it rejects with a network-shaped error (a `fetch` `TypeError`; `AbortError` excluded) **while offline**, park the entry (`isPaused: true`) and retry on reconnect instead of surfacing the error; the `status` stays `idle` / last-success. Otherwise the error surfaces normally.
+- `always` — never gate on connectivity; the fetcher runs whenever requested (localhost, IPC and service-worker sources that don't surface through `navigator.onLine`).
+- `offlineFirst` — start the fetch regardless. If it rejects with a network-shaped error (a `fetch` `TypeError`; `AbortError` excluded) **while offline**, park the entry (`isPaused: true`) and retry on reconnect instead of surfacing the error; the `status` stays `idle` and last-success. Otherwise the error surfaces normally.
 
-`isPaused` (on `AsyncState`, §5.3) is the observable signal for both parked paths — `false` whenever a fetch is actually in flight or settled. Use it to render a "waiting for network" affordance distinct from a spinner (`isFetching`) or an error (`status === 'error'`).
+`isPaused` (on `AsyncState`, §5.3) is the observable signal for both parked paths — `false` whenever a fetch is in flight or settled. Use it to render a "waiting for network" affordance distinct from a spinner (`isFetching`) or an error (`status === 'error'`).
 
 ### 5.6 Race conditions
 
@@ -489,7 +489,7 @@ userQuery.prefetch(id) // fire-and-forget warmup
 
 Internally these all dispatch to the root's query client.
 
-**Invalidate semantics.** `invalidate` / `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry — one kept warm by `gcTime` after its last subscriber left, or created by `prefetch` — is marked stale and *not* refetched; the next subscriber triggers the fetch. This matches TanStack and avoids waking data nobody is watching.
+**Invalidate semantics.** `invalidate` and `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry — one kept warm by `gcTime` after its last subscriber left, or created by `prefetch` — is marked stale and *not* refetched; the next subscriber triggers the fetch. This matches TanStack and avoids waking data no subscriber is watching.
 
 Both return a `Promise<void>` that resolves when the refetches they trigger settle or are discarded, or immediately for entries without subscribers (which are marked stale only). Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `ctx.bindQuery(query)` or `root.bindQuery(query)` to select a root (§21.5). Resolution alone does not guarantee reconciliation if a request was superseded (§6.4).
 
@@ -528,7 +528,7 @@ We deliberately don't bundle Immer — users who want it import it themselves, o
 
 ### 5.9 Refetch triggers
 
-- `staleTime` — on subscribe / access, refetch if older than this.
+- `staleTime` — on subscribe and access, refetch if older than this.
 - `refetchInterval` — periodic background refetch while subscribed (paused while suspended). Two forms, see below.
 - `refetchOnWindowFocus` — **off by default.** Opt-in per query or root-wide.
 - `refetchOnReconnect` — **off by default.** Same.
@@ -577,10 +577,10 @@ Applies to `defineQuery`, `defineInfiniteQuery`, and `ctx.cache` (for the fields
 
 Two deliberate exclusions:
 
-- **`refetchInterval` is not defaultable.** A root-wide interval would start background polling for every query in the app, which is never what someone means by "defaults". Opt in per query, in either form.
-- **`refetchOnWindowFocus` / `refetchOnReconnect` are no-ops for infinite queries**, which install no focus/reconnect subscription. They resolve for regular queries only.
+- **`refetchInterval` is not defaultable.** A root-wide interval would start background polling for every query in the app, which is not what "defaults" is asking for. Opt in per query, in either form.
+- **`refetchOnWindowFocus` and `refetchOnReconnect` are no-ops for infinite queries**, which install no focus/reconnect subscription. They resolve for regular queries only.
 
-The pre-existing flat `RootOptions.refetchOnWindowFocus` / `refetchOnReconnect` remain as shorthand; when both are set, the `defaultQueryOptions` entry wins.
+The pre-existing flat `RootOptions.refetchOnWindowFocus` and `refetchOnReconnect` remain as shorthand; when both are set, the `defaultQueryOptions` entry wins.
 
 ### 5.10 Picking the right cache flavor
 
@@ -590,7 +590,7 @@ The pre-existing flat `RootOptions.refetchOnWindowFocus` / `refetchOnReconnect` 
 | Keyed cache (args vary), used by one or many controllers | `defineQuery({ key, fetcher })` |
 | Paginated / cursored accumulation | `defineInfiniteQuery({...})` |
 
-**A note on "local" parameterized caches.** Earlier drafts shipped a `ctx.paramCache` primitive — a controller-scoped keyed cache — to cover "I need pagination state but no other module needs this data." That use case is fully covered by `defineQuery`: define the query at module scope, never import it elsewhere, and it's effectively local. Sharing across controllers is opportunistic, not required, and entries gc cleanly via `gcTime`. The extra primitive added vocabulary without adding capability, so it's gone. If you genuinely want zero leakage into the global query client, set `gcTime: 0` and the entry drops the instant the last subscriber leaves.
+**A note on "local" parameterized caches.** Earlier drafts shipped a `ctx.paramCache` primitive — a controller-scoped keyed cache — to cover "I need pagination state but no other module needs this data." That use case is fully covered by `defineQuery`: define the query at module scope, never import it elsewhere, and it is local in practice. Sharing across controllers is opportunistic, not required, and entries gc cleanly via `gcTime`. The extra primitive added vocabulary without adding capability, so it's gone. If you want zero leakage into the global query client, set `gcTime: 0` and the entry drops the instant the last subscriber leaves.
 
 ### 5.11 Infinite / cursor pagination
 
@@ -624,7 +624,7 @@ type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
 }
 ```
 
-**Refetch semantics.** A refetch of an infinite entry — `refetchInterval`, `invalidate()`, `refetch()`, focus/reconnect — **re-fetches every currently-loaded page** in order (from `initialPageParam`, chaining each next param via `getNextPageParam` off the freshly-fetched pages), not just the first. Pages update atomically at the end, so a scrolled-down list never flashes down to one page mid-refetch. This matches TanStack. A refetch that finds the dataset has shrunk (a page now returns `getNextPageParam === null` earlier) keeps only the pages that still exist. **Not dehydrated:** infinite entries are skipped by `dehydrate()` (§15) — a server-rendered infinite list refetches its first page(s) on the client.
+**Refetch semantics.** A refetch of an infinite entry — `refetchInterval`, `invalidate()`, `refetch()`, focus/reconnect — **re-fetches every currently-loaded page** in order (from `initialPageParam`, chaining each next param via `getNextPageParam` off the freshly-fetched pages), not only the first. Pages update atomically at the end, so a scrolled-down list never flashes down to one page mid-refetch. This matches TanStack. A refetch that finds the dataset has shrunk (a page now returns `getNextPageParam === null` earlier) keeps only the pages that still exist. **Not dehydrated:** infinite entries are skipped by `dehydrate()` (§15) — a server-rendered infinite list refetches its first page(s) on the client.
 
 The `flat` selector is configurable per-query via an `itemsOf: (page) => page.items` field. If omitted, `flat` equals `pages`.
 
@@ -662,7 +662,7 @@ type Mutation<V, R> = {
 }
 ```
 
-**`status`** is the outcome of the latest run — `'idle'` before any run (and after `reset()`), `'pending'` in flight, `'success'`, `'error'`. It is what React's `useMutation` derives `isIdle` / `isSuccess` / `isError` from, so a **`void` mutation** (which resolves `undefined`) still reports `status: 'success'` rather than looking stuck at idle. Distinct from `isPending`, which stays true while *any* run is in flight (parallel mode). A superseded `latest-wins` run does **not** flip `status` to `'error'` — the superseder owns the terminal status.
+**`status`** is the outcome of the latest run — `'idle'` before any run (and after `reset()`), `'pending'` in flight, `'success'`, `'error'`. It is what React's `useMutation` derives `isIdle`, `isSuccess` and `isError` from, so a **`void` mutation** (which resolves `undefined`) still reports `status: 'success'` rather than looking stuck at idle. Distinct from `isPending`, which stays true while *any* run is in flight (parallel mode). A superseded `latest-wins` run does **not** flip `status` to `'error'` — the superseder owns the terminal status.
 
 ### 6.1 Concurrency modes
 
@@ -715,7 +715,7 @@ try {
 }
 ```
 
-**A run that already completed is never rolled back.** If `mutate` resolves and the abort lands in the gap before the run's continuation, the work is done — you cannot cancel what already happened. The optimistic snapshot is **finalized**, not rolled back (rolling back would commit a value already known to be stale to a cache that outlives the mutation, with no `onSuccess` left to invalidate it), and a persistable run settles as `'success'` rather than `'cancelled'` so the queue does not replay a write the server accepted (§13.3). The returned promise still rejects with `AbortError` — the caller walked away, and `data` / `status` belong to the superseder or to nobody.
+**A run that already completed is never rolled back.** If `mutate` resolves and the abort lands in the gap before the run's continuation, the work is done — you cannot cancel what already happened. The optimistic snapshot is **finalized**, not rolled back (rolling back would commit a value already known to be stale to a cache that outlives the mutation, with no `onSuccess` left to invalidate it), and a persistable run settles as `'success'` rather than `'cancelled'` so the queue does not replay a write the server accepted (§13.3). The returned promise still rejects with `AbortError` — the caller walked away, and `data` and `status` belong to the superseder, or are left unset.
 
 ### 6.3 Optimistic updates
 
@@ -740,7 +740,7 @@ The guarantee this buys: **once every optimistic layer has rolled back — in an
 
 **Fetch success rebases live snapshots.** When a fetch resolves while optimistic snapshots are live, each snapshot's captured baseline is updated to the fresh server value. A subsequent rollback therefore restores *server truth*, not the pre-fetch value — otherwise a refetch landing mid-mutation, followed by that mutation failing, would resurrect stale pre-fetch data. Pair this with `query.cancel(...)` (§5.5): cancelling outgoing refetches *before* an optimistic write prevents a stale response from overwriting it in the first place.
 
-This is snapshot-based rollback, not full rebasing: it does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For genuinely conflicting updates (two mutations writing the same field), prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
+This is snapshot-based rollback, not full rebasing: it does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For conflicting updates (two mutations writing the same field), prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
 
 Only `query.setData(...)` (as used inside a mutation's `onMutate`) creates a rollback snapshot and flips `hasPendingMutations`. **Canonical cache writes** that do not originate from an optimistic mutation — cross-tab receive, entity backprop (`setEntryData`, §13.2), realtime patches — write straight through the entry without pushing a snapshot, so they never set `hasPendingMutations` and can never wedge it at `true`.
 
@@ -760,7 +760,7 @@ This is a correctness distinction, not a stylistic one. A `setData` snapshot exi
 
 ### 6.5 Detached runs — writes that outlive the screen
 
-`detached: true` stops `dispose()` from cancelling. In-flight runs finish, queued `serial` runs still drain, `run(...)` still works after dispose, and `onSuccess` / `onError` / `onSettled` still fire.
+`detached: true` stops `dispose()` from cancelling. In-flight runs finish, queued `serial` runs still drain, `run(...)` still works after dispose, and `onSuccess`, `onError` and `onSettled` still fire.
 
 ```ts
 const activate = ctx.mutation({
@@ -841,7 +841,7 @@ type Validator<T> = (
 
 The `AbortSignal` is triggered when the value changes again before the validator resolves (or the field is disposed) — async validators should pass it through to their I/O.
 
-A validator may return a `string` (an error on the node it's attached to), `null` / `[]` (valid), or a `FormIssue[]` to target descendants by `path` — see §8.3 for how form- and array-level validators route those onto specific fields. On a leaf `Field`, a returned `FormIssue[]` collapses to its messages (a leaf has no descendants to route to).
+A validator may return a `string` (an error on the node it's attached to), `null` and `[]` (valid), or a `FormIssue[]` to target descendants by `path` — see §8.3 for how form- and array-level validators route those onto specific fields. On a leaf `Field`, a returned `FormIssue[]` collapses to its messages (a leaf has no descendants to route to).
 
 **Validators run in a tracking scope.** Reading any signal inside a validator causes the validator to re-run automatically when that signal changes:
 
@@ -855,7 +855,7 @@ const confirm = ctx.field('', [
 
 Sync validators run first and short-circuit; async validators only run after all syncs pass.
 
-**Built-in validators.** `required`, `minLength`, `maxLength`, `min`, `max`, `email`, `pattern`, and `mustBeTrue`. `required` rejects empty values (`''`, `null`, `undefined`, `[]`) but a boolean `false` is a legitimate value and **passes** — for a consent / terms checkbox that must be ticked, use `mustBeTrue(message?)`, which rejects anything that isn't `true`.
+**Built-in validators.** `required`, `minLength`, `maxLength`, `min`, `max`, `email`, `pattern`, and `mustBeTrue`. `required` rejects empty values (`''`, `null`, `undefined`, `[]`) but a boolean `false` is a legitimate value and **passes** — for a consent or terms checkbox that must be ticked, use `mustBeTrue(message?)`, which rejects anything that isn't `true`.
 
 ### 8.2 Debounced async validators
 
@@ -956,7 +956,7 @@ form.fields.confirm.errors // ['Passwords must match'] — routed onto the field
 form.topLevelErrors        // [] — nothing landed at the top
 ```
 
-Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` / `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel** beside a field's own validator output and `setErrors` server errors: they merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run** (so fixing the mismatch removes them, while a field's own `set()` does not). An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
+Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` and `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel** beside a field's own validator output and `setErrors` server errors: they merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run** (so fixing the mismatch removes them, while a field's own `set()` does not). An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
 
 **Flat error summary.** For a11y "X errors at top of form" displays:
 
@@ -1023,7 +1023,7 @@ order.value.value
 // { customer: string; items: Array<{ sku: string; qty: number; price: number }> }
 ```
 
-The factory passed to `fieldArray` runs once per `add()` / `insert()` to construct a fresh sub-form (or sub-field). Each item is owned by the array; removing it disposes the underlying form.
+The factory passed to `fieldArray` runs once per `add()` and `insert()` to construct a fresh sub-form (or sub-field). Each item is owned by the array; removing it disposes the underlying form.
 
 **Structural dirtiness.** `add`, `insert`, `remove`, `move`, and `clear` mark the array **dirty** — `isDirty` is `true` after any of them, not only after a per-item edit. This is what makes the reactive-`initial` guard (§8.4) safe: once the user adds or removes a row, the default `resetOnInitialChange: 'when-clean'` stops re-seating, so a background refetch of `initial: () => queryData` can't silently delete the rows the user just added. `reset()` — and an `initial`-driven re-seat — clears the structural dirt back to the clean baseline.
 
@@ -1072,7 +1072,7 @@ function useSubmit<T, R>(
 }
 ```
 
-This is *not* a primitive — just a typical user-written helper. Shown here so the submission flow is obvious.
+This is *not* a primitive — a typical user-written helper. Shown here so the submission flow is obvious.
 
 ### 8.7 Zod integration (`@kontsedal/olas-zod`)
 
@@ -1123,7 +1123,7 @@ const debouncedQuery = debounced(query, 300) // Signal<string>, lags by 300ms
 const throttledScroll = throttled(scrollY, 100)
 ```
 
-For method-level throttling inside a controller, just wrap a function with `debounce(fn, 300)`.
+For method-level throttling inside a controller, wrap a function with `debounce(fn, 300)`.
 
 ---
 
@@ -1180,7 +1180,7 @@ declare module '@kontsedal/olas-core' {
 const greeting = computed(() => `Hello, ${ctx.deps.session.currentUser.value?.name ?? 'guest'}`)
 ```
 
-Services can be plain objects, Olas roots themselves, or anything else with a `.value` signal-like surface. The point is: **deps is the right home for app-wide state**, not just stateless API clients.
+Services can be plain objects, Olas roots themselves, or anything else with a `.value` signal-like surface. The point is: **deps is the right home for app-wide state**, not only stateless API clients.
 
 ### 10.2 Deps as the cross-cutting bus
 
@@ -1266,11 +1266,11 @@ Scopes are slightly weaker than props for static traceability (a consumer's sign
 
 #### When to use a scope — and when not to
 
-Scopes are the most easily abused primitive in the library. Used well, they remove painful prop-drilling for genuinely hierarchical data. Used carelessly, they turn into React Context 2.0: invisible coupling, hard-to-trace dependencies, provider spaghetti.
+Scopes are the most easily abused primitive in the library. Used well, they remove painful prop-drilling for hierarchical data. Used carelessly, they turn into React Context 2.0: invisible coupling, hard-to-trace dependencies, provider spaghetti.
 
 **Use a scope when:**
 
-- The data is **truly domain-hierarchical** — there's a level in your controller tree where it's introduced, and every controller below that level conceptually exists *within* that domain. Classic examples: `orgId`, `workspaceId`, `documentId`, `experimentBucket`.
+- The data is **domain-hierarchical** — there's a level in your controller tree where it's introduced, and every controller below that level conceptually exists *within* that domain. Classic examples: `orgId`, `workspaceId`, `documentId`, `experimentBucket`.
 - More than **three intermediate layers** would otherwise have to thread the same prop unchanged. (Three is roughly the patience threshold — beyond that, prop-drilling becomes refactoring tax.)
 - The consuming controllers don't need to declare the dependency in their *external* props (the dependency is contextual, not parameterized).
 - You have **fewer than ~10 scopes** in the whole app. If your app has 30 scopes, you've recreated implicit DI by other means.
@@ -1287,7 +1287,7 @@ Scopes are the most easily abused primitive in the library. Used well, they remo
 - The data is **app-wide** and stable for the root's lifetime — services, API clients, session, logger.
 - Multiple unrelated subtrees need it.
 
-**The litmus test:** if a junior engineer reading your controller can't answer "where does this value come from?" in 10 seconds, you've overused scopes. Scopes are a memory-and-typing convenience, not a substitute for explicit parameterization. The default move is props; reach for a scope when the prop-drilling cost is real and the data is genuinely hierarchical.
+**The litmus test:** if a junior engineer reading your controller can't answer "where does this value come from?" in 10 seconds, you've overused scopes. Scopes are a memory-and-typing convenience, not a substitute for explicit parameterization. The default move is props; reach for a scope when the prop-drilling cost is real and the data is hierarchical.
 
 ---
 
@@ -1334,7 +1334,7 @@ If item *content* changes (same key, new fields) and a child needs to react, the
 
 Collections solve two problems at once: dynamic lifecycles, and **per-item subscription performance**. Each child controller owns its own signals, so UI items can subscribe only to *their* signals — the parent list re-renders only when items are added/removed, item internals re-render only when their signals change.
 
-For non-controller-worthy items (just data), a `computed(() => list.value.find(...))` is fine — accept the linear search up to a few thousand items.
+For non-controller-worthy items (plain data), a `computed(() => list.value.find(...))` is fine — accept the linear search up to a few thousand items.
 
 **Heterogeneous items — same primitive, factory form.** When item types vary (Notion blocks, Datadog widgets, Slack channel types), pass a `factory` instead of `controller` + `propsOf`:
 
@@ -1363,7 +1363,7 @@ blocks.items.value
 
 `ctx.collection` accepts **either** the homogeneous form (`controller` + `propsOf`) **or** the factory form (`factory: (item) => { controller, props }`), never both. The factory form is called once per new key; type-discriminant changes for an existing key dispose and reconstruct the child.
 
-This makes `ctx.collection` the single primitive for plugin / block / widget containers. Document editors, dashboards, page builders, IDE panels — anywhere the children are typed-per-item.
+This makes `ctx.collection` the single primitive for plugin, block and widget containers. Document editors, dashboards, page builders, IDE panels — anywhere the children are typed-per-item.
 
 **Ephemeral controllers — `ctx.session`.** When a child controller exists only for a transient interaction (modal, edit session, tooltip, command palette open), `ctx.child` is the wrong primitive — it lives until the parent disposes. Use `ctx.session`:
 
@@ -1377,7 +1377,7 @@ await editor.save.run({ content: editor.draft.value })
 dispose()
 ```
 
-Lifetime is bounded by either (a) the explicit `dispose()` you call, or (b) the parent's disposal — whichever comes first. The api shape is exactly the controller's return type; there's no extra wrapper to unpack.
+Lifetime is bounded by either (a) the explicit `dispose()` you call, or (b) the parent's disposal — whichever comes first. The api shape is exactly the controller's return type, with no wrapper around it.
 
 Use cases: modal forms (open, edit, save/cancel, dispose), inline edit sessions (one row enters edit mode, commits, disposes), wizards (each step's controller lives for its step), command palette (the palette is constructed when opened, disposed when closed).
 
@@ -1385,7 +1385,7 @@ Use cases: modal forms (open, edit, save/cancel, dispose), inline edit sessions 
 
 Controllers are the unit of *testable logic*. Each one is a small program with its own lifecycle, its own primitives, and its own public surface. They earn their cost — both runtime (per-instance allocations, subscriptions, devtools events) and conceptual (you have to think about where it lives in the tree).
 
-Use a **controller** when each item is genuinely its own small program: an open chat in messenger, a tab in a tabbed editor, an active video player on a watch page, a row in an editable spreadsheet of ~hundreds of rows. The signals it owns, the mutations it exposes, and the per-item lifecycle (close, pause, dispose) all justify a dedicated controller.
+Use a **controller** when each item is its own small program: an open chat in messenger, a tab in a tabbed editor, an active video player on a watch page, a row in an editable spreadsheet of ~hundreds of rows. The signals it owns, the mutations it exposes, and the per-item lifecycle (close, pause, dispose) all justify a dedicated controller.
 
 Use **plain signals or maps of signals** when items are homogeneous data with no per-item behavior worth testing in isolation: posts in an infinite news feed (10,000 visible), cells in a spreadsheet grid (100,000), nodes in a virtualized tree, comments past the first ten. These belong as data inside a parent controller. The parent owns one or many signals that hold the collection; UI subscribes to per-item slices (typically via `computed(() => bigMap.value.get(id))` or per-item signals stored in a `Map<Key, Signal<Item>>`).
 
@@ -1467,7 +1467,7 @@ Cross-tab sync is opt-in and only supported by storages that emit change events 
 
 ### 13.2 Cross-tab in-memory cache sync
 
-A separate composable (`@kontsedal/olas-cross-tab`) layers over `QueryClient` to mirror `setData` / `invalidate` events across browser tabs of the same origin via `BroadcastChannel`. Persistence (§13 / `@kontsedal/olas-persist`) syncs *persisted* signals on the `storage` event; this syncs *in-memory* query cache entries that never touch disk. Both are opt-in and independently configurable; combining them for the same logical state is supported but redundant.
+A separate composable (`@kontsedal/olas-cross-tab`) layers over `QueryClient` to mirror `setData` and `invalidate` events across browser tabs of the same origin via `BroadcastChannel`. Persistence (§13 and `@kontsedal/olas-persist`) syncs *persisted* signals on the `storage` event; this syncs *in-memory* query cache entries that never touch disk. Both are opt-in and independently configurable; combining them for the same logical state is supported but redundant.
 
 The plugin requires a stable `queryId` per query to route messages across tabs. Set it on `defineQuery({ queryId, ... })`. Opt a query in with `crossTab: true`. See `@kontsedal/olas-cross-tab` README and §5.2 for the query-spec fields.
 
@@ -1482,9 +1482,9 @@ createRoot(appController, {
 
 Only non-infinite queries sync. Infinite queries (`defineInfiniteQuery`) do not propagate cross-tab — the page-array payload is too heavy to be a safe default. Plugin events still fire with `kind: 'infinite'` so future plugins can opt in; the built-in cross-tab plugin filters them out.
 
-**Echo prevention is layered:** (1) the `QueryClient` marks remote-applied writes with `isRemote: true` on `SetDataEvent` / `InvalidateEvent`, and plugins skip rebroadcast in that case; (2) messages carry a `sourceId`, and the plugin filters its own; (3) messages carry a monotonic `msgId`, and out-of-order or duplicate messages are dropped.
+**Echo prevention is layered:** (1) the `QueryClient` marks remote-applied writes with `isRemote: true` on `SetDataEvent` and `InvalidateEvent`, and plugins skip rebroadcast in that case; (2) messages carry a `sourceId`, and the plugin filters its own; (3) messages carry a monotonic `msgId`, and out-of-order or duplicate messages are dropped.
 
-`SetDataEvent` carries a `source: 'set' | 'fetch' | 'remote'` field so layered plugins can distinguish explicit `setData` calls from fetcher-result writes (`'fetch'`) and remote-applied writes (`'remote'`). The cross-tab plugin only rebroadcasts `source: 'set'` — fetcher results are a per-tab concern, since every tab runs its own fetcher and rebroadcasting would be quadratic noise. Plugins that need a holistic view of cache writes (entity normalization — see §18.1) observe all three.
+`SetDataEvent` carries a `source: 'set' | 'fetch' | 'remote'` field so layered plugins can distinguish explicit `setData` calls from fetcher-result writes (`'fetch'`) and remote-applied writes (`'remote'`). The cross-tab plugin only rebroadcasts `source: 'set'` — fetcher results are a per-tab concern, since every tab runs its own fetcher and rebroadcasting would be quadratic noise. A plugin that needs every cache write observes all three. Entity normalization is one, see §18.1.
 
 `QueryClientPluginApi` exposes `setEntryData(queryId, keyArgs, updater)` for plugins that need to write back into the cache via the local-write path (the resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast). Used by the entity-normalization plugin (§18.1) to patch every query holding a given entity in one batched round of writes. `setEntryData` and `applyRemoteSetData` are **canonical writes** — they update the entry and emit the event but push no optimistic snapshot and do not set `hasPendingMutations` (§6.4); only `query.setData` in a mutation's `onMutate` does.
 
@@ -1515,7 +1515,7 @@ root.__debug.queryEntries() // DebugCacheEntry[] — current state of every cach
 - `controller:debug` — `{ path, values }`. A `ctx.debug({...})` call *after* construction (e.g. from an effect); carries the controller's full merged variables record (live references).
 - `cache:subscribed | fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryKey }` (`fetch-success`/`fetch-error` add `durationMs`, `fetch-error` adds `error`, `subscribed` adds `subscriberPath`).
 - `cache:set-data` — `{ queryKey, source, data }`. Emitted on every cache write; `data` is the post-write value and `source` is `'set' | 'fetch' | 'mutate' | 'remote'` (mirrors the §13.2 plugin vocabulary). This is what lets a panel show *current* data without polling.
-- `snapshot:push | rollback | finalize` — `{ queryKey }`. The optimistic-update stack (§6.4): a tracked `setData` pushes, a mutation error / supersede rolls back, a mutation success finalizes.
+- `snapshot:push | rollback | finalize` — `{ queryKey }`. The optimistic-update stack (§6.4): a tracked `setData` pushes, a mutation error and supersede rolls back, a mutation success finalizes.
 - `mutation:run | success | error | rollback` — `{ path, name? }` (`run` adds `vars`, `success` `result`, `error` `error`).
 - `field:validated` — `{ path, field, valid, errors }`.
 
@@ -1586,7 +1586,7 @@ function UserProfile({ id }: { id: string }) {
 }
 ```
 
-In React, hooks build on `useSyncExternalStore`. In Vue, signals interop with `ref` natively. In Svelte, signals become stores via `$signal`. In vanilla, just `.subscribe()`.
+In React, hooks build on `useSyncExternalStore`. In Vue, signals interop with `ref` natively. In Svelte, signals become stores via `$signal`. In vanilla, call `.subscribe()`.
 
 The adapter is the **only** code that knows about a UI framework. Everything else is pure TS.
 
@@ -1661,7 +1661,7 @@ Some state legitimately belongs to a single component for a single interaction: 
 
 **Keep this state in components** — `useState`, `useRef`, framework-native. On gesture end, *commit* the result to the controller (e.g., `kanban.moveCard(cardId, newColumnId)`). The pattern is: component owns "what is the user doing right now"; controller owns "what does the world look like after they're done."
 
-This is not a violation of "logic lives in controllers" — gestures aren't logic, they're input. The controller method `moveCard` is the logic, and it's tested there.
+This keeps to "logic lives in controllers". A gesture is input, and the controller method `moveCard` is the logic, tested there.
 
 ### Bulk operations
 
@@ -1670,7 +1670,7 @@ For "select N items, do thing to all of them":
 - **If the API supports a batch endpoint** (preferred): one mutation with `vars: ID[]`. Optimistic update writes all N at once. One rollback on failure.
 - **If only single-item endpoints exist**: `await Promise.all(ids.map(id => mutation.run({ id })))`. Mutations are `parallel` by default. Errors per-item are visible via the rejected promise; `mutation.error` only reflects the *last* error (limitation of a single mutation instance). For richer per-item tracking, run mutations inside a controller and track an `Array<MutationOutcome>` signal.
 
-Avoid pretending a single mutation tracks N concurrent runs cleanly — the `Mutation` API tracks one logical operation. For N truly independent operations, run N separate mutations or hand-roll the orchestration.
+Avoid pretending a single mutation tracks N concurrent runs cleanly — the `Mutation` API tracks one logical operation. For N independent operations, run N separate mutations or hand-roll the orchestration.
 
 ### Code splitting with `ctx.lazyChild`
 
@@ -1692,7 +1692,7 @@ Semantics:
 - Returns a `LazyChild<Api>` wrapper, not the api itself.
 - `load()` triggers the import; multiple calls dedupe. If you never call `load()`, the module never loads.
 - On success, `api.value` becomes the controller's API. Components subscribe normally via `use(editor.api)`.
-- On import / construction failure, `status` flips to `'error'` and `error.value` carries the cause; `root.onError` fires with `kind: 'construction'`.
+- On import and construction failure, `status` flips to `'error'` and `error.value` carries the cause; `root.onError` fires with `kind: 'construction'`.
 - Parent disposal disposes the lazy child (if loaded) and aborts an in-flight load.
 
 Type:
@@ -1717,7 +1717,7 @@ Document the rebuild pattern in your project's HMR setup.
 
 ### Multi-select for large lists
 
-Selection state (which items are selected, the "anchor" for shift-click range select) recurs in every table / list with bulk actions. Use the `selection` composable from `@kontsedal/olas-core`:
+Selection state (which items are selected, the "anchor" for shift-click range select) recurs in every table and list with bulk actions. Use the `selection` composable from `@kontsedal/olas-core`:
 
 ```ts
 import { selection } from '@kontsedal/olas-core'
@@ -1808,7 +1808,7 @@ The `current` thunk re-reads server data on edit start, so concurrent updates do
 
 ### Live streaming buffers (logs, metrics, presence)
 
-Tail mode: a WebSocket / SSE stream firing 10–1000 events/sec, rendered live with backpressure:
+Tail mode: a WebSocket and SSE stream firing 10–1000 events/sec, rendered live with backpressure:
 
 ```ts
 function useTail<T>(
@@ -1982,9 +1982,9 @@ The following are deliberately out of scope. They aren't "we'll do them later" �
 - Multi-framework adapters in core. `@kontsedal/olas-react` ships.
 - **React Server Components (RSC).** Controllers rely on signals and client-side lifecycle. They run in the browser — wrap any RSC tree in client components before reaching Olas.
 - **Built-in router.** Routing belongs in deps as a service (§16.5). Plug in `react-router`, TanStack Router, or your own.
-- **Gesture / transient UI state.** State whose lifetime equals a single interaction (in-progress drag rectangle, hover, focus) belongs in components, not controllers. See §16.5.
+- **Gesture and transient UI state.** State whose lifetime equals a single interaction (in-progress drag rectangle, hover, focus) belongs in components, not controllers. See §16.5.
 - **Multi-item mutation orchestration.** The `Mutation` primitive tracks one logical operation. For "fire N mutations and track each result," compose them in a controller (§16.5).
-- **Offline-first sync / mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network; if you need a queue-then-sync model (Notion, Linear), build it as a layer over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`.
+- **Offline-first sync and mutation queueing.** No persistent outbox, no conflict-resolution layer in core. Mutations are best-effort against the network; if you need a queue-then-sync model (Notion, Linear), build it as a layer over `ctx.mutation` (queue locally, retry on reconnect) and persist via `@kontsedal/olas-persist`.
 
 ### 18.1 Entity normalization
 
@@ -2009,8 +2009,8 @@ const patchPostEverywhere = (ctx: Ctx, id: string, patch: Partial<Post>) => {
 - `defineEntity<T>({ name, idOf })` — module-scope entity descriptor.
 - `entitiesPlugin([Post, User, ...])` — install via `RootOptions.plugins[]`.
 - `entities.signal(Post, id) → ReadSignal<Post | undefined>` — reactive per-id reads.
-- `entities.update(Post, id, patchOrUpdater, options?)` — accepts `Partial<T>` (default shallow merge; pass `{ merge: 'deep' }` to recursively merge plain objects, with arrays / non-plain values replacing) or `(prev: T) => T` (updater). Backpropagates to every query holding the entity, batched into one round of subscriber notifications. Uses `QueryClientPluginApi.setEntryData` (§13.2) to write back — including for infinite queries (page arrays are walked transparently).
-- `entities.upsert / get / invalidate / entries / bindings` — round out the surface (last two are devtools snapshots).
+- `entities.update(Post, id, patchOrUpdater, options?)` — accepts `Partial<T>` (default shallow merge; pass `{ merge: 'deep' }` to recursively merge plain objects, with arrays or non-plain values replacing) or `(prev: T) => T` (updater). Backpropagates to every query holding the entity, batched into one round of subscriber notifications. Uses `QueryClientPluginApi.setEntryData` (§13.2) to write back — including for infinite queries (page arrays are walked transparently).
+- `entities.upsert, get, invalidate, entries and bindings` — round out the surface (last two are devtools snapshots).
 
 ```ts
 const Post = defineEntity<Post>({ name: 'Post', idOf: (v: any) => v?.id ?? null })
@@ -2053,11 +2053,11 @@ Future-work ideas — additional packages, storage adapters, browser-extension d
 | `@kontsedal/olas-realtime` | Composables over a consumer-supplied `RealtimeService` — `useRealtimePatcher` (WebSocket / SSE → cache patch) and `useLiveStream` (tail-buffer with capacity + coalesced flush). §16.5. |
 | `@kontsedal/olas-entities` | `QueryClientPlugin` that walks query data via per-entity `idOf`, normalizes into a reactive per-id signal store, and backpropagates `entity.update(id, patch)` to every query holding the entity. §18.1. |
 
-Vanilla "adapter" — no package needed. Signals already expose `.subscribe()` / `.peek()`.
+Vanilla "adapter" — no package needed. Signals already expose `.subscribe()` and `.peek()`.
 
 ### 19.3 Why one core package, not several
 
-Splitting into `signals` / `runtime` / `query` / `forms` would give marginal bundle-size wins and real DX cost (more imports, version-sync issues, more changesets per release). Tree-shaking handles unused exports inside a single package. Estimated full-bundle size ~6–8 kb gzip with `@preact/signals-core` included.
+Splitting into `signals`, `runtime`, `query` and `forms` would give marginal bundle-size wins and real DX cost (more imports, version-sync issues, more changesets per release). Tree-shaking handles unused exports inside a single package. Estimated full-bundle size ~6–8 kb gzip with `@preact/signals-core` included.
 
 ### 19.4 Sub-path exports
 
@@ -2142,7 +2142,7 @@ olas/
 
 ## 20. Type-level API
 
-The full public TypeScript surface. Internal types are not listed; anything in this section is exported from `@kontsedal/olas-core` (or `@kontsedal/olas-react` / `@kontsedal/olas-persist` where noted).
+The full public TypeScript surface. Internal types are not listed; anything in this section is exported from `@kontsedal/olas-core` (or `@kontsedal/olas-react` and `@kontsedal/olas-persist` where noted).
 
 ### 20.1 Signals
 
@@ -2171,7 +2171,7 @@ function debounced<T>(source: ReadSignal<T>, ms: number): ReadSignal<T>
 function throttled<T>(source: ReadSignal<T>, ms: number): ReadSignal<T>
 ```
 
-`untracked(fn)` runs `fn` with auto-tracking suppressed — any signals read inside don't become dependencies of the surrounding `computed` or `effect`. Useful for "read these signals once to log them" or "read a snapshot of state inside an effect without subscribing to it." For a single-signal peek, prefer `signal.peek()`; `untracked` is for the multi-signal / nested-call case.
+`untracked(fn)` runs `fn` with auto-tracking suppressed — any signals read inside don't become dependencies of the surrounding `computed` or `effect`. Useful for "read these signals once to log them" or "read a snapshot of state inside an effect without subscribing to it." For a single-signal peek, prefer `signal.peek()`; `untracked` is for the multi-signal and nested-call case.
 
 `Signal<T>` extends `ReadSignal<T>` — a `Signal` is assignable wherever a `ReadSignal` is expected, but not vice versa. This is what makes caches' `data: ReadSignal<T>` un-writable from the outside.
 
@@ -2335,7 +2335,7 @@ declare module '@kontsedal/olas-core' {
 
 Now every `Ctx` everywhere has `ctx.deps: { api, session, logger }`. No generics needed in controller signatures.
 
-**Style B — explicit generic (for libraries / multiple roots with different deps).**
+**Style B — explicit generic (for libraries and multiple roots with different deps).**
 
 ```ts
 type AppCtx = Ctx<{ api: ApiClient; session: SessionStore }>
@@ -2698,7 +2698,7 @@ type DeepPartial<T> = T extends object
   : T
 ```
 
-`Field<T>` *is* a `ReadSignal<T>` — `use(field)` in the UI works, `field.value` reads, `field.set(x)` writes. Direct `.value = ...` is not exposed; writes must go through `set` so dirty / touched / validation update.
+`Field<T>` *is* a `ReadSignal<T>` — `use(field)` in the UI works, `field.value` reads, `field.set(x)` writes. Direct `.value = ...` is not exposed; writes must go through `set` so dirty, touched and validation update.
 
 Nested field access is via the `form.fields.address.fields.city`-style path. Path-typed lookup (`form.fieldAt('address.city')`) is not part of the API — the template-literal-type machinery is implementation-heavy and the nested access covers ~95% of cases.
 
@@ -2816,7 +2816,7 @@ type DebugEvent =
 Discriminated union keyed by `type` — devtools consumers `switch` on it. Adding new event variants is non-breaking; consumers ignore unknown types.
 
 > Production note: emission sites are elided from the production build of
-> `@kontsedal/olas-core` — see §23 *Devtools / `__debug` and production builds*.
+> `@kontsedal/olas-core` — see §23 *Devtools and `__debug` and production builds*.
 > Subscribers attach but receive no events.
 
 ```ts
@@ -2902,7 +2902,7 @@ function TextInput({ field, label }: { field: Field<string>; label: string }) {
 - `<KeepAlive controller={ctrl}>` — calls `ctrl.suspend()` on unmount and `ctrl.resume()` on remount instead of disposing. Useful when a controller wraps a sub-tree.
 - `useSuspendOnHidden(ctrl)` — auto-suspends when the tab becomes hidden via `document.visibilityState`. Resumes on visible.
 
-Without these, you call `ctrl.suspend()` / `ctrl.resume()` yourself; the adapter doesn't drive lifecycle implicitly.
+Without these, you call `ctrl.suspend()` and `ctrl.resume()` yourself; the adapter doesn't drive lifecycle implicitly.
 
 **`useField` fake helper.** For UI tests, `@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides)` that produce shape-correct fakes:
 
@@ -3200,11 +3200,11 @@ class MutationRunner<V, R> {
 }
 ```
 
-The snapshot stack for rollback is just `Array<{ id, snapshot }>` ordered by application time. On rollback, only the failed mutation's snapshot is invoked. Snapshots themselves close over the pre-update value of any caches they touched.
+The snapshot stack for rollback is an `Array<{ id, snapshot }>` ordered by application time. On rollback, only the failed mutation's snapshot is invoked. Snapshots themselves close over the pre-update value of any caches they touched.
 
 ### 21.8 Devtools event flow
 
-Every controller, query client, and mutation runner gets a reference to the root's `DevtoolsEmitter`. Events are emitted synchronously at relevant points (no batching). The emitter is just `Set<(event: DebugEvent) => void>`.
+Every controller, query client, and mutation runner gets a reference to the root's `DevtoolsEmitter`. Events are emitted synchronously at relevant points (no batching). The emitter is a `Set<(event: DebugEvent) => void>`.
 
 Users opt in via `root.__debug.subscribe(handler)`. With no subscribers, the emitter calls are roughly free (one Set size check).
 
@@ -3267,7 +3267,7 @@ These add up. A controller with 5 fields, 2 mutations, and 3 cache subscriptions
 
 - **Under 100:** never a concern.
 - **100–1,000:** fine, but profile if you mount/unmount frequently.
-- **1,000–10,000:** consider reducing — use a `ctx.collection` with per-item controllers only if each item genuinely has its own logic; otherwise model items as data inside a parent.
+- **1,000–10,000:** consider reducing — use a `ctx.collection` with per-item controllers only if each item has its own logic; otherwise model items as data inside a parent.
 - **10,000+:** almost certainly the wrong tool. The `cells` pattern (per-key signal in a Map) is what you want.
 
 ### Reactivity costs
@@ -3294,7 +3294,7 @@ Recommendation in §5.7: use Immer for any non-trivial nested update.
 
 - `__debug.subscribe(handler)` makes the per-event cost roughly free when no one is listening (one Set size check, < 100 ns).
 - With one subscriber, expect ~1–5 µs per event (allocation of the event object + handler invocation).
-- For a noisy controller (many cache events / sec), this matters. Use the devtools subscription only in dev, not in prod.
+- For a noisy controller (many cache events and sec), this matters. Use the devtools subscription only in dev, not in prod.
 
 ### Form perf
 
@@ -3327,6 +3327,6 @@ What this means for consumers:
 
 The substitution is keyed on `process.env.NODE_ENV !== 'production'` at the
 moment tsdown runs. Consumers do not need to define `__DEV__` themselves — it
-is already inlined into the published `.mjs` / `.cjs` artefacts. To produce a
+is already inlined into the published `.mjs` and `.cjs` artefacts. To produce a
 dev-flavoured build of the workspace, use the root `build:dev` script (no
 `NODE_ENV` prefix) instead of `build`.

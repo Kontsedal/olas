@@ -21,9 +21,9 @@ Two thin composables over a consumer-supplied `RealtimeService` (`ctx.deps.realt
 
 - `useRealtimePatcher(ctx, channel, handlers)` — subscribe, dispatch each event to a type-keyed handler. Wraps SPEC §16.5 lines 1364-1391.
 - `useLiveStream<TEvent>(ctx, channel, options?)` — tail-mode buffer with `capacity` + coalesced `flushMs` flushes, plus pause/resume/clear. Wraps SPEC §16.5 lines 1547-1597.
-- `useRealtimeConnection(ctx)` / `onReconnect(ctx, fn)` — connection-state signal + reconnect trigger (see "Connection state" below).
+- `useRealtimeConnection(ctx)` and `onReconnect(ctx, fn)` — connection-state signal + reconnect trigger (see "Connection state" below).
 
-The package ships **no default transport** — apps inject their own (WebSocket / Pusher / Ably / Supabase / SSE) through deps.
+The package ships **no default transport** — apps inject their own (WebSocket, Pusher, Ably, Supabase and SSE) through deps.
 
 ## API
 
@@ -62,7 +62,7 @@ After augmentation, `Ctx<AmbientDeps>` satisfies the `Ctx<RealtimeDeps>` paramet
 Both composables hold their subscription inside `ctx.effect(() => { ... return () => sub.unsubscribe() })`:
 
 - **Dispose**: effect cleanup unsubscribes; `useLiveStream` also `clearTimeout`s any pending flush. See `packages/realtime/src/index.ts:158-164`.
-- **Pause / resume**: `useLiveStream` reads `isPaused.value` at the top of the effect. The signal write triggered by `pause()` causes the effect to re-run with `isPaused === true`, which short-circuits before subscribing — the previous run's cleanup runs first and unsubscribes. `resume()` flips it back, the effect runs again, and a fresh subscription is established.
+- **Pause and resume**: `useLiveStream` reads `isPaused.value` at the top of the effect. The signal write triggered by `pause()` causes the effect to re-run with `isPaused === true`, which short-circuits before subscribing — the previous run's cleanup runs first and unsubscribes. `resume()` flips it back, the effect runs again, and a fresh subscription is established.
 - **Events during pause are LOST** (T6.7): `pause()` tears down the subscription, so nothing is received while paused — only *already-buffered* events survive. The `pending: TEvent[]` accumulator isn't cleared on pause (events buffered in the same tick as the pause still flush), but a genuine gap can't be recovered from the buffer — pair with `onReconnect(...)` + query `invalidate` to refetch authoritative state. The docstrings + README say this explicitly.
 
 ## Connection state (`useRealtimeConnection` / `onReconnect`)
@@ -72,7 +72,7 @@ Both composables hold their subscription inside `ctx.effect(() => { ... return (
 ## Tail-buffer semantics
 
 - **Capacity** is oldest-drop. The flush computes `next = events.peek().concat(pending).slice(-capacity)` — `slice`, not `splice`, because signals need a fresh array reference for subscribers to fire.
-- **`flushMs`** coalesces bursts. A single timer is scheduled on first enqueue; further enqueues just push onto `pending` until the timer fires.
+- **`flushMs`** coalesces bursts. A single timer is scheduled on first enqueue; further enqueues only push onto `pending` until the timer fires.
 - **`flushMs <= 0`** flushes synchronously per event. Used by the capacity test to skip the timer.
 - **`clear()`** empties both `events` and `pending`, and `clearTimeout`s any pending flush. The subscription itself is **not** torn down — calling `clear()` while live is the natural "start fresh, keep streaming" idiom.
 

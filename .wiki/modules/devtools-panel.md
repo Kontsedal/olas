@@ -26,7 +26,7 @@ confidence: medium
 
 # `@kontsedal/olas-devtools`
 
-Drop-in React panel that subscribes to a root's `__debug` bus and renders six live views. The **default / headline view is the causal Timeline** — every event ordered by `seq` and grouped by `causeId` into collapsible cause-chains, each `cache:set-data` expandable to a structural before/after diff. The other tabs are controller Tree, Cache (event log), Inspector (live cache state), Mutations, and Fields. Plus a floating `<DevtoolsLauncher>` that hosts the panel inside a draggable / resizable window with state persisted to `localStorage`. Spec §13/§14.
+Drop-in React panel that subscribes to a root's `__debug` bus and renders six live views. The **default and headline view is the causal Timeline** — every event ordered by `seq` and grouped by `causeId` into collapsible cause-chains, each `cache:set-data` expandable to a structural before/after diff. The other tabs are controller Tree, Cache (event log), Inspector (live cache state), Mutations, and Fields. Plus a floating `<DevtoolsLauncher>` that hosts the panel inside a draggable and resizable window with state persisted to `localStorage`. Spec §13/§14.
 
 ## Public surface
 
@@ -77,9 +77,9 @@ function formatTime(t: number): string
 
 The package splits into three pieces:
 
-1. **`store.ts`** — pure logic. A `DevtoolsStore` exposes four `Signal`s (one per view). `handle(event)` is the dispatcher; it routes a `DebugEvent` to either `tree$.set(insertNode(...))` / `tree$.set(setNodeState(...))` or one of the bounded-log pushers. Tested in isolation; no React.
+1. **`store.ts`** — pure logic. A `DevtoolsStore` exposes four `Signal`s (one per view). `handle(event)` is the dispatcher; it routes a `DebugEvent` to either `tree$.set(insertNode(...))` or `tree$.set(setNodeState(...))` or one of the bounded-log pushers. Tested in isolation; no React.
 2. **`DevtoolsPanel.tsx`** — React component. `useMemo(() => new DevtoolsStore(...), [maxEntries])`, then `useEffect(() => store.attach(root), [root, store])`. Tabs are local React state. Each view reads its signal via `@kontsedal/olas-react`'s `use()` and renders.
-3. **`format.ts` / `styles.ts`** — tiny helpers. `styles.ts` is a hard-coded CSS string injected via `<style>` inside the panel — no build-time CSS extraction needed.
+3. **`format.ts` and `styles.ts`** — tiny helpers. `styles.ts` is a hard-coded CSS string injected via `<style>` inside the panel — no build-time CSS extraction needed.
 
 ## Why the tree has a virtual empty root
 
@@ -87,13 +87,13 @@ The package splits into three pieces:
 
 ## Bounded logs
 
-`cache$` / `mutations$` / `fields$` are capped at `maxEntries` (default 100). When full, the oldest entry drops (via `appendBounded` — `slice` + `push`). Each entry has an auto-incrementing `id` for React `key`s and a `t` (ms epoch) for display.
+`cache$`, `mutations$` and `fields$` are capped at `maxEntries` (default 100). When full, the oldest entry drops (via `appendBounded` — `slice` + `push`). Each entry has an auto-incrementing `id` for React `key`s and a `t` (ms epoch) for display.
 
 `tree$` is NOT a log — it's the live state of the controller tree. `clearLogs()` empties the three log signals but preserves the tree.
 
 ## T6.3 hardening
 
-- **Bounded tree.** Disposed controllers used to accumulate in `tree$` forever (churny virtualized lists / lazy children). `pruneDisposed()` (called on `controller:disposed`) removes the oldest **fully-disposed subtrees** once the retained-disposed count exceeds `maxDisposedNodes` (option, default `DEFAULT_MAX_DISPOSED_NODES = 200`). Active/suspended nodes — and any disposed node with a live descendant — are never pruned (`subtreeAllDisposed` guard). Pure helpers `countDisposed` / `collectPrunableRoots` / `removeNodeAt` are exported and unit-tested.
+- **Bounded tree.** Disposed controllers used to accumulate in `tree$` forever (churny virtualized lists and lazy children). `pruneDisposed()` (called on `controller:disposed`) removes the oldest **fully-disposed subtrees** once the retained-disposed count exceeds `maxDisposedNodes` (option, default `DEFAULT_MAX_DISPOSED_NODES = 200`). Active/suspended nodes — and any disposed node with a live descendant — are never pruned (`subtreeAllDisposed` guard). Pure helpers `countDisposed`, `collectPrunableRoots` and `removeNodeAt` are exported and unit-tested.
 - **Concurrent mutation durations.** `mutationStarts` is now `Map<path#name, number[]>` — a FIFO queue of `run` start times. Overlapping runs of the same mutation each pair (oldest-first) with their own duration; the old single-value map let a later run's start clobber the earlier one's, losing a duration. Exact run↔settle attribution isn't possible (the debug bus carries no per-run id), but FIFO never loses a start.
 - **`JsonView` cycle guard.** `seen` is the set of **ancestors on the current path**, rebuilt immutably per level (`new Set(seen).add(value)`), not a mutated shared set of everything-rendered. A shared reference (`{a: obj, b: obj}` — a DAG) is no longer mis-flagged `[Circular]`, collapse→re-expand doesn't carry stale state, and StrictMode's double-render stays independent. True cycles (a node that is its own ancestor) are still caught. Tested in `jsonview.test.tsx`.
 - **Debounced filter.** The panel's filter `<input>` stays responsive (`value={filter}`), but views filter against a 150ms-debounced `debouncedFilter`, so a `JSON.stringify`-per-entry pass doesn't run on every keystroke.
@@ -106,7 +106,7 @@ For full history, build a `DevtoolsStore` next to `createRoot` (before any contr
 
 ## DistributiveOmit
 
-`store.ts` defines a small `DistributiveOmit<T, K>` helper because the default `Omit<UnionType, K>` collapses to the intersection of common keys — losing per-variant fields. Used in the `pushCache` / `pushMutation` parameter types so a call site can supply just one variant's payload.
+`store.ts` defines a small `DistributiveOmit<T, K>` helper because the default `Omit<UnionType, K>` collapses to the intersection of common keys — losing per-variant fields. Used in the `pushCache` and `pushMutation` parameter types so a call site can supply only one variant's payload.
 
 ## The six tabs
 
@@ -133,18 +133,18 @@ Rendering is **reactive with no polling**: `<DebugVar>` duck-types a signal-like
 
 ## Event-driven inspector (the poll is gone)
 
-The Inspector previously polled `root.__debug.queryEntries()` on a `setInterval` (default 800ms). Now the store seeds `cacheState$` from `queryEntries()` ONCE on `attach()` and refreshes it — coalesced through the same flush as the logs — whenever a cache / snapshot event arrives. No interval. `attach()` also seeds the per-key **diff baseline** (`lastDataByKey`) from that first snapshot, so the first post-attach write to an already-cached key diffs against real data rather than reading as "initial". The `inspectorPollMs` prop is retained but ignored (deprecated). Caveat: a pure timer-driven `isStale` transition (no accompanying event) won't refresh the inspector until the next event — the accepted tradeoff for killing the poll.
+The Inspector previously polled `root.__debug.queryEntries()` on a `setInterval` (default 800ms). Now the store seeds `cacheState$` from `queryEntries()` ONCE on `attach()` and refreshes it — coalesced through the same flush as the logs — whenever a cache and snapshot event arrives. No interval. `attach()` also seeds the per-key **diff baseline** (`lastDataByKey`) from that first snapshot, so the first post-attach write to an already-cached key diffs against real data rather than reading as "initial". The `inspectorPollMs` prop is retained but ignored (deprecated). Caveat: a pure timer-driven `isStale` transition (no accompanying event) won't refresh the inspector until the next event — the accepted tradeoff for killing the poll.
 
 ## What's tested
 
-- `store.test.ts` (25 tests) — `insertNode` / `setNodeState`, bounded logs, `DebugEvent` variants through `handle()`, `attach()` unsubscribe, PLUS the unified timeline (ordering, `seq` fallback vs emitter `seq`, `causeId`, `prev` diff baseline + seed-on-attach, `maxTimelineEntries` bounding, pause-drops, clear-resets-baseline) and the event-driven `cacheState$` (seed on attach + refresh-on-cache-event + no-refresh-on-non-cache-event).
+- `store.test.ts` (25 tests) — `insertNode` and `setNodeState`, bounded logs, `DebugEvent` variants through `handle()`, `attach()` unsubscribe, PLUS the unified timeline (ordering, `seq` fallback vs emitter `seq`, `causeId`, `prev` diff baseline + seed-on-attach, `maxTimelineEntries` bounding, pause-drops, clear-resets-baseline) and the event-driven `cacheState$` (seed on attach + refresh-on-cache-event + no-refresh-on-non-cache-event).
 - `diff.test.ts` (10 tests) — `diffValues` add/remove/change/same, nested recursion, DAG-vs-cycle, opaque built-ins (Date), first-write.
-- `panel.test.tsx` (10 tests) — RTL: default Timeline tab, cause-chain grouping of a failing optimistic mutation, `cache:set-data` diff expansion, event-driven inspector; plus prior tree / cache / clear / tabs / suspend / debounce / defaultTab coverage.
+- `panel.test.tsx` (10 tests) — RTL: default Timeline tab, cause-chain grouping of a failing optimistic mutation, `cache:set-data` diff expansion, event-driven inspector; plus prior tree, cache, clear, tabs, suspend, debounce and defaultTab coverage.
 - Indirectly: `core/tests/devtools-events.test.ts` pins the runtime-emit + `seq`/`causeId` correlation contract.
 
 ## What's NOT included / follow-ups
 
 - **`cache:subscribed`** wiring (subscriber counts) — needs subscriber-path threading through `use → acquire` (overhaul T8.5). Declared in the union, not emitted.
-- **Infinite-query** fetch / snapshot devtools events — T8.1 wired regular queries only (`setInfiniteData` does emit `cache:set-data`).
+- **Infinite-query** fetch and snapshot devtools events — T8.1 wired regular queries only (`setInfiniteData` does emit `cache:set-data`).
 - The rest of the devtools overhaul: virtualization + ring buffer (T8.2), omnibox search (T8.3), live actions (T8.6), env simulation + forms inspector (T8.7), plugin lanes (T8.8), session export/import (T8.9). See `../candidates/decisions/devtools-overhaul.md`.
 - Signal dependency graph view (spec §13 mentions it).

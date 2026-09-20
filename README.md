@@ -16,9 +16,9 @@ export const counter = defineController(() => {
 })
 ```
 
-That's a controller: a function that returns an object. Components subscribe to it, call its methods, and never own its lifetime.
+That's a controller: a function that returns an object. Components subscribe to it, call its methods, and do not own its lifetime.
 
-Because it's *just a function*, here's the entire test — no renderer, no jsdom, no Testing Library:
+Because it's *a function*, here's the entire test — no renderer, no jsdom, no Testing Library:
 
 ```ts
 import { createTestController } from '@kontsedal/olas-core/testing'
@@ -90,7 +90,7 @@ The practical wins:
 - **Logic without renderers.** A controller is a function. Tests pass in fake `deps`, call methods, and assert against signals. No `render(<App />)`, no Testing Library, no fake timers chasing effect flushes.
 - **Explicit lifetimes.** Every field, query, mutation, and child controller dies with its parent. No "what owns this subscription?" mystery.
 - **Shared queries by default.** Two controllers subscribing to the same query share one fetch and one cache entry. The same primitive scales from "one widget" to "every screen on the dashboard."
-- **Framework-agnostic core.** `@kontsedal/olas-core` never imports React. The React adapter is a thin layer on top of `useSyncExternalStore`. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
+- **Framework-agnostic core.** `@kontsedal/olas-core` declares no React dependency and does not import it. The React adapter is a thin layer on top of `useSyncExternalStore`. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
 
 ---
 
@@ -129,7 +129,7 @@ effect(() => {
 count.update((n) => n + 1)        // logs "count is 6"
 ```
 
-A `signal` is a typed cell with `.value` (read) and `.set(...)` / `.update(fn)` (write). `computed(...)` derives a read-only signal that recomputes when its dependencies change. `effect(...)` runs side effects, re-running when *its* dependencies change.
+A `signal` is a typed cell. Read it with `.value`; write with `.set(...)` or `.update(fn)`. `computed(...)` derives a read-only signal that recomputes when its dependencies change. `effect(...)` runs side effects, re-running when *its* dependencies change.
 
 Olas wraps [`@preact/signals-core`](https://github.com/preactjs/signals) behind these types. It's small (~1 kB), fast, and glitch-free.
 
@@ -281,7 +281,7 @@ graph TD
   E --> G["gc'd after the last<br/>subscriber leaves + gcTime"]
 ```
 
-You never wire this up — subscribing *is* the sharing. The same primitive scales from one widget to every screen on a dashboard.
+You do not wire this up. Subscribing *is* the sharing. The same primitive scales from one widget to every screen on a dashboard.
 
 ### 5. Writes with mutations
 
@@ -368,7 +368,7 @@ function NameInput({ field }: { field: Field<string> }) {
 }
 ```
 
-For schema-driven forms, `@kontsedal/olas-zod` walks a `z.object(...)` tree and emits the matching `Form` / `Field` / `FieldArray` structure with validators auto-attached:
+For schema-driven forms, `@kontsedal/olas-zod` walks a `z.object(...)` tree and emits the matching `Form`, `Field` and `FieldArray` structure with validators auto-attached:
 
 ```ts
 import { z } from 'zod'
@@ -447,7 +447,7 @@ const theme = signal<'light' | 'dark'>('light')
 usePersisted(ctx, 'theme', theme)
 ```
 
-`usePersisted` reads the saved value on construction and writes through on every change. Works for any signal-shaped source (`signal`, `field`, or anything exposing `.value` / `.set` / `.subscribe`). Cross-tab sync via `crossTab: true`.
+`usePersisted` reads the saved value on construction and writes through on every change. Works for any signal-shaped source (`signal`, `field`, or anything exposing `.value`, `.set` and `.subscribe`). Cross-tab sync via `crossTab: true`.
 
 ### SSR — `dehydrate` and `hydrate`
 
@@ -529,7 +529,7 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Best-effort, replay-safe mutation queue. Persists `defineMutation({ persist: true })` runs to a `StorageAdapter`; replays pending entries on reload / crash / reconnect (Web-Locks-coordinated cross-tab). |
 | [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Works with TanStack Router or React Router v6. |
 
-**Versioning.** Each package versions independently — a release bumps only the packages that actually changed, so version numbers across the suite will not match and are not meant to. Install whichever packages you use at whatever versions npm resolves; each declares the range of `@kontsedal/olas-core` it works with as a peer dependency, so an incompatible combination fails at install time rather than at runtime.
+**Versioning.** Each package versions independently — a release bumps only the packages that changed, so version numbers across the suite will not match and are not meant to. Install whichever packages you use at whatever versions npm resolves; each declares the range of `@kontsedal/olas-core` it works with as a peer dependency, so an incompatible combination fails at install time rather than at runtime.
 
 Outstanding work — additional storage adapters, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
 
@@ -560,13 +560,13 @@ Every business-logic surface in these examples is covered by a controller test t
 
 These are honest, terse sketches. None of them are reasons to leave a tool you're happy with.
 
-**vs. Redux Toolkit / Zustand.** A store is one big object. A controller tree is many small objects, each owning its slice and lifetime. Olas has no reducers, no slices, no selectors — you read signals directly, you call methods directly. The "selector" problem (re-render on unrelated changes) doesn't exist because subscriptions are per-signal.
+**vs. Redux Toolkit and Zustand.** A store is one big object. A controller tree is many small objects, each owning its slice and lifetime. Olas has no reducers, no slices, no selectors — you read signals directly, you call methods directly. The "selector" problem (re-render on unrelated changes) doesn't exist because subscriptions are per-signal.
 
 **vs. TanStack Query + Zustand.** TanStack handles the network; Zustand handles the rest; gluing them together is application code. Olas is one model: queries, mutations, and ephemeral state all live in the same controller, with the same lifetime, in the same place.
 
 **vs. MobX.** Both are signal-graph-based. MobX is class-oriented with decorators; Olas is function-oriented with a `ctx` factory and explicit lifetime ownership. Tests in Olas don't need MobX-runtime configuration.
 
-**vs. Effector / XState.** Effector is signal-graph-based at a finer grain (effects, stores, events as primitives). XState is state-machine-first. Olas sits between: signal-graph for data, but with controllers as the unit of ownership.
+**vs. Effector and XState.** Effector is signal-graph-based at a finer grain (effects, stores, events as primitives). XState is state-machine-first. Olas sits between: signal-graph for data, but with controllers as the unit of ownership.
 
 ---
 

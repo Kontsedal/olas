@@ -27,7 +27,7 @@ confidence: high
 # Examples
 
 `examples/` contains four runnable apps. The **kanban** app is the flagship —
-it exercises essentially every public primitive across every package. The
+it exercises nearly every public primitive across every package. The
 remaining three are focused single-purpose demos that cover SSR, vanilla TS,
 and virtualization in isolation.
 
@@ -47,7 +47,7 @@ Each example's `vite.config.ts` and `vitest.config.ts` imports from
 `@kontsedal/olas-*` package names (including `@kontsedal/olas-entities`) to
 source paths. Without this, examples would require running `pnpm build` first
 to populate `packages/*/dist/`. Vite resolves the aliases at module-graph
-build time, so dev / test / SSR all see source.
+build time, so dev, test and SSR all see source.
 
 Every example uses the same scripts:
 
@@ -129,7 +129,7 @@ they imply a library change.
    — keyed by dotted path. Resolved against the kanban "title-is-unique"
    need.
 5. **`ctx.attach` returns `{ api, dispose, suspend, resume }`** — the
-   `suspend / resume` pair cascades through the attached sub-tree's
+   `suspend and resume` pair cascades through the attached sub-tree's
    lifecycle entries, so `<KeepAlive controller={...}>` consumes it
    directly. Resolved.
 

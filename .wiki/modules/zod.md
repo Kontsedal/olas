@@ -43,13 +43,13 @@ formFromZod<T extends z.ZodObject<...>>(
 ): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]> }>
 ```
 
-Walks a `z.object` schema and builds the corresponding `Form` / `FieldArray` / `Field` tree with Zod validators auto-attached. Return type is structurally precise — no hand-written `Form<{...}>` shape required.
+Walks a `z.object` schema and builds the corresponding `Form`, `FieldArray` and `Field` tree with Zod validators auto-attached. Return type is structurally precise — no hand-written `Form<{...}>` shape required.
 
 - `z.object(...)` → `Form` (recurse). The root form gets `rootOnlyZodValidator(rootSchema)` attached so top-level `.refine(...)` rules surface as form-level errors.
 - `z.array(...)` → `FieldArray` (recurse on the element).
-- anything else → `Field` with `zodValidator(schema)`. A nested leaf that *looks* like a zod schema (has a `def`/`_def`) but fails every `instanceof` check — i.e. a **duplicate zod copy** — can't be introspected, so it degrades to a flat field; `formFromZod` dev-warns via `isForeignZod` / `warnDuplicateZod` (T6.5).
+- anything else → `Field` with `zodValidator(schema)`. A nested leaf that *looks* like a zod schema (has a `def`/`_def`) but fails every `instanceof` check — i.e. a **duplicate zod copy** — can't be introspected, so it degrades to a flat field; `formFromZod` dev-warns via `isForeignZod` and `warnDuplicateZod` (T6.5).
 
-`unwrap(schema)` strips outer `ZodDefault` / `ZodOptional` / `ZodNullable` wrappers (up to 5 deep) to find the inner type. Default initial is the Zod default if present, else the empty value for the type: `''` string, `0` number, `false` bool, `[]` array/tuple, first option for enum, `0n` bigint, `{}` record, `undefined` otherwise. **`ZodDate` → `undefined`** (T6.5 — the old `null` flowed a non-Date into a `Date`-typed field; pair with `required()` for "must pick a date"). A **`.transform()` / `.pipe()`** (`ZodPipe`) seeds from its INPUT schema's default via `def.in` — the field holds what the user edits, and the transform runs on parse; note the field TYPE still reflects `z.infer` (the output), a documented mismatch (T6.5).
+`unwrap(schema)` strips outer `ZodDefault`, `ZodOptional` and `ZodNullable` wrappers (up to 5 deep) to find the inner type. Default initial is the Zod default if present, else the empty value for the type: `''` string, `0` number, `false` bool, `[]` array/tuple, first option for enum, `0n` bigint, `{}` record, `undefined` otherwise. **`ZodDate` → `undefined`** (T6.5 — the old `null` flowed a non-Date into a `Date`-typed field; pair with `required()` for "must pick a date"). A **`.transform()` and `.pipe()`** (`ZodPipe`) seeds from its INPUT schema's default via `def.in` — the field holds what the user edits, and the transform runs on parse; note the field TYPE still reflects `z.infer` (the output), a documented mismatch (T6.5).
 
 `extraValidators` is keyed by dotted leaf path (`'title'`, `'address.street'`). Each entry's validator is appended to that leaf's validators list alongside the Zod check — both must pass. `FieldArray` items aren't separately addressable (one factory per array).
 

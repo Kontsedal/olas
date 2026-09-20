@@ -1,10 +1,10 @@
 # @kontsedal/olas-core
 
-The core of Olas — UI-framework-agnostic. Signals, controllers, queries, mutations, forms, scopes, SSR, and the devtools event bus. No React / Vue / Svelte imports anywhere.
+The core of Olas — UI-framework-agnostic. Signals, controllers, queries, mutations, forms, scopes, SSR, and the devtools event bus. No React, Vue and Svelte imports anywhere.
 
 This package is the only place that touches `@preact/signals-core` (peer dep). Everything else is plain TypeScript.
 
-Because it never imports a renderer, your controllers stay plain functions — construct one, drive it, and assert on its signals with no DOM, no jsdom, no Testing Library. The same controllers can back React today and Vue / Svelte / vanilla DOM tomorrow through a thin adapter.
+Because it never imports a renderer, your controllers stay plain functions — construct one, drive it, and assert on its signals with no DOM, no jsdom, no Testing Library. The same controllers can back React today and Vue, Svelte and vanilla DOM tomorrow through a thin adapter.
 
 ## Install
 

@@ -40,7 +40,7 @@ type Computed<T>   = ReadSignal<T>
 
 ## Internal helper
 
-`readOnly(source)` in `signals/readonly.ts` returns a fresh `ReadSignal<T>` view that omits `set` / `update` / writable `.value`. The returned object is `Object.freeze`d, so a `(ro as any).value = …` assignment throws in strict mode and is a no-op in sloppy mode — defense-in-depth on top of the type system, not a substitute for it. Use when exposing a `Signal` as a `ReadSignal` on a public surface.
+`readOnly(source)` in `signals/readonly.ts` returns a fresh `ReadSignal<T>` view that omits `set`, `update` and writable `.value`. The returned object is `Object.freeze`d, so a `(ro as any).value = …` assignment throws in strict mode and is a no-op in sloppy mode — defense-in-depth on top of the type system, not a substitute for it. Use when exposing a `Signal` as a `ReadSignal` on a public surface.
 
 ## Subscribe semantics
 
@@ -49,7 +49,7 @@ type Computed<T>   = ReadSignal<T>
 ## Why wrapped, not re-exported
 
 - A stable public surface independent of the upstream library.
-- Add `.set()` / `.update()` methods we want even though upstream uses property setters. Both are **arrow-bound instance fields** (`runtime.ts` `SignalImpl`), not prototype methods — so `onChange={s.set}` / `const setName = s.set` work and keep a stable identity (like React's `setState`) instead of throwing `Cannot read properties of undefined (reading 'inner')` once detached. `FieldImpl.set` (`forms/field.ts`) is bound for the same reason.
+- Add `.set()` and `.update()` methods we want even though upstream uses property setters. Both are **arrow-bound instance fields** (`runtime.ts` `SignalImpl`), not prototype methods — so `onChange={s.set}` and `const setName = s.set` work and keep a stable identity (like React's `setState`) instead of throwing `Cannot read properties of undefined (reading 'inner')` once detached. `FieldImpl.set` (`forms/field.ts`) is bound for the same reason.
 - Make `readOnly(...)` projection mechanically sound.
 - Dodge a TS overload-resolution bug in upstream — see `pitfalls/preact-signals-overload-return.md`.
 

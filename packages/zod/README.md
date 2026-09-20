@@ -68,7 +68,7 @@ function formFromZod<S extends z.ZodObject<z.ZodRawShape>>(
 ): Form<...>
 ```
 
-`zodValidator` runs `schema.safeParse(value)` and reports the first `ZodIssue`'s `message`. `zodValidatorAsync` awaits `.safeParseAsync(...)` for schemas with async `.refine` / `.transform`.
+`zodValidator` runs `schema.safeParse(value)` and reports the first `ZodIssue`'s `message`. `zodValidatorAsync` awaits `.safeParseAsync(...)` for schemas with async `.refine` and `.transform`.
 
 | Export | What |
 |---|---|

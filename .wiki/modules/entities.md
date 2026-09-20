@@ -69,7 +69,7 @@ This relies on `setAtPath` returning a structure that shares siblings by referen
 
 ## Where the new core hooks live
 
-- **`SetDataEvent.source: 'set' | 'fetch' | 'remote'`** — added in `packages/core/src/query/plugin.ts:60-83`. Lets the plugin react to fetch results (not just explicit `setData`).
+- **`SetDataEvent.source: 'set' | 'fetch' | 'remote'`** — added in `packages/core/src/query/plugin.ts:60-83`. Lets the plugin react to fetch results (not only explicit `setData`).
 - **`Entry.onSuccessData` callback** — `packages/core/src/query/entry.ts:21-32, 178-187`. Fires from `applySuccess` after the batched signal writes. `ClientEntry` wires it in `client.ts:69-77` to call `client.emitSetData(query, keyArgs, data, 'data', 'fetch')`.
 - **`QueryClientPluginApi.setEntryData(queryId, keyArgs, updater)`** — `plugin.ts:34-58`, implemented at `client.ts:577-595`. Local-originated setData by keyArgs. Cross-tab WILL rebroadcast (`source: 'set'`).
 - **Cross-tab now skips `source: 'fetch'`** — `packages/cross-tab/src/plugin.ts:163-168`. Each tab runs its own fetcher; broadcasting fetch results would be quadratic noise.
@@ -84,7 +84,7 @@ This relies on `setAtPath` returning a structure that shares siblings by referen
 
 ## bindingKey uses `stableHash`
 
-Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the same canonicalizer the core `QueryClient` uses for its own per-entry hash — Date values canonicalize to ISO strings, object keys sort, `undefined` distinguishes from absent, and functions / symbols / Map / Set throw. This means an entities binding key collides with the `QueryClient` entry it points at iff the same `keyArgs` would, so `api.setEntryData(queryId, keyArgs, ...)` always finds the right entry.
+Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the same canonicalizer the core `QueryClient` uses for its own per-entry hash — Date values canonicalize to ISO strings, object keys sort, `undefined` distinguishes from absent, and functions, symbols, Map and Set throw. This means an entities binding key collides with the `QueryClient` entry it points at iff the same `keyArgs` would, so `api.setEntryData(queryId, keyArgs, ...)` always finds the right entry.
 
 ## Memory model
 
@@ -124,6 +124,6 @@ Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the 
 
 - `packages/entities/src/index.ts` — ~440 lines, whole package.
 - `SPEC.md` §18.1 — the worked example this package replaces.
-- `modules/query.md` — the underlying `setData` / fetch lifecycle.
+- `modules/query.md` — the underlying `setData` and fetch lifecycle.
 - `modules/cross-tab.md` — closest sibling plugin (lifecycle + plugin reuse pattern).
 - `BACKLOG.md` → `@kontsedal/olas-entities` entry (now `[done]`).

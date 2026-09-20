@@ -76,7 +76,7 @@ constructor(
 
 - Add discriminators (`'user'` prefix to avoid colliding with `['post', id]`).
 - Normalize args (e.g. lowercasing an email before hashing).
-- Drop irrelevant args (`{ pageSize: 10, sort: 'newest' }` → just `[sort]` if pageSize is fixed).
+- Drop irrelevant args (`{ pageSize: 10, sort: 'newest' }` → only `[sort]` if pageSize is fixed).
 
 If `key` always returned the args unchanged, we'd merge them. But it doesn't — and that's the point.
 

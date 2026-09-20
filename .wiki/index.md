@@ -16,7 +16,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/query.md](modules/query.md) — local cache, shared queries, infinite queries, mutations, SSR
 - [modules/forms.md](modules/forms.md) — `Field`, `Form`, `FieldArray`, stdlib validators
 - [modules/emitter.md](modules/emitter.md) — standalone + controller-bound emitters
-- [modules/timing.md](modules/timing.md) — `debounced` / `throttled` signal projections
+- [modules/timing.md](modules/timing.md) — `debounced` and `throttled` signal projections
 - [modules/devtools.md](modules/devtools.md) — `DebugEvent` bus
 - [modules/errors.md](modules/errors.md) — `ErrorContext`, `dispatchError`
 - [modules/zod.md](modules/zod.md) — `@kontsedal/olas-zod`: `zodValidator`, `formFromZod`
@@ -24,7 +24,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/realtime.md](modules/realtime.md) — `@kontsedal/olas-realtime`: `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService`
 - [modules/cross-tab.md](modules/cross-tab.md) — `@kontsedal/olas-cross-tab`: `BroadcastChannel`-backed cross-tab in-memory query cache sync
 - [modules/mutation-queue.md](modules/mutation-queue.md) — `@kontsedal/olas-mutation-queue`: best-effort persistent replay queue for `persist:true` mutations (reload + reconnect + cross-tab-coordinated)
-- [modules/router.md](modules/router.md) — `@kontsedal/olas-router`: `createRouterAdapter` bridging TanStack Router / React Router v6 into `RouteParams`/`Search`/`Pathname` scopes
+- [modules/router.md](modules/router.md) — `@kontsedal/olas-router`: `createRouterAdapter` bridging TanStack Router and React Router v6 into `RouteParams`/`Search`/`Pathname` scopes
 - [modules/entities.md](modules/entities.md) — `@kontsedal/olas-entities`: `defineEntity` + auto-walk + reverse-index backprop over `QueryClientPlugin`
 - [modules/react.md](modules/react.md) — `@kontsedal/olas-react`: provider + `useSyncExternalStore`-backed hooks
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
@@ -42,7 +42,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 ## Flows
 
 - [flows/query-subscription.md](flows/query-subscription.md) — `ctx.use(query, key)` → bind → fetch → React
-- [flows/mutation-concurrency.md](flows/mutation-concurrency.md) — parallel / latest-wins / serial paths
+- [flows/mutation-concurrency.md](flows/mutation-concurrency.md) — parallel, latest-wins and serial paths
 - [flows/ssr.md](flows/ssr.md) — `waitForIdle → dehydrate` (server) → `hydrate` (client)
 - [flows/construction-rollback.md](flows/construction-rollback.md) — factory throws → partial state torn down
 - [flows/use-root.md](flows/use-root.md) — `createRoot` → `<OlasProvider>` → `useRoot()` → `use(signal)` → DOM
@@ -70,11 +70,11 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert
 - [pitfalls/raf-unbound-illegal-invocation.md](pitfalls/raf-unbound-illegal-invocation.md) — native `requestAnimationFrame` assigned unbound throws "Illegal invocation" in real browsers (jsdom hides it)
 - [pitfalls/dispose-order-is-registration-order.md](pitfalls/dispose-order-is-registration-order.md) — teardown is one reverse-registration pass, not phased; an `onDispose` hook reaches an effect only if the effect was created first
-- [pitfalls/no-invalidator-still-refetches.md](pitfalls/no-invalidator-still-refetches.md) — "nothing invalidates this query" is not grounds to skip `cancel()` before an optimistic `setData`: a stale entry refetches on subscribe / `resume()` with no invalidator anywhere
+- [pitfalls/no-invalidator-still-refetches.md](pitfalls/no-invalidator-still-refetches.md) — "nothing invalidates this query" is not grounds to skip `cancel()` before an optimistic `setData`: a stale entry refetches on subscribe and `resume()` with no invalidator anywhere
 
 ## Candidates (not authoritative)
 
-Speculative / unbuilt — excluded from authoritative queries. New low-evidence inferences go into `candidates/<type>/`.
+Speculative and unbuilt — excluded from authoritative queries. New low-evidence inferences go into `candidates/<type>/`.
 
 - [candidates/backlog.md](candidates/backlog.md) — staging backlog of substantial forward-looking **proposals** (rich design candidates); complements the terse repo-root `BACKLOG.md`
 - [candidates/decisions/devtools-overhaul.md](candidates/decisions/devtools-overhaul.md) — proposed devtools overhaul (causal-timeline debugger); rescued from the transient remediation plan

@@ -61,7 +61,7 @@ Fix: use `initial` in the factory:
 tags: ctx.fieldArray((initial) => ctx.field(initial ?? '')),
 ```
 
-The spec's own example (cited above) is misleading about this — it shows the factory ignoring `initial` but expects the values to land anyway. The implementation deliberately doesn't auto-set; the test we wrote reflects what the code actually does.
+The spec's own example (cited above) is misleading about this — it shows the factory ignoring `initial` but expects the values to land anyway. The implementation deliberately doesn't auto-set; the test we wrote reflects what the code does.
 
 ## Diagnostic
 

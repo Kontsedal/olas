@@ -79,7 +79,7 @@ The `QueryClient` fires plugin events for every query that has a `queryId` set, 
 - A query without a `queryId` is invisible to the plugin. `crossTab: true` without a `queryId` warns once (dev only) at `defineQuery` time.
 - `queryId` set but `crossTab: false`/undefined → skipped on both send and receive.
 
-**`crossTab` values (T6.4).** The spec type is `boolean | 'data'` (`true` ≡ `'data'`). The `'infinite'` / `'both'` values were **removed** — core's `applyRemoteSetData` / `applyRemoteInvalidate` early-return for infinite (non-`'query'`) defs, so those broadcasts were channel noise no peer could apply. `registerQueryId` (`define.ts`) dev-warns if a JS/cast caller still passes them; `shouldBroadcast` maps them to `'data'`, and infinite `kind` is dropped by the send gate regardless. Infinite cross-tab is a `BACKLOG.md` item.
+**`crossTab` values (T6.4).** The spec type is `boolean | 'data'` (`true` ≡ `'data'`). The `'infinite'` or `'both'` values were **removed** — core's `applyRemoteSetData` or `applyRemoteInvalidate` early-return for infinite (non-`'query'`) defs, so those broadcasts were channel noise no peer could apply. `registerQueryId` (`define.ts`) dev-warns if a JS/cast caller still passes them; `shouldBroadcast` maps them to `'data'`, and infinite `kind` is dropped by the send gate regardless. Infinite cross-tab is a `BACKLOG.md` item.
 
 ## Apply semantics — entries must already exist
 
@@ -91,7 +91,7 @@ The `QueryClient` fires plugin events for every query that has a `queryId` set, 
 
 ## SSR no-op
 
-`channelFactory` defaults to `defaultChannelFactory`, which returns `undefined` when `typeof BroadcastChannel === 'undefined'`. In that case `crossTabPlugin(...)` returns an empty plugin object (`{}`) — every hook is undefined, so the QueryClient's `try/catch`-wrapped dispatch is a no-op. Roots boot cleanly in Node / SSR contexts; cross-tab is just disabled.
+`channelFactory` defaults to `defaultChannelFactory`, which returns `undefined` when `typeof BroadcastChannel === 'undefined'`. In that case `crossTabPlugin(...)` returns an empty plugin object (`{}`) — every hook is undefined, so the QueryClient's `try/catch`-wrapped dispatch is a no-op. Roots boot cleanly in Node and SSR contexts; cross-tab is disabled.
 
 ## Interaction with `@kontsedal/olas-persist`
 
@@ -108,7 +108,7 @@ In real life each tab is its own process with its own `defineQuery` invocation, 
 
 ## Conflict model — last-delivery-wins, no arbitration
 
-No consensus / clocks: each tab applies inbound writes in delivery order, last-wins **per tab**. Two tabs writing the same entry concurrently can settle on different values and **stay diverged permanently** — nothing reconciles on its own. The fix is a server refetch (`query.invalidate(...)`, which also broadcasts) so all tabs re-converge on server truth. Documented honestly in the package README (T6.4).
+No consensus and clocks: each tab applies inbound writes in delivery order, last-wins **per tab**. Two tabs writing the same entry concurrently can settle on different values and **stay diverged permanently** — nothing reconciles on its own. The fix is a server refetch (`query.invalidate(...)`, which also broadcasts) so all tabs re-converge on server truth. Documented in the package README (T6.4).
 
 ## Limitations (v1)
 

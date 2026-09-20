@@ -83,11 +83,11 @@ See `flows/query-subscription.md`.
 
 A `Query` is module-scoped. Binding a handle or entry registers its client in `query.__clients`. Bound actions select that client; unbound calls fail when multiple clients are registered. Disposal unregisters the client. See `../decisions/per-root-query-client.md` and `query-isolation.test.ts`.
 
-`invalidate` / `invalidateAll` return a `Promise<void>` for the selected root. Fetch errors route to that root's `onError`; ambiguity and root disposal reject. A subscriber-less entry is marked stale without refetching. See spec §5.7 and §21.5.
+`invalidate` and `invalidateAll` return a `Promise<void>` for the selected root. Fetch errors route to that root's `onError`; ambiguity and root disposal reject. A subscriber-less entry is marked stale without refetching. See spec §5.7 and §21.5.
 
 ## The imperative surface: read, and two kinds of write
 
-Beyond `ctx.use`, the handle carries the operations that reach a keyed entry from outside a subscription — `invalidate` / `invalidateAll` / `cancel` / `cancelAll` / `prefetch` / `setData`, and since 0.6.0 also:
+Beyond `ctx.use`, the handle carries the operations that reach a keyed entry from outside a subscription — `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `prefetch` and `setData`, and since 0.6.0 also:
 
 - **`peek(...keyArgs): T | undefined`** (`client.peekData`, `client.ts`) — synchronous read. Looks the entry up in `maps` **without** `bindEntry`, so a peek cannot mint the entry it is asking about, and reads through `.peek()` so it registers no reactive dependency. `undefined` conflates "no entry" with "not settled", deliberately: the caller that cares is guarding a write, and both answers mean *don't*. The bound handle reads only its selected root. An unbound peek returns undefined for zero clients and throws on multiple clients.
 - **`write(...keyArgs, updater): void`** (`client.writeData`) — canonical write: `Entry.setData(updater, { track: false })`, so no snapshot record and no `hasPendingMutations` flip. Same entry-binding and the same `source: 'set'` event as `setData`; the devtools `source` is pinned to `'set'` rather than inheriting `'mutate'` from an ambient cause. Why this is a separate method rather than an option: `decisions/canonical-vs-optimistic-writes.md`.
@@ -103,7 +103,7 @@ Beyond `ctx.use`, the handle carries the operations that reach a keyed entry fro
 
 ## Network mode & `isPaused`
 
-`QuerySpec.networkMode` (`'online'` default / `'always'` / `'offlineFirst'`) gates fetches on `navigator.onLine`. `online` defers a fetch requested while offline (`Entry.scheduleDeferredFetch`), resuming on the `online` event (`focus-online.ts` `subscribeReconnect` → `drainDeferred`). `offlineFirst` runs the fetch but, on a `fetch`-`TypeError` while offline, parks and retries on reconnect instead of surfacing the error (`entry.ts` `runWithRetry` catch, T3.5). Both parked paths set the `isPaused` signal (new on `AsyncState`) — `true` while waiting for the network, `false` whenever a fetch is in flight or settled. `always` never parks. Spec §5.5; pinned by `query-focus-online.test.ts` (R-Q3.5). Infinite entries expose `isPaused` for the online-defer path but do not yet implement the `offlineFirst` park (BACKLOG).
+`QuerySpec.networkMode` (`'online'` default, `'always'` and `'offlineFirst'`) gates fetches on `navigator.onLine`. `online` defers a fetch requested while offline (`Entry.scheduleDeferredFetch`), resuming on the `online` event (`focus-online.ts` `subscribeReconnect` → `drainDeferred`). `offlineFirst` runs the fetch but, on a `fetch`-`TypeError` while offline, parks and retries on reconnect instead of surfacing the error (`entry.ts` `runWithRetry` catch, T3.5). Both parked paths set the `isPaused` signal (new on `AsyncState`) — `true` while waiting for the network, `false` whenever a fetch is in flight or settled. `always` never parks. Spec §5.5; pinned by `query-focus-online.test.ts` (R-Q3.5). Infinite entries expose `isPaused` for the online-defer path but do not yet implement the `offlineFirst` park (BACKLOG).
 
 ## SSR
 
@@ -111,17 +111,17 @@ Beyond `ctx.use`, the handle carries the operations that reach a keyed entry fro
 
 ## Plugin slot
 
-The `QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`). Plugins observe `setData` / `invalidate` / `gc` and can push remote-originated writes back through the cache via `QueryClientPluginApi.applyRemoteSetData` / `applyRemoteInvalidate` / `setEntryData`. Spec §13.2. Surface:
+The `QueryClient` accepts `plugins?: QueryClientPlugin[]` (forwarded from `RootOptions.plugins`). Plugins observe `setData`, `invalidate` or `gc` and can push remote-originated writes back through the cache via `QueryClientPluginApi.applyRemoteSetData`, `applyRemoteInvalidate` or `setEntryData`. Spec §13.2. Surface:
 
 - **`init(api)`** — called once after construction. Wire transports here. The `api` is closed over the client; safe to retain.
-- **`onSetData(event)`** — fires on every cache write. `event.source` discriminates origin: `'set'` (explicit `client.setData` / mutation / plugin-initiated `setEntryData`), `'fetch'` (fetcher resolved successfully via `Entry.applySuccess`, OR a hydrated entry was first bound via `bindEntry`), or `'remote'` (`applyRemoteSetData`). `event.isRemote` is `true` only for `'remote'` — `source === 'remote' ⇔ isRemote === true`, kept dual for back-compat (cross-tab gates on `isRemote`, entities gates on `source`). Infinite queries fire with `kind: 'infinite'` for BOTH explicit `setData` (`'set'`) AND successful page fetches (`'fetch'` — initial, next, prev — via the `onSuccessData` closure handed to `InfiniteEntry`). `cross-tab` skips `kind: 'infinite'`; `entities` walks it (`event.data` is `TPage[]`, so the path accumulator records `[pageIdx, ...inPagePath]` and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData`).
+- **`onSetData(event)`** — fires on every cache write. `event.source` discriminates origin: `'set'` (explicit `client.setData`, mutation and plugin-initiated `setEntryData`), `'fetch'` (fetcher resolved successfully via `Entry.applySuccess`, OR a hydrated entry was first bound via `bindEntry`), or `'remote'` (`applyRemoteSetData`). `event.isRemote` is `true` only for `'remote'` — `source === 'remote' ⇔ isRemote === true`, kept dual for back-compat (cross-tab gates on `isRemote`, entities gates on `source`). Infinite queries fire with `kind: 'infinite'` for BOTH explicit `setData` (`'set'`) AND successful page fetches (`'fetch'` — initial, next, prev — via the `onSuccessData` closure handed to `InfiniteEntry`). `cross-tab` skips `kind: 'infinite'`; `entities` walks it (`event.data` is `TPage[]`, so the path accumulator records `[pageIdx, ...inPagePath]` and `setEntryData` routes infinite-keyed writes back through `InfiniteEntry.setData`).
 - **`onInvalidate(event)`** — every invalidate (regular + infinite). Same `isRemote` semantics.
 - **`onGc(event)`** — every entry drop. No `isRemote` (gc is local).
 - **`dispose()`** — called from `QueryClient.dispose`. Tear down transports.
 
 `QueryClientPluginApi.setEntryData(queryId, keyArgs, updater)` writes back into a specific entry by `keyArgs` (not `callArgs`). Used by `@kontsedal/olas-entities` to backpropagate entity patches into every query holding the entity without recovering the original args. The resulting `SetDataEvent` has `source: 'set'`, `isRemote: false` — cross-tab WILL rebroadcast.
 
-Plugin callbacks are wrapped in try/catch; exceptions route to the root's `onError` with `kind: 'plugin'`. The `queryId → Query` registry (`registerQueryById` / `lookupRegisteredQuery` in `plugin.ts`) routes inbound messages back to the right query value across module-graph boundaries (cross-tab, cross-process).
+Plugin callbacks are wrapped in try/catch; exceptions route to the root's `onError` with `kind: 'plugin'`. The `queryId → Query` registry (`registerQueryById` and `lookupRegisteredQuery` in `plugin.ts`) routes inbound messages back to the right query value across module-graph boundaries (cross-tab, cross-process).
 
 Plugin events fire only for queries that have a `queryId`. Queries without one are silently invisible to plugins — a `crossTab: true` spec without a `queryId` triggers a one-time `console.warn` from `defineQuery` (dev only).
 

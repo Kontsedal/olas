@@ -56,9 +56,9 @@ The controller tree is unaffected by StrictMode because it lives outside React. 
 
 ## Why `useController(root)` still exists
 
-Spec §16, §20.10: `useController(root)` is the older form that takes the root explicitly. It's essentially the identity function (`return root`) and is kept for:
+Spec §16, §20.10: `useController(root)` is the older form that takes the root explicitly. It returns the root unchanged (`return root`) and is kept for:
 
-- Tests that don't want to wrap in a provider just to read.
+- Tests that don't want to wrap in a provider only to read.
 - Apps with multiple unrelated roots that don't want to thread a single context.
 
 `useRoot()` is the recommended ergonomic form for the single-root case.

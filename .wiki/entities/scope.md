@@ -34,7 +34,7 @@ type Scope<T> = {
 function defineScope<T>(options?: { default?: T; name?: string }): Scope<T>
 ```
 
-`defineScope` mints a fresh symbol each call, so two `defineScope<X>()` invocations with identical options are still distinct. Identity is what `provide` / `inject` match on.
+`defineScope` mints a fresh symbol each call, so two `defineScope<X>()` invocations with identical options are still distinct. Identity is what `provide` and `inject` match on.
 
 `hasDefault` is a separate flag so we can distinguish "no default was passed" from "default: undefined was passed". Both produce `scope.default === undefined`, but only the second hits the default branch in `inject`.
 
@@ -65,4 +65,4 @@ Rollback (construction throws) also disposes the partial instance — the scopes
 
 ## When to use — see spec §10.3's litmus test
 
-Spec §10.3 has the full guidance. The TL;DR: scopes are the most easily abused primitive in the library. Use them for genuinely hierarchical data (`orgId` introduced at the org level, needed by tasks below); reach for props otherwise. The litmus test: "if a junior engineer can't answer 'where does this come from?' in 10 seconds, you've overused scopes".
+Spec §10.3 has the full guidance. The TL;DR: scopes are the most easily abused primitive in the library. Use them for hierarchical data (`orgId` introduced at the org level, needed by tasks below); reach for props otherwise. The litmus test: "if a junior engineer can't answer 'where does this come from?' in 10 seconds, you've overused scopes".

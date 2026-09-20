@@ -46,11 +46,11 @@ ctx.onDispose(() => {
 })
 ```
 
-Swap the two registrations and `flush()` emits into nothing — silently. There is no error and no warning; a resize made inside the debounce window is simply never persisted, and only on unmount.
+Swap the two registrations and `flush()` emits into nothing — silently. There is no error and no warning; a resize made inside the debounce window is never persisted, and only on unmount.
 
 ## The rule
 
-When an `onDispose` hook needs to *do* something through a controller primitive rather than just release a resource, **create the primitive first**. If that is hard to guarantee — the hook added by a composable, the effect by the caller — don't rely on ordering: register the flush with something that owns the timing explicitly (an app-level pending-writes drain), or flush at the event that should persist rather than at teardown.
+When an `onDispose` hook needs to *do* something through a controller primitive rather than only release a resource, **create the primitive first**. If that is hard to guarantee — the hook added by a composable, the effect by the caller — don't rely on ordering: register the flush with something that owns the timing explicitly (an app-level pending-writes drain), or flush at the event that should persist rather than at teardown.
 
 ## Where it's documented
 

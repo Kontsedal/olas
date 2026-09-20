@@ -72,7 +72,7 @@ Full signatures and gotchas in [`../../API.md`](../../API.md#olasreact).
 
 ## Why `useSyncExternalStore`
 
-`useSyncExternalStore` is React 18's official external-store API. It guarantees no tearing under concurrent rendering and works correctly under StrictMode's double-mount. Olas signals are external state from React's perspective; the adapter just bridges the two.
+`useSyncExternalStore` is React 18's official external-store API. It guarantees no tearing under concurrent rendering and works correctly under StrictMode's double-mount. Olas signals are external state from React's perspective; the adapter bridges the two.
 
 The internal pattern: every signal `.subscribe()` fires synchronously with the current value on subscribe. The adapter swallows that first fire (React already has the value from `getSnapshot`) and only translates *actual changes* into store-change notifications.
 
@@ -91,7 +91,7 @@ const profile = {
 render(<UserCard profile={profile} />)
 ```
 
-The fakes satisfy the real `Field<T>` / `AsyncState<T>` types so they pass `useField` / `useQuery` without casts.
+The fakes satisfy the real `Field<T>` and `AsyncState<T>` types so they pass `useField` and `useQuery` without casts.
 
 ## SSR & hydration
 

@@ -60,7 +60,7 @@ const listController = defineController((ctx) => {
 })
 ```
 
-`_ctx` is unused here, but pinning the convention (`ctx` first) makes it obvious which composables are lifecycle-bound (when they grow to need it).
+`_ctx` is unused here. Pinning the convention of `ctx` first makes it obvious which composables are lifecycle-bound once they grow to need it.
 
 ---
 
@@ -93,7 +93,7 @@ const profileController = defineController((ctx) => {
 })
 ```
 
-`save.run()` triggers validate-then-mutate. `save.isPending` / `save.error` are signals you can bind in the UI.
+`save.run()` triggers validate-then-mutate. `save.isPending` and `save.error` are signals you can bind in the UI.
 
 ---
 
@@ -137,7 +137,7 @@ function useInlineEdit<T>(
 
 ## `useTail` — bounded live stream with backpressure
 
-For WebSocket / SSE streams firing 10–1000 events/sec, rendered live:
+For WebSocket and SSE streams firing 10–1000 events/sec, rendered live:
 
 ```ts
 import type { Ctx } from '@kontsedal/olas-core'
@@ -220,7 +220,7 @@ useRealtimePatcher<FeedEvent>(ctx, 'feed-events', {
 
 Two things are load-bearing here. **`ctx.bindQuery`** scopes every operation to this root — a server handling concurrent requests has one root per request, and an unbound `newsfeedQuery.write(...)` would refuse to guess which one (§21.5). **`write`, not `setData`** — a realtime event is server truth that already happened, so there is nothing to roll back. `setData` opens an optimistic snapshot that someone must settle; calling it fire-and-forget leaks one live snapshot per event and wedges `hasPendingMutations` true forever. `setData` is for the optimistic half of a mutation; `write` is for data that is already true.
 
-Requires a `realtime` service in deps with `subscribe(channel, handler)`. The framework primitive is `ctx.effect` + `setData`; this just wraps the dispatching boilerplate.
+Requires a `realtime` service in deps with `subscribe(channel, handler)`. The framework primitive is `ctx.effect` + `setData`; this wraps the dispatching boilerplate.
 
 ---
 
@@ -285,7 +285,7 @@ const checkoutController = defineController((ctx) => {
 ## Router integration
 
 Use `@kontsedal/olas-router` — a generic adapter that exposes
-`RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope` and a
+`RouteParamsScope`, `RouteSearchScope` and `RoutePathnameScope` and a
 `Bridge` component that pushes the router's state into those scopes.
 Works with any client-side router (TanStack Router, React Router v6, or
 your own). **Next.js is not supported** — see `BACKLOG.md` for the
@@ -343,7 +343,7 @@ function App() {
 }
 ```
 
-The `Bridge` shallow-equals the incoming `params` / `search` records, so
+The `Bridge` shallow-equals the incoming `params` and `search` records, so
 fresh-object-every-render (the typical router pattern) doesn't churn
 downstream consumers.
 
@@ -382,7 +382,7 @@ const appController = defineController((ctx) => {
 
 ### Pattern C — pre-fetching on route enter
 
-Use the router's loader / `beforeLoad` hook to prefetch — the data lands in the cache before the component mounts, so `ctx.use` returns it synchronously. (See "structural sharing" in §6 of `SPEC.md` for the ref-stability guarantees this gives you.)
+Use the router's loader and `beforeLoad` hook to prefetch — the data lands in the cache before the component mounts, so `ctx.use` returns it synchronously. (See "structural sharing" in §6 of `SPEC.md` for the ref-stability guarantees this gives you.)
 
 Prefetch through `root.bindQuery(query)` rather than the bare definition, so the fetch lands in *this* root's cache:
 
