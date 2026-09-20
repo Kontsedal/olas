@@ -39,6 +39,16 @@ describe('createRoot does not statically reach the heavy subsystems', () => {
     expect(rootSrc).not.toMatch(/new QueryClient\(/)
   })
 
+  test('neither instance.ts nor root.ts reaches query/engine.ts', () => {
+    // The error helper lives in its own module for this reason. With it in
+    // engine.ts, createRoot held a value edge into the module that constructs
+    // the client, and the exclusion rested on export-level DCE rather than on
+    // the graph.
+    for (const src of [instanceSrc, rootSrc]) {
+      expect(valueEdges(src).join('\n')).not.toMatch(/from '\.\.\/query\/engine'/)
+    }
+  })
+
   test('query/engine.ts is the ONLY value importer of the client', () => {
     // Exclusivity is the property. Asserting that engine.ts imports the client
     // proves nothing on its own — another module gaining that edge is exactly
@@ -165,5 +175,47 @@ describe('ctx internals are not a public contract', () => {
   test('a hand-rolled ctx gets a named error rather than a property crash', () => {
     const fake = { deps: {} } as never
     expect(() => createField(fake, '')).toThrow(/not a controller ctx/)
+  })
+})
+
+describe('an engine belongs to exactly one root', () => {
+  test('reusing one across roots throws rather than cross-wiring plugins', () => {
+    const engine = queryEngine()
+    const def = defineController(() => ({}))
+    const first = createRoot(def, { ...noDeps, queries: engine })
+    expect(() => createRoot(def, { ...noDeps, queries: engine })).toThrow(/already adopted/)
+    first.dispose()
+  })
+
+  test('a fresh engine per root is fine', () => {
+    const def = defineController(() => ({}))
+    const a = createRoot(def, { ...noDeps, queries: queryEngine() })
+    const b = createRoot(def, { ...noDeps, queries: queryEngine() })
+    a.dispose()
+    b.dispose()
+  })
+})
+
+describe('streamed hydration on an engine-less root', () => {
+  test('warns rather than dropping the entry in silence', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const root = createRoot(
+      defineController(() => ({})),
+      noDeps,
+    )
+    root.applyDehydratedEntry('app/user/v1', ['me'], { id: 'me' }, Date.now())
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('app/user/v1'))
+    warn.mockRestore()
+    root.dispose()
+  })
+})
+
+describe('the internals handle is not on the public surface', () => {
+  test('the barrel does not export CTX_INTERNALS', async () => {
+    const barrel = (await import('../src/index')) as Record<string, unknown>
+    expect(barrel.CTX_INTERNALS).toBeUndefined()
+    // Still reachable for anyone who takes the risk knowingly — that is what
+    // a registered symbol is for.
+    expect(Symbol.for('olas.ctx.internals')).toBeDefined()
   })
 })

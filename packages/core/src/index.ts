@@ -18,8 +18,11 @@ export type {
   RootOptions,
 } from './controller'
 export { createRoot, defineController } from './controller'
-export type { CtxInternals } from './controller/internals'
-export { CTX_INTERNALS } from './controller/internals'
+// CTX_INTERNALS and CtxInternals are deliberately NOT exported. The handle is
+// how the ctx-taking primitives reach a controller, and its shape can change
+// in a patch release — a typed public export would get bound to. Anyone who
+// genuinely needs it can reach the key through `Symbol.for('olas.ctx.internals')`,
+// which is the point of using a registered symbol, and takes the risk knowingly.
 // Errors & devtools
 export type { DebugBus, DebugCacheEntry, DebugEvent, DebugEventMeta } from './devtools'
 // Emitter

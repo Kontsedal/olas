@@ -67,10 +67,23 @@ export type QueryEngine = {
 }
 
 export function queryEngine(options: QueryEngineOptions = {}): QueryEngine {
+  // One engine, one root. Sharing an engine value would hand two roots the
+  // same plugin *instances* — double-installed listeners, and two caches
+  // cross-wired through one BroadcastChannel — which is exactly what
+  // `.wiki/decisions/per-root-query-client.md` exists to prevent. The "engine"
+  // noun invites hoisting the value to module scope, so say so loudly.
+  let adopted = false
   return {
     __olas: 'queryEngine',
     __options: options,
     __create(host: QueryEngineHost): QueryClient {
+      if (adopted) {
+        throw new Error(
+          '[olas] this queryEngine() is already adopted by a root. Each root needs its own: ' +
+            'call queryEngine() again rather than sharing one value.',
+        )
+      }
+      adopted = true
       return new QueryClient({
         onError: host.onError,
         devtools: host.devtools,
@@ -83,15 +96,4 @@ export function queryEngine(options: QueryEngineOptions = {}): QueryEngine {
       })
     },
   }
-}
-
-/**
- * Thrown when a controller reaches for the cache on a root built without an
- * engine. Names the fix rather than failing on a null read.
- */
-export function missingQueryEngine(operation: string): Error {
-  return new Error(
-    `[olas] ${operation} needs a query engine. Pass one to createRoot: ` +
-      "createRoot(def, { deps, queries: queryEngine() }) — import { queryEngine } from '@kontsedal/olas-core'.",
-  )
 }

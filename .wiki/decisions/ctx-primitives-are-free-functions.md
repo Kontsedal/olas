@@ -43,7 +43,7 @@ Measured with `esbuild --bundle --minify --define:__DEV__=false`, gzipped, `@pre
 
 A consumer who imports everything pays 0.8 KB more, for the engine indirection and the internals plumbing. That trade is the point: the cost moved onto the people who use the features.
 
-**What consumers actually get today: 19.9 KB → 8.1 KB, not 4.8.** Bundling the published `dist/` rather than `src/`, the query engine is excluded as designed but the forms subsystem is not. `tsdown` flattens the package into one shared chunk, so exclusion inside it depends on statement-level dead-code elimination — and `FormImpl`/`FieldArrayImpl` declare their brand markers as computed class-field keys (`[FORM_BRAND] = true`), which esbuild refuses to drop. A signals-only dist bundle still contains `olas.form`, verified by grep.
+**What consumers actually get today: 19.9 KB → 8.2 KB, not 4.8.** Bundling the published `dist/` rather than `src/`, the query engine is excluded as designed but the forms subsystem is not. `tsdown` flattens the package into one shared chunk, so exclusion inside it depends on statement-level dead-code elimination — and `FormImpl`/`FieldArrayImpl` declare their brand markers as computed class-field keys (`[FORM_BRAND] = true`), which esbuild refuses to drop. A signals-only dist bundle still contains `olas.form`, verified by grep.
 
 So the structural work is done and half the payoff is stuck in the build. Fixing it means assigning brands in the constructor instead of as computed field keys, or preserving module structure in the tsdown output. Tracked in `BACKLOG.md`. The honest summary: **2.5x today, 4.2x once the build stops retaining forms.**
 
@@ -52,6 +52,8 @@ So the structural work is done and half the payoff is stuck in the build. Fixing
 `Ctx` was one object literal with every method wired eagerly, built in `controller/instance.ts`. That module value-imported `createField`, `createForm`, `createFieldArray`, `createLocalCache`, `createMutation`, `createUse` and `createInfiniteUse`. `createRoot` reaches `ControllerInstance`, so every one of those subsystems was statically reachable from the only entry point anyone uses. Nothing a bundler does can remove code an object literal might call.
 
 The same argument defeats the obvious fix for the query engine. Constructing the `QueryClient` lazily "on first use" does not help if the first-use site is `ctx.use`, because `ctx.use` lives in `instance.ts` and `instance.ts` is always reachable. The `new QueryClient(...)` expression has to leave `createRoot`'s module graph entirely, which is why `query/engine.ts` exists and is the only module that imports `QueryClient` by value.
+
+"Entirely" is load-bearing and was not true at first. Both `instance.ts` and `root.ts` need to throw the "you forgot the engine" error, and that helper originally lived in `engine.ts` — so `createRoot` still held a value edge into the module that constructs the client, and the exclusion rested on a bundler's export-level dead-code elimination rather than on the graph. The helper now lives in `query/missing-engine.ts`, which imports nothing. `tests/tree-shaking.test.ts` pins that neither `instance.ts` nor `root.ts` reaches `query/engine.ts`.
 
 ## Why the engine is adopted eagerly
 
@@ -67,7 +69,7 @@ A free function needs what a method had: the disposal list, the controller path,
 
 `Symbol.for` rather than a module-local symbol, for the reason in [`brand-markers-not-classes.md`](brand-markers-not-classes.md): two copies of the package in one dependency graph must agree. The accessor throws a named error when the symbol is absent, because the realistic failure is a hand-rolled test double standing in for a real `Ctx`, and `undefined is not an object` does not say that.
 
-This is not public API. The shape can change in a patch release.
+This is not public API, and the barrel does not export it — a typed public export would get bound to whatever "can change in a patch release" said next to it. `Symbol.for('olas.ctx.internals')` still reaches the key for anyone who needs it and accepts the risk knowingly, which is what a registered symbol is for.
 
 ## Naming
 

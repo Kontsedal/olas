@@ -1,7 +1,7 @@
 import { DevtoolsEmitter } from '../devtools'
 import { scheduleExpiry } from '../expiry-timer'
 import type { QueryClient } from '../query/client'
-import { missingQueryEngine } from '../query/engine'
+import { missingQueryEngine } from '../query/missing-engine'
 import { getFactory } from './define'
 import { ControllerInstance, type RootShared } from './instance'
 import type { AmbientDeps, ControllerDef, Root, RootOptions } from './types'
@@ -220,9 +220,32 @@ function attachRootControls<Api>(
     value: () => queryClient?.waitForIdle() ?? Promise.resolve(),
     ...lock,
   })
+  // Streaming SSR pushes entries in through this before any controller has
+  // subscribed. Dropping them silently on an engine-less root would present as
+  // "hydration did nothing" with no symptom to chase. `root.bindQuery` already
+  // throws in the same situation; this cannot throw, because the intake runs
+  // from a script tag, so it warns.
+  const applyDehydrated = (
+    queryId: string,
+    keyArgs: readonly unknown[],
+    data: unknown,
+    lastUpdatedAt: number,
+  ): void => {
+    if (queryClient === null) {
+      if (__DEV__) {
+        console.warn(
+          `[olas] hydration payload for '${queryId}' discarded — this root has no query engine. ` +
+            'Pass `queries: queryEngine()` to createRoot.',
+        )
+      }
+      return
+    }
+    queryClient.applyDehydratedEntry(queryId, keyArgs, data, lastUpdatedAt)
+  }
+
   Object.defineProperty(target, 'applyDehydratedEntry', {
     value: (queryId: string, keyArgs: readonly unknown[], data: unknown, lastUpdatedAt: number) =>
-      queryClient?.applyDehydratedEntry(queryId, keyArgs, data, lastUpdatedAt),
+      applyDehydrated(queryId, keyArgs, data, lastUpdatedAt),
     ...lock,
   })
 
