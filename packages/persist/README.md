@@ -81,6 +81,12 @@ The IndexedDB adapter, `indexedDbAdapter`, resolves each op on the transaction's
 
 `{ crossTab: true }` wires the adapter's `onChange(...)` callback. The default localStorage adapter wires it to the browser's `storage` event. Updates from other tabs deserialize and call `source.set(value)` without echoing the write back.
 
+## Server rendering
+
+`localStorageAdapter` reads synchronously, and `usePersisted` reads it while the controller is constructed. On a returning visitor the persisted values are therefore in the signals before `hydrateRoot` runs, and the server — which has no localStorage — built its HTML from the defaults. Rendering a persisted value on the hydrating pass is a hydration mismatch, and React answers those by discarding the server's markup.
+
+Hold persisted values back for one client render rather than changing what the controller does. `useSyncExternalStore(subscribeToNothing, () => true, () => false)` is `false` on the server and on the hydrating render, and `true` from the render after; gate the persisted values on it. The reader-ssr example does this in [`examples/reader-ssr/src/App.tsx`](../../examples/reader-ssr/src/App.tsx) and explains the trade in [its README](../../examples/reader-ssr/README.md#persisted-state-and-the-first-render).
+
 ## Further reading
 
 - [`../../API.md`](../../API.md#olaspersist) — full reference.

@@ -5,7 +5,7 @@
  *  - Title
  *  - Labels (read via the entities plugin — a label rename anywhere bubbles
  *    here without a refetch)
- *  - AvatarStack of assignees (same entity story)
+ *  - Assignee avatars (same entity story)
  *  - Subtask progress + comment count
  *  - Due-date relative timestamp
  */
@@ -18,7 +18,7 @@ import type { CSSProperties, MouseEvent } from 'react'
 import type { Card as CardData, Priority } from '../../api'
 import type { AppApi } from '../../app.controller'
 import { LabelEntity, UserEntity } from '../../entities'
-import { AvatarStack, cx, Tag } from '../../ui'
+import { Avatar, cx, Tag } from '../../ui'
 
 const PRIORITY_TONE: Record<Priority, 'info' | 'neutral' | 'warning' | 'danger'> = {
   low: 'info',
@@ -49,14 +49,6 @@ export function CardTile({ card, ordered }: { card: CardData; ordered: readonly 
     transition,
     opacity: isDragging ? 0 : 1,
   }
-
-  const labels = card.labelIds
-    .map((id) => app.entities.get(LabelEntity, id))
-    .filter((l): l is NonNullable<typeof l> => l !== undefined)
-
-  const assignees = card.assigneeIds
-    .map((id) => app.entities.get(UserEntity, id))
-    .filter((u): u is NonNullable<typeof u> => u !== undefined)
 
   const doneSubs = card.subtasks.filter((s) => s.done).length
   const totalSubs = card.subtasks.length
@@ -104,12 +96,10 @@ export function CardTile({ card, ordered }: { card: CardData; ordered: readonly 
         )}
         <h4 className="olas-card-tile-title">{card.title}</h4>
 
-        {labels.length > 0 && (
+        {card.labelIds.length > 0 && (
           <div className="olas-card-tile-labels">
-            {labels.map((l) => (
-              <Tag key={l.id} hue={l.hue}>
-                {l.name}
-              </Tag>
+            {card.labelIds.map((id) => (
+              <LabelTag key={id} id={id} />
             ))}
           </div>
         )}
@@ -136,11 +126,54 @@ export function CardTile({ card, ordered }: { card: CardData; ordered: readonly 
             </span>
           )}
           <span className="olas-card-tile-spacer" />
-          {assignees.length > 0 && <AvatarStack members={assignees} size="sm" />}
+          {card.assigneeIds.length > 0 && <AssigneeAvatars ids={card.assigneeIds} />}
         </footer>
       </div>
     </article>
   )
+}
+
+/**
+ * One label, read reactively.
+ *
+ * `entities.get(...)` is a documented non-reactive peek, so a rename made
+ * anywhere else in the app would not reach this tile until the board query
+ * refetched — which is the opposite of what this example is here to show.
+ * `entities.signal(...)` is the reactive read, and `use(...)` subscribes to
+ * it. One component per id, rather than a `use(...)` inside the `.map`,
+ * because React matches hooks by call order and the id list changes length.
+ */
+function LabelTag({ id }: { id: string }) {
+  const app = useRoot<AppApi>()
+  const label = use(app.entities.signal(LabelEntity, id))
+  if (label === undefined) return null
+  return <Tag hue={label.hue}>{label.name}</Tag>
+}
+
+/**
+ * The assignee stack. It mirrors the `AvatarStack` primitive's overflow
+ * maths rather than calling it, because each avatar has to do its own
+ * reactive `entities.signal` read — `AvatarStack` takes resolved members,
+ * and resolving them in the parent would need one hook per id.
+ */
+function AssigneeAvatars({ ids, max = 3 }: { ids: readonly string[]; max?: number }) {
+  const shown = ids.slice(0, max)
+  const overflow = ids.length - shown.length
+  return (
+    <span className="olas-avatar-stack">
+      {shown.map((id) => (
+        <AssigneeAvatar key={id} id={id} />
+      ))}
+      {overflow > 0 && <Avatar name={`+${overflow}`} size="sm" />}
+    </span>
+  )
+}
+
+function AssigneeAvatar({ id }: { id: string }) {
+  const app = useRoot<AppApi>()
+  const user = use(app.entities.signal(UserEntity, id))
+  if (user === undefined) return null
+  return <Avatar name={user.name} hue={user.hue} size="sm" />
 }
 
 function relTime(iso: string): string {

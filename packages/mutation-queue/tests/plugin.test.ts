@@ -422,6 +422,10 @@ function stubOnlineEnv(initialOnline: boolean) {
       nav.onLine = true
       for (const cb of listeners.get('online') ?? []) cb()
     },
+    /** How many `online` listeners the plugin currently holds on `window`. */
+    listenerCount(ev: string) {
+      return listeners.get(ev)?.size ?? 0
+    },
     restore() {
       vi.unstubAllGlobals()
     },
@@ -859,5 +863,219 @@ describe('a run that completed before dispose must not be replayed', () => {
     expect(adapter.store.size).toBe(0)
 
     root.dispose()
+  })
+})
+
+describe('mutationQueuePlugin — a manual retry must not leave a second entry', () => {
+  const MUTATION_ID = 'mq-test/manual-retry'
+
+  beforeEach(() => {
+    _unregisterMutationById(MUTATION_ID)
+  })
+
+  test('a retry that succeeds drops the entry the failed run left behind', async () => {
+    // The failed run's entry stays on disk for a cross-load replay. The user
+    // then retries by hand, which is a NEW runId, so its success only knows
+    // about its own entry. Leave the first one and the next page load writes
+    // the order a second time.
+    const adapter = memoryAdapter()
+    let calls = 0
+    const createOrder = defineMutation({
+      mutationId: MUTATION_ID,
+      mutate: async (vars: { sku: string }) => {
+        calls += 1
+        if (calls === 1) throw new Error('server 500')
+        return { id: 'srv-1', ...vars }
+      },
+    })
+    const def = defineController((ctx) => ({
+      create: createMutation(ctx, { ...createOrder, retry: 0 }) as Mutation<
+        { sku: string },
+        unknown
+      >,
+    }))
+    type Api = { create: Mutation<{ sku: string }, unknown> }
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      onError: () => {},
+      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/retry', maxAttempts: 5 })],
+    }) as unknown as Api & { dispose(): void }
+
+    await root.create.run({ sku: 'A-1' }).catch(() => {})
+    await settle()
+    expect(adapter.store.size).toBe(1) // retained for replay
+
+    await root.create.run({ sku: 'A-1' })
+    await settle()
+    expect(calls).toBe(2)
+    // Nothing left to replay: the write the first entry describes is the one
+    // the retry just landed.
+    expect(adapter.store.size).toBe(0)
+
+    root.dispose()
+  })
+
+  test('a different operation under the same mutationId keeps its own entry', async () => {
+    // The supersede rule keys on the variables, not the mutationId — two
+    // distinct orders that both fail must both stay queued.
+    const adapter = memoryAdapter()
+    const createOrder = defineMutation({
+      mutationId: MUTATION_ID,
+      mutate: async (vars: { sku: string }) => {
+        if (vars.sku === 'A-1') throw new Error('server 500')
+        return { id: 'srv-2', ...vars }
+      },
+    })
+    const def = defineController((ctx) => ({
+      create: createMutation(ctx, { ...createOrder, retry: 0 }) as Mutation<
+        { sku: string },
+        unknown
+      >,
+    }))
+    type Api = { create: Mutation<{ sku: string }, unknown> }
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      onError: () => {},
+      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/retry2', maxAttempts: 5 })],
+    }) as unknown as Api & { dispose(): void }
+
+    await root.create.run({ sku: 'A-1' }).catch(() => {})
+    await settle()
+    expect(adapter.store.size).toBe(1)
+
+    await root.create.run({ sku: 'B-2' })
+    await settle()
+    // B-2 succeeded and dropped its own entry; A-1 is still pending replay.
+    expect(adapter.store.size).toBe(1)
+    const [stored] = [...adapter.store.values()]
+    expect((JSON.parse(stored as string) as QueueEntry).variables).toEqual({ sku: 'A-1' })
+
+    root.dispose()
+  })
+
+  test('a dedupeBy collapse settles the entry it collapsed onto', async () => {
+    // The collapsed run writes no entry of its own. Deleting `event.runId` on
+    // its success targets a key that was never written and leaves the owner
+    // on disk to replay a write the server already took.
+    const adapter = memoryAdapter()
+    const plugin = mutationQueuePlugin({
+      adapter,
+      keyPrefix: 'test/mq/alias',
+      maxAttempts: 5,
+      dedupeBy: (_id, vars) => (vars as { key: string }).key,
+    })
+    plugin.onMutationEnqueue?.({
+      mutationId: 'm',
+      runId: 'run-1',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
+    await settle()
+    plugin.onMutationSettle?.({ mutationId: 'm', runId: 'run-1', outcome: 'error' })
+    await settle()
+    expect(adapter.store.size).toBe(1) // retained below maxAttempts
+
+    plugin.onMutationEnqueue?.({
+      mutationId: 'm',
+      runId: 'run-2',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
+    plugin.onMutationSettle?.({ mutationId: 'm', runId: 'run-2', outcome: 'success' })
+    await settle()
+    expect(adapter.store.size).toBe(0)
+
+    plugin.dispose?.()
+  })
+})
+
+describe('mutationQueuePlugin — replay skips runs executing in this tab', () => {
+  const MUTATION_ID = 'mq-test/inflight-replay'
+
+  beforeEach(() => {
+    _unregisterMutationById(MUTATION_ID)
+  })
+
+  test('replayNow() inside the enqueue→settle window does not re-fire the run', async () => {
+    // A network flap fires `online` (or the app calls `replayNow()`) while a
+    // run is still awaiting its response. Its entry is already on disk, so an
+    // unguarded replay issues the same POST a second time.
+    const adapter = memoryAdapter()
+    let calls = 0
+    let release: (v: { id: string }) => void = () => {}
+    const pending = new Promise<{ id: string }>((res) => {
+      release = res
+    })
+    const createOrder = defineMutation({
+      mutationId: MUTATION_ID,
+      mutate: (_vars: { sku: string }) => {
+        calls += 1
+        return pending
+      },
+    })
+    const plugin = mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/inflight' })
+    const def = defineController((ctx) => ({
+      create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
+    }))
+    type Api = { create: Mutation<{ sku: string }, unknown> }
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    }) as unknown as Api & { dispose(): void }
+    // Let `init`'s own (empty) replay pass finish, or its `replaying` guard
+    // would turn the `replayNow()` below into a no-op and the test would
+    // pass without exercising anything.
+    await settle()
+
+    const run = root.create.run({ sku: 'A-1' })
+    expect(adapter.store.size).toBe(1)
+    expect(calls).toBe(1)
+
+    await plugin.replayNow()
+    await settle()
+    expect(calls).toBe(1) // the live run was skipped, not replayed
+
+    release({ id: 'srv-1' })
+    await run
+    await settle()
+    expect(adapter.store.size).toBe(0)
+
+    root.dispose()
+  })
+})
+
+describe('mutationQueuePlugin — dispose releases the offline wait', () => {
+  test('dispose() drops every online listener, including the parked replay pass', async () => {
+    const env = stubOnlineEnv(false)
+    try {
+      const id = 'mq-test/dispose-offline'
+      _unregisterMutationById(id)
+      const adapter = memoryAdapter()
+      seed(adapter, 'test/mq/dispose-offline', { mutationId: id, runId: 'r1' })
+      let calls = 0
+      defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
+      const def = defineController(() => ({}))
+      const root = createRoot(def, {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/dispose-offline' })],
+      })
+      await settle()
+      expect(calls).toBe(0)
+      // The reconnect listener plus the one the parked `waitForOnline` holds.
+      expect(env.listenerCount('online')).toBe(2)
+
+      root.dispose()
+      await settle()
+      // Both are gone: the pass released the cross-tab replay lock instead of
+      // holding it until a network that may never return.
+      expect(env.listenerCount('online')).toBe(0)
+      expect(calls).toBe(0)
+    } finally {
+      env.restore()
+    }
   })
 })

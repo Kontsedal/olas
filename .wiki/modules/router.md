@@ -9,9 +9,10 @@ covers:
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/router/tests/adapter.test.tsx }
+  - { type: tested-by, target: ../../packages/router/tests/ssr.test.tsx }
   - { type: uses, target: controller.md }
   - { type: uses, target: ../entities/scope.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-21
 confidence: high
 ---
 
@@ -30,8 +31,9 @@ A framework-neutral bridge that funnels a React router's route state (TanStack R
 
 ## The two footguns it addresses (T6.6)
 
-- **SSR seeding.** The `Bridge` pushes state in a **client-only `useLayoutEffect`** — it never runs on the server. Without seeding, route-scoped signals would be `{}` and `''` for the ENTIRE server render. `createRouterAdapter(initial)` seeds the signals at construction so server code injects real params/search/pathname (`adapter.tsx:5-17`).
-- **First-render emptiness.** Even on the client, the first render precedes the `useLayoutEffect` push (moved from `useEffect` → `useLayoutEffect` in T6.6 to shrink the gap, but not eliminate it). Guard route-dependent queries with `enabled: () => params.value.id !== undefined`.
+- **SSR seeding.** The `Bridge` pushes state in a **client-only layout effect** — no effect of either kind runs on the server. Without seeding, route-scoped signals would be `{}` and `''` for the ENTIRE server render. `createRouterAdapter(initial)` seeds the signals at construction so server code injects real params/search/pathname (`adapter.tsx:5-17`).
+- **First-render emptiness.** Even on the client, the first render precedes the layout-effect push (moved from `useEffect` → `useLayoutEffect` in T6.6 to shrink the gap, but not eliminate it). Guard route-dependent queries with `enabled: () => params.value.id !== undefined`.
+- **Server render of the `Bridge`.** The effect is chosen by environment — `useLayoutEffect` when `typeof window !== 'undefined'`, `useEffect` otherwise (`adapter.tsx`). React 18, the floor of the `react: ">=18"` peer range, warns on `console.error` for a `useLayoutEffect` reached during a server render; React 19 dropped that warning. The sanctioned path still seeds and never renders the `Bridge` on the server, but a consumer's shared layout mounts it anyway. `packages/router/tests/ssr.test.tsx` renders it under `renderToString` in the node environment (0.9 review).
 - **`params` typing.** `Record<string, string | undefined>` — matches React Router, where an optional segment absent from the URL is `undefined` (T6.6 widened it from `string`, killing an internal cast).
 
 ## Scopes

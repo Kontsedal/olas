@@ -12,7 +12,7 @@
 //                                  resources (cleared timer, here).
 //  - `ctx.deps.market`            — typed ambient deps, no module global.
 //
-// `KeepAlive` in the React layer wraps this controller so flipping between
+// `SuspendOnUnmount` in the React layer wraps this controller so flipping between
 // two symbols can either dispose-and-recreate, OR suspend/resume to preserve
 // the recent-trades cache. The example uses suspend/resume.
 

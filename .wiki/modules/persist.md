@@ -10,7 +10,7 @@ edges:
   - { type: tested-by, target: ../../packages/persist/tests/indexeddb-adapter.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: controller.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-21
 confidence: high
 ---
 
@@ -74,6 +74,14 @@ The package ships two `StorageAdapter` implementations:
   - **Commit-ack (T6.1):** `runRequest` resolves on the transaction's `oncomplete`, not the request's `onsuccess` — a write's `onsuccess` fires before the data is durably committed, so quota and disk failures only surface as `tx.onabort` at commit. `get`, `set` and `delete` **reject** on failure rather than swallowing it, so `usePersisted`'s `onError` fires. The cross-tab broadcast runs only after the commit lands. An `onversionchange` handler closes the connection and drops the cached promise, so a stale connection never blocks another tab's upgrade. The next op re-opens, and a failed re-open rejects rather than no-oping forever).
 
 Both adapters share the same `StorageAdapter` shape, so `usePersisted` is agnostic. IndexedDB is the right pick for larger payloads (above ~5MB localStorage quota), payloads with characters that bloat string serialization, or anywhere async storage is acceptable.
+
+## `clearPersisted` names its own scope (0.9 review)
+
+`clearPersisted(storage?, options?)` deletes stored keys, and it refuses to guess how many. With no `prefix` it used to delete every key the adapter enumerated — and the default adapter is `localStorage`, shared by the whole origin, so a "log out" also took analytics ids and consent records the app never wrote. It now throws unless given a non-empty `prefix` or an explicit `{ all: true }` (`packages/persist/src/index.ts`). The positional `clearPersisted(storage, prefix, onError)` form still resolves. An adapter with no `keys()` reports through `onError` under the key `'<keys>'` instead of returning silently, so a caller can tell "nothing matched" from "cannot enumerate". Six tests in `persist.test.ts`; the function had none before.
+
+## Persisted state and server rendering (0.9 review)
+
+`usePersisted` reads its adapter during controller construction, and `localStorageAdapter.get` is synchronous. On a returning visitor the stored values are therefore in the signals BEFORE `hydrateRoot` runs, while the server built its HTML from the defaults — a hydration mismatch, which React answers by discarding the server's markup. The fix belongs in the renderer, not here: hold persisted values back for one client render. `examples/reader-ssr/src/App.tsx` does it with a `useHydrated` built on `useSyncExternalStore`'s server-snapshot argument, and both `packages/persist/README.md` and the example README carry the pattern.
 
 ## What's NOT included
 

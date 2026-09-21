@@ -20,7 +20,7 @@ edges:
   - { type: uses, target: ../modules/persist.md }
   - { type: uses, target: ../flows/ssr.md }
   - { type: uses, target: ../flows/mutation-concurrency.md }
-last_verified: 2026-05-21
+last_verified: 2026-09-21
 confidence: high
 ---
 
@@ -35,9 +35,9 @@ and virtualization in isolation.
 
 | Path | UI | Demonstrates |
 |------|----|--------------|
-| `examples/kanban/` | **React (flagship)** | Multi-board project tracker. All three mutation concurrency modes (parallel move / latest-wins search / serial reorder), optimistic snapshot + auto-rollback, `formFromZod` + `FieldArray` + `debouncedValidator`, `defineScope` × 5, `ctx.emitter` + `ctx.on`, `selection<string>()`, **`entitiesPlugin`** (User + Label), **`crossTabPlugin`**, **`useRealtimePatcher`** + **`useLiveStream`** over BroadcastChannel, **`usePersisted`** × N (theme/density/sidebar/last-board), **`defineInfiniteQuery`** (archive), **`KeepAlive`** + **`useSuspendOnHidden`**, **`debounced`** + **`throttled`** + standalone **`effect()`**, root **`onError`** (`ErrorContext`) → toast bridge, `<DevtoolsLauncher>`. Feature-folder code structure; design system in `src/ui/` over the shared scales in `examples/_shared/ui/tokens.css`. |
+| `examples/kanban/` | **React (flagship)** | Multi-board project tracker. All three mutation concurrency modes (parallel move / latest-wins search / serial reorder), optimistic snapshot + auto-rollback, `formFromZod` + `FieldArray` + `debouncedValidator`, `defineScope` × 5, `ctx.emitter` + `ctx.on`, `selection<string>()`, **`entitiesPlugin`** (User + Label), **`crossTabPlugin`**, **`useRealtimePatcher`** + **`useLiveStream`** over BroadcastChannel, **`usePersisted`** × N (theme/density/sidebar/last-board), **`defineInfiniteQuery`** (archive), **`SuspendOnUnmount`** + **`useSuspendOnHidden`**, **`debounced`** + **`throttled`** + standalone **`effect()`**, root **`onError`** (`ErrorContext`) → toast bridge, `<DevtoolsLauncher>`. Feature-folder code structure; design system in `src/ui/` over the shared scales in `examples/_shared/ui/tokens.css`. |
 | `examples/stock-ticker/` | **None — vanilla TS** | `signal` / `computed` / `effect`, `ctx.emitter` + `ctx.on`, `debounced` / `throttled`, `defineQuery` + `refetchInterval`, `usePersisted` watchlist + alerts, SVG sparklines, alert evaluation via emitter. |
-| `examples/reader-ssr/` | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery` with reactive key, `useSuspendOnHidden`, persisted bookmarks + reading progress + theme (`usePersisted` × 3), `ctx.emitter` analytics, `onError` root option + `ErrorContext`. |
+| `examples/reader-ssr/` | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery` with reactive key, `useSuspendOnHidden`, persisted bookmarks + reading progress + theme (`usePersisted` × 3) behind a `useHydrated` gate, `ctx.attach` for the per-article composer, `ctx.emitter` analytics, `onError` root option + `ErrorContext`. |
 | `examples/virtualized-table/` | React | Virtualized list with row flash on update. |
 
 ## Shared scaffolding
@@ -130,7 +130,7 @@ they imply a library change.
    need.
 5. **`ctx.attach` returns `{ api, dispose, suspend, resume }`** — the
    `suspend and resume` pair cascades through the attached sub-tree's
-   lifecycle entries, so `<KeepAlive controller={...}>` consumes it
+   lifecycle entries, so `<SuspendOnUnmount controller={...}>` consumes it
    directly. Resolved.
 
 ## Running them

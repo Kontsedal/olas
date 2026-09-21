@@ -449,8 +449,10 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     // Persistable mutations emit an enqueue event BEFORE the user's `mutate`
     // runs. If the page reloads mid-mutation, the queue plugin replays from
     // this entry. `runId` / `mutationId` are captured at the top of
-    // `executeRun`; retries within `runWithRetry` reuse `runId` via `attempt`
-    // bumps inside that loop.
+    // `executeRun`. Exactly one enqueue fires per run, always with
+    // `attempt: 0` — the in-process retry loop in `runWithRetry` re-invokes
+    // `spec.mutate` under the same `runId` and emits nothing, because the
+    // durable entry it would re-announce is already on disk unchanged.
     if (this.isPersistable && mutationId !== undefined) {
       try {
         this.lifecycle?.emitEnqueue({ mutationId, runId, variables: vars, attempt: 0 })

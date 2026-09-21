@@ -118,6 +118,61 @@ describe('useSuspendOnHidden', () => {
     addSpy.mockRestore()
     removeSpy.mockRestore()
   })
+
+  test('unmounting while hidden resumes instead of stranding the controller', () => {
+    // Nothing else is listening for `visibilitychange` once this effect is
+    // gone, so a controller left suspended here stays suspended forever.
+    const c = makeController()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+
+    function Probe() {
+      useSuspendOnHidden(c)
+      return null
+    }
+    const { unmount } = render(<Probe />)
+    expect(c.suspendCalls).toBe(1)
+    expect(c.resumeCalls).toBe(0)
+
+    act(() => unmount())
+    expect(c.resumeCalls).toBe(1)
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  })
+
+  test('unmounting while visible leaves the controller alone', () => {
+    // The hook never resumed a visible controller on mount, so it has
+    // nothing to undo on unmount either — the caller owns that state.
+    const c = makeController()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+
+    function Probe() {
+      useSuspendOnHidden(c)
+      return null
+    }
+    const { unmount } = render(<Probe />)
+    act(() => unmount())
+    expect(c.suspendCalls).toBe(0)
+    expect(c.resumeCalls).toBe(0)
+  })
+
+  test('swapping the controller while hidden resumes the one being dropped', () => {
+    const a = makeController()
+    const b = makeController()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+
+    function Probe({ controller }: { controller: SuspendableController }) {
+      useSuspendOnHidden(controller)
+      return null
+    }
+    const { rerender } = render(<Probe controller={a} />)
+    expect(a.suspendCalls).toBe(1)
+
+    act(() => rerender(<Probe controller={b} />))
+    expect(a.resumeCalls).toBe(1) // handed back, not stranded
+    expect(b.suspendCalls).toBe(1)
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  })
 })
 
 // R4.6 (T4.6) — cross-fade overlap: two wrappers around the SAME controller must

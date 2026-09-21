@@ -69,14 +69,24 @@ export const KeepAlive = SuspendOnUnmount
 /**
  * Auto-suspend a controller when `document.visibilityState === 'hidden'`,
  * and resume on visible. See spec §20.10.
+ *
+ * The effect undoes itself on cleanup: if it is the reason the controller is
+ * suspended, it resumes before it goes. Unmounting a hidden tab's subtree —
+ * or swapping the `controller` argument while hidden — would otherwise leave
+ * that controller suspended with nothing left listening for the
+ * `visibilitychange` that was supposed to wake it.
  */
 export function useSuspendOnHidden(controller: SuspendableController): void {
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
+    // Whether the suspension standing right now is this effect's doing.
+    let suspendedHere = false
     const onChange = () => {
       if (document.visibilityState === 'hidden') {
+        suspendedHere = true
         controller.suspend()
       } else {
+        suspendedHere = false
         controller.resume()
       }
     }
@@ -88,11 +98,13 @@ export function useSuspendOnHidden(controller: SuspendableController): void {
     // closing here is: mount under a hidden tab never suspends until the
     // next visibility change, which may never come.
     if (document.visibilityState === 'hidden') {
+      suspendedHere = true
       controller.suspend()
     }
     document.addEventListener('visibilitychange', onChange)
     return () => {
       document.removeEventListener('visibilitychange', onChange)
+      if (suspendedHere) controller.resume()
     }
   }, [controller])
 }

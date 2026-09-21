@@ -5,8 +5,11 @@
 
 import { use, useField } from '@kontsedal/olas-react'
 import { Loader2, MessageCircle, Send, X } from 'lucide-react'
-import { type ReactElement, useEffect, useMemo } from 'react'
+import { type ReactElement, useEffect, useReducer, useRef } from 'react'
 import type { AppApi } from './controller'
+
+/** `{ api, dispose }` — what `ctx.attach(composerController, …)` returns. */
+type ComposerHandle = ReturnType<AppApi['reader']['openComposer']>
 
 export function Composer({
   api,
@@ -17,10 +20,37 @@ export function Composer({
   articleId: string
   onClose: () => void
 }): ReactElement {
-  // ctx.attach returns { api, dispose } — let the parent close it.
-  const handle = useMemo(() => api.reader.openComposer(articleId), [api, articleId])
-  // Tear down when the React component unmounts (e.g. switching articles).
-  useEffect(() => () => handle.dispose(), [handle])
+  // `ctx.attach` is side-effectful: the composer controller it builds starts
+  // a comments query and a debounced validator the moment it exists. That
+  // rules out `useMemo` and the `useState` initializer — React is free to
+  // discard a memo, and StrictMode invokes both twice, which would leave a
+  // live controller running with nobody holding its `dispose`. A ref mutated
+  // during render constructs exactly one across StrictMode's double render.
+  // Same pattern `HydrationBoundary` uses for `createRoot`, in
+  // `packages/react/src/context.ts`.
+  //
+  // `articleId` is fixed for the life of one Composer: the caller renders it
+  // under `key={article.id}`, so a different article is a different instance.
+  const handleRef = useRef<ComposerHandle | null>(null)
+  const [, forceRender] = useReducer((n: number) => n + 1, 0)
+  if (handleRef.current === null) {
+    handleRef.current = api.reader.openComposer(articleId)
+  }
+  const handle = handleRef.current
+
+  useEffect(() => {
+    // StrictMode simulates mount → unmount → remount without re-rendering in
+    // between, so the remount has to rebuild what the cleanup tore down —
+    // otherwise the fields below read a disposed controller.
+    if (handleRef.current === null) {
+      handleRef.current = api.reader.openComposer(articleId)
+      forceRender()
+    }
+    return () => {
+      handleRef.current?.dispose()
+      handleRef.current = null
+    }
+  }, [api, articleId])
 
   const author = useField(handle.api.author)
   const body = useField(handle.api.body)

@@ -520,7 +520,7 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | Package | What it gives you |
 |---|---|
 | [`@kontsedal/olas-core`](packages/core) | Everything: signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus. |
-| [`@kontsedal/olas-react`](packages/react) | React adapter — `OlasProvider`, `useRoot`, `use`, `useQuery`, `useField`, `KeepAlive`, `useSuspendOnHidden`. |
+| [`@kontsedal/olas-react`](packages/react) | React adapter — `OlasProvider`, `useRoot`, `use`, `useQuery`, `useField`, `SuspendOnUnmount`, `useSuspendOnHidden`. |
 | [`@kontsedal/olas-persist`](packages/persist) | `usePersisted` + `localStorage` adapter. |
 | [`@kontsedal/olas-zod`](packages/zod) | `zodValidator(schema)` + `formFromZod(ctx, schema)`. |
 | [`@kontsedal/olas-devtools`](packages/devtools) | In-app `<DevtoolsPanel>` + floating launcher consuming `root.__debug`. |

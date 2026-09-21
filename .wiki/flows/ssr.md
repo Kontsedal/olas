@@ -11,9 +11,10 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
+  - { type: tested-by, target: ../../packages/react/tests/ssr-hydration.test.tsx }
   - { type: uses, target: ../entities/query-client.md }
   - { type: uses, target: ../modules/react.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-21
 confidence: high
 ---
 

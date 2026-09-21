@@ -2,12 +2,18 @@
  * Right-hand detail panel. Renders nothing when no card is selected — the
  * grid column collapses to 0 and the board fills the space.
  *
- * The KeepAlive wrapper is wired so the controller's pause/resume signal
- * flips when the panel unmounts — visible in devtools.
+ * The SuspendOnUnmount wrapper is wired so the controller's pause/resume
+ * signal flips when the panel unmounts — visible in devtools.
+ *
+ * `CardDetail` owns the "is a card selected?" branch and `DetailPanel` takes
+ * the card as a prop. The panel calls seven hooks, so it cannot be the one
+ * to return early: React matches hooks by call order, and a component that
+ * returns before them renders a different number of hooks per pass.
  */
 
-import { KeepAlive, use, useField, useQuery, useRoot } from '@kontsedal/olas-react'
+import { SuspendOnUnmount, use, useField, useQuery, useRoot } from '@kontsedal/olas-react'
 import { Archive, Loader2, MoveRight, X } from 'lucide-react'
+import type { Card } from '../../api'
 import type { AppApi } from '../../app.controller'
 import { Button, IconButton, Select, Textarea } from '../../ui'
 import { CommentsThread } from '../comments/CommentsThread'
@@ -20,17 +26,15 @@ export function CardDetail() {
   const card = use(app.cardDetail.card)
   if (card === null) return null
   return (
-    <KeepAlive controller={app.cardDetail}>
-      <DetailPanel />
-    </KeepAlive>
+    <SuspendOnUnmount controller={app.cardDetail}>
+      <DetailPanel card={card} />
+    </SuspendOnUnmount>
   )
 }
 
-function DetailPanel() {
+function DetailPanel({ card }: { card: Card }) {
   const app = useRoot<AppApi>()
-  const card = use(app.cardDetail.card)
   const board = useQuery(app.board.board)
-  if (card === null) return null
   const titleField = useField(app.cardDetail.form.fields.title)
   const descField = useField(app.cardDetail.form.fields.description)
   const priorityField = useField(app.cardDetail.form.fields.priority)

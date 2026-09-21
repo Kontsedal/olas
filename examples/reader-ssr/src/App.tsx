@@ -1,13 +1,21 @@
 // Reader UI. Renders the accumulated feed; "Load more" calls `loadMore()`.
 // `useSuspendOnHidden` pauses the root when the tab is hidden (cache stays in
 // memory; effects tear down; resumes on visible).
+//
+// Persisted state (theme, bookmarks, reading progress) is held back from the
+// first client render — see `useHydrated` at the bottom of this file.
 
 import { OlasProvider, use, useRoot, useSuspendOnHidden } from '@kontsedal/olas-react'
 import { Bookmark, BookmarkPlus, Loader2, MessageCircle, Moon, Sun, SunMoon } from 'lucide-react'
-import { type ReactElement, useEffect, useState } from 'react'
+import { type ReactElement, useEffect, useState, useSyncExternalStore } from 'react'
 import type { Article } from './api'
 import { Composer } from './Composer'
-import type { AppApi, AppRoot, Theme } from './controller'
+import type { AppApi, AppRoot, Progress, Theme } from './controller'
+
+/** What the server renders, because it has no localStorage to read. */
+const NO_PROGRESS: Progress = { lastArticleId: null, scrollY: 0 }
+const NO_BOOKMARKS: readonly string[] = []
+const NO_THEME: Theme = 'auto'
 
 export function App({ root }: { root: AppRoot }): ReactElement {
   return (
@@ -24,9 +32,21 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
   const articles = use(api.reader.flatArticles)
   const hasNextPage = use(api.reader.hasNextPage)
   const isFetching = use(api.reader.isFetching)
-  const progress = use(api.reader.progress)
-  const bookmarks = use(api.reader.bookmarks)
-  const theme = use(api.reader.theme)
+  // `usePersisted` reads localStorage synchronously while the controller is
+  // constructed, so on a returning visitor these three already hold the
+  // stored values by the time `hydrateRoot` runs — and the server, which has
+  // no localStorage, sent markup built from the defaults. Rendering the
+  // stored values on the first client pass is a hydration mismatch. Hold
+  // them back for one render; `useHydrated` explains the mechanism.
+  const hydrated = useHydrated()
+  const storedProgress = use(api.reader.progress)
+  const storedBookmarks = use(api.reader.bookmarks)
+  const storedTheme = use(api.reader.theme)
+  const progress = hydrated ? storedProgress : NO_PROGRESS
+  const bookmarks = hydrated ? storedBookmarks : NO_BOOKMARKS
+  const theme = hydrated ? storedTheme : NO_THEME
+  const isBookmarked = (articleId: string): boolean =>
+    hydrated && api.reader.isBookmarked(articleId)
   // Which article's composer is open. Only one at a time — the controller is
   // disposed via `ctx.attach`'s dispose handle when the user closes it or
   // opens a different one.
@@ -108,15 +128,13 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
           }`}
         >
           <button
-            aria-label={api.reader.isBookmarked(article.id) ? 'Unbookmark' : 'Bookmark'}
+            aria-label={isBookmarked(article.id) ? 'Unbookmark' : 'Bookmark'}
             onClick={() => api.reader.toggleBookmark(article.id)}
             className={`absolute right-0 top-5 rounded-[var(--radius-mark)] p-1 hover:bg-(--color-bg-sunk) ${
-              api.reader.isBookmarked(article.id)
-                ? 'text-(--color-accent)'
-                : 'text-(--color-fg-mute)'
+              isBookmarked(article.id) ? 'text-(--color-accent)' : 'text-(--color-fg-mute)'
             }`}
           >
-            {api.reader.isBookmarked(article.id) ? (
+            {isBookmarked(article.id) ? (
               <Bookmark className="size-5 fill-current" />
             ) : (
               <BookmarkPlus className="size-5" />
@@ -153,7 +171,14 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
             </button>
           </div>
           {openComment === article.id && (
-            <Composer api={api} articleId={article.id} onClose={() => setOpenComment(null)} />
+            // `key` pins one Composer instance per article, so the
+            // controller it attaches never has to be swapped in place.
+            <Composer
+              key={article.id}
+              api={api}
+              articleId={article.id}
+              onClose={() => setOpenComment(null)}
+            />
           )}
         </article>
       ))}
@@ -178,6 +203,31 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
     </div>
   )
 }
+
+/**
+ * `false` on the server and on the client's first, hydrating render; `true`
+ * from the render after hydration onwards.
+ *
+ * `useSyncExternalStore` takes a third argument, the server snapshot, and
+ * React uses it for the hydrating pass as well — so the two sides agree on
+ * `false`, the markup matches, and the client re-renders with `true` once
+ * hydration is done. The store never actually changes, hence the no-op
+ * `subscribe`. This is the general answer for any state the server cannot
+ * see: localStorage, `window.matchMedia`, the current time.
+ *
+ * The cost is one extra client render, and a first paint that shows the
+ * default theme before the stored one. An app that cannot accept the theme
+ * flash writes `data-theme` from a blocking inline script in the document
+ * head, before React runs at all.
+ */
+function useHydrated(): boolean {
+  return useSyncExternalStore(subscribeToNothing, alwaysTrue, alwaysFalse)
+}
+
+const subscribeToNothing = (): (() => void) => noop
+const noop = (): void => {}
+const alwaysTrue = (): boolean => true
+const alwaysFalse = (): boolean => false
 
 function nextTheme(t: Theme): Theme {
   if (t === 'auto') return 'light'

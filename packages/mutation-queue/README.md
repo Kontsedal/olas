@@ -50,7 +50,7 @@ const root = createRoot(checkout, {
   deps: {},
   plugins: [
     mutationQueuePlugin({
-      adapter: localStorageAdapter(),
+      adapter: localStorageAdapter,
       keyPrefix: 'my-app/mutations/v1',
     }),
   ],
@@ -95,13 +95,13 @@ type ReplaySettleApi = { invalidate(query: Query<any, any>, callArgs?: readonly 
 
 | Option | What |
 |---|---|
-| `adapter` | The durable store. `localStorageAdapter()` is the typical default; switch to `indexedDbAdapter()` when payloads are large or `localStorage`'s 5–10 MB quota is uncomfortably close. The adapter must implement `keys()` — both shipped adapters do. Custom adapters without `keys()` log a warning and skip replay. |
+| `adapter` | The durable store. `localStorageAdapter` (an object, not a factory) is the typical default; switch to `indexedDbAdapter()` when payloads are large or `localStorage`'s 5–10 MB quota is uncomfortably close. The adapter must implement `keys()` — both shipped adapters do. Custom adapters without `keys()` log a warning and skip replay. |
 | `keyPrefix` | Required namespace prefix in storage. Use `'<app>/mutations/v<n>'`. Bump `v<n>` when you ship a schema change that can't be `migrate`-d. |
 | `maxAttempts` | Maximum total replay attempts per entry across page loads (in-process retries inside one load are governed by `spec.retry`). After exhaustion the entry is dropped and `onReplayError` fires. |
 | `ttlMs` | Drop entries older than `Date.now() - ttlMs` before any replay attempt. Useful for "if this hasn't gone through in a week, give up." Default is no TTL. |
 | `backoffMs` / `maxBackoffMs` | Exponential backoff on cross-reload retries — `delay = min(backoffMs * 2^(attempts-1), maxBackoffMs)`. Default is no backoff (first retry runs immediately). |
 | `maxEntryBytes` | Soft byte budget per JSON-serialized entry. Exceeding it calls `onWarn` and the write proceeds anyway. Default 64 KB. Set to `Infinity` to disable. |
-| `dedupeBy` | Return a stable idempotency key from `(mutationId, variables)`. Two enqueues sharing the same key collapse — the second consumer promise still resolves but no second durable entry is written. Client-side cost reduction; the server must still dedupe authoritatively. |
+| `dedupeBy` | Return a stable idempotency key from `(mutationId, variables)`. Two enqueues sharing the same key collapse — the second consumer promise still resolves but no second durable entry is written, and the collapsed run settles the entry it collapsed onto. The key also defines "the same logical operation" for the supersede rule, in place of the variables. Client-side cost reduction; the server must still dedupe authoritatively. |
 | `migrate` | Translate entries written under a prior `PROTOCOL_VERSION` into the current shape. Return `null` to drop. Without a migrator, version mismatches silently discard the entry. |
 | `onReplayError` | Fires when replay gives up on an entry: `maxAttempts` exhausted, TTL expired, or no module registered the `mutationId`. The integration point for telemetry / "we couldn't deliver your action" UX. |
 | `onReplayAttempt` | Fires on every non-terminal replay failure — surfaces "we'll retry later" indicators. |
@@ -134,10 +134,23 @@ On `init`, at root construction: list every entry under `keyPrefix`, group by `m
 - **Variables must be JSON-serializable.** Functions, symbols, class instances throw at enqueue; the throw is reported via `onWarn` and the in-process run continues without durability.
 - **Same-`mutationId` runs are serial across loads.** `order/create` followed by `order/cancel` for the same id always run in order. Use distinct `mutationId`s for orthogonal operations.
 - **Idempotency is the consumer's responsibility.** The queue guarantees at-least-once-until-success delivery. Include an `idempotencyKey` in your variables and have the server dedupe by it.
+- **One entry per logical operation, per tab.** A manual retry of a failed run supersedes the entry that run left behind, and a replay pass skips runs this tab is executing right now. Both rules are described in [Retries and the one-entry rule](#retries-and-the-one-entry-rule).
+
+### Retries and the one-entry rule
+
+A run that fails leaves its entry on disk, because the next page load should try it again. The user usually does not wait for that page load — they press the button again. That retry is a fresh run with a fresh `runId`, so its own success drops only its own entry, and the entry the first run left still describes an order the server has already taken. The next load replays it and the customer is charged twice.
+
+The queue closes that window with two rules.
+
+**A successful run supersedes the failed runs it retries.** When a run succeeds, the queue also drops the entries left by earlier runs of the same logical operation that settled in error. Identity is what `dedupeBy(mutationId, variables)` returns when you supply it, and the `mutationId` plus the JSON form of the variables when you do not — a retry re-submits the same variables, while a genuinely new operation carries different ones. Only runs that have already settled are eligible, so a second submit that is still in flight keeps its own entry. A run that settled as `cancelled` also keeps its entry: a reload mid-flight is indistinguishable from a cancel, and that entry is the whole reason the queue exists.
+
+**A `dedupeBy` collapse settles the entry it collapsed onto.** The second enqueue under a live idempotency key writes no entry of its own. Its settle therefore acts on the owner's entry — dropping it on success, counting its attempts on error.
+
+**A replay never touches a run this tab is executing.** An `online` event or a `replayNow()` that lands between a run's enqueue and its settle sees that run's entry on disk and would fire the same request again. The queue skips those entries; the live run's own settle disposes of them. This guard is per-tab, so a second tab replaying during your in-flight run remains possible — see [Cross-tab replay coordination](#cross-tab-replay-coordination), and keep the server-side `idempotencyKey` gate.
 
 ### Online wait + abort on dispose
 
-Replay blocks on `navigator.onLine === true` before any `mutate` call. Tabs that boot offline don't burn `maxAttempts` against unreachable endpoints — they wait for the `online` event. When the root disposes, every in-flight replay aborts (the controller's `AbortSignal` rejects with `AbortError`), the `online` listener is removed, and any pending backoff sleep short-circuits.
+Replay blocks on `navigator.onLine === true` before any `mutate` call. Tabs that boot offline don't burn `maxAttempts` against unreachable endpoints — they wait for the `online` event. When the root disposes, every in-flight replay aborts (the controller's `AbortSignal` rejects with `AbortError`), both `online` listeners are removed, and any pending backoff sleep short-circuits. A pass parked on the offline wait is released too, so it hands back the cross-tab replay lock instead of holding it for a network that may never return.
 
 ### Cross-tab replay coordination
 

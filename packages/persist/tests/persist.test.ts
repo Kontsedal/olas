@@ -1,6 +1,6 @@
 import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
-import { type StorageAdapter, usePersisted } from '../src'
+import { clearPersisted, type StorageAdapter, usePersisted } from '../src'
 
 const emptyDeps = {}
 
@@ -612,5 +612,74 @@ describe('usePersisted — ready-gate races (T6.1)', () => {
     await flush()
     expect(root.s.value).toBe('from-peer')
     root.dispose()
+  })
+})
+
+describe('clearPersisted', () => {
+  /** `memoryStorage` has no `keys()`; this one does. */
+  const enumerable = (
+    initial: Record<string, string> = {},
+  ): StorageAdapter & { store: Map<string, string> } => {
+    const base = memoryStorage(initial)
+    return Object.assign(base, { keys: () => [...base.store.keys()] })
+  }
+
+  test('an unscoped clear throws instead of wiping the whole backend', async () => {
+    // The default adapter is localStorage, shared by the whole origin: an
+    // unscoped clear takes the analytics ids and the consent record along
+    // with this app's state. Scope has to be said out loud.
+    const storage = enumerable({ 'my-app/theme': '"dark"', 'ga/cid': '123' })
+    await expect(clearPersisted(storage)).rejects.toThrow(/pass a non-empty `prefix`/)
+    await expect(clearPersisted(storage, {})).rejects.toThrow(/`\{ all: true \}`/)
+    await expect(clearPersisted(storage, { prefix: '' })).rejects.toThrow(/non-empty/)
+    expect(storage.store.size).toBe(2) // nothing deleted
+  })
+
+  test('a prefix deletes only its own keys', async () => {
+    const storage = enumerable({
+      'my-app/theme': '"dark"',
+      'my-app/draft': '"hi"',
+      'ga/cid': '123',
+    })
+    await clearPersisted(storage, { prefix: 'my-app/' })
+    expect([...storage.store.keys()]).toEqual(['ga/cid'])
+  })
+
+  test('{ all: true } deletes every enumerable key', async () => {
+    const storage = enumerable({ 'my-app/theme': '"dark"', 'ga/cid': '123' })
+    await clearPersisted(storage, { all: true })
+    expect(storage.store.size).toBe(0)
+  })
+
+  test('the positional prefix form still works', async () => {
+    const storage = enumerable({ 'my-app/theme': '"dark"', 'ga/cid': '123' })
+    await clearPersisted(storage, 'my-app/')
+    expect([...storage.store.keys()]).toEqual(['ga/cid'])
+  })
+
+  test('an adapter without keys() reports through onError and deletes nothing', async () => {
+    const storage = memoryStorage({ 'my-app/theme': '"dark"' })
+    const seen: Array<{ key: string; message: string }> = []
+    await clearPersisted(storage, {
+      prefix: 'my-app/',
+      onError: (err, key) => seen.push({ key, message: (err as Error).message }),
+    })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.key).toBe('<keys>')
+    expect(seen[0]?.message).toMatch(/has no keys\(\)/)
+    expect(storage.store.size).toBe(1)
+  })
+
+  test('a delete that throws is reported per key and does not stop the sweep', async () => {
+    const storage = enumerable({ 'my-app/a': '1', 'my-app/b': '2', 'my-app/c': '3' })
+    const realDelete = storage.delete.bind(storage)
+    storage.delete = (key: string) => {
+      if (key === 'my-app/b') throw new Error('SecurityError')
+      realDelete(key)
+    }
+    const seen: string[] = []
+    await clearPersisted(storage, { prefix: 'my-app/', onError: (_err, key) => seen.push(key) })
+    expect(seen).toEqual(['my-app/b'])
+    expect([...storage.store.keys()]).toEqual(['my-app/b'])
   })
 })

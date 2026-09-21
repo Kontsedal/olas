@@ -129,7 +129,9 @@ export type GcEvent = {
  * the queue replays from these entries.
  *
  * `runId` is unique per execution (a single `mutation.run(...)` call OR a
- * replay attempt). `attempt` counts retry passes within a single runId.
+ * replay attempt). One event fires per run, and `attempt` is always `0`:
+ * the in-process retry loop reuses the `runId` and re-emits nothing, so a
+ * plugin counting cross-load replay attempts must keep its own tally.
  */
 export type MutationEnqueueEvent = {
   mutationId: string

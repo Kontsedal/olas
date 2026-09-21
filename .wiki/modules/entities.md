@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: query.md }
   - { type: uses, target: signals.md }
   - { type: related, target: cross-tab.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-21
 confidence: high
 ---
 
@@ -89,6 +89,7 @@ Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the 
 ## Memory model
 
 - Per-id signals are interned in a `Map<entityName, Map<id, Signal>>`. They survive until plugin `dispose` (the slot Map is cleared all at once).
+- `dispose()` also sets a `disposed` flag, and `assertRegistered` checks it first. The clear and "never registered" are the same state to a `store.get(name)` probe, so without the flag every post-dispose call reported `entity "X" was not registered with entitiesPlugin([...])` and sent the reader after a registration that was there all along (0.9 review). Pinned in `entities.test.ts`.
 - Reverse-index entries are tied to query entries. On `onGc(event)`, the bindings for the gc'd entry are dropped from the reverse index. The entity slot stays (a detail view subscribed to that entity should keep working even when its source query is gc'd).
 - Orphaned entity slots accumulate over the app's lifetime. Set `defineEntity({ maxSlots })` to cap the slot map: on overflow, the plugin evicts orphans (entities with no live bindings) in LRU order on the next slot insert. Bound entities are never evicted; if the cap is smaller than the bound-entity count, the cap is silently exceeded. A one-shot dev warning still fires at `SLOT_BLOAT_WARN_AT` (10k) for partitions without a cap.
 

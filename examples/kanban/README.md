@@ -16,7 +16,7 @@ of all features doubles as a coverage map for the library.
 | Search bar (250 ms debounce → server) | `debounced()` + `createMutation(ctx, { concurrency: 'latest-wins' })` |
 | Filter chips (priority / label / assignee) | `computed()` composition over signals |
 | Bulk move + multi-select | `selection<string>()` (handleClick range / meta) |
-| Detail panel | `<KeepAlive controller={cardDetail}>` (suspend/resume on unmount) |
+| Detail panel | `<SuspendOnUnmount controller={cardDetail}>` (suspend/resume on unmount) |
 | Card detail form | `formFromZod` + `FieldArray` for subtasks |
 | Async title-uniqueness check | `debouncedValidator()` |
 | Assignee picker with shared user data | `entitiesPlugin` + `defineEntity<User>` |
@@ -51,7 +51,7 @@ src/
 ├── features/
 │   ├── boards/              # sidebar + switcher
 │   ├── board/               # kanban grid + 3 mutation modes + drag/drop + selection
-│   ├── card-detail/         # KeepAlive panel + form + async validator
+│   ├── card-detail/         # SuspendOnUnmount panel + form + async validator
 │   ├── search/              # debounced search bar
 │   ├── filters/             # chip picker (priority/label/assignee)
 │   ├── comments/            # useLiveStream thread
@@ -101,5 +101,5 @@ pnpm --filter @kontsedal/olas-example-kanban build
 1. `src/api/types.ts` — domain shapes.
 2. `src/app.controller.ts` — the *orchestrator*. Reads top-down like a wiring diagram.
 3. `src/features/board/board.controller.ts` — three mutation modes side-by-side; this is where the testability claim lives.
-4. `src/features/card-detail/card-detail.controller.ts` — `formFromZod` + `debouncedValidator` + KeepAlive shape.
+4. `src/features/card-detail/card-detail.controller.ts` — `formFromZod` + `debouncedValidator` + SuspendOnUnmount shape.
 5. `tests/board.test.ts` + `tests/cross-tab.test.ts` — see the mutations and the two-tab convergence verified deterministically.

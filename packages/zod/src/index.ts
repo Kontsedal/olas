@@ -243,11 +243,20 @@ export type ZodToLeaf<S> =
  * - top-level: `'title'`
  * - nested form: `'address.street'`
  *
- * `FieldArray` items aren't separately addressable — the schema walker
- * generates one factory per array, so a path of `'tags'` matches the
- * `FieldArray` (validators attached there apply to the array as a whole;
- * use Olas's `FieldArrayOptions.validators` shape). Per-element rules
- * already live on the Zod element schema and are attached automatically.
+ * A path names a position in the SCHEMA, not in the value, and an array
+ * contributes no segment to it. So a path at or under an array applies to
+ * every element:
+ *
+ * - `z.array(z.string())` under `tags` → `'tags'` validates each tag
+ * - `z.array(z.object({ name }))` under `tags` → `'tags.name'` validates
+ *   each item's `name` field
+ *
+ * There is no path that addresses the `FieldArray` itself. An array-level
+ * rule — "at least three tags", "no duplicates" — takes a
+ * `FieldArrayValidator`, a different signature over the whole item list,
+ * and `formFromZod` does not wire those; express it in the Zod schema
+ * (`z.array(...).min(3)`), which `zodValidator` already enforces on the
+ * parent.
  *
  * Validators run alongside `zodValidator(schema)` — both must pass.
  */

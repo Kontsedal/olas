@@ -106,6 +106,57 @@ Also retained unconditionally in every bundle: the top-level `globalRegistry(Sym
 
 Worth doing before 1.0, because the published numbers are the ones consumers will quote back.
 
+### [idea] The plugin contract knows the names of its own plugins
+
+[from the 0.9 review] `QueryClientPlugin` is presented as an open extension point, and core does not treat it as one:
+
+- `packages/core/src/query/plugin.ts:206-209` hardcodes a `crossTab` flag, and a `persist` flag sits beside it. Both name specific satellite packages.
+- Every first-party plugin casts into `__spec` to read what it needs.
+- Hooks are synchronous, which is why the durable enqueue in `@kontsedal/olas-mutation-queue` is fire-and-forget and carries a documented loss window.
+- No first-party plugin sets `name`, so `ErrorContext.pluginName` is always `undefined` — the field exists for Sentry and OTel adapters and never carries a value.
+- `subscribedKeys` has no consumers at all.
+
+Closing this means deciding what a third-party plugin is entitled to, which is a design question rather than a set of fixes. Setting `name` on the six shipped plugins is the one piece that stands alone.
+
+### [idea] `useQuery` re-renders on every `isFetching` flip
+
+[from the 0.9 review] `useQuery` snapshots all eight signals on an `AsyncState`, so a component that reads only `data` still re-renders when a background refetch starts and again when it ends. TanStack answers this with `select` (derive and compare) and `notifyOnChangeProps` (subscribe to a subset). Two related findings in the same hook: the `isEqual` short-circuit is gated on selector identity (`packages/react/src/hooks.ts:90`), so an inline selector — the common case — never reaches it; and `useSuspenseQuery` throws a fresh promise per suspended render (`hooks.ts:208` with `packages/core/src/query/use.ts:123-130`), with the `!cur` path throwing an already-rejected one.
+
+### [idea] No `useInfiniteQuery`
+
+[from the 0.9 review] `defineInfiniteQuery` exists in core, and the React adapter has no hook for it. `examples/kanban/src/features/archive/ArchiveDrawer.tsx` hand-rolls five separate `use(...)` subscriptions to cover what one hook should return. That example is the evidence for the shape the hook needs.
+
+### [idea] Four smaller defects in the React adapter
+
+[from the 0.9 review]
+
+- `packages/react/src/context.ts:160-163` disposes a live root during render when `def` identity changes, and the replacement root reuses the original `options.hydrate` — so the new root hydrates from the old root's server state.
+- The streaming intake teardown clobbers a second boundary (`packages/react/src/streaming.ts:281-288`).
+- `useField` and `useMutation.reset` return unmemoized action closures, so every consumer of a memoized child re-renders.
+- `packages/react/package.json` declares a top-level `"types": "./dist/index.d.cts"` next to `"module": "./dist/index.mjs"`. A bundler that falls back to the top-level `types` gets CJS declarations for an ESM entry.
+
+### [idea] `useFieldInput` and `createOlasContext` have no consumers
+
+[from the 0.9 review] Neither is used by any example or test. An export nobody calls is an export nobody has checked. Either give each one an example and a test, or deprecate it. `useFieldInput` is the more defensible of the two — it is the accessible-input shape — and the four examples all hand-roll `value`/`onChange`/`onBlur` instead, which is itself the argument for wiring one of them through it.
+
+### [idea] Three gaps in `@kontsedal/olas-realtime`
+
+[from the 0.9 review] `channel` is a plain string, not a signal, so a controller cannot express a per-route room without tearing down and rebuilding the subscription. `onReconnect` opens a second transport subscription rather than reusing the first. And `rafFlush`, `onDrop` and the capacity `RangeError` have no tests.
+
+### [idea] Five known costs and silent no-ops in `@kontsedal/olas-entities`
+
+[from the 0.9 review]
+
+- The shared-reference re-walk is exponential in a pathological diamond, while the cost comment at `packages/entities/src/index.ts:521-523` claims it is linear in reachable nodes.
+- `update()` with `api === null` skips backprop without saying so (`index.ts:770`).
+- `setAtPath` no-ops on a stale path (`index.ts:631-648`), so a patch aimed at a moved node vanishes.
+- Entities combined with cross-tab amplifies writes: one field patch broadcasts N full payloads.
+- `packages/entities/tests/entities.test.ts:465` is vacuous, and its title contradicts the contract it claims to pin.
+
+### [idea] Two costs in `@kontsedal/olas-zod`
+
+[from the 0.9 review] `rootOnlyZodValidator` re-parses the whole schema on every validation, on top of the per-leaf validators that already ran. And `warnDuplicateZod` has no once-gate, so a duplicate zod copy warns on every leaf the walker visits.
+
 ## Storage / sync
 
 ### [idea] Cross-tab sync for infinite queries
@@ -115,6 +166,36 @@ Worth doing before 1.0, because the published numbers are the ones consumers wil
 ### [idea] Cross-`mutationId` causal ordering in the mutation queue
 
 [from T6.2] `@kontsedal/olas-mutation-queue` replays entries serially **within** a `mutationId` (sorted by `seq`), but different `mutationId`s replay in parallel and cross-tab order isn't coordinated. So a logical dependency like `order/cancel` needing to land after `order/create` (distinct ids) isn't guaranteed on replay. A full fix needs a cross-id dependency DAG (or a global replay sequence with per-entry `dependsOn` edges) plus cross-tab agreement on that order — significant design. Today's guidance: model dependent steps under one `mutationId`, or make the server tolerant of out-of-order arrival (idempotency + reconciliation). Documented as a limitation in the package README.
+
+### [idea] The mutation queue replays a 422 until `maxAttempts`
+
+[from the 0.9 review] `@kontsedal/olas-mutation-queue` treats every replay failure as transient. A 422, a 400 or a 409 that will never succeed burns all `maxAttempts` — with `backoffMs` set, over several page loads — before `onReplayError` fires. Shape: an `isRetryable(err, entry)` option, defaulting to today's "everything is", that drops an entry on the first non-retryable failure and reports it. The awkward part is the contract: `mutate` is a consumer function returning whatever it likes, so the queue cannot read a status code without the consumer handing it one.
+
+### [idea] Two mutation-queue replay paths have no tests
+
+[from the 0.9 review] `packages/mutation-queue/tests/plugin.test.ts` drives a synchronous in-memory adapter in a Node environment, so two paths never execute: the `pendingWrites` ordering that exists for an async adapter (`indexedDbAdapter`, where a `delete` can overtake its own `write`), and the Web Locks branch of `withReplayLock` (Node has no `navigator.locks`, so every test takes the uncoordinated fallback). Both are the parts most likely to break. Needs a promise-returning fake adapter with controllable resolution order, and a fake `navigator.locks` that can grant or refuse.
+
+### [idea] The mutation queue's `seqCounter` can collide across tabs
+
+[from the 0.9 review] `seqCounter` is seeded from `Date.now()` (`packages/mutation-queue/src/plugin.ts`), so two tabs that open in the same millisecond start from the same number and mint the same `seq` for unrelated entries. Replay then orders those entries arbitrarily within a `mutationId`. The `replayAll` priming loop raises the counter past anything already on disk, which narrows the window to entries enqueued before either tab has listed storage. A per-tab random suffix, or a `(seq, tabId)` composite sort key, would close it.
+
+### [idea] Cross-tab sync is last-message-wins with no causality
+
+[from the 0.9 review] `@kontsedal/olas-cross-tab` applies whatever arrives, in arrival order, with no version vector and no conflict resolution. Two tabs editing the same entry converge on whichever message landed last, which need not be the last write. Three related gaps found alongside it:
+
+- An optimistic write broadcast under `source: 'set'` reaches a peer that has no knowledge of the mutation behind it. If the origin tab crashes before its rollback or commit, the peer holds optimistic state forever.
+- A peer silently skips an entry that is not currently bound (`packages/core/src/query/client.ts:851-855`), so a tab drops updates for data it has cached but nobody is subscribed to.
+- The plugin-reuse-across-roots guard throws from `init`, but `callPlugin` catches it and routes it to `onError`. The half-installed plugin stays attached to the second root. `@kontsedal/olas-entities` has the same shape at `packages/entities/src/index.ts:651-659`.
+
+Each of the four could be a separate change; they share one question, which is what guarantee the transport is supposed to give.
+
+### [idea] Three sharp edges in `@kontsedal/olas-persist`
+
+[from the 0.9 review]
+
+- **Version skew.** A peer running `version: undefined` hands the raw versioned envelope to `deserialize` (`packages/persist/src/index.ts:404-405`), so a tab on the old build parses `{"v":2,"d":"…"}` as the value.
+- **`skipFirstDelivery` assumes an immediately-emitting source** (`index.ts:597-601`). A source that does not emit on subscribe has its first real change swallowed instead.
+- **`throttleMs` is documented as a debounce and implemented as a trailing throttle** (`index.ts:66-70` against `580-592`). Pick one — the implementation is the safer behavior under a stream of writes, so the doc is probably what should move.
 
 ## Forms
 
@@ -232,11 +313,19 @@ example turns up wanting the same primitives — three call sites is not yet a c
 
 The other three examples (kanban, reader-ssr, stock-ticker) each ship a `tests/` suite driving their controller via `createTestController` with no DOM. `examples/virtualized-table` has none — yet the root README's examples section implies every example is covered ("Every business-logic surface in these examples is covered by a controller test"). Either add a `tests/controller.test.ts` for `tableController` (row upsert, per-row optimistic edit + `onError` rollback, `selection` range + bulk-apply, title filter) — a natural fit since it's the "rows are data" showcase — or soften the README claim. Adding the test is the better close: the controller is pure and already DOM-free.
 
+### [idea] kanban's `isPaused` is written but never read
+
+[from the 0.9 review] `examples/kanban/src/features/card-detail/card-detail.controller.ts` sets an `isPaused` signal from `suspend`/`resume` and nothing renders it. The example's stated point is that a `<SuspendOnUnmount>` wrapper's effect is visible, so either surface the signal in the panel or drop it.
+
 ## Tooling / DX
 
 ### [idea] Local `pnpm lint` fails on Windows (CRLF vs biome `lineEnding: "lf"`)
 
 `biome.json` sets `formatter.lineEnding: "lf"` but the repo has no `.gitattributes`, so with `core.autocrlf=true` (the default on the maintainer's Windows box) every source file is CRLF in the working tree and `biome check .` reports "Formatter would have printed…" for *every* file. CI passes only because Linux checks out LF. Fix options: add `.gitattributes` (`* text=auto eol=lf`) so checkouts are LF, then `git add --renormalize .` once; or set `core.autocrlf=input` locally. Deferred because renormalizing mid-remediation would bury the real diffs in line-ending noise. Local rule-checking meanwhile is `pnpm exec biome lint .` (skips the formatter); CI verifies formatting.
+
+### [idea] Three biome rules are off, and the examples are why
+
+[from the 0.9 review] `biome.json` disables `useHookAtTopLevel`, `useExhaustiveDependencies` and `noArrayIndexKey`. The review found one real instance of two of them in the examples — a conditional return above seven hooks, and an index key on a list with a delete — both since fixed. The rules were off, so nothing caught them. Re-enabling all three repo-wide would flag existing code in the packages too; the narrower move is to enable them for `examples/**` only, where the code is meant to be exemplary, and to record here what the package-level exceptions would be.
 
 ### [idea] Satellite/integration packages typecheck against built `dist`, not `src`
 

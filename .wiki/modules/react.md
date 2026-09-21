@@ -11,10 +11,12 @@ covers:
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/react/tests/adapter.test.tsx }
+  - { type: tested-by, target: ../../packages/react/tests/ssr-hydration.test.tsx }
+  - { type: tested-by, target: ../../packages/react/tests/keep-alive.test.tsx }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/ctx.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-21
 confidence: high
 ---
 
@@ -90,11 +92,13 @@ An earlier version used `getSnapshot = () => versionRef.current`, a number bumpe
 
 The root is constructed by `createRoot(def, { deps })` **outside** React. `OlasProvider` is a plain `Context.Provider`; it doesn't do anything else. So StrictMode's double-mount-and-effect-twice behavior has no effect on the controller tree — the factory ran exactly once, when `createRoot` was called. See `adapter.test.tsx`'s "double-mount does not double-construct" case.
 
-If a sub-controller has UI-driven lifecycle (e.g. hidden routes), the `<KeepAlive>` wrapper handles suspend/resume. StrictMode causes an extra `resume → suspend → resume` cycle which is safe: `ControllerInstance.suspend()` is a no-op when already suspended and `resume()` is a no-op when already active.
+If a sub-controller has UI-driven lifecycle (e.g. hidden routes), the `<SuspendOnUnmount>` wrapper handles suspend/resume. StrictMode causes an extra `resume → suspend → resume` cycle which is safe: `ControllerInstance.suspend()` is a no-op when already suspended and `resume()` is a no-op when already active.
 
-## `KeepAlive` and `useSuspendOnHidden`
+## `SuspendOnUnmount` and `useSuspendOnHidden`
 
-Default behavior in olas: unmounting the React component does NOT dispose the controller (the controller is owned by its parent and `createRoot`'s consumer). `<KeepAlive>` opts the wrapped sub-tree into a different policy:
+`KeepAlive` is a deprecated alias of `SuspendOnUnmount` (`keep-alive.ts`); the old name implied Vue-style DOM preservation, which the component does not do.
+
+Default behavior in olas: unmounting the React component does NOT dispose the controller (the controller is owned by its parent and `createRoot`'s consumer). `<SuspendOnUnmount>` opts the wrapped sub-tree into a different policy:
 
 - on React (re-)mount → `controller.resume()`
 - on React unmount → `controller.suspend()`
@@ -103,6 +107,8 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 
 `useSuspendOnHidden` is the same idea keyed off `document.visibilityState` (not refcounted — it's a single per-controller visibility hook). Guards `typeof document !== 'undefined'` so it's safe to import from SSR code (no-op on the server).
 
+**It undoes itself on cleanup (0.9 review).** The effect tracks whether the standing suspension is its own doing, and resumes on the way out if it is. Unmounting a subtree while the tab was hidden used to strand the controller: the hook had suspended it, and the `visibilitychange` listener that would have resumed it went with the same cleanup. Swapping the `controller` argument while hidden stranded the outgoing one the same way. A controller the hook never suspended is left alone, which keeps the existing "don't resume a visible tab on mount" rule intact. Three cases in `keep-alive.test.tsx`.
+
 ## `HydrationBoundary` — root ownership (T4.1)
 
 `<OlasProvider>` takes a root created outside React. `HydrationBoundary` instead **creates and owns** the root for client-side SSR hydration. `createRoot` is side-effectful, starting fetches, timers and focus and online listeners, so it must NOT run in a `useMemo` or a `useState` initializer. StrictMode re-invokes those and orphans a live root, which was the original bug. `context.ts` does this instead:
@@ -110,6 +116,12 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 - The root is created **lazily during render** in a `useRef` (`if (rootRef.current === null) …`) — a ref mutated in render creates exactly one root across StrictMode's double render.
 - `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render). The root is recreated only when the **`def` identity** changes (dispose old + create new, in render).
 - A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount, unmount and remount **without re-rendering between them**. The effect's remount-setup therefore recreates the disposed root and calls `forceRender()`, so the Provider hands descendants a live root. This is a dev-only double-construct, as TanStack does. Pinned by `packages/react/tests/hydration-boundary.test.tsx`.
+
+## SSR round trip, end to end (0.9 review)
+
+`packages/react/tests/ssr-hydration.test.tsx` is the only test that puts `renderToString` and `hydrateRoot` on the same markup. Server: build a root, `waitForIdle`, render to a string, `dehydrate`. Client: build a root with `{ hydrate: state }`, hydrate over that HTML, and assert `onRecoverableError` was never called — React funnels a hydration mismatch there before discarding the server's DOM. A second case, hydrating the same HTML against a root whose query never settles, asserts the check has teeth by watching it fire.
+
+Everything else covers one half: `hydration-boundary.test.tsx` covers the boundary's lifecycle, `packages/core/tests/ssr.test.ts` covers dehydrate/hydrate, and `examples/reader-ssr/tests/ssr.test.ts` covers the cache hit without React.
 
 ## Fakes for UI tests
 

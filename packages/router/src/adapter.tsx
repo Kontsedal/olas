@@ -1,6 +1,17 @@
 import { batch, type Scope, type Signal, signal } from '@kontsedal/olas-core'
-import { type ReactElement, type ReactNode, useLayoutEffect } from 'react'
+import { type ReactElement, type ReactNode, useEffect, useLayoutEffect } from 'react'
 import { RouteParamsScope, RoutePathnameScope, RouteSearchScope } from './scopes'
+
+/**
+ * `useLayoutEffect` on the client, `useEffect` on the server. React warns
+ * that `useLayoutEffect` does nothing on the server and asks you to use
+ * `useEffect` instead — and it means it: neither runs during
+ * `renderToString`. The swap only silences the warning for a `Bridge` that
+ * is rendered on the server, which the SSR path is not supposed to do (seed
+ * with `createRouterAdapter(initial)` instead) but which a consumer's
+ * shared layout can reach anyway.
+ */
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 /**
  * A snapshot of route state. Params values are `string | undefined` to match
@@ -124,13 +135,14 @@ export function createRouterAdapter(initial?: RouteState): RouterAdapter {
     children?: ReactNode
   }): ReactElement | null {
     const { params, search, pathname, children } = props
-    // Push router state into the underlying signals. `useLayoutEffect` (not
-    // `useEffect`) runs before the browser paints, shrinking the window where
-    // a consumer reads the pre-Bridge value on the client's first commit. It
-    // still doesn't run on the server — seed via `createRouterAdapter(initial)`
-    // for SSR. `batch` collapses the three writes into one notification round
-    // so consumers depending on multiple slots don't see an intermediate state.
-    useLayoutEffect(() => {
+    // Push router state into the underlying signals. A layout effect (not a
+    // plain one) runs before the browser paints, shrinking the window where
+    // a consumer reads the pre-Bridge value on the client's first commit. No
+    // effect of either kind runs on the server — seed via
+    // `createRouterAdapter(initial)` for SSR. `batch` collapses the three
+    // writes into one notification round so consumers depending on multiple
+    // slots don't see an intermediate state.
+    useIsomorphicLayoutEffect(() => {
       batch(() => {
         if (!shallowEqual(store.params.peek(), params)) store.params.set(params)
         const nextSearch = search ?? EMPTY

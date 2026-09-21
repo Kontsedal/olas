@@ -121,6 +121,37 @@ describe('formFromZod', () => {
     root.dispose()
   })
 
+  test('an extraValidators path at an array applies to every element', async () => {
+    // A path names a position in the SCHEMA and an array adds no segment to
+    // it, so `'tags'` reaches each tag field — there is no path that
+    // addresses the FieldArray itself. Pinned because the two readings are
+    // easy to confuse and only this one is implemented.
+    const schema = z.object({ tags: z.array(z.string().min(1)) })
+    const seen: unknown[] = []
+    const def = defineController((ctx) => ({
+      form: formFromZod(ctx, schema, {
+        initials: { tags: ['ok', 'banned'] },
+        extraValidators: {
+          tags: (value) => {
+            seen.push(value)
+            return value === 'banned' ? 'tag is banned' : null
+          },
+        },
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await flush()
+
+    const items = root.form.fields.tags.items.value
+    expect(items).toHaveLength(2)
+    // Each element ran the validator with its OWN value, not with the array.
+    expect(seen).toEqual(['ok', 'banned'])
+    expect(items[0]?.errors.value).toEqual([])
+    expect(items[1]?.errors.value).toContain('tag is banned')
+
+    root.dispose()
+  })
+
   test('lifts root-level z.object().refine() into a form-level validator', async () => {
     // Cross-field check: confirm must match password. Lives at the root,
     // not on either leaf — a leaf-level `zodValidator(z.string())` can't

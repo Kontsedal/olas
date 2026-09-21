@@ -8,11 +8,15 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/zod/tests/zod.test.ts }
   - { type: uses, target: forms.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-21
 confidence: high
 ---
 
 # `@kontsedal/olas-zod`
+
+## What an `extraValidators` path means (0.9 review)
+
+A path names a position in the SCHEMA, not in the value, and an array contributes no segment to it. So `'tags'` on `z.array(z.string())` attaches to EVERY tag field, and `'tags.name'` on `z.array(z.object({ name }))` attaches to every item's `name`. No path addresses the `FieldArray` itself: an array-level rule takes a `FieldArrayValidator` over the whole item list, a different signature that `formFromZod` does not wire — put those in the Zod schema (`z.array(...).min(3)`), where `zodValidator` enforces them on the parent. The doc claimed the opposite for both halves; the implementation never changed. `zod.test.ts` pins the element behavior.
 
 Four exports: `zodValidator(schema)`, `zodValidatorAsync(schema)`, `rootOnlyZodValidator(schema)`, and `formFromZod(ctx, schema, options?)`. Spec §8.7, §10.
 

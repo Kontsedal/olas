@@ -1314,3 +1314,113 @@ the documentation of the thing it is changing.
 
 Also in this commit: `@kontsedal/olas-dom` was built, measured and dropped before commit —
 see `decisions/no-vanilla-adapter.md` and the earlier entry today.
+
+## [2026-09-21 09:50] ingest | 0.9 review findings — duplicate writes, hydration, and two wrong messages
+
+Sixteen findings from an external review of the 0.9 tree. Fourteen reproduced and were fixed;
+one did not reproduce against the installed React and was fixed anyway for the peer floor;
+the rest were filed to `BACKLOG.md`.
+
+**The queue could write a mutation twice, three ways.** All three sat in
+`@kontsedal/olas-mutation-queue` and all three are now closed in `plugin.ts`, pinned by four
+tests.
+
+The first is the one a user reaches by hand. A `persist: true` run that fails keeps its
+entry on disk for a cross-load replay, which is the design. The user does not wait for the
+reload — they press the button again. That retry is a fresh `runId`, so its success dropped
+its own entry and left the first one, and the next page load placed the order again. A run
+that succeeds now also drops the entries left by earlier runs of the same logical operation
+that settled in error. Identity is `dedupeBy` when configured, otherwise the `mutationId`
+plus the JSON form of the variables — a retry re-submits the same variables, a different
+operation carries different ones. Only settled runs are eligible, so a concurrent identical submit keeps
+its own entry.
+
+The second was in the `dedupeBy` path the first one reuses. A collapsed enqueue writes no
+entry, and its settle still deleted `event.runId` — a key that was never written — leaving
+the owner's entry on disk after the collapse had already succeeded. Every settle branch now
+resolves through `runAlias` to the entry that exists.
+
+The third needed no user at all. `replayEntry` called the registered mutate with no check on
+what this tab was already running, so an `online` event or a `replayNow()` landing inside the
+enqueue→settle window replayed a live request. `inFlightRuns` now covers that window.
+
+**Core's comment about `attempt` was wrong, and had been for a while.** `mutation.ts` said
+retries within `runWithRetry` bump `attempt`. They do not: one enqueue fires per run, always
+with `attempt: 0`, and the retry loop re-invokes `spec.mutate` under the same `runId` emitting
+nothing. The `MutationEnqueueEvent` doc said the same thing and now says the truth, which
+matters because it is the contract a third-party plugin would build an attempt counter on.
+The queue always kept its own tally, so nothing behavioral changed.
+
+**`dispose()` could hold the cross-tab replay lock forever.** `waitForOnline` sits inside
+`withReplayLock`, and a tab that disposed while offline never resolved it. The lock, and the
+`online` listener the wait had registered, survived until a network that might never return.
+`onlineWaiters` releases both.
+
+**A returning visitor's first client render disagreed with the server.** `usePersisted` reads
+its adapter during controller construction and `localStorageAdapter` reads synchronously, so
+theme, bookmarks and reading progress were in the signals before `hydrateRoot` ran — while
+the server, with no localStorage, had rendered the defaults. React answers a mismatch by
+discarding the server's DOM, which is the entire cost the SSR pass was paying to avoid. It
+only bites a returning visitor, which is why every first-visit test passed.
+
+The fix is in the renderer, not the controller: `examples/reader-ssr/src/App.tsx` holds the
+three values back for one render behind a `useHydrated` built on `useSyncExternalStore`'s
+server-snapshot argument. Written up in `pitfalls/persisted-state-breaks-hydration.md`,
+because the shape generalizes to anything the server cannot see, and repeated in both
+READMEs.
+
+**Nothing in the repo had ever hydrated real markup.** SSR is a headline feature and the
+tests covered each half separately — `dehydrate`/`hydrate` in core, the boundary's lifecycle
+in react, the cache hit without React in the reader-ssr example. None put `renderToString` and
+`hydrateRoot` on the same HTML, which is the only place a mismatch surfaces.
+`packages/react/tests/ssr-hydration.test.tsx` does, watching `onRecoverableError`. It carries
+a control case — the same markup against a root with no hydrated state — because an
+assertion that something never fires is worth little until you have watched it fire.
+
+**Two error messages sent readers the wrong way.** `@kontsedal/olas-entities` cleared the
+store in `dispose()`, and that clear is indistinguishable from "never registered" to the
+registration check, so every post-dispose call reported a missing `entitiesPlugin([...])`
+entry that was right there. A `disposed` flag now answers first. Separately,
+`clearPersisted()` with no prefix deleted every key the adapter enumerated — and the default
+adapter is `localStorage`, shared by the origin, so a "log out" took analytics ids and
+consent records with it. It now requires a non-empty `prefix` or an explicit `{ all: true }`.
+That function had zero tests and now has six.
+
+**The flagship example broke a rule it exists to teach.** `CardDetail.tsx` returned early
+above seven hooks, and `CardTile.tsx` promised in its own docstring that "a label rename
+anywhere bubbles here without a refetch" while reading through `entities.get`, the documented
+NON-reactive peek. Both fixed: the panel takes its card as a prop so the branch lives one
+component up, and labels, assignees and comment authors read `entities.signal` through small
+per-id components — one component per id, because a `use(...)` inside a `.map` changes the
+hook count with the list. `SubtasksRow` had `key={idx}` on a list with a delete; it now keys
+off the item's `Form` handle identity, and a DOM test watches node identity survive a
+removal.
+
+`biome.json` disables `useHookAtTopLevel`, `useExhaustiveDependencies` and `noArrayIndexKey`,
+which is why nothing caught two of those. Filed.
+
+**`useSuspendOnHidden` never let go.** It suspended on hidden and removed its
+`visibilitychange` listener on cleanup — the only thing that would ever have resumed the
+controller. Unmounting a hidden tab's subtree stranded it permanently; swapping the
+`controller` argument stranded the outgoing one. The cleanup now resumes whatever it is the
+reason for suspending, and leaves anything else alone.
+
+**One finding did not reproduce.** The router's unguarded `useLayoutEffect` warns during a
+server render on React 18, and React 19 — what this workspace installs — dropped that
+warning. The isomorphic swap went in anyway, since `react: ">=18"` is the declared peer
+range, and the new `packages/router/tests/ssr.test.tsx` says plainly that its `console.error`
+assertion cannot fail here today.
+
+**One finding was a doc, pointing the wrong way.** `@kontsedal/olas-zod` documented an
+`extraValidators` path of `'tags'` as matching the `FieldArray` as a whole. It never did — a
+path names a position in the schema, an array adds no segment, so the walker hands the same
+path to every element. The doc moved to meet the code, because the alternative needs a
+`FieldArrayValidator`, a different signature the type cannot express. Pinned.
+
+Filed to `BACKLOG.md` rather than fixed: the queue's lack of retryable/non-retryable error
+classification, its two untested replay paths and its `Date.now()` seed; cross-tab's absent
+causality and three neighbours; three sharp edges in persist; the plugin contract's hardcoded
+knowledge of its own plugins; `useQuery`'s missing `select`, the absent `useInfiniteQuery`,
+four smaller React defects, and the two exports with no consumers; three gaps in realtime;
+five in entities; two in zod; kanban's decorative `isPaused`; and the three biome rules.
+

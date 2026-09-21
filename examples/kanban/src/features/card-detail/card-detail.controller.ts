@@ -6,9 +6,9 @@
  *  - `formFromZod` + `FieldArray` for subtasks (already covered elsewhere,
  *    here we exercise async validators on a leaf field).
  *  - `debouncedValidator` — async "is this title already used?" check.
- *  - The controller exposes its own `suspend` / `resume` so a `<KeepAlive>`
- *    wrapper can freeze it when the panel unmounts (the form keeps its
- *    state; only effects pause).
+ *  - The controller exposes its own `suspend` / `resume` so a
+ *    `<SuspendOnUnmount>` wrapper can freeze it when the panel unmounts
+ *    (the form keeps its state; only effects pause).
  */
 
 import {
@@ -197,7 +197,7 @@ export const cardDetailController = defineController(
       close,
       titleAsyncError,
       isTitleChecking,
-      // SuspendableController shape for `<KeepAlive>`.
+      // SuspendableController shape for `<SuspendOnUnmount>`.
       suspend: () => isPaused.set(true),
       resume: () => isPaused.set(false),
       isPaused,

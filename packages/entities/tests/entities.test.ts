@@ -605,6 +605,29 @@ describe('entitiesPlugin', () => {
     root.dispose()
   })
 
+  test('calling into the plugin after dispose says it was disposed, not unregistered', () => {
+    // `dispose()` clears the same `store` that the registration check
+    // probes, so a post-dispose call used to report "was not registered"
+    // and send the reader hunting for a missing entitiesPlugin([...]) entry
+    // that was there all along.
+    const plugin = entitiesPlugin([Post])
+    const def = defineController(() => ({}))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    plugin.upsert(Post, { id: 'p1', title: 'Live', likes: 0 })
+    root.dispose()
+
+    const expectErr = /the plugin was disposed with its owning root/
+    expect(() => plugin.signal(Post, 'p1')).toThrow(expectErr)
+    expect(() => plugin.get(Post, 'p1')).toThrow(expectErr)
+    expect(() => plugin.upsert(Post, { id: 'p2', title: 'Late', likes: 0 })).toThrow(expectErr)
+    expect(() => plugin.update(Post, 'p1', { title: 'Late' })).toThrow(expectErr)
+    expect(() => plugin.invalidate(Post, 'p1')).toThrow(expectErr)
+    expect(() => plugin.entries(Post)).toThrow(expectErr)
+    expect(() => plugin.bindings(Post, 'p1')).toThrow(expectErr)
+    // And it does NOT claim the entity was never registered.
+    expect(() => plugin.get(Post, 'p1')).not.toThrow(/was not registered/)
+  })
+
   test('keyArgs containing a Date is handled correctly (uses stableHash)', async () => {
     // The OLD bindingKey used JSON.stringify — same Date instance hashed
     // ok-ish, but two equivalent Dates produced different keys. stableHash

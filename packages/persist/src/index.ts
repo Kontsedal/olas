@@ -648,18 +648,77 @@ export function usePersisted<T>(
   return { ready: ready$ }
 }
 
+export type ClearPersistedOptions = {
+  /** Delete only keys starting with this. Must be non-empty. */
+  prefix?: string
+  /**
+   * Delete EVERY key the adapter enumerates. Required when no `prefix` is
+   * given, because the default adapter is `localStorage` — which the whole
+   * origin shares. Without the opt-in, a "log out" would also take the
+   * analytics ids, the consent record, and whatever a third-party script
+   * put there.
+   */
+  all?: boolean
+  onError?: (err: unknown, key: string) => void
+}
+
 /**
- * Clear every key under a `prefix` (default: clear all). Useful for "log out"
- * flows that want to drop persisted state without enumerating consumers.
- * Errors are routed through the optional `onError` (e.g. quota or security
- * exceptions on `delete`).
+ * Clear persisted keys. Useful for "log out" flows that want to drop stored
+ * state without enumerating consumers. Errors — quota, security exceptions
+ * on `delete` — are routed through the optional `onError`; a failed
+ * enumeration reports under the key `'<keys>'`.
+ *
+ * Scope is never implicit: pass a `prefix`, or pass `all: true` to accept
+ * that everything the adapter can see goes. Neither throws.
+ *
+ * ```ts
+ * await clearPersisted(localStorageAdapter, { prefix: 'my-app/' })
+ * await clearPersisted(sessionAdapter, { all: true })
+ * ```
+ *
+ * An adapter without `keys()` cannot be enumerated, so the call reports
+ * `'<keys>'` through `onError` and deletes nothing.
  */
 export async function clearPersisted(
-  storage: StorageAdapter = localStorageAdapter,
-  prefix?: string,
+  storage?: StorageAdapter,
+  options?: ClearPersistedOptions,
+): Promise<void>
+/** @deprecated Positional form. Pass `{ prefix }` instead. */
+export async function clearPersisted(
+  storage: StorageAdapter | undefined,
+  prefix: string,
   onError?: (err: unknown, key: string) => void,
+): Promise<void>
+export async function clearPersisted(
+  storage: StorageAdapter = localStorageAdapter,
+  prefixOrOptions?: string | ClearPersistedOptions,
+  legacyOnError?: (err: unknown, key: string) => void,
 ): Promise<void> {
-  if (storage.keys === undefined) return
+  const options: ClearPersistedOptions =
+    typeof prefixOrOptions === 'string'
+      ? { prefix: prefixOrOptions, onError: legacyOnError }
+      : (prefixOrOptions ?? {})
+  const prefix = options.prefix
+  const onError = options.onError ?? legacyOnError
+  if (prefix === undefined || prefix === '') {
+    if (options.all !== true) {
+      throw new Error(
+        '[olas/persist] clearPersisted: pass a non-empty `prefix`, or `{ all: true }` to' +
+          ' delete every key the adapter enumerates. The default adapter is localStorage,' +
+          ' which the whole origin shares, so an unscoped clear takes keys this app never wrote.',
+      )
+    }
+  }
+  if (storage.keys === undefined) {
+    onError?.(
+      new Error(
+        '[olas/persist] clearPersisted: the storage adapter has no keys(), so its contents' +
+          ' cannot be enumerated. Nothing was deleted.',
+      ),
+      '<keys>',
+    )
+    return
+  }
   let keys: Iterable<string>
   try {
     const result = storage.keys()
@@ -668,8 +727,11 @@ export async function clearPersisted(
     onError?.(err, '<keys>')
     return
   }
-  for (const key of keys) {
-    if (prefix !== undefined && !key.startsWith(prefix)) continue
+  // Snapshot before deleting — an adapter whose `keys()` returns a live view
+  // (localStorage's does not, but a Map-backed one might) would otherwise be
+  // mutated mid-iteration.
+  for (const key of [...keys]) {
+    if (prefix !== undefined && prefix !== '' && !key.startsWith(prefix)) continue
     try {
       const r = storage.delete(key)
       if (r instanceof Promise) await r

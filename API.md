@@ -414,7 +414,7 @@ type Collection<K, Api> = {
 }
 ```
 
-A child factory that throws is routed to `root.onError` (`kind: 'construction'`) and skipped — the collection shows one fewer entry; the diff loop doesn't re-throw. A `suspendItem`'d row is NOT auto-resumed by a whole-tree `suspend()`/`resume()` cascade (e.g. KeepAlive) — perfect for virtualized lists. SPEC §11.1.
+A child factory that throws is routed to `root.onError` (`kind: 'construction'`) and skipped — the collection shows one fewer entry; the diff loop doesn't re-throw. A `suspendItem`'d row is NOT auto-resumed by a whole-tree `suspend()`/`resume()` cascade (e.g. `SuspendOnUnmount`) — perfect for virtualized lists. SPEC §11.1.
 
 ### `ctx.lazyChild<Props, Api>(loader, props, options?): LazyChild<Api>`
 
@@ -1261,7 +1261,7 @@ render(<UserCard user={user} />)
 
 # @kontsedal/olas-react
 
-The React adapter. ~230 LOC on top of `useSyncExternalStore` — concurrent-safe, no tearing, StrictMode-safe.
+The React adapter, built on `useSyncExternalStore` — concurrent-safe, no tearing, StrictMode-safe.
 
 ### `OlasProvider({ root, children })`
 
@@ -1353,19 +1353,21 @@ function UserCard({ user }: { user: AsyncState<User> }) {
 }
 ```
 
-### `<KeepAlive controller>`
+### `<SuspendOnUnmount controller>`
 
 ```tsx
-<KeepAlive controller={panel}>
+<SuspendOnUnmount controller={panel}>
   <Panel />
-</KeepAlive>
+</SuspendOnUnmount>
 ```
 
-Wrap a sub-tree to suspend the underlying controller on unmount and resume on remount (instead of disposing). Useful for routes you switch back to often.
+Wrap a sub-tree to suspend the underlying controller on unmount and resume on remount (instead of disposing). Useful for routes you switch back to often. Refcounted per controller, so two wrappers overlapping during a cross-fade keep it resumed until the last one unmounts.
+
+`KeepAlive` is a deprecated alias of this component. The old name implied Vue-style DOM preservation, which it does not do — the React tree really unmounts, and only the controller survives.
 
 ### `useSuspendOnHidden(controller: SuspendableController): void`
 
-Suspends the controller when `document.visibilitychange` flips to hidden; resumes on visible. Pair with `<KeepAlive>` for tab-switching workloads.
+Suspends the controller when `document.visibilitychange` flips to hidden; resumes on visible, and on unmount if it is still the reason the controller is suspended. Pair with `<SuspendOnUnmount>` for tab-switching workloads.
 
 ### Type: `SuspendableController`
 
