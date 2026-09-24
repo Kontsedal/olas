@@ -73,7 +73,7 @@ const count = useValue(api.count)
 
 - **A read does not lag a write.** A ref's getter reads the signal's current value, so code that writes a signal and then reads the ref sees the new value.
 - **Vue tracks each ref on its own.** A template that reads `data` does not re-render when `isFetching` flips, because each field is a separate ref.
-- **Subscriptions end with the component.** The adapter ties each one to the current effect scope with `onScopeDispose`. Called outside any scope, a hook still returns a working ref, but nothing ends its subscription.
+- **Subscriptions end with the component.** The adapter ties each one to the current effect scope with `onScopeDispose`. Called outside any scope, a hook still returns a working ref, but nothing ends its subscription. A development build warns about it once per hook, naming the hook. To use a hook outside a component, call it inside `effectScope().run()` and call `stop()` on the scope when you are done.
 - **`mutate` is fire-and-forget.** It returns nothing, and a failure lands on `error` and `status`. The adapter catches the rejection, so it does not become an unhandled one. `run` returns the promise, and the caller owns its rejection.
 - **The refs are read-only.** `useValue` ignores an assignment. Write through the signal, or through `useField`'s `value`, which calls `field.set`.
 

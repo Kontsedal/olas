@@ -1993,7 +1993,7 @@ const { data, isLoading } = useQuery(app.user)
 const count = useValue(app.count) // count.value in script, {{ count }} in a template
 ```
 
-`olasPlugin(root)` provides the root to the whole app. `useRoot()` returns its `api` and is typed by the same `Register` augmentation, declared on `@kontsedal/olas-vue`. `useValue(signal)` returns a read-only `Ref<T>`, and `useQuery`, `useInfiniteQuery`, `useField` and `useMutation` return one ref per field (`Refs<T>`) plus the actions. Vue's own dependency tracking re-renders a template only for the refs it read, so the adapter tracks nothing itself. A ref's getter reads `signal.peek()`, so a write is visible to the next read before Vue flushes. `useField(field).value` is a writable ref that writes through `field.set`, which makes it work with `v-model`. `useMutation` returns `mutate` and `run` with the React adapter's semantics. Every subscription ends with the current effect scope.
+`olasPlugin(root)` provides the root to the whole app. `useRoot()` returns its `api` and is typed by the same `Register` augmentation, declared on `@kontsedal/olas-vue`. `useValue(signal)` returns a read-only `Ref<T>`, and `useQuery`, `useInfiniteQuery`, `useField` and `useMutation` return one ref per field (`Refs<T>`) plus the actions. Vue's own dependency tracking re-renders a template only for the refs it read, so the adapter tracks nothing itself. A ref's getter reads `signal.peek()`, so a write is visible to the next read before Vue flushes. `useField(field).value` is a writable ref that writes through `field.set`, which makes it work with `v-model`. `useMutation` returns `mutate` and `run` with the React adapter's semantics. Every subscription ends with the current effect scope. A hook called outside one still returns working refs, but nothing ends their subscriptions, so a development build warns once per hook, naming it.
 
 ### 16.3 Svelte (`@kontsedal/olas-svelte`)
 
@@ -2062,7 +2062,7 @@ createRealtimePatcher<FeedEvent>(ctx, 'feed-events', {
 })
 ```
 
-The patcher subscribes inside `ctx.effect`, so the subscription ends with the controller, and it runs each handler untracked. A `'*'` handler sees every event. The framework primitives underneath are `ctx.effect` and `write`. Note three choices in the example. `bindQuery` scopes the writes to this root, per §21.5. `write` rather than `setData`, because a realtime event is server truth with nothing to roll back. A fire-and-forget `setData` would leave a live snapshot per event (§6.4). The `origin` tag marks the writes as derived, and cross-tab leaves them alone, since every tab receives the same push (§13.2). `createConnectionState(ctx)` reads the transport's connection state as a signal, and `onReconnect(ctx, fn)` runs `fn` when it comes back.
+The patcher subscribes inside `ctx.effect`, so the subscription ends with the controller, and it runs each handler untracked. Each handler receives its own variant of the event union, `Extract<TEvent, { type: K }>`, and a `'*'` handler sees every event. `channel` is a name or a `ReadSignal<string>`, and a new name moves the subscription to the new channel: a per-route room is a `computed` over the route params. The framework primitives underneath are `ctx.effect` and `write`. Note three choices in the example. `bindQuery` scopes the writes to this root, per §21.5. `write` rather than `setData`, because a realtime event is server truth with nothing to roll back. A fire-and-forget `setData` would leave a live snapshot per event (§6.4). The `origin` tag marks the writes as derived, and cross-tab leaves them alone, since every tab receives the same push (§13.2). `createConnectionState(ctx)` reads the transport's connection state as a signal, and `onReconnect(ctx, fn)` runs `fn` when it comes back. All of them on one `RealtimeService` share one `onConnectionChange` subscription.
 
 #### Gesture / transient UI state
 
@@ -2243,6 +2243,7 @@ Key points:
 - `flushMs` (default 16) coalesces N events into one signal write, which prevents 1000 renders/sec. `rafFlush: true` coalesces against `requestAnimationFrame` instead.
 - `capacity` (default 1000) caps memory; oldest entries drop, and `onDrop` receives them.
 - Pause/resume controls the subscription, not the buffer. Events that arrive during a pause are not received, so recover a gap with `onReconnect(...)` and a query `invalidate` rather than the buffer.
+- A channel signal's change moves the subscription and empties the buffer, since the buffered events came from the old channel.
 - For "merge with historical query" (load page-1 history then tail forward), compose with a `createCache` and a `computed(() => [...history.data.value ?? [], ...logs.events.value])`.
 
 ---
@@ -4309,7 +4310,7 @@ Honest estimates so users know what they're paying for. All numbers are order-of
 | persist: `createPersisted` / `persistQueryCachePlugin` | 1.05 kB / 1.25 kB |
 | zod | 1.35 kB, plus Zod itself |
 | cross-tab / entities / mutation-queue | 1.4 kB / 2.2 kB / 3.3 kB |
-| realtime / router | 0.85 kB / 0.65 kB |
+| realtime / router | 1.05 kB / 0.65 kB |
 | devtools | 18.8 kB, loaded behind the app's own dev gate |
 
 For a "kitchen sink" app, everything in core plus react, `createPersisted` and zod stays within about 28.5 kB, plus Zod itself.
@@ -4378,7 +4379,7 @@ Recommendation in §5.7: use Immer for any non-trivial nested update.
 
 ### Devtools and production builds
 
-The packages with dev-only code (core, entities, persist, react and zod) each ship two builds from one source, behind export conditions:
+The packages with dev-only code (core, entities, persist, react, vue and zod) each ship two builds from one source, behind export conditions:
 
 | Condition | File | `__DEV__` |
 |---|---|---|

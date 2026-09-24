@@ -11,7 +11,7 @@ import {
   required,
   signal,
 } from '@kontsedal/olas-core'
-import { afterEach, describe, expect, test } from 'vitest'
+import { afterEach, describe, expect, test, vi } from 'vitest'
 import { type App, createApp, defineComponent, h, nextTick } from 'vue'
 import {
   olasPlugin,
@@ -248,12 +248,17 @@ describe('useValue details', () => {
   })
 
   test('the ref is read-only, and reads the signal outside a component too', () => {
+    // No effect scope: nothing to tie the subscription to, so it warns
+    // (scope-warning.test.ts covers the warning).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const count = signal(1)
-    const ref = useValue(count) // no effect scope: nothing to tie the subscription to
+    const ref = useValue(count)
     ;(ref as { value: number }).value = 5
     expect(count.value).toBe(1)
     count.set(2)
     expect(ref.value).toBe(2)
+    expect(warn).toHaveBeenCalledTimes(1)
+    warn.mockRestore()
   })
 })
 

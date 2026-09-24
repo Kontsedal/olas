@@ -1,5 +1,5 @@
 import type { Ctx, ReadSignal } from '@kontsedal/olas-core'
-import { signal, untracked } from '@kontsedal/olas-core'
+import { batch, signal, untracked } from '@kontsedal/olas-core'
 
 /**
  * A handle returned by `RealtimeService.subscribe(...)`. Matches the shape
@@ -58,24 +58,34 @@ export type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknow
 export type RealtimeDeps = { realtime: RealtimeService }
 
 /**
- * Map of `event.type` literal → handler. Only keys present in the
- * discriminated union appear; other types are filtered out by the
- * `TEvent extends { type: infer K }` conditional.
+ * Map of `event.type` literal → handler. Each key is one `type` of the
+ * discriminated union, and its handler receives that variant only:
+ * `Extract<TEvent, { type: K }>`, so `'comment-added': (ev) => ev.comment`
+ * needs no narrowing.
  *
- * The `'*'` wildcard key receives every event the dispatcher saw, including
- * those a specific handler already consumed. Use it for logging,
- * instrumentation, or "I don't know all the types yet" diagnostics.
+ * The `'*'` wildcard key receives every event the dispatcher saw, typed as
+ * the whole union, including those a specific handler already consumed. Use
+ * it for logging, instrumentation, or "I don't know all the types yet"
+ * diagnostics.
  */
-export type PatcherHandlers<TEvent> = Partial<
-  Record<TEvent extends { type: infer K } ? K & string : never, (event: TEvent) => void>
-> & {
+export type PatcherHandlers<TEvent extends { type: string }> = {
+  [K in TEvent['type']]?: (event: Extract<TEvent, { type: K }>) => void
+} & {
   '*'?: (event: TEvent) => void
 }
+
+/** The channel's name now: a string as it is, a signal's current value. */
+const channelName = (channel: string | ReadSignal<string>): string =>
+  typeof channel === 'string' ? channel : channel.value
 
 /**
  * Subscribe to `channel` for the lifetime of the surrounding controller and
  * dispatch each event to the matching handler by `event.type`. Wrapper around
  * the recurring SPEC §16.5 "realtime → cache patches" pattern.
+ *
+ * `channel` is a name or a signal of one. With a signal, a new name
+ * unsubscribes from the old channel and subscribes to the new one, so a
+ * per-route room is `computed(() => 'room:' + params.value.roomId)`.
  *
  * Handlers run inside `untracked(...)` so accidental signal reads (e.g.
  * `query.setData((prev) => prev.value)`) don't add deps to the enclosing
@@ -87,14 +97,13 @@ export type PatcherHandlers<TEvent> = Partial<
  */
 export function createRealtimePatcher<TEvent extends { type: string }>(
   ctx: Ctx<RealtimeDeps>,
-  channel: string,
+  channel: string | ReadSignal<string>,
   handlers: PatcherHandlers<TEvent>,
 ): void {
   ctx.effect(() => {
-    const sub = ctx.deps.realtime.subscribe<TEvent>(channel, (event) => {
-      const handler = handlers[event.type as keyof PatcherHandlers<TEvent>] as
-        | ((e: TEvent) => void)
-        | undefined
+    const sub = ctx.deps.realtime.subscribe<TEvent>(channelName(channel), (event) => {
+      // The map types each handler by its own variant; `event` is the union.
+      const handler = handlers[event.type as TEvent['type']] as ((e: TEvent) => void) | undefined
       const wildcard = handlers['*']
       if (handler === undefined && wildcard === undefined) return
       untracked(() => {
@@ -142,7 +151,9 @@ export type LiveStreamOptions<TEvent = unknown> = {
  * (let alone buffered) until `resume()`. To recover a gap, pair with
  * `onReconnect(...)` + a query `invalidate` (refetch authoritative state)
  * rather than relying on the buffer. `clear()` empties the buffer without
- * touching the subscription. SPEC §16.5 tail-buffer pattern.
+ * touching the subscription. A channel signal's change empties it too, since
+ * the buffered events came from the old channel. SPEC §16.5 tail-buffer
+ * pattern.
  */
 export type LiveStream<TEvent> = {
   events: ReadSignal<readonly TEvent[]>
@@ -174,10 +185,15 @@ const DEFAULT_FLUSH_MS = 16
  *   gap with `onReconnect(...)` + query `invalidate`, not the buffer.
  * - `clear()` resets the buffer (and any unflushed pending events) without
  *   touching the subscription.
+ * - `channel` is a name or a signal of one. A new name moves the
+ *   subscription to the new channel and empties the buffer, as `clear()`
+ *   does: a tail holds one channel's events, and nothing in an event says
+ *   which channel it came from. A change during a pause empties it too, and
+ *   `resume()` subscribes to the new name.
  */
 export function createLiveStream<TEvent>(
   ctx: Ctx<RealtimeDeps>,
-  channel: string,
+  channel: string | ReadSignal<string>,
   options?: LiveStreamOptions<TEvent>,
 ): LiveStream<TEvent> {
   const capacity = options?.capacity ?? DEFAULT_CAPACITY
@@ -253,27 +269,45 @@ export function createLiveStream<TEvent>(
     }
   }
 
+  const cancelFlush = () => {
+    if (flushTimer != null) {
+      clearTimeout(flushTimer)
+      flushTimer = null
+    }
+    if (rafHandle != null && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(rafHandle)
+      rafHandle = null
+    }
+  }
+
+  const clear = () => {
+    pending = []
+    cancelFlush()
+    events$.set([])
+  }
+
+  // The channel the buffered events came from.
+  let bufferedFrom: string | undefined
+
   ctx.effect(() => {
+    // Read the channel before the pause flag, so a change re-runs this effect
+    // during a pause too.
+    const name = channelName(channel)
+    if (bufferedFrom !== undefined && name !== bufferedFrom) clear()
+    bufferedFrom = name
     if (isPaused$.value) return
     // Events buffered during the previous run that the cleanup cleared the
     // timer for (i.e. pause() fired before the trailing flush) would sit
     // forever otherwise; reschedule the flush as we re-subscribe so they
     // eventually land in `events$`.
     if (pending.length > 0) scheduleFlush()
-    const sub = ctx.deps.realtime.subscribe<TEvent>(channel, (event) => {
+    const sub = ctx.deps.realtime.subscribe<TEvent>(name, (event) => {
       pending.push(event)
       scheduleFlush()
     })
     return () => {
       sub.unsubscribe()
-      if (flushTimer != null) {
-        clearTimeout(flushTimer)
-        flushTimer = null
-      }
-      if (rafHandle != null && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(rafHandle)
-        rafHandle = null
-      }
+      cancelFlush()
     }
   })
 
@@ -282,18 +316,7 @@ export function createLiveStream<TEvent>(
     isPaused: isPaused$,
     pause: () => isPaused$.set(true),
     resume: () => isPaused$.set(false),
-    clear: () => {
-      pending = []
-      if (flushTimer != null) {
-        clearTimeout(flushTimer)
-        flushTimer = null
-      }
-      if (rafHandle != null && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(rafHandle)
-        rafHandle = null
-      }
-      events$.set([])
-    },
+    clear,
   }
 }
 
@@ -306,6 +329,12 @@ export function createLiveStream<TEvent>(
  * observe connection state, so it reports that honestly rather than lying
  * with `'connected'` (T6.7). With a reporter, it starts optimistically at
  * `'connected'` until the first change corrects it.
+ *
+ * Every `createConnectionState` and `onReconnect` on one `RealtimeService`
+ * shares one `onConnectionChange` listener. The first live one subscribes,
+ * and the last one to dispose (or suspend) unsubscribes. One that starts
+ * while the listener is live begins at the transport's latest report, since
+ * the transport's own "current state" call came once, on that subscribe.
  *
  * Useful for "stale-during-disconnect" UIs and as a refetch trigger when
  * the connection comes back up:
@@ -321,17 +350,69 @@ export function createLiveStream<TEvent>(
  * ```
  */
 export function createConnectionState(ctx: Ctx<RealtimeDeps>): ReadSignal<ConnectionState> {
-  // A transport WITHOUT `onConnectionChange` can't report status — start at
-  // `'unknown'` instead of claiming `'connected'` (T6.7). With a reporter,
-  // start optimistically at `'connected'` until the first change corrects it.
-  const canReport = ctx.deps.realtime.onConnectionChange !== undefined
-  const state$ = signal<ConnectionState>(canReport ? 'connected' : 'unknown')
-  ctx.effect(() => {
-    const onChange = ctx.deps.realtime.onConnectionChange
-    if (onChange === undefined) return undefined
-    return onChange((s) => state$.set(s))
-  })
+  const service = ctx.deps.realtime
+  const report = service.onConnectionChange
+  // A transport WITHOUT `onConnectionChange` can't report status — report
+  // `'unknown'` instead of claiming `'connected'` (T6.7).
+  if (report === undefined) return signal<ConnectionState>('unknown')
+  // With a reporter, start optimistically at `'connected'` until the first
+  // report corrects it.
+  const state$ = signal<ConnectionState>('connected')
+  const listener = (s: ConnectionState) => state$.set(s)
+  ctx.effect(() => joinConnection(service, report, listener))
   return state$
+}
+
+type ConnectionListener = (state: ConnectionState) => void
+
+/**
+ * One `onConnectionChange` subscription per transport, fanned out to every
+ * live `createConnectionState`. `last` is the latest report while the
+ * subscription is open, for a listener that joins after it opened.
+ */
+type ConnectionHub = {
+  listeners: Set<ConnectionListener>
+  last?: ConnectionState | undefined
+  off?: (() => void) | undefined
+}
+
+const hubs = new WeakMap<RealtimeService, ConnectionHub>()
+
+/** Add `listener` to the service's shared subscription; returns its removal. */
+function joinConnection(
+  service: RealtimeService,
+  report: (handler: ConnectionListener) => () => void,
+  listener: ConnectionListener,
+): () => void {
+  let h = hubs.get(service)
+  if (h === undefined) {
+    h = { listeners: new Set() }
+    hubs.set(service, h)
+  }
+  const hub = h
+  if (hub.listeners.size === 0) {
+    // Open before adding the listener: a throw here leaves the hub closed and
+    // empty, so the next listener tries again. Called on the service, so a
+    // class-based transport keeps its `this`.
+    hub.off = report.call(service, (s) => {
+      hub.last = s
+      batch(() => {
+        for (const l of hub.listeners) l(s)
+      })
+    })
+  }
+  hub.listeners.add(listener)
+  // A transport's synchronous "current state" call reached the hub once, when
+  // it opened; `last` hands it to every listener that joins after.
+  if (hub.last !== undefined) listener(hub.last)
+  return () => {
+    hub.listeners.delete(listener)
+    if (hub.listeners.size > 0) return
+    const off = hub.off
+    hub.off = undefined
+    hub.last = undefined
+    off?.()
+  }
 }
 
 /**

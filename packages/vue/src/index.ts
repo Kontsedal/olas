@@ -75,6 +75,30 @@ function onDispose(stop: () => void): void {
   if (getCurrentScope() !== undefined) onScopeDispose(stop)
 }
 
+/** The hooks that have already warned about a missing effect scope. */
+let warnedOutsideScope: Set<string> | undefined
+
+/**
+ * Development builds only. Outside an effect scope nothing calls
+ * `onScopeDispose`, so a hook's subscription is never ended. Warn once per
+ * hook, where the call happens, naming the hook. A hook that calls another
+ * (`useQuery` builds on `useValue`) checks once, under its own name. Each
+ * hook calls it as `__DEV__ && warnOutsideScope(name)`, which the default
+ * build drops, strings and all.
+ */
+function warnOutsideScope(hook: string): void {
+  if (getCurrentScope() !== undefined) return
+  warnedOutsideScope ??= new Set()
+  if (warnedOutsideScope.has(hook)) return
+  warnedOutsideScope.add(hook)
+  console.warn(
+    `[olas] ${hook}() ran outside a Vue effect scope, so nothing will unsubscribe it: ` +
+      'its signal subscriptions stay live, and keep the refs they feed in memory, for as ' +
+      "long as the signals exist. Call it from a component's setup(), or inside " +
+      'effectScope().run() and call stop() on that scope when you are done.',
+  )
+}
+
 /** Options for `useValue`. */
 export type UseValueOptions<T> = {
   /** Decides when a new value triggers Vue. Default `Object.is`. */
@@ -85,14 +109,23 @@ export type UseValueOptions<T> = {
  * A read-only ref over any `ReadSignal`: a `signal`, a `computed`, a `Field`,
  * a `Form` or a `FieldArray`. Reading the ref reads the signal's current value,
  * so it never lags a write. The subscription ends with the component (the
- * current effect scope).
+ * current effect scope). Outside any scope nothing ends it, and a development
+ * build warns.
  *
  * ```ts
  * const count = useValue(api.count)   // count.value in script, {{ count }} in a template
  * ```
  */
 export function useValue<T>(signal: ReadSignal<T>, options?: UseValueOptions<T>): Readonly<Ref<T>> {
-  const isEqual = options?.isEqual ?? Object.is
+  __DEV__ && warnOutsideScope('useValue')
+  return valueRef(signal, options?.isEqual)
+}
+
+/** `useValue` without the scope check, for the hooks built on it. */
+function valueRef<T>(
+  signal: ReadSignal<T>,
+  isEqual: (a: T, b: T) => boolean = Object.is,
+): Readonly<Ref<T>> {
   let last = signal.peek()
   let trigger: () => void = () => {}
   const ref = customRef<T>((track, triggerRef) => {
@@ -147,17 +180,22 @@ export type UseQueryReturn<T> = Refs<{
  * ```
  */
 export function useQuery<T>(subscription: AsyncState<T>): UseQueryReturn<T> {
+  __DEV__ && warnOutsideScope('useQuery')
+  return queryRefs(subscription)
+}
+
+function queryRefs<T>(subscription: AsyncState<T>): UseQueryReturn<T> {
   return {
-    data: useValue(subscription.data),
-    error: useValue(subscription.error),
-    status: useValue(subscription.status),
-    isLoading: useValue(subscription.isLoading),
-    isFetching: useValue(subscription.isFetching),
-    isStale: useValue(subscription.isStale),
-    isPaused: useValue(subscription.isPaused),
-    isEnabled: useValue(subscription.isEnabled),
-    lastUpdatedAt: useValue(subscription.lastUpdatedAt),
-    hasPendingMutations: useValue(subscription.hasPendingMutations),
+    data: valueRef(subscription.data),
+    error: valueRef(subscription.error),
+    status: valueRef(subscription.status),
+    isLoading: valueRef(subscription.isLoading),
+    isFetching: valueRef(subscription.isFetching),
+    isStale: valueRef(subscription.isStale),
+    isPaused: valueRef(subscription.isPaused),
+    isEnabled: valueRef(subscription.isEnabled),
+    lastUpdatedAt: valueRef(subscription.lastUpdatedAt),
+    hasPendingMutations: valueRef(subscription.hasPendingMutations),
     refetch: subscription.refetch,
     reset: subscription.reset,
     cancel: subscription.cancel,
@@ -182,14 +220,15 @@ export type UseInfiniteQueryReturn<TPage, TItem> = UseQueryReturn<TPage[]> &
 export function useInfiniteQuery<TPage, TItem>(
   subscription: InfiniteQuerySubscription<TPage, TItem>,
 ): UseInfiniteQueryReturn<TPage, TItem> {
+  __DEV__ && warnOutsideScope('useInfiniteQuery')
   return {
-    ...useQuery(subscription),
-    pages: useValue(subscription.pages),
-    flat: useValue(subscription.flat),
-    hasNextPage: useValue(subscription.hasNextPage),
-    hasPreviousPage: useValue(subscription.hasPreviousPage),
-    isFetchingNextPage: useValue(subscription.isFetchingNextPage),
-    isFetchingPreviousPage: useValue(subscription.isFetchingPreviousPage),
+    ...queryRefs(subscription),
+    pages: valueRef(subscription.pages),
+    flat: valueRef(subscription.flat),
+    hasNextPage: valueRef(subscription.hasNextPage),
+    hasPreviousPage: valueRef(subscription.hasPreviousPage),
+    isFetchingNextPage: valueRef(subscription.isFetchingNextPage),
+    isFetchingPreviousPage: valueRef(subscription.isFetchingPreviousPage),
     fetchNextPage: subscription.fetchNextPage,
     fetchPreviousPage: subscription.fetchPreviousPage,
   }
@@ -226,14 +265,15 @@ export type UseFieldReturn<T> = {
  * ```
  */
 export function useField<T>(field: Field<T>): UseFieldReturn<T> {
-  const current = useValue(field)
+  __DEV__ && warnOutsideScope('useField')
+  const current = valueRef(field)
   return {
     value: vueComputed({ get: () => current.value, set: (next: T) => field.set(next) }),
-    errors: useValue(field.errors),
-    isValid: useValue(field.isValid),
-    isDirty: useValue(field.isDirty),
-    touched: useValue(field.touched),
-    isValidating: useValue(field.isValidating),
+    errors: valueRef(field.errors),
+    isValid: valueRef(field.isValid),
+    isDirty: valueRef(field.isDirty),
+    touched: valueRef(field.touched),
+    isValidating: valueRef(field.isValidating),
     set: (next) => field.set(next),
     setAsInitial: (next) => field.setAsInitial(next),
     reset: () => field.reset(),
@@ -266,14 +306,15 @@ export type UseMutationReturn<V, R> = Refs<{
  * for an event handler; `run` returns the promise.
  */
 export function useMutation<V, R>(mutation: Mutation<V, R>): UseMutationReturn<V, R> {
+  __DEV__ && warnOutsideScope('useMutation')
   const run = ((...args: unknown[]) =>
     (mutation.run as (v: unknown) => Promise<R>)(args[0])) as MutationRun<V, R>
   return {
-    data: useValue(mutation.data),
-    error: useValue(mutation.error),
-    status: useValue(mutation.status),
-    isPending: useValue(mutation.isPending),
-    lastVariables: useValue(mutation.lastVariables),
+    data: valueRef(mutation.data),
+    error: valueRef(mutation.error),
+    status: valueRef(mutation.status),
+    isPending: valueRef(mutation.isPending),
+    lastVariables: valueRef(mutation.lastVariables),
     run,
     mutate: ((...args: unknown[]) => {
       ;(run as (...a: unknown[]) => Promise<R>)(...args).catch(() => {})

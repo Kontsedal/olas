@@ -14,7 +14,7 @@ covers:
 edges:
   - { type: related, target: brand-markers-not-classes.md }
   - { type: related, target: ctx-primitives-are-free-functions.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -46,7 +46,7 @@ All of these run in CI after `pnpm build`:
 
 ## Two builds per package: production and development
 
-Core, entities, persist, react and zod have `if (__DEV__)` branches. Each ships two builds from one source (its `tsdown.config.ts` exports an array): `dist/` with `__DEV__: 'false'`, and `dist/dev/` with `__DEV__: 'true'`. The exports map puts the dev build behind a `development` condition, between `types` and `default`. tsdown cleans once for both configs before either builds, so they cannot wipe each other.
+Core, entities, persist, react, vue and zod have `if (__DEV__)` branches. Vue joined on 2026-09-25, for its missing-effect-scope warning. Each ships two builds from one source (its `tsdown.config.ts` exports an array): `dist/` with `__DEV__: 'false'`, and `dist/dev/` with `__DEV__: 'true'`. The exports map puts the dev build behind a `development` condition, between `types` and `default`. tsdown cleans once for both configs before either builds, so they cannot wipe each other.
 
 Before 1.0, `__DEV__` came from `NODE_ENV` at build time, and the release build ran with `NODE_ENV=production`. So the published core had no devtools events at all, and `@kontsedal/olas-devtools` showed an empty tree against it, in 0.8 too. Two fixes were weighed:
 - **An unguarded `process.env.NODE_ENV` left in the dist,** as React and Redux do. It throws `process is not defined` in a browser with no bundler. A `typeof process` guard avoids that, but it also defeats Vite's dev server: Vite replaces `process.env.NODE_ENV`, not `typeof process`, so the guard reads `false` in the browser.

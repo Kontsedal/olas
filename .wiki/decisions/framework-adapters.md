@@ -8,6 +8,7 @@ covers:
   - packages/svelte/src/index.ts
   - packages/integration/tests/adapter-parity/scenarios.ts
   - packages/react/tests/preact-compat.test.tsx
+  - packages/svelte/tsconfig.svelte-check.json
   - vitest.config.ts
 edges:
   - { type: tested-by, target: ../../packages/integration/tests/adapter-parity/scenarios.ts }
@@ -16,7 +17,7 @@ edges:
   - { type: uses, target: ../modules/vue.md }
   - { type: uses, target: ../modules/svelte.md }
   - { type: related, target: no-vanilla-adapter.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -40,7 +41,7 @@ Each framework already has a reactive primitive, so each adapter is a translatio
 
 **React** gets its granularity from tracked getters (`hooks.ts`, `useTrackedSnapshot`). The result object records which fields a component reads during render. The subscription then notifies React only when one of those moves. A read after commit returns the live value, so an untracked field does not read stale. Until anything is read, every change notifies, which keeps `renderHook(() => useQuery(sub))` working.
 
-**Vue** needs no tracking of its own. `useQuery` returns one ref per `AsyncState` signal, and Vue's dependency tracking re-renders a template only for the refs it read. The ref's getter reads `signal.peek()`, so a write is visible to the next read at once, before Vue flushes. The subscription ends with the current effect scope (`onScopeDispose`).
+**Vue** needs no tracking of its own. `useQuery` returns one ref per `AsyncState` signal, and Vue's dependency tracking re-renders a template only for the refs it read. The ref's getter reads `signal.peek()`, so a write is visible to the next read at once, before Vue flushes. The subscription ends with the current effect scope (`onScopeDispose`). Outside a scope nothing ends it, and a development build warns once per hook.
 
 **Svelte** needs the least. An Olas signal's `subscribe` calls its handler with the current value at once and returns the unsubscribe. That is Svelte's store contract, so `$count` works on a signal as it is. A `Field` also has `set`, which makes it a writable store for `bind:value`. The package adds `setRoot` and `getRoot` over Svelte context, and one `computed` store per multi-signal object.
 
@@ -64,3 +65,5 @@ It does not cover `HydrationBoundary`'s StrictMode path, because compat's `Stric
 ## Svelte in the test runner
 
 A Svelte component test needs the compiler plugin and the `browser` resolve condition. Without the condition, `svelte` resolves to its server build and `mount` throws. Adding the condition globally would move other packages to their browser builds too, so the root `vitest.config.ts` runs the Svelte tests as a second project. `vitest.stryker.config.ts` drops the projects, because Stryker runs core's tests only.
+
+The compiler strips the `<script lang="ts">` types of a `.svelte` file without checking them, and `tsc` sees only the `*.svelte` module declaration. So the Svelte package's `typecheck` script runs `svelte-check` after `tsc`, with `--fail-on-warnings`. Its `tsconfig.svelte-check.json` includes the fixtures in `packages/svelte/tests/fixtures/` and in `packages/integration/tests/adapter-parity/svelte/`. It sets `rootDir` to `packages/`, since the parity fixtures live in another package. The parity fixtures import `@kontsedal/olas-svelte` through its built `dist`, so the check needs `pnpm build` first, as every satellite's typecheck does.

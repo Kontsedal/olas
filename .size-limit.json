@@ -88,7 +88,7 @@
     "path": "packages/realtime/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "0.85 KB"
+    "limit": "1.05 KB"
   },
   {
     "name": "router",

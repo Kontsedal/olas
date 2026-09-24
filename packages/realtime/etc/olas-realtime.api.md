@@ -14,12 +14,12 @@ export type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknow
 export function createConnectionState(ctx: Ctx<RealtimeDeps>): ReadSignal<ConnectionState>;
 
 // @public
-export function createLiveStream<TEvent>(ctx: Ctx<RealtimeDeps>, channel: string, options?: LiveStreamOptions<TEvent>): LiveStream<TEvent>;
+export function createLiveStream<TEvent>(ctx: Ctx<RealtimeDeps>, channel: string | ReadSignal<string>, options?: LiveStreamOptions<TEvent>): LiveStream<TEvent>;
 
 // @public
 export function createRealtimePatcher<TEvent extends {
     type: string;
-}>(ctx: Ctx<RealtimeDeps>, channel: string, handlers: PatcherHandlers<TEvent>): void;
+}>(ctx: Ctx<RealtimeDeps>, channel: string | ReadSignal<string>, handlers: PatcherHandlers<TEvent>): void;
 
 // @public
 export type LiveStream<TEvent> = {
@@ -42,9 +42,11 @@ export type LiveStreamOptions<TEvent = unknown> = {
 export function onReconnect(ctx: Ctx<RealtimeDeps>, fn: () => void): void;
 
 // @public
-export type PatcherHandlers<TEvent> = Partial<Record<TEvent extends {
-    type: infer K;
-} ? K & string : never, (event: TEvent) => void>> & {
+export type PatcherHandlers<TEvent extends {
+    type: string;
+}> = { [K in TEvent['type']]?: (event: Extract<TEvent, {
+        type: K;
+    }>) => void } & {
     '*'?: (event: TEvent) => void;
 };
 

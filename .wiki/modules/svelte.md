@@ -4,12 +4,14 @@ description: "@kontsedal/olas-svelte — setRoot/getRoot plus queryStore, infini
 type: module
 covers:
   - packages/svelte/src/index.ts
+  - packages/svelte/package.json
+  - packages/svelte/tsconfig.svelte-check.json
 edges:
   - { type: tested-by, target: ../../packages/svelte/tests/svelte.test.ts }
   - { type: tested-by, target: ../../packages/integration/tests/adapter-parity/svelte.test.ts }
   - { type: uses, target: signals.md }
   - { type: related, target: ../decisions/framework-adapters.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -43,7 +45,9 @@ Component tests need two things the rest of the suite must not get:
 - the Svelte compiler plugin (`@sveltejs/vite-plugin-svelte`);
 - the `browser` resolve condition, without which `svelte` resolves to its server build and `mount` throws.
 
-The root `vitest.config.ts` runs them as a separate `svelte` project for that reason (`decisions/framework-adapters.md`). Fixtures are `.svelte` files in `packages/svelte/tests/fixtures/`. `Harness.svelte` calls `setRoot` and renders the view under test. Svelte ships the `*.svelte` module declaration, so `tsc` typechecks the test files without a shim; the `.svelte` files themselves are checked only by the compiler, at test time.
+The root `vitest.config.ts` runs them as a separate `svelte` project for that reason (`decisions/framework-adapters.md`). Fixtures are `.svelte` files in `packages/svelte/tests/fixtures/`. `Harness.svelte` calls `setRoot` and renders the view under test. Svelte ships the `*.svelte` module declaration, so `tsc` typechecks the test files without a shim. `tsc` cannot see inside a `.svelte` file, though, and the compiler strips its types at test time without checking them. So the package's `typecheck` script runs `svelte-check --tsconfig ./tsconfig.svelte-check.json --fail-on-warnings` after `tsc`. That config includes these fixtures and the parity views in `packages/integration/tests/adapter-parity/svelte/`, with `rootDir` widened to `packages/` for the second directory.
+
+The first run found no type errors and one warning, twice: `state_referenced_locally` on `setRoot(root)` in `Harness.svelte` and the parity `App.svelte`. Reading the `root` prop once is the intent, since a context is set while the component initializes. Both files carry a `svelte-ignore` comment that says so.
 
 ## Tests
 

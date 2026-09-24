@@ -4,7 +4,7 @@ This page says what Olas costs in bytes and in time, and how each number was mea
 
 ## Bundle size
 
-`size-limit` measures one entry per row of `.size-limit.json`. Each size is minified and brotlied, with the runtime peers left out: `@preact/signals-core`, the framework, Zod, and the Olas packages a satellite builds on. These are the sizes from one `pnpm build && pnpm size` run on 2026-09-24:
+`size-limit` measures one entry per row of `.size-limit.json`. Each size is minified and brotlied, with the runtime peers left out: `@preact/signals-core`, the framework, Zod, and the Olas packages a satellite builds on. These are the sizes from one `pnpm build && pnpm size` run on 2026-09-24, and from a second run on 2026-09-25 for vue and realtime:
 
 | Entry | Imports | Size | Budget |
 |---|---|---|---|
@@ -13,7 +13,7 @@ This page says what Olas costs in bytes and in time, and how each number was mea
 | core: + queries and mutations | `createRoot`, `defineController`, `queryEngine`, `defineQuery`, `createQuery`, `createMutation` | 16.18 kB | 16.6 kB |
 | core: everything | `*` | 21.84 kB | 22.3 kB |
 | react | `*` | 3.54 kB | 3.8 kB |
-| vue | `*` | 821 B | 900 B |
+| vue | `*` | 833 B | 900 B |
 | svelte | `*` | 772 B | 850 B |
 | persist: `createPersisted` | `createPersisted`, `localStorageAdapter` | 990 B | 1.05 kB |
 | persist: `persistQueryCachePlugin` | `persistQueryCachePlugin`, `restoreQueryCache` | 1.09 kB | 1.25 kB |
@@ -21,7 +21,7 @@ This page says what Olas costs in bytes and in time, and how each number was mea
 | cross-tab | `*` | 1.31 kB | 1.4 kB |
 | entities | `*` | 2.2 kB | 2.2 kB |
 | mutation-queue | `*` | 3.07 kB | 3.3 kB |
-| realtime | `*` | 796 B | 850 B |
+| realtime | `*` | 1 kB | 1.05 kB |
 | router | `*` | 580 B | 650 B |
 | devtools | `*` | 17.84 kB | 18.8 kB |
 

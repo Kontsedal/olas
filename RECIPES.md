@@ -269,11 +269,8 @@ const feedController = defineController((ctx) => {
         posts.map((p) => (p.id === ev.postId ? { ...p, likes: p.likes + 1 } : p)),
       )
     },
-    'comment-added': (ev) => {
-      // A handler receives the whole `FeedEvent` union, so narrow on `type`.
-      if (ev.type !== 'comment-added') return
-      comments.write(ev.postId, (prev) => [...(prev ?? []), ev.comment])
-    },
+    // Each handler receives its own variant of `FeedEvent`, so `ev.comment` needs no check.
+    'comment-added': (ev) => comments.write(ev.postId, (prev) => [...(prev ?? []), ev.comment]),
     'post-deleted': () => newsfeed.invalidateAll(),
   })
 

@@ -406,14 +406,10 @@ export const boardController = defineController(
 
     // ───────── Realtime patcher — react to events from other tabs ─────────
     //
-    // `createRealtimePatcher` types each handler's arg as the full event union,
-    // so we narrow with a small `Variant` alias on the way in.
-
-    type Variant<K extends RealtimeEvent['type']> = Extract<RealtimeEvent, { type: K }>
+    // Each handler receives its own variant of `RealtimeEvent`, keyed by `type`.
 
     createRealtimePatcher<RealtimeEvent>(ctx, REALTIME_CHANNEL, {
-      'card.moved': (raw) => {
-        const e = raw as Variant<'card.moved'>
+      'card.moved': (e) => {
         if (e.by === ctx.deps.tabId) return
         activity.emit({
           id: uid(),
@@ -426,8 +422,7 @@ export const boardController = defineController(
         // The patcher's job here is the activity entry + any side effects
         // that the cache write alone can't produce.
       },
-      'card.created': (raw) => {
-        const e = raw as Variant<'card.created'>
+      'card.created': (e) => {
         if (e.by === ctx.deps.tabId) return
         activity.emit({
           id: uid(),
@@ -437,8 +432,7 @@ export const boardController = defineController(
           text: `Another tab created "${e.card.title}"`,
         })
       },
-      'card.archived': (raw) => {
-        const e = raw as Variant<'card.archived'>
+      'card.archived': (e) => {
         if (e.by === ctx.deps.tabId) return
         activity.emit({
           id: uid(),
@@ -448,8 +442,7 @@ export const boardController = defineController(
           text: 'Another tab archived a card',
         })
       },
-      'user.updated': (raw) => {
-        const e = raw as Variant<'user.updated'>
+      'user.updated': (e) => {
         if (e.by === ctx.deps.tabId) return
         // Propagate the rename through the entities store so every card
         // showing this user updates without a refetch.

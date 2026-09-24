@@ -4,13 +4,15 @@ description: "@kontsedal/olas-vue — olasPlugin, useRoot, useValue, useQuery, u
 type: module
 covers:
   - packages/vue/src/index.ts
+  - packages/vue/tsdown.config.ts
 edges:
   - { type: tested-by, target: ../../packages/vue/tests/vue.test.ts }
+  - { type: tested-by, target: ../../packages/vue/tests/scope-warning.test.ts }
   - { type: tested-by, target: ../../packages/integration/tests/adapter-parity/vue.test.ts }
   - { type: uses, target: signals.md }
   - { type: related, target: ../decisions/framework-adapters.md }
   - { type: related, target: react.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -33,11 +35,19 @@ interface Register {}                                           // augmented by 
 
 ## `useValue`
 
-Everything else is built from it.
+Everything else is built from it, through `valueRef`, which is `useValue` without the scope check.
 - A `customRef` whose getter calls `track()` and returns `signal.peek()`. A read therefore sees a write at once, before Vue flushes.
 - One `subscribeChanges` subscription calls the ref's `trigger()` when the value moves and `isEqual` (default `Object.is`) calls it a change.
 - `onScopeDispose` ends the subscription with the current effect scope. Outside a scope, the ref still works and nothing ends it.
 - The ref's `set` ignores the write. `useField`'s `value` is a separate `computed` whose setter calls `field.set`.
+
+## Outside an effect scope
+
+Called from a plain module or a `setTimeout`, a hook has no scope to end its subscriptions. `getCurrentScope()` is `undefined`, the refs still work, and the signals keep the refs' trigger closures alive for as long as the signals live.
+
+Each public hook checks for a scope first, as `__DEV__ && warnOutsideScope(name)`. The expression form is on purpose. The package has about twenty branches, and five `if (__DEV__)` guards put it under the 90% branch gate. Their production side cannot run under the `__DEV__: 'true'` that `vitest.config.ts` defines. The default build drops the expression either way. It warns once per hook name, naming the hook, the leak and the fix: `setup()`, or `effectScope().run()` and a later `stop()`. The hooks built on another call `valueRef` and `queryRefs` rather than `useValue` and `useQuery`, so `useQuery` warns as `useQuery`, not ten times as `useValue`. `useRoot` subscribes to nothing, so it does not check.
+
+The package ships two builds for this, like core and react (SPEC §23). `dist/` inlines `__DEV__ = false` and drops the check with the `Set` behind it. `dist/dev/` sits behind the `development` export condition and keeps it. `packages/vue/tests/scope-warning.test.ts` runs in a file of its own, since the once-per-hook memory is module state.
 
 ## Granularity
 
