@@ -41,8 +41,8 @@ type FeedEvent = { type: 'like-added'; postId: string } | { type: 'post-deleted'
 
 const makeFeedQuery = (queryId: string): Query<[], { posts: Post[] }> =>
   defineQuery({
-    queryId,
-    crossTab: true,
+    id: queryId,
+    meta: { crossTab: true },
     key: () => [],
     fetcher: async () => ({
       posts: [
@@ -198,7 +198,7 @@ describe('integration: realtime + multi-tab', () => {
     const realtime = fakeRealtime()
     let fetches = 0
     const usersQuery = defineQuery({
-      queryId: 'int/realtime/onreconnect',
+      id: 'int/realtime/onreconnect',
       key: () => [],
       fetcher: async () => {
         fetches += 1

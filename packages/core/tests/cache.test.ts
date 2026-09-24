@@ -154,7 +154,7 @@ describe('ctx.cache — race protection (§5.6)', () => {
     const seenAborts: boolean[] = []
     const fetchers: Array<{ promise: Promise<string>; resolve: (v: string) => void }> = []
     const def = defineController((ctx) => ({
-      thing: createCache(ctx, (sig) => {
+      thing: createCache(ctx, ({ signal: sig }) => {
         const d = deferred<string>()
         fetchers.push(d)
         sig.addEventListener('abort', () => {
@@ -263,7 +263,7 @@ describe('ctx.cache — disposal aborts in-flight', () => {
   test('controller dispose aborts the current fetcher signal', async () => {
     let aborted = false
     const def = defineController((ctx) => ({
-      thing: createCache(ctx, (sig) => {
+      thing: createCache(ctx, ({ signal: sig }) => {
         sig.addEventListener('abort', () => {
           aborted = true
         })

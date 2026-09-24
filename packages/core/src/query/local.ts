@@ -1,8 +1,9 @@
 import { effect, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { Entry } from './entry'
-import type { LocalCache, Snapshot } from './types'
+import type { FetchCtx, LocalCache, Snapshot } from './types'
 
+/** Options for `createCache(ctx, fetcher, options?)`. Spec §5.1. */
 export type LocalCacheOptions<T> = {
   key?: () => readonly unknown[]
   staleTime?: number
@@ -17,10 +18,14 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   private readonly keepPreviousData: boolean
   private lastSucceededFor: unknown[] | null = null
 
-  constructor(fetcher: (signal: AbortSignal) => Promise<T>, options: LocalCacheOptions<T>) {
+  constructor(
+    fetcher: (ctx: FetchCtx) => Promise<T>,
+    options: LocalCacheOptions<T>,
+    deps: FetchCtx['deps'],
+  ) {
     this.keepPreviousData = options.keepPreviousData ?? false
     this.entry = new Entry<T>({
-      fetcher: () => fetcher,
+      fetcher: () => (signal) => fetcher({ signal, deps }),
       staleTime: options.staleTime ?? 0,
       initialData: options.initialData,
     })
@@ -106,10 +111,11 @@ class LocalCacheImpl<T> implements LocalCache<T> {
 }
 
 export function createLocalCache<T>(
-  fetcher: (signal: AbortSignal) => Promise<T>,
+  fetcher: (ctx: FetchCtx) => Promise<T>,
   options?: LocalCacheOptions<T>,
+  deps?: FetchCtx['deps'],
 ): LocalCache<T> {
-  return new LocalCacheImpl(fetcher, options ?? {})
+  return new LocalCacheImpl(fetcher, options ?? {}, deps ?? {})
 }
 
 function arraysEqual(a: readonly unknown[], b: readonly unknown[]): boolean {

@@ -1,8 +1,8 @@
 /**
  * Context passed to a root's `onError` handler. `kind` identifies where in
  * the controller's surface the throw originated; `controllerPath` is the
- * path from root to the controller that owned the failing code; `queryKey`
- * is set for `cache` kinds. Spec §12, §20.9.
+ * path from root to the controller that owned the failing code; `queryId`
+ * and `key` name the cache entry for `cache` kinds. Spec §12, §20.9.
  *
  * `'plugin'` is used for exceptions raised by `QueryClientPlugin` callbacks
  * (`@kontsedal/olas-cross-tab` and friends); SPEC §13.2.
@@ -18,7 +18,10 @@
 export type ErrorContext = {
   kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction' | 'plugin'
   controllerPath: readonly string[]
-  queryKey?: readonly unknown[]
+  /** The query's `id`, for `cache` kinds. */
+  queryId?: string
+  /** The entry's key (`spec.key(...)` output), for `cache` kinds. */
+  key?: readonly unknown[]
   eventId: string
   timestamp: number
   attempt?: number

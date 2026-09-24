@@ -109,7 +109,7 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
     let i = 0
     const def = defineController((ctx) => ({
       save: createMutation(ctx, {
-        mutate: async (_: void, sig) => {
+        mutate: async (_: void, { signal: sig }) => {
           const d = ds[i++]!
           sig.addEventListener('abort', () => d.reject(new DOMException('Aborted', 'AbortError')))
           return d.promise
@@ -132,6 +132,7 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
 
   test('onMutate snapshot is rolled back on supersede', async () => {
     const q = defineQuery({
+      id: 'mutation/134',
       key: () => ['x'],
       fetcher: async () => 1,
     })
@@ -251,6 +252,7 @@ describe('ctx.mutation — concurrency: serial', () => {
 describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
   test('snapshot returned from onMutate auto-rolls back on error without an explicit onError', async () => {
     const q = defineQuery({
+      id: 'mutation/253',
       key: () => ['n'],
       fetcher: async () => 0,
     })
@@ -275,6 +277,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
 
   test('onError calling snapshot.rollback() is idempotent with the auto-rollback', async () => {
     const q = defineQuery({
+      id: 'mutation/277',
       key: () => ['n'],
       fetcher: async () => 0,
     })
@@ -312,6 +315,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
 
   test('onMutate captures snapshot; rollback restores on error', async () => {
     const q = defineQuery({
+      id: 'mutation/314',
       key: () => ['n'],
       fetcher: async () => 0,
     })
@@ -339,6 +343,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     // mutation success never finalized it. Only rollback cleared it. So an
     // optimistic+successful write left `hasPendingMutations` stuck true.
     const q = defineQuery({
+      id: 'mutation/341',
       key: () => ['n'],
       fetcher: async () => 0,
     })
@@ -364,6 +369,7 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
 
   test('stacked optimistic updates: later mutation rollback lands on earlier intermediate state', async () => {
     const q = defineQuery({
+      id: 'mutation/366',
       key: () => ['n'],
       fetcher: async () => 0,
     })
@@ -519,7 +525,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     const def = defineController(
       (ctx) => ({
         drop: createMutation(ctx, {
-          name: 'dropDatabase',
+          id: 'dropDatabase',
           mutate: async () => {
             mutateCalls += 1
             return 'dropped'
@@ -537,7 +543,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     // The whole point of the type: a caller filtering cancellations must NOT
     // swallow this one — the write it asked for silently did not happen.
     expect(isAbortError(err)).toBe(false)
-    expect((err as MutationDisposedError).mutationName).toBe('dropDatabase')
+    expect((err as MutationDisposedError).mutationId).toBe('dropDatabase')
     expect((err as MutationDisposedError).controllerPath).toEqual(['root'])
   })
 
@@ -566,7 +572,11 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     // that would normally invalidate is skipped on this path — so nothing
     // would ever repair it.
     const d = deferred<string>()
-    const q = defineQuery({ key: () => ['doc'] as const, fetcher: async () => 'server-value' })
+    const q = defineQuery({
+      id: 'mutation/569',
+      key: () => ['doc'] as const,
+      fetcher: async () => 'server-value',
+    })
     let onSuccessCalls = 0
     const def = defineController((ctx) => ({
       read: createQuery(ctx, q),
@@ -611,7 +621,11 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     // The guard for the case above: only a COMPLETED run finalizes. One that
     // never resolved has no server truth to commit to.
     const d = deferred<string>()
-    const q = defineQuery({ key: () => ['doc2'] as const, fetcher: async () => 'server-value' })
+    const q = defineQuery({
+      id: 'mutation/614',
+      key: () => ['doc2'] as const,
+      fetcher: async () => 'server-value',
+    })
     const def = defineController((ctx) => ({
       read: createQuery(ctx, q),
       save: createMutation(ctx, {
@@ -636,7 +650,11 @@ describe('dispose — what a torn-down mutation does with a write', () => {
 describe('detached mutations (§6.5)', () => {
   test('dispose does not abort an in-flight detached run; it resolves and settles', async () => {
     const d = deferred<string>()
-    const q = defineQuery({ key: () => ['lic'] as const, fetcher: async () => 'free' })
+    const q = defineQuery({
+      id: 'mutation/639',
+      key: () => ['lic'] as const,
+      fetcher: async () => 'free',
+    })
     const seen: string[] = []
     const def = defineController((ctx) => ({
       read: createQuery(ctx, q),

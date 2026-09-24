@@ -98,9 +98,9 @@ export const boardController = defineController(
     const selectedAssigneeIds = signal<ReadonlySet<string>>(new Set())
 
     const applyFilter = createMutation<{ q: string }, SearchResults>(ctx, {
-      name: 'applyFilter',
+      id: 'applyFilter',
       concurrency: 'latest-wins',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         isSearching.set(true)
         try {
           const r = await ctx.deps.api.search(activeBoardId.peek(), vars.q, signal)
@@ -183,14 +183,14 @@ export const boardController = defineController(
     // ───────── Move card (parallel, optimistic with snapshot auto-rollback) ─────────
 
     const moveCard = createMutation<MoveVars, void>(ctx, {
-      name: 'moveCard',
+      id: 'moveCard',
       concurrency: 'parallel',
       onMutate: (vars) =>
         boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('moveCard before board loaded')
           return applyMove(prev, vars)
         }),
-      mutate: (vars, signal) =>
+      mutate: (vars, { signal }) =>
         ctx.deps.api.moveCard(
           activeBoardId.peek(),
           vars.cardId,
@@ -228,9 +228,9 @@ export const boardController = defineController(
     // ───────── Create card (serial) ─────────
 
     const createCard = createMutation<{ columnId: string; title: string }, Card>(ctx, {
-      name: 'createCard',
+      id: 'createCard',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const card = await ctx.deps.api.createCard(
           activeBoardId.peek(),
           {
@@ -283,9 +283,9 @@ export const boardController = defineController(
     // ───────── Create column (serial) ─────────
 
     const createColumn = createMutation<{ title: string; hue?: number }, Column>(ctx, {
-      name: 'createColumn',
+      id: 'createColumn',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const hue = vars.hue ?? randomColumnHue()
         const col = await ctx.deps.api.createColumn(activeBoardId.peek(), vars.title, hue, signal)
         boardQueryActions.write(activeBoardId.peek(), (prev) =>
@@ -306,7 +306,7 @@ export const boardController = defineController(
     // ───────── Reorder a single column (serial) ─────────
 
     const reorderColumn = createMutation<{ columnId: string; cardIds: string[] }, void>(ctx, {
-      name: 'reorderColumn',
+      id: 'reorderColumn',
       concurrency: 'serial',
       onMutate: (vars) =>
         boardQueryActions.setData(activeBoardId.peek(), (prev) => {
@@ -318,7 +318,7 @@ export const boardController = defineController(
             ),
           }
         }),
-      mutate: (vars, signal) =>
+      mutate: (vars, { signal }) =>
         ctx.deps.api.reorderColumn(activeBoardId.peek(), vars.columnId, vars.cardIds, signal),
       onSuccess: (_r, vars) => activity.emit(makeActivity('move', `Reordered ${vars.columnId}`)),
       onError: (err, _vars, snapshot) => {
@@ -337,14 +337,15 @@ export const boardController = defineController(
     // ───────── Archive (serial) ─────────
 
     const archiveCard = createMutation<{ cardId: string }, void>(ctx, {
-      name: 'archiveCard',
+      id: 'archiveCard',
       concurrency: 'serial',
       onMutate: (vars) =>
         boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('archiveCard before board loaded')
           return removeCard(prev, vars.cardId)
         }),
-      mutate: (vars, signal) => ctx.deps.api.archiveCard(activeBoardId.peek(), vars.cardId, signal),
+      mutate: (vars, { signal }) =>
+        ctx.deps.api.archiveCard(activeBoardId.peek(), vars.cardId, signal),
       onSuccess: (_r, vars) => {
         activity.emit(makeActivity('archive', 'Archived a card'))
         ctx.deps.broadcaster.publish({

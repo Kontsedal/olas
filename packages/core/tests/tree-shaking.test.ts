@@ -68,7 +68,11 @@ describe('createRoot does not statically reach the heavy subsystems', () => {
 })
 
 describe('a root without a query engine', () => {
-  const q = defineQuery({ key: () => ['x'] as const, fetcher: async () => 1 })
+  const q = defineQuery({
+    id: 'tree-shaking/71',
+    key: () => ['x'] as const,
+    fetcher: async () => 1,
+  })
 
   test('createQuery names the fix', () => {
     const def = defineController((ctx) => {
@@ -149,7 +153,11 @@ describe('a root without a query engine', () => {
 
 describe('a root with a query engine behaves as before', () => {
   test('createQuery subscribes', async () => {
-    const yq = defineQuery({ key: () => ['y'] as const, fetcher: async () => 'v' })
+    const yq = defineQuery({
+      id: 'tree-shaking/152',
+      key: () => ['y'] as const,
+      fetcher: async () => 'v',
+    })
     const def = defineController((ctx) => ({ sub: createQuery(ctx, yq) }))
     const root = createRoot(def, { ...noDeps, queries: queryEngine() })
     await root.waitForIdle()

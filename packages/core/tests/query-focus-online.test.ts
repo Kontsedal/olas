@@ -14,6 +14,7 @@ describe('refetchOnWindowFocus', () => {
   test('refetches on window focus when data is stale', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/16',
       key: () => ['rfwf'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -33,6 +34,7 @@ describe('refetchOnWindowFocus', () => {
   test('skips refetch when data is still fresh (within staleTime)', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/35',
       key: () => ['rfwf-fresh'],
       fetcher: async () => ++count,
       staleTime: 5000,
@@ -58,6 +60,7 @@ describe('refetchOnWindowFocus', () => {
   test('does not refetch when flag is unset (default)', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/60',
       key: () => ['rfwf-off'],
       fetcher: async () => ++count,
     })
@@ -76,6 +79,7 @@ describe('refetchOnWindowFocus', () => {
   test('unsubscribes when subscriber count drops to 0', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/78',
       key: () => ['rfwf-unsub'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -95,6 +99,7 @@ describe('refetchOnWindowFocus', () => {
   test('responds to document visibilitychange (visible)', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/97',
       key: () => ['rfwf-vis'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -123,6 +128,7 @@ describe('refetchOnReconnect', () => {
   test('refetches on online event when data is stale', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/125',
       key: () => ['rfr'],
       fetcher: async () => ++count,
       refetchOnReconnect: true,
@@ -142,6 +148,7 @@ describe('refetchOnReconnect', () => {
   test('does not refetch when flag is unset (default)', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/144',
       key: () => ['rfr-off'],
       fetcher: async () => ++count,
     })
@@ -160,6 +167,7 @@ describe('refetchOnReconnect', () => {
   test('both flags can coexist on the same query', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/162',
       key: () => ['both'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -189,6 +197,7 @@ describe('root-wide defaults', () => {
   test('root refetchOnWindowFocus applies to queries that do not set it', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/191',
       key: () => ['root-wide-focus'],
       fetcher: async () => ++count,
     })
@@ -211,6 +220,7 @@ describe('root-wide defaults', () => {
   test('root refetchOnReconnect applies to queries that do not set it', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/213',
       key: () => ['root-wide-reconnect'],
       fetcher: async () => ++count,
     })
@@ -233,6 +243,7 @@ describe('root-wide defaults', () => {
   test('spec false beats root true (explicit per-query opt-out)', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/235',
       key: () => ['opt-out'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: false,
@@ -257,6 +268,7 @@ describe('root-wide defaults', () => {
     // Sanity: verifies the resolution order doesn't accidentally clobber spec true.
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/259',
       key: () => ['spec-only'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -289,6 +301,7 @@ describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
     setOnline(false)
     let attempt = 0
     const q = defineQuery({
+      id: 'query-focus-online/291',
       key: () => ['of'],
       networkMode: 'offlineFirst',
       fetcher: async () => {
@@ -320,6 +333,7 @@ describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
     setOnline(false)
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/322',
       key: () => ['on-defer'],
       fetcher: async () => ++count, // networkMode defaults to 'online'
     })
@@ -351,6 +365,7 @@ describe('focus double-fire coalesces to one refetch (R-Q3.9)', () => {
   test('focus + visibilitychange in one tick refetch once, not twice', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/353',
       key: () => ['dblfire'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -392,6 +407,7 @@ describe('refetchInterval — hidden tab', () => {
   test('number form: hidden ticks are skipped, and the chain survives them', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/394',
       key: () => ['rfi-hidden'],
       fetcher: async () => ++count,
       refetchInterval: 1000,
@@ -418,6 +434,7 @@ describe('refetchInterval — hidden tab', () => {
     const seen: Array<number | undefined> = []
     let count = 0
     const q = defineQuery({
+      id: 'query-focus-online/420',
       key: () => ['rfi-hidden-fn'],
       fetcher: async () => ++count,
       refetchInterval: (data) => {

@@ -57,7 +57,7 @@ declare module '@kontsedal/olas-core' {
 // --- Shared query: one cache entry per cursor. ---------------------------
 
 export const pageQuery = defineQuery({
-  queryId: 'reader/pages',
+  id: 'reader/pages',
   key: (cursor: number) => ['page', cursor],
   fetcher: ({ signal, deps }, cursor: number): Promise<Page> => deps.api.getPage(cursor, signal),
   staleTime: 60_000,

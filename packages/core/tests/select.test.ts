@@ -10,7 +10,7 @@ describe('createQuery(ctx, query, { select })', () => {
   test('select projects T → U on data', async () => {
     type User = { id: string; name: string; email: string }
     const userQuery = defineQuery({
-      queryId: 'select-test/user',
+      id: 'select-test/user',
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string): Promise<User> => ({
         id,
@@ -36,7 +36,7 @@ describe('createQuery(ctx, query, { select })', () => {
     type User = { id: string; name: string; tags: string[] }
     let calls = 0
     const userQuery = defineQuery({
-      queryId: 'select-test/stable',
+      id: 'select-test/stable',
       key: () => [],
       fetcher: async (): Promise<User> => {
         calls += 1
@@ -71,7 +71,7 @@ describe('createQuery(ctx, query, { select })', () => {
     type Row = { id: string; counter: number }
     let counter = 0
     const rowQuery = defineQuery({
-      queryId: 'select-test/dedup',
+      id: 'select-test/dedup',
       key: () => [],
       fetcher: async (): Promise<Row> => ({ id: 'r1', counter }),
       staleTime: 0,
@@ -103,7 +103,7 @@ describe('createQuery(ctx, query, { select })', () => {
   test('select runs after structural-share — sees stable inputs on no-op refetch', async () => {
     type Payload = { items: Array<{ id: string; label: string }> }
     const payloadQuery = defineQuery({
-      queryId: 'select-test/share',
+      id: 'select-test/share',
       key: () => [],
       fetcher: async (): Promise<Payload> => ({
         items: [
@@ -145,7 +145,7 @@ describe('createQuery(ctx, query, { select })', () => {
     type Row = { id: string }
     let throwNext = true
     const rowQuery = defineQuery({
-      queryId: 'select-test/error',
+      id: 'select-test/error',
       key: () => [],
       fetcher: async (): Promise<Row> => {
         if (throwNext) throw new Error('boom')

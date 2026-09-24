@@ -27,8 +27,8 @@ import { UserEntity } from '../../entities'
 import { activityScope, selectedCardScope } from '../../scopes'
 
 const commentsQuery = defineQuery({
-  queryId: 'comments',
-  crossTab: true,
+  id: 'comments',
+  meta: { crossTab: true },
   key: (cardId: string) => [cardId],
   fetcher: ({ signal, deps }, cardId: string): Promise<Comment[]> =>
     deps.api.listComments(cardId, signal),
@@ -94,9 +94,9 @@ export const commentsController = defineController(
     // this would be `session.user.id`. We pick the first registered user as
     // a stand-in so the demo doesn't need a sign-in flow.
     const addComment = createMutation<{ body: string }, Comment>(ctx, {
-      name: 'addComment',
+      id: 'addComment',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const id = selectedCardId.peek()
         if (id === null) throw new Error('No card open')
         // Stand-in for "the current user" — first registered user. A real app

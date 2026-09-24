@@ -51,13 +51,13 @@ const seedFeed = (): Post[] => [
 describe('integration: optimistic CRUD + entities', () => {
   test('like-post optimistic update patches both queries; commits on server success', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/feed-success',
+      id: 'int/crud/feed-success',
       key: () => [],
       fetcher: async () => ({ posts: seedFeed() }),
       staleTime: 60_000,
     })
     const sidebarQuery = defineQuery({
-      queryId: 'int/crud/sidebar-success',
+      id: 'int/crud/sidebar-success',
       key: () => [],
       // Same `p1` referenced via a different query — the reverse index
       // must patch both in one entities.update.
@@ -109,13 +109,13 @@ describe('integration: optimistic CRUD + entities', () => {
 
   test('server failure rolls back the optimistic patch in both queries', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/feed-rollback',
+      id: 'int/crud/feed-rollback',
       key: () => [],
       fetcher: async () => ({ posts: seedFeed() }),
       staleTime: 60_000,
     })
     const sidebarQuery = defineQuery({
-      queryId: 'int/crud/sidebar-rollback',
+      id: 'int/crud/sidebar-rollback',
       key: () => [],
       fetcher: async () => ({ recent: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -189,13 +189,13 @@ describe('integration: optimistic CRUD + entities', () => {
 
   test('latest-wins racing mutations: superseded run rolls back; winner commits in both queries', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/feed-race',
+      id: 'int/crud/feed-race',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
     const sidebarQuery = defineQuery({
-      queryId: 'int/crud/sidebar-race',
+      id: 'int/crud/sidebar-race',
       key: () => [],
       fetcher: async () => ({ recent: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -209,7 +209,7 @@ describe('integration: optimistic CRUD + entities', () => {
       const feed = createQuery(ctx, feedQuery, () => [])
       const sidebar = createQuery(ctx, sidebarQuery, () => [])
       const setLikes = createMutation<number, number>(ctx, {
-        mutate: async (target, signal) => {
+        mutate: async (target, { signal }) => {
           const slot = slots[i++]
           if (!slot) throw new Error('out of slots')
           signal.addEventListener('abort', () =>
@@ -257,7 +257,7 @@ describe('integration: optimistic CRUD + entities', () => {
 
   test('disposing the root mid-flight cancels in-flight mutations cleanly', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/dispose-midflight',
+      id: 'int/crud/dispose-midflight',
       key: () => [],
       fetcher: async () => ({ posts: seedFeed() }),
       staleTime: 60_000,
@@ -269,7 +269,7 @@ describe('integration: optimistic CRUD + entities', () => {
     const def = defineController((ctx) => {
       const feed = createQuery(ctx, feedQuery, () => [])
       const slow = createMutation<void, void>(ctx, {
-        mutate: async (_v, signal) => {
+        mutate: async (_v, { signal }) => {
           signal.addEventListener('abort', () =>
             hold.reject(new DOMException('Aborted', 'AbortError')),
           )

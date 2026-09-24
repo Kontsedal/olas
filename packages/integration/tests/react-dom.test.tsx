@@ -45,7 +45,7 @@ const seedCards = (): Card[] => [
 describe('react integration: card list', () => {
   test('useQuery re-renders when a mutation succeeds and writes to the cache', async () => {
     const cardsQuery = defineQuery({
-      queryId: 'int/react/cards-mutate',
+      id: 'int/react/cards-mutate',
       key: () => [],
       fetcher: async () => seedCards(),
       staleTime: 60_000,
@@ -116,7 +116,7 @@ describe('react integration: card list', () => {
   test('useSuspenseQuery shows the fallback then resolves', async () => {
     let resolveFetch: ((v: { who: string }) => void) | null = null
     const slowQuery = defineQuery({
-      queryId: 'int/react/slow',
+      id: 'int/react/slow',
       key: () => [],
       fetcher: () =>
         new Promise<{ who: string }>((r) => {

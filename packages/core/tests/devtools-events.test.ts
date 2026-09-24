@@ -10,6 +10,7 @@ describe('runtime devtools events', () => {
   test('cache:fetch-start + fetch-success fire when a subscribed query resolves', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
+      id: 'devtools-events/12',
       key: (id: string) => [id],
       fetcher: async (_ctx, id) => `data-${id}`,
     })
@@ -36,6 +37,7 @@ describe('runtime devtools events', () => {
   test('cache:fetch-error fires when a fetcher throws (no retries)', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
+      id: 'devtools-events/38',
       key: () => [],
       fetcher: async () => {
         throw new Error('boom')
@@ -54,7 +56,11 @@ describe('runtime devtools events', () => {
 
   test('cache:invalidated fires on query.invalidate()', async () => {
     const events: DebugEvent[] = []
-    const q = defineQuery({ key: (id: string) => [id], fetcher: async (_ctx, id) => id })
+    const q = defineQuery({
+      id: 'devtools-events/57',
+      key: (id: string) => [id],
+      fetcher: async (_ctx, id) => id,
+    })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['k']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
     await root.api.x.firstValue()
@@ -104,6 +110,7 @@ describe('runtime devtools events', () => {
   test('mutation:rollback fires when an optimistic snapshot is rolled back', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
+      id: 'devtools-events/106',
       key: (id: string) => [id],
       fetcher: async (_ctx, id) => `server-${id}`,
     })
@@ -140,7 +147,7 @@ describe('runtime devtools events', () => {
     const def = defineController((ctx) => ({
       save: createMutation<number, string>(ctx, {
         concurrency: 'latest-wins',
-        mutate: async (_, signal) => {
+        mutate: async (_, { signal }) => {
           await new Promise<void>((resolve, reject) => {
             const id = setTimeout(resolve, 50)
             signal.addEventListener('abort', () => {
@@ -167,6 +174,7 @@ describe('runtime devtools events', () => {
   test('cache:gc fires when a subscriber leaves and gcTime expires', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
+      id: 'devtools-events/169',
       key: (id: string) => [id],
       fetcher: async (_ctx, id) => id,
       gcTime: 0, // immediate gc
@@ -187,7 +195,7 @@ describe('runtime devtools events', () => {
 
   test('every event carries a monotonic seq and a numeric timestamp', async () => {
     const events: DebugEvent[] = []
-    const q = defineQuery({ key: () => ['k'], fetcher: async () => 1 })
+    const q = defineQuery({ id: 'devtools-events/190', key: () => ['k'], fetcher: async () => 1 })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     root.debug.subscribe((ev) => events.push(ev))
@@ -207,6 +215,7 @@ describe('runtime devtools events', () => {
   test('a fetch shares one causeId across fetch-start, fetch-success and its set-data', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
+      id: 'devtools-events/209',
       key: (id: string) => [id],
       fetcher: async (_ctx, id) => `data-${id}`,
     })
@@ -228,13 +237,14 @@ describe('runtime devtools events', () => {
   test('an optimistic mutation groups run, set-data, snapshot push/rollback, rollback and error under one causeId', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
+      id: 'devtools-events/230',
       key: (id: string) => [id],
       fetcher: async (_ctx, id) => `server-${id}`,
     })
     const def = defineController((ctx) => ({
       cur: createQuery(ctx, q, () => ['1']),
       save: createMutation(ctx, {
-        name: 'save',
+        id: 'save',
         mutate: async () => {
           throw new Error('boom')
         },
@@ -268,6 +278,7 @@ describe('runtime devtools events', () => {
   test('a successful mutation emits snapshot:finalize under the run causeId', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
+      id: 'devtools-events/270',
       key: (id: string) => [id],
       fetcher: async (_ctx, id) => `server-${id}`,
     })
@@ -296,7 +307,11 @@ describe('runtime devtools events', () => {
 
   test('a bare query.setData is source:set with no causeId', async () => {
     const events: DebugEvent[] = []
-    const q = defineQuery({ key: (id: string) => [id], fetcher: async (_ctx, id) => id })
+    const q = defineQuery({
+      id: 'devtools-events/299',
+      key: (id: string) => [id],
+      fetcher: async (_ctx, id) => id,
+    })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['1']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await root.api.x.firstValue()

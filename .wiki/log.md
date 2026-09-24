@@ -1519,3 +1519,24 @@ The reasoning is in the new page `decisions/root-handle-separate.md`.
 1,238 call sites were rewritten by `scripts/codemods/root-api.ts`, a ts-morph codemod driven by the type checker. It runs in two modes. The first detects the 0.x root type (it has `__debug` and `applyDehydratedEntry`). The `--after` mode catches accesses that the first pass saw only through `as unknown as Api & { dispose(): void }` casts. Those casts were stripped first so the real type flowed. The regression test "root-controls conflict disposes the tree (R-L2.5)" is deleted, because the conflict can no longer occur. The controller test that asserted reserved names throw now asserts the opposite.
 
 Wiki pages that still describe the intersection get rewritten in the W6 docs pass: `flows/use-root.md`, `modules/controller.md`, `modules/react.md` and `entities/controller-instance.md`.
+
+## [2026-09-24 16:40] ingest | 1.0 W1b/c: required id, typed meta, { signal, deps }
+
+- `QuerySpec.id` and `InfiniteQuerySpec.id` are required, and `defineQuery` asserts a non-empty string at runtime. The anonymous-query branches are gone from `dehydrate`, the three plugin emitters, the fetch-success closures and the hydration key.
+- `meta?: QueryMeta` and `meta?: MutationMeta` are empty, augmentable interfaces. cross-tab and mutation-queue declare `crossTab` and `persist` through `declare module`.
+- `MutationSpec` drops `name`, `mutationId` and `persist` in favour of `id` and `meta`. A mutation with an `id` now reports enqueue and settle to plugins, and the events carry `meta`. mutation-queue filters on `event.meta.persist`. `QueryClientPluginApi` gains `deps`, so its replay can pass `{ signal, deps }`.
+- `defineMutation` takes a `MutationDefinition` with no hooks and no implicit persist, and brands the value non-enumerably. `createMutation(ctx, def, hooks)` is the new overload.
+- `ErrorContext` has `queryId` and `key`. `MutationDisposedError` has `mutationId`.
+
+The reasoning is in `decisions/required-id-and-meta.md`.
+
+`scripts/codemods/identity-meta.ts` rewrote 376 call sites syntactically. It moves a property under `meta` in place rather than removing and appending, so no two edits can overlap. It also gives an id-less query a `<file>/<line>` placeholder id. Placeholders that landed in example sources were renamed by hand.
+
+Seven tests that pinned removed behaviour were deleted:
+- anonymous queries skipped by plugins and by dehydrate;
+- the removed `crossTab: 'infinite' | 'both'` values;
+- `persist` without an id.
+
+The SSR registration-order test now always uses ids.
+
+The global query registry still exists and still warns on a duplicate id. W2 replaces it with per-root lookup.

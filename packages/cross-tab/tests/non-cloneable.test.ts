@@ -21,8 +21,8 @@ import { crossTabPlugin } from '../src/plugin'
  */
 
 const nonCloneableQuery = defineQuery({
-  queryId: 'non-cloneable-test/q',
-  crossTab: true,
+  id: 'non-cloneable-test/q',
+  meta: { crossTab: true },
   key: (id: string) => ['nc', id],
   fetcher: async (_ctx, id: string) => ({ id }),
 })

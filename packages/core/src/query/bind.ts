@@ -2,8 +2,22 @@ import { ctxInternals } from '../controller/internals'
 import type { Ctx } from '../controller/types'
 import type { InfiniteQuery, InfiniteQueryActions, InfiniteQuerySubscription } from './infinite'
 import { createLocalCache, type LocalCacheOptions } from './local'
-import { createMutation as createMutationImpl, type Mutation, type MutationSpec } from './mutation'
-import type { LocalCache, Query, QueryActions, QuerySubscription, UseOptions } from './types'
+import {
+  createMutation as createMutationImpl,
+  isMutationDef,
+  type Mutation,
+  type MutationDef,
+  type MutationHooks,
+  type MutationSpec,
+} from './mutation'
+import type {
+  FetchCtx,
+  LocalCache,
+  Query,
+  QueryActions,
+  QuerySubscription,
+  UseOptions,
+} from './types'
 import { createInfiniteUse, createUse } from './use'
 
 /**
@@ -57,7 +71,7 @@ export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
  * A controller-local cache — one fetcher, no sharing, no cache key (§5.1).
  *
  * ```ts
- * const report = createCache(ctx, (signal) => api.report(signal))
+ * const report = createCache(ctx, ({ signal, deps }) => deps.api.report({ signal }))
  * ```
  *
  * Unlike `createQuery` this needs **no** query engine: a local cache is not a
@@ -67,7 +81,7 @@ export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
  */
 export function createCache<T>(
   ctx: Ctx,
-  fetcher: (signal: AbortSignal) => Promise<T>,
+  fetcher: (ctx: FetchCtx) => Promise<T>,
   options?: LocalCacheOptions<T>,
 ): LocalCache<T> {
   const internals = ctxInternals(ctx, 'createCache')
@@ -76,45 +90,71 @@ export function createCache<T>(
   // silently fall back to 0. Only the fields `LocalCacheOptions` carries are
   // merged; `retry`/`gcTime`/`networkMode` are not part of its surface.
   const defaults = internals.queryDefaults
-  const cache = createLocalCache<T>(fetcher, {
-    ...options,
-    staleTime: options?.staleTime ?? (defaults.staleTime as number | undefined),
-    keepPreviousData:
-      options?.keepPreviousData ?? (defaults.keepPreviousData as boolean | undefined),
-  })
+  const cache = createLocalCache<T>(
+    fetcher,
+    {
+      ...options,
+      staleTime: options?.staleTime ?? (defaults.staleTime as number | undefined),
+      keepPreviousData:
+        options?.keepPreviousData ?? (defaults.keepPreviousData as boolean | undefined),
+    },
+    ctx.deps,
+  )
   internals.register({ kind: 'cleanup', dispose: () => cache.dispose() })
   return cache
 }
 
 /**
- * A write owned by this controller's lifetime (§6).
+ * A write owned by this controller's lifetime (§6). Either inline:
  *
  * ```ts
- * const save = createMutation(ctx, { mutate: (v, signal) => api.save(v, signal) })
+ * const save = createMutation(ctx, {
+ *   mutate: (draft: Draft, { signal, deps }) => deps.api.save(draft, { signal }),
+ * })
+ * ```
+ *
+ * or from a module-scope `defineMutation(...)`, with this controller's
+ * lifecycle hooks layered on:
+ *
+ * ```ts
+ * const place = createMutation(ctx, createOrder, { onSuccess: () => toast('Placed') })
  * ```
  *
  * Needs a query engine: mutations participate in the root's in-flight
  * accounting, which `waitForIdle()` reads during SSR.
  */
-export function createMutation<V, R>(ctx: Ctx, spec: MutationSpec<V, R>): Mutation<V, R> {
+export function createMutation<V, R>(
+  ctx: Ctx,
+  def: MutationDef<V, R>,
+  hooks?: MutationHooks<V, R>,
+): Mutation<V, R>
+export function createMutation<V, R>(ctx: Ctx, spec: MutationSpec<V, R>): Mutation<V, R>
+export function createMutation<V, R>(
+  ctx: Ctx,
+  specOrDef: MutationSpec<V, R> | MutationDef<V, R>,
+  hooks?: MutationHooks<V, R>,
+): Mutation<V, R> {
   const internals = ctxInternals(ctx, 'createMutation')
   internals.assertLive('createMutation')
   const client = internals.requireClient('createMutation')
+  const spec: MutationSpec<V, R> = isMutationDef(specOrDef)
+    ? { ...specOrDef, ...hooks }
+    : (specOrDef as MutationSpec<V, R>)
   const mutation = createMutationImpl<V, R>(
     spec,
     internals.onError,
     internals.path,
     client.mutationsInflight$,
     internals.devtools as never,
-    // Lifecycle hooks for persistable mutations, wired only when
-    // `spec.persist === true`. `createMutationImpl` validates the
-    // `mutationId` requirement before construction.
-    spec.persist === true
+    // A mutation with an `id` reports its runs to plugins; the plugin decides
+    // from `meta` whether a run concerns it.
+    spec.id !== undefined
       ? {
           emitEnqueue: (ev) => client.emitMutationEnqueue(ev),
           emitSettle: (ev) => client.emitMutationSettle(ev),
         }
       : undefined,
+    ctx.deps,
   )
   internals.register({ kind: 'cleanup', dispose: () => mutation.dispose() })
   return mutation

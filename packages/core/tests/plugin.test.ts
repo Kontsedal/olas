@@ -21,15 +21,9 @@ import type { QuerySubscription } from '../src/query/types'
  */
 
 const usersQuery = defineQuery({
-  queryId: 'plugin-test/users',
+  id: 'plugin-test/users',
   key: (id: string) => ['user', id],
   fetcher: async (_ctx, id: string) => ({ id, name: `User ${id}` }),
-})
-
-const anonymousQuery = defineQuery({
-  // No `queryId` — plugin events should be skipped.
-  key: (id: string) => ['anon', id],
-  fetcher: async (_ctx, id: string) => ({ id }),
 })
 
 /**
@@ -84,26 +78,6 @@ describe('QueryClientPlugin', () => {
     expect(event.data).toEqual({ id: '1', name: 'Alice' })
     expect(event.kind).toBe('data')
     expect(event.isRemote).toBe(false)
-    root.dispose()
-  })
-
-  test('onSetData is NOT fired for queries with no queryId', () => {
-    const onSetData = vi.fn<(e: SetDataEvent) => void>()
-    const plugin: QueryClientPlugin = { onSetData }
-    // Build a controller that ALSO binds anonymousQuery so it has a client.
-    const def = defineController((ctx) => {
-      createQuery(ctx, usersQuery, () => ['1' as string])
-      createQuery(ctx, anonymousQuery, () => ['1' as string])
-      return {}
-    })
-    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
-
-    anonymousQuery.setData('1', () => ({ id: '1' }))
-    expect(onSetData).not.toHaveBeenCalled()
-
-    // Sanity: queries WITH queryId still fire.
-    usersQuery.setData('1', () => ({ id: '1', name: 'X' }))
-    expect(onSetData).toHaveBeenCalledTimes(1)
     root.dispose()
   })
 

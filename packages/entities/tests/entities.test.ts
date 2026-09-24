@@ -64,7 +64,7 @@ describe('entitiesPlugin', () => {
 
   test('auto-walks fetch results and populates the store', async () => {
     const feedQuery: Query<[], { posts: Post[]; pinned: Post }> = defineQuery({
-      queryId: 'ent-test/1',
+      id: 'ent-test/1',
       key: () => [],
       fetcher: async () => ({
         posts: [
@@ -89,7 +89,7 @@ describe('entitiesPlugin', () => {
 
   test('per-id signal fires on observation', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/2',
+      id: 'ent-test/2',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -135,7 +135,7 @@ describe('entitiesPlugin', () => {
 
   test('update patches the store + a single query holding the entity', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/3',
+      id: 'ent-test/3',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -159,7 +159,7 @@ describe('entitiesPlugin', () => {
 
   test('update backpropagates to multiple queries holding the same entity', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/4/feed',
+      id: 'ent-test/4/feed',
       key: () => [],
       fetcher: async () => ({
         posts: [
@@ -170,7 +170,7 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
     const profileQuery = defineQuery({
-      queryId: 'ent-test/4/profile',
+      id: 'ent-test/4/profile',
       key: () => [],
       fetcher: async () => ({
         user: { id: 'u1', name: 'Alice' },
@@ -210,7 +210,7 @@ describe('entitiesPlugin', () => {
 
   test('update reaches an entity at multiple paths in the same query', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/5',
+      id: 'ent-test/5',
       key: () => [],
       fetcher: async () => ({
         posts: [
@@ -286,13 +286,13 @@ describe('entitiesPlugin', () => {
 
   test('subscribers re-render exactly once per update across N affected queries', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/6/feed',
+      id: 'ent-test/6/feed',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
     const sidebarQuery = defineQuery({
-      queryId: 'ent-test/6/sidebar',
+      id: 'ent-test/6/sidebar',
       key: () => [],
       fetcher: async () => ({ recent: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -361,7 +361,7 @@ describe('entitiesPlugin', () => {
   test('reverse index drops bindings when an entity disappears from a query', async () => {
     // Two distinct posts; we'll setData to replace the list so p1 is removed.
     const feedQuery = defineQuery({
-      queryId: 'ent-test/8',
+      id: 'ent-test/8',
       key: () => [],
       fetcher: async () => ({
         posts: [
@@ -413,7 +413,7 @@ describe('entitiesPlugin', () => {
 
   test('invalidate removes the entity from the store without touching queries', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/9',
+      id: 'ent-test/9',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -453,7 +453,7 @@ describe('entitiesPlugin', () => {
   test('cycle in query data does not stack-overflow the walker', async () => {
     type Cyclic = { id: string; title: string; likes: number; self?: unknown }
     const cyclicQuery: Query<[], Cyclic> = defineQuery({
-      queryId: 'ent-test/cycle',
+      id: 'ent-test/cycle',
       key: () => [],
       fetcher: async () => {
         const post: Cyclic = { id: 'p1', title: 'A', likes: 0 }
@@ -474,7 +474,7 @@ describe('entitiesPlugin', () => {
   test('non-entity objects with an `id` field are NOT classified', async () => {
     type NotPost = { id: string; someField: number }
     const q: Query<[], { stuff: NotPost[] }> = defineQuery({
-      queryId: 'ent-test/disambig',
+      id: 'ent-test/disambig',
       key: () => [],
       // Has `id` strings but no `title`/`name`, so neither idOf claims them.
       fetcher: async () => ({ stuff: [{ id: 'x1', someField: 1 }] }),
@@ -497,7 +497,7 @@ describe('entitiesPlugin', () => {
     // second occurrence and silently lost the binding — entity.update would
     // then patch only one path. This test pins the stack-based detection.
     const sharedQuery = defineQuery({
-      queryId: 'ent-test/dag',
+      id: 'ent-test/dag',
       key: () => [],
       fetcher: async () => {
         const post: Post = { id: 'p1', title: 'A', likes: 0 }
@@ -533,7 +533,7 @@ describe('entitiesPlugin', () => {
   test('true cycle: a self-referencing Post still terminates and records once', async () => {
     type Cyclic = Post & { self?: unknown }
     const cyclicQuery: Query<[], Cyclic> = defineQuery({
-      queryId: 'ent-test/cycle-strict',
+      id: 'ent-test/cycle-strict',
       key: () => [],
       fetcher: async () => {
         const post: Cyclic = { id: 'p1', title: 'A', likes: 0 }
@@ -607,7 +607,7 @@ describe('entitiesPlugin', () => {
     const t = new Date('2026-05-20T00:00:00.000Z')
     type WithDate = { day: Date; posts: Post[] }
     const dailyQuery: Query<[Date], WithDate> = defineQuery({
-      queryId: 'ent-test/date-keys',
+      id: 'ent-test/date-keys',
       key: (day: Date) => [day],
       fetcher: async (_ctx, day: Date) => ({
         day,
@@ -632,7 +632,7 @@ describe('entitiesPlugin', () => {
 
   test('update accepts an updater function as well as a Partial patch', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/updater',
+      id: 'ent-test/updater',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -674,7 +674,7 @@ describe('entitiesPlugin', () => {
 
   test('entries() returns a Map snapshot of the partition; mutating it does not affect the store', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/entries',
+      id: 'ent-test/entries',
       key: () => [],
       fetcher: async () => ({
         posts: [
@@ -713,7 +713,7 @@ describe('entitiesPlugin', () => {
     // entries → the entities plugin never saw the data → `entities.signal`
     // returned undefined on first paint.
     const feedQuery = defineQuery<[], { posts: Post[]; pinned: Post }>({
-      queryId: 'ent-test/hydrate',
+      id: 'ent-test/hydrate',
       key: () => [],
       // Mark as if the test ever ran the fetcher we'd notice.
       fetcher: async () => {
@@ -765,7 +765,7 @@ describe('entitiesPlugin', () => {
 
   test('entries() values are shallow-cloned + frozen — snapshot mutation does NOT corrupt the live store', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/frozen-entries',
+      id: 'ent-test/frozen-entries',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
@@ -794,7 +794,7 @@ describe('entitiesPlugin', () => {
 
   test('bindings() returns deep-cloned binding info for a single id', async () => {
     const feedQuery = defineQuery({
-      queryId: 'ent-test/bindings',
+      id: 'ent-test/bindings',
       key: () => [],
       fetcher: async () => ({
         posts: [
@@ -868,7 +868,7 @@ describe('entitiesPlugin', () => {
           : null,
     })
     const q = defineQuery({
-      queryId: 'ent-test/deep-merge',
+      id: 'ent-test/deep-merge',
       key: () => [],
       fetcher: async (): Promise<{ post: NestedPost }> => ({
         post: {
@@ -921,7 +921,7 @@ describe('entitiesPlugin', () => {
           : null,
     })
     const q = defineQuery({
-      queryId: 'ent-test/deep-array',
+      id: 'ent-test/deep-array',
       key: () => [],
       fetcher: async (): Promise<{ p: WithTags }> => ({
         p: { id: 'p1', title: 'A', tags: ['x', 'y', 'z'] },
@@ -989,7 +989,7 @@ describe('entitiesPlugin', () => {
       maxSlots: 1,
     })
     const q = defineQuery({
-      queryId: 'ent-test/lru-bound',
+      id: 'ent-test/lru-bound',
       key: () => [],
       fetcher: async (): Promise<{ items: Item[] }> => ({
         items: [
@@ -1082,7 +1082,7 @@ describe('entitiesPlugin', () => {
     ]
 
     const feed = defineInfiniteQuery<[], number, FeedItem[]>({
-      queryId: 'ent-test/infinite-feed',
+      id: 'ent-test/infinite-feed',
       key: () => [],
       fetcher: async ({ pageParam }): Promise<FeedItem[]> => pages[pageParam] ?? [],
       initialPageParam: 0,
@@ -1130,7 +1130,7 @@ describe('entitiesPlugin', () => {
           : null,
     })
     const q = defineQuery({
-      queryId: 'ent-test/shallow-default',
+      id: 'ent-test/shallow-default',
       key: () => [],
       fetcher: async (): Promise<{ n: Nested }> => ({
         n: { id: 'n1', meta: { a: 1, b: 2 } },

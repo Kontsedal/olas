@@ -40,7 +40,7 @@ let fetches = 0
  * `queryId` warn about a duplicate).
  */
 const articlesQuery = defineQuery({
-  queryId: 'ssr-hydration/articles',
+  id: 'ssr-hydration/articles',
   key: () => [],
   staleTime: Number.POSITIVE_INFINITY,
   fetcher: async () => {
@@ -51,7 +51,7 @@ const articlesQuery = defineQuery({
 
 /** Never settles, so the control's client render is pinned on `isLoading`. */
 const pendingQuery = defineQuery({
-  queryId: 'ssr-hydration/pending',
+  id: 'ssr-hydration/pending',
   key: () => [],
   staleTime: Number.POSITIVE_INFINITY,
   fetcher: () => new Promise<string[]>(() => {}),

@@ -17,6 +17,7 @@ const keep = <T extends { dispose(): void }>(root: T): T => {
 describe('query operations are scoped to one root', () => {
   test('bound reads, writes and optimistic rollback cannot cross request boundaries', async () => {
     const q = defineQuery({
+      id: 'query-isolation/19',
       key: (id: string) => [id],
       fetcher: async ({ deps }) => deps.user as string,
       staleTime: Infinity,
@@ -46,7 +47,7 @@ describe('query operations are scoped to one root', () => {
 
   test('all ambiguous unbound operations fail before fetching or changing data', async () => {
     const fetcher = vi.fn(async () => 'original')
-    const q = defineQuery({ key: () => [], fetcher, staleTime: Infinity })
+    const q = defineQuery({ id: 'query-isolation/49', key: () => [], fetcher, staleTime: Infinity })
     const def = defineController((ctx) => ({ sub: createQuery(ctx, q) }))
     const a = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
     const b = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
@@ -76,6 +77,7 @@ describe('query operations are scoped to one root', () => {
 
   test('bound prefetch works before subscriptions and rejects after root disposal', async () => {
     const q = defineQuery({
+      id: 'query-isolation/78',
       key: (id: number) => [id],
       fetcher: async ({ deps }, id: number) => `${deps.user}:${id}`,
       staleTime: Infinity,
@@ -98,6 +100,7 @@ describe('query operations are scoped to one root', () => {
   test('invalidateAll refetches every local key and leaves other roots alone', async () => {
     const calls: string[] = []
     const q = defineQuery({
+      id: 'query-isolation/100',
       key: (id: number) => [id],
       fetcher: async ({ deps }, id: number) => {
         const value = `${deps.user}:${id}`
@@ -127,6 +130,7 @@ describe('query operations are scoped to one root', () => {
   ] as const)('%s only aborts the selected root', async (method) => {
     const signals: AbortSignal[] = []
     const q = defineQuery({
+      id: 'query-isolation/129',
       key: () => [],
       fetcher: async ({ signal }) => {
         signals.push(signal)
@@ -146,6 +150,7 @@ describe('query operations are scoped to one root', () => {
   test('infinite query operations use the selected root, including ambiguity guards', async () => {
     const calls: string[] = []
     const q = defineInfiniteQuery({
+      id: 'query-isolation/148',
       key: () => [],
       fetcher: async ({ deps }) => {
         calls.push(deps.user as string)

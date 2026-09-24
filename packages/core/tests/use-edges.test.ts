@@ -14,6 +14,7 @@ const flush = async () => {
 describe('subscription.refetch / firstValue when not yet bound', () => {
   test('regular subscription with enabled=false rejects refetch / firstValue', async () => {
     const q = defineQuery({
+      id: 'use-edges/16',
       key: () => ['unbound'],
       fetcher: async () => 'never',
     })
@@ -29,6 +30,7 @@ describe('subscription.refetch / firstValue when not yet bound', () => {
 
   test('infinite subscription with enabled=false rejects refetch / firstValue and no-ops fetchNextPage', async () => {
     const q = defineInfiniteQuery({
+      id: 'use-edges/31',
       key: () => ['unbound-inf'],
       fetcher: async () => 'never',
       initialPageParam: 0,
@@ -53,6 +55,7 @@ describe('enabled gate flip causes detach + attach', () => {
     let fetches = 0
     const enabled = signal(true)
     const q = defineQuery({
+      id: 'use-edges/55',
       key: () => ['toggleable'],
       fetcher: async () => ++fetches,
     })
@@ -74,6 +77,7 @@ describe('enabled gate flip causes detach + attach', () => {
   test('infinite: detaches when enabled flips false', async () => {
     const enabled = signal(true)
     const q = defineInfiniteQuery({
+      id: 'use-edges/76',
       key: () => ['toggle-inf'],
       fetcher: async ({ pageParam }: { pageParam: number }) => `p${pageParam}`,
       initialPageParam: 0,
@@ -102,6 +106,7 @@ describe('root.suspend / root.resume with an infinite subscription', () => {
   test('suspend releases the entry; resume rebinds and refetches when stale', async () => {
     let calls = 0
     const q = defineInfiniteQuery({
+      id: 'use-edges/104',
       key: () => ['suspend-inf'],
       fetcher: async ({ pageParam }: { pageParam: number }) => {
         calls++
@@ -129,6 +134,7 @@ describe('root.suspend / root.resume with an infinite subscription', () => {
     let calls = 0
     const enabled = signal(false)
     const q = defineInfiniteQuery({
+      id: 'use-edges/131',
       key: () => ['suspend-disabled'],
       fetcher: async () => {
         calls++
@@ -153,6 +159,7 @@ describe('root.suspend / root.resume with an infinite subscription', () => {
 
   test('suspend is a no-op when already suspended; resume is a no-op when not suspended', async () => {
     const q = defineInfiniteQuery({
+      id: 'use-edges/155',
       key: () => ['idem'],
       fetcher: async () => 'page',
       initialPageParam: 0,

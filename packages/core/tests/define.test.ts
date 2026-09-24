@@ -13,6 +13,7 @@ const flush = async () => {
 describe('defineQuery.prefetch — no clients yet', () => {
   test('rejects when no root has touched the query', async () => {
     const q = defineQuery({
+      id: 'define/15',
       key: () => ['orphan'],
       fetcher: async () => 'never',
     })
@@ -26,6 +27,7 @@ describe('defineQuery.prefetch — multiple clients', () => {
     try {
       let fetches = 0
       const q = defineQuery({
+        id: 'define/28',
         key: () => ['multi'],
         fetcher: async () => ++fetches,
         staleTime: 60_000,
@@ -50,6 +52,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
   test('invalidate(...args) only refetches the matching key', async () => {
     const calls: number[] = []
     const q = defineInfiniteQuery({
+      id: 'define/52',
       key: (k: number) => [k],
       fetcher: async ({ pageParam }, k: number) => {
         calls.push(k)
@@ -82,6 +85,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
   test('invalidateAll refetches every bound key', async () => {
     const calls: number[] = []
     const q = defineInfiniteQuery({
+      id: 'define/84',
       key: (k: number) => [k],
       fetcher: async (_ctx, k: number) => {
         calls.push(k)
@@ -111,6 +115,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
 
   test('setData applies optimistic pages and rollback restores the previous list', async () => {
     const q = defineInfiniteQuery({
+      id: 'define/113',
       key: () => ['s'],
       fetcher: async ({ pageParam }) => `p${pageParam as number}`,
       initialPageParam: 0,
@@ -134,6 +139,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
 
   test('setData finalize clears pending-mutations without reverting', async () => {
     const q = defineInfiniteQuery({
+      id: 'define/136',
       key: () => ['s2'],
       fetcher: async () => 'p0',
       initialPageParam: 0,
@@ -158,6 +164,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
 
   test('prefetch rejects when no root has subscribed', async () => {
     const q = defineInfiniteQuery({
+      id: 'define/160',
       key: () => ['none'],
       fetcher: async () => 'page',
       initialPageParam: 0,
@@ -170,6 +177,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const q = defineInfiniteQuery({
+        id: 'define/172',
         key: () => ['multi'],
         fetcher: async () => 'page',
         initialPageParam: 0,
@@ -195,6 +203,7 @@ describe('defineQuery.invalidate(...args)', () => {
   test('only invalidates entries that match the provided key', async () => {
     const calls: string[] = []
     const q = defineQuery({
+      id: 'define/197',
       key: (id: string) => [id],
       fetcher: async (_ctx, id: string) => {
         calls.push(id)
@@ -220,35 +229,5 @@ describe('defineQuery.invalidate(...args)', () => {
     expect(calls.filter((k) => k === 'b').length).toBe(1)
     a.dispose()
     b.dispose()
-  })
-})
-
-describe('defineQuery({ crossTab: true }) without queryId', () => {
-  beforeEach(() => {
-    vi.spyOn(console, 'warn').mockImplementation(() => {})
-  })
-  afterEach(() => {
-    ;(console.warn as ReturnType<typeof vi.fn>).mockRestore?.()
-  })
-
-  test('warns once that cross-tab is disabled without a queryId', () => {
-    defineQuery({
-      key: () => ['x'],
-      fetcher: async () => 1,
-      crossTab: true,
-    })
-    expect(console.warn).toHaveBeenCalledWith(
-      expect.stringMatching(/defineQuery\(\{ crossTab: true \}\) requires a stable `queryId`/),
-    )
-  })
-
-  test('does not warn when queryId is supplied', () => {
-    defineQuery({
-      key: () => ['x'],
-      fetcher: async () => 1,
-      crossTab: true,
-      queryId: 'unique-id-1',
-    })
-    expect(console.warn).not.toHaveBeenCalled()
   })
 })

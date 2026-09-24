@@ -8,6 +8,7 @@ import type {
   AsyncState,
   AsyncStatus,
   NetworkMode,
+  QueryMeta,
   RefetchInterval,
   RetryDelay,
   RetryPolicy,
@@ -35,6 +36,8 @@ export type InfiniteFetchCtx<PageParam> = {
  *   `subscription.flat` convenience signal.
  */
 export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> = {
+  /** See `QuerySpec.id`. Required, and unique across regular and infinite queries. */
+  id: string
   key: (...args: Args) => unknown[]
   /**
    * Fetcher receives an `InfiniteFetchCtx` (pageParam + signal + deps) as
@@ -62,20 +65,8 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
   networkMode?: NetworkMode
   /** See `QuerySpec.structuralShare`. Applies to the head-page refresh. */
   structuralShare?: boolean
-  /**
-   * Stable identifier used by `QueryClientPlugin`s (`@kontsedal/olas-cross-tab`,
-   * etc.). Infinite queries do NOT propagate cross-tab in v1 — the
-   * page-array payload is too heavy to be a safe default — but the field is
-   * accepted for forward compatibility. SPEC §13.2.
-   */
-  queryId?: string
-  /**
-   * Accepted for API symmetry, but infinite queries do NOT propagate
-   * cross-tab: peers can't apply page-array payloads (core's remote-apply
-   * paths early-return for infinite defs). The `'infinite'` / `'both'` values
-   * were removed in T6.4; infinite cross-tab is tracked in `BACKLOG.md`.
-   */
-  crossTab?: boolean | 'data'
+  /** See `QuerySpec.meta`. */
+  meta?: QueryMeta
 }
 
 /**

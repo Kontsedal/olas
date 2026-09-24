@@ -52,20 +52,21 @@ describe('integration: offline → online sync', () => {
     let online = false
     let mutateCalls = 0
     defineMutation({
-      mutationId: idA,
+      id: idA,
       mutate: async (vars: OrderVars): Promise<OrderResult> => {
         mutateCalls += 1
         if (!online) throw new Error('NetworkError: offline')
         return { id: 'srv-1', ...vars }
       },
+      meta: { persist: true },
     })
 
     const def1 = defineController((ctx) => ({
       create: createMutation(ctx, {
         // Spread the module-scope spec (mutationId + mutate) and add
         // retry: 0 so in-process retries don't consume our attempt budget.
-        mutationId: idA,
-        mutate: async (vars: OrderVars, signal: AbortSignal) => {
+        id: idA,
+        mutate: async (vars: OrderVars, { signal }) => {
           // Re-route to the registered mutate fn through the closure so
           // the in-process run also fails (the queue path uses the
           // registered impl on replay).
@@ -78,7 +79,7 @@ describe('integration: offline → online sync', () => {
             return r
           })
         },
-        persist: true,
+        meta: { persist: true },
         retry: 0,
       }) as Mutation<OrderVars, OrderResult>,
     }))
@@ -133,23 +134,24 @@ describe('integration: offline → online sync', () => {
     const seen: OrderVars[] = []
 
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: OrderVars): Promise<OrderResult> => {
         if (!online) throw new Error('NetworkError: offline')
         seen.push(vars)
         return { id: `srv-${seen.length}`, ...vars }
       },
+      meta: { persist: true },
     })
 
     const def1 = defineController((ctx) => ({
       create: createMutation(ctx, {
-        mutationId: id,
+        id: id,
         mutate: async (vars: OrderVars) => {
           if (!online) throw new Error('NetworkError: offline')
           seen.push(vars)
           return { id: `srv-${seen.length}`, ...vars } as OrderResult
         },
-        persist: true,
+        meta: { persist: true },
         retry: 0,
       }) as Mutation<OrderVars, OrderResult>,
     }))
@@ -204,12 +206,13 @@ describe('integration: offline → online sync', () => {
     let failuresLeft = 3 // first 3 replay attempts fail, then succeed
 
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: OrderVars): Promise<OrderResult> => {
         attemptLog(vars)
         if (failuresLeft-- > 0) throw new Error('still offline')
         return { id: 'srv-final', ...vars }
       },
+      meta: { persist: true },
     })
 
     // Seed a queue entry as if a prior session had enqueued and crashed

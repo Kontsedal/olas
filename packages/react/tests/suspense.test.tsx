@@ -53,7 +53,7 @@ describe('useQuery({ suspense: true })', () => {
   test('throws subscription.promise() while pending → Suspense fallback shows, then resolves', async () => {
     let resolveFetcher!: (value: string) => void
     const userQuery = defineQuery({
-      queryId: 'suspense-test/load',
+      id: 'suspense-test/load',
       key: () => [],
       fetcher: () =>
         new Promise<string>((resolve) => {
@@ -100,7 +100,7 @@ describe('useQuery({ suspense: true })', () => {
     const restore = silenceConsoleError()
     try {
       const userQuery = defineQuery({
-        queryId: 'suspense-test/error',
+        id: 'suspense-test/error',
         key: () => [],
         fetcher: async (): Promise<string> => {
           throw new Error('server down')
@@ -149,7 +149,7 @@ describe('useQuery({ suspense: true })', () => {
   test('refetch after first success does NOT re-suspend', async () => {
     let value = 'first'
     const greetingQuery = defineQuery({
-      queryId: 'suspense-test/refetch',
+      id: 'suspense-test/refetch',
       key: () => [],
       fetcher: async () => value,
       staleTime: 60_000,
@@ -198,7 +198,7 @@ describe('useQuery({ suspense: true })', () => {
     try {
       let shouldFail = false
       const q = defineQuery({
-        queryId: 'suspense-test/refetch-fail',
+        id: 'suspense-test/refetch-fail',
         key: () => [],
         fetcher: async (): Promise<string> => {
           if (shouldFail) throw new Error('refetch boom')
@@ -255,7 +255,7 @@ describe('useQuery({ suspense: true })', () => {
 
   test('without suspense option, hook behaves as before (data: T | undefined)', async () => {
     const greetingQuery = defineQuery({
-      queryId: 'suspense-test/no-suspense',
+      id: 'suspense-test/no-suspense',
       key: () => [],
       fetcher: async () => 'hi',
       staleTime: 60_000,
@@ -295,7 +295,7 @@ describe('useQuery({ suspense: true })', () => {
 describe('subscription.promise()', () => {
   test('resolves with data on success', async () => {
     const q = defineQuery({
-      queryId: 'promise-test/success',
+      id: 'promise-test/success',
       key: () => [],
       fetcher: async () => ({ id: 1 }),
       staleTime: 60_000,
@@ -311,7 +311,7 @@ describe('subscription.promise()', () => {
   test('rejects with the error on failure', async () => {
     const boom = new Error('boom')
     const q = defineQuery({
-      queryId: 'promise-test/error',
+      id: 'promise-test/error',
       key: () => [],
       fetcher: async () => {
         throw boom

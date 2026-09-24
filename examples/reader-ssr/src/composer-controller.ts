@@ -43,13 +43,13 @@ export const composerController = defineController(
     // about this article's comments.
     const comments = createCache<Comment[]>(
       ctx,
-      (signal) => ctx.deps.api.listComments(props.articleId, signal),
+      ({ signal }) => ctx.deps.api.listComments(props.articleId, signal),
       { staleTime: 10_000 },
     )
 
     const submit = createMutation<void, Comment>(ctx, {
-      name: 'postComment',
-      mutate: async (_, signal) => {
+      id: 'postComment',
+      mutate: async (_, { signal }) => {
         form.markAllTouched()
         const ok = await form.validate()
         if (!ok) throw new Error('Invalid comment')

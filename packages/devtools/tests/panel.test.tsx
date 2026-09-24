@@ -49,6 +49,7 @@ describe('<DevtoolsPanel>', () => {
 
   test('renders cache events as they arrive', async () => {
     const usersQuery = defineQuery({
+      id: 'panel/51',
       key: () => [],
       fetcher: async () => 'data',
     })
@@ -80,7 +81,7 @@ describe('<DevtoolsPanel>', () => {
   })
 
   test('Clear button empties the cache log', async () => {
-    const q = defineQuery({ key: () => [], fetcher: async () => 'x' })
+    const q = defineQuery({ id: 'panel/83', key: () => [], fetcher: async () => 'x' })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
@@ -164,7 +165,7 @@ describe('<DevtoolsPanel>', () => {
   })
 
   test('the filter input is debounced before it filters the view — T6.3', async () => {
-    const q = defineQuery({ key: () => [], fetcher: async () => 'x' })
+    const q = defineQuery({ id: 'panel/167', key: () => [], fetcher: async () => 'x' })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
@@ -203,13 +204,14 @@ describe('<DevtoolsPanel>', () => {
 
   test('timeline groups a failing mutation + its optimistic write + rollback as one cause-chain', async () => {
     const q = defineQuery({
+      id: 'panel/205',
       key: (id: string) => [id],
       fetcher: async (_c, id) => `server-${id}`,
     })
     const def = defineController((ctx) => ({
       cur: createQuery(ctx, q, () => ['1']),
       save: createMutation(ctx, {
-        name: 'save',
+        id: 'save',
         mutate: async () => {
           throw new Error('boom')
         },
@@ -241,13 +243,14 @@ describe('<DevtoolsPanel>', () => {
 
   test('a cache:set-data row expands to a structural before/after diff', async () => {
     const q = defineQuery({
+      id: 'panel/243',
       key: (id: string) => [id],
       fetcher: async (_c, _id) => ({ name: 'Ada', age: 36 }),
     })
     const def = defineController((ctx) => ({
       cur: createQuery(ctx, q, () => ['1']),
       bump: createMutation(ctx, {
-        name: 'bump',
+        id: 'bump',
         mutate: async () => 'ok',
         onMutate: () =>
           q.setData('1', (p) => ({ ...(p as { name: string; age: number }), age: 37 })),
@@ -298,7 +301,11 @@ describe('<DevtoolsPanel>', () => {
   })
 
   test('the cache inspector updates from events (no poll)', async () => {
-    const q = defineQuery({ key: (id: string) => [id], fetcher: async (_c, id) => `data-${id}` })
+    const q = defineQuery({
+      id: 'panel/301',
+      key: (id: string) => [id],
+      fetcher: async (_c, id) => `data-${id}`,
+    })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['u1']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 

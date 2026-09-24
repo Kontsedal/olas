@@ -281,20 +281,13 @@ function defaultWarn(message: string, cause?: unknown): void {
 }
 
 /**
- * Per-query opt-in gate — applied on BOTH send and receive (T6.4), so a tab
- * only broadcasts, and only accepts, writes for queries it opted in. The
- * QueryClient's events fire for every query with a `queryId`, so the filter
- * lives here. Returns `'data'` when opted in, else `false`.
- *
- * `crossTab: true` maps to `'data'`. The removed `'infinite'`/'both'` values
- * also map to `'data'` — a JS / cast caller may still pass them (core
- * dev-warns at define time), but infinite queries never sync (see the send
- * gate); regular writes on such a query still propagate.
+ * Per-query opt-in gate, applied on BOTH send and receive, so a tab only
+ * broadcasts, and only accepts, writes for queries that set
+ * `meta: { crossTab: true }`. The QueryClient's events fire for every query,
+ * so the filter lives here. Infinite queries never sync (see the send gate).
  */
 function shouldBroadcast(queryId: string): 'data' | false {
   const registered = lookupRegisteredQuery(queryId)
   if (!registered) return false
-  const flag = (registered.__spec as { crossTab?: boolean | 'data' | 'infinite' | 'both' }).crossTab
-  if (flag === true || flag === 'data' || flag === 'infinite' || flag === 'both') return 'data'
-  return false
+  return registered.__spec.meta?.crossTab === true ? 'data' : false
 }

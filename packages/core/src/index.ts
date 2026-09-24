@@ -75,6 +75,7 @@ export { defineInfiniteQuery, defineQuery } from './query/define'
 export type { QueryEngine, QueryEngineOptions } from './query/engine'
 export { queryEngine } from './query/engine'
 export type {
+  InfiniteFetchCtx,
   InfiniteQuery,
   InfiniteQueryActions,
   InfiniteQuerySpec,
@@ -85,10 +86,16 @@ export type {
 // rolling their own ad-hoc JSON.stringify (which mishandles Date, key
 // ordering, and `undefined`).
 export { stableHash } from './query/keys'
+export type { LocalCacheOptions } from './query/local'
 export type {
+  MutateCtx,
   Mutation,
   MutationConcurrency,
   MutationDef,
+  MutationDefinition,
+  MutationHooks,
+  MutationMeta,
+  MutationRun,
   MutationSpec,
 } from './query/mutation'
 export { defineMutation, MutationDisposedError } from './query/mutation'
@@ -112,10 +119,12 @@ export type {
   DefaultQueryOptions,
   DehydratedEntry,
   DehydratedState,
+  FetchCtx,
   LocalCache,
   NetworkMode,
   Query,
   QueryActions,
+  QueryMeta,
   QuerySpec,
   QuerySubscription,
   RefetchInterval,

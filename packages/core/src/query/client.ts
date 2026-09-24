@@ -17,6 +17,8 @@ import {
   type GcEvent,
   type InvalidateEvent,
   lookupRegisteredQuery,
+  type MutationEnqueueEvent,
+  type MutationSettleEvent,
   type QueryClientPlugin,
   type QueryClientPluginApi,
   type SetDataEvent,
@@ -91,13 +93,13 @@ function resolveRefetchInterval<T>(
 
 type AnyQuery = Query<any, any> & {
   readonly __spec: QuerySpec<any, any>
-  readonly __id: string | undefined
+  readonly __id: string
   __clients: Set<QueryClient>
 }
 
 type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
   readonly __spec: InfiniteQuerySpec<any, any, any, any>
-  readonly __id: string | undefined
+  readonly __id: string
   __clients: Set<QueryClient>
 }
 
@@ -106,7 +108,7 @@ type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
  * identity stops a dehydrated entry for query A being adopted by query B that
  * merely hashes to the same key (spec §15, T1.2). `JSON.stringify` of the pair
  * is used rather than string concatenation so no separator char is ambiguous —
- * both `id` (an arbitrary user `queryId`) and `hash` are unbounded strings.
+ * both `id` (an arbitrary user-written string) and `hash` are unbounded.
  */
 const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
 
@@ -149,7 +151,7 @@ export class ClientEntry<T> {
     hydrated: { data: T; lastUpdatedAt: number } | undefined,
     /**
      * Prepared by `QueryClient.bindEntry` (which is the only construction
-     * site). When the query has a `queryId`, the closure calls back into
+     * site). The closure calls back into
      * `QueryClient.emitSetData` with `source: 'fetch'` after every
      * successful fetch. We accept it pre-built rather than reach into the
      * client from here because `emitSetData` is `private` on `QueryClient`
@@ -405,8 +407,8 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     keyArgs: readonly unknown[],
     spec: InfiniteQuerySpec<any, PageParam, TPage, TItem>,
     /**
-     * Prepared by `QueryClient.bindInfiniteEntry`. When the infinite query
-     * has a `queryId`, the closure calls back into `QueryClient.emitSetData`
+     * Prepared by `QueryClient.bindInfiniteEntry`. The closure calls back
+     * into `QueryClient.emitSetData`
      * with `kind: 'infinite', source: 'fetch'` after every successful page
      * write (initial, next, prev). Mirrors `ClientEntry.onFetchSuccess`.
      */
@@ -636,6 +638,9 @@ export class QueryClient {
   private makePluginApi(): QueryClientPluginApi {
     const self = this
     return {
+      get deps() {
+        return self.deps
+      },
       invalidate(query, args) {
         return self.bindQuery(query).invalidate(...args)
       },
@@ -692,8 +697,7 @@ export class QueryClient {
     source: 'set' | 'fetch' | 'remote',
   ): void {
     if (this.plugins.length === 0) return
-    const queryId = query.__spec.queryId
-    if (queryId == null) return
+    const queryId = query.__spec.id
     const event: SetDataEvent = {
       queryId,
       keyArgs,
@@ -712,8 +716,7 @@ export class QueryClient {
 
   /**
    * Emit a devtools `cache:set-data` event for a cache write. Independent of
-   * the plugin `emitSetData` fan-out above — devtools observes ALL writes,
-   * even for queries without a `queryId` (which plugins skip). When `source`
+   * the plugin `emitSetData` fan-out above. When `source`
    * is omitted it's derived from the ambient cause: a write inside a
    * mutation's `onMutate`/rollback (an active `__runWithCause` frame) is
    * `'mutate'` and inherits the run's `causeId`; a bare write is `'set'`.
@@ -741,8 +744,7 @@ export class QueryClient {
     kind: 'data' | 'infinite',
   ): void {
     if (this.plugins.length === 0) return
-    const queryId = query.__spec.queryId
-    if (queryId == null) return
+    const queryId = query.__spec.id
     const event: InvalidateEvent = {
       queryId,
       keyArgs,
@@ -763,8 +765,7 @@ export class QueryClient {
     kind: 'data' | 'infinite',
   ): void {
     if (this.plugins.length === 0) return
-    const queryId = query.__spec.queryId
-    if (queryId == null) return
+    const queryId = query.__spec.id
     const event: GcEvent = { queryId, keyArgs, kind }
     for (const plugin of this.plugins) {
       if (plugin.onGc) {
@@ -776,15 +777,10 @@ export class QueryClient {
 
   /**
    * Fan out a `MutationEnqueueEvent` to every installed plugin. Called from
-   * `MutationImpl.executeRun` when `spec.persist === true`. Plugins use this
-   * to write the run to durable storage; the queue replays on reload. SPEC §13.3.
+   * `MutationImpl.executeRun` for every run of a mutation with an `id`. A queue
+   * plugin writes the run to durable storage when its `meta` asks for it.
    */
-  emitMutationEnqueue(event: {
-    mutationId: string
-    runId: string
-    variables: unknown
-    attempt: number
-  }): void {
+  emitMutationEnqueue(event: MutationEnqueueEvent): void {
     if (this.plugins.length === 0) return
     for (const plugin of this.plugins) {
       if (plugin.onMutationEnqueue) {
@@ -794,13 +790,8 @@ export class QueryClient {
     }
   }
 
-  /** Fan out a `MutationSettleEvent` to every installed plugin. SPEC §13.3. */
-  emitMutationSettle(event: {
-    mutationId: string
-    runId: string
-    outcome: 'success' | 'error' | 'cancelled'
-    error?: unknown
-  }): void {
+  /** Fan out a `MutationSettleEvent` to every installed plugin. */
+  emitMutationSettle(event: MutationSettleEvent): void {
     if (this.plugins.length === 0) return
     for (const plugin of this.plugins) {
       if (plugin.onMutationSettle) {
@@ -980,7 +971,8 @@ export class QueryClient {
         dispatchError(this.onError, err, {
           kind: 'cache',
           controllerPath: [],
-          queryKey: entry.keyArgs,
+          queryId,
+          key: entry.keyArgs,
         })
       })
       this.emitInvalidate(internal, entry.keyArgs, 'data')
@@ -1054,20 +1046,7 @@ export class QueryClient {
 
   dehydrate(): DehydratedState {
     const entries: DehydratedState['entries'] = []
-    let skipped = 0
     for (const [query, map] of this.maps) {
-      // Registration order is not a stable identity across server/client bundles.
-      if (query.__id === undefined) {
-        // Silently shipping fewer entries than the server actually cached is a
-        // safe outcome (the client refetches) but an invisible one — the only
-        // symptom is a slower page. Count the entries that WOULD have made the
-        // payload and say so once, so the missing `queryId` presents as a
-        // config warning rather than as a performance mystery. Spec §15.
-        for (const ce of map.values()) {
-          if (ce.entry.status.peek() === 'success') skipped++
-        }
-        continue
-      }
       for (const ce of map.values()) {
         if (ce.entry.status.peek() === 'success') {
           entries.push({
@@ -1078,14 +1057,6 @@ export class QueryClient {
           })
         }
       }
-    }
-    if (__DEV__ && skipped > 0) {
-      console.warn(
-        `[olas] dehydrate() skipped ${skipped} cached ${skipped === 1 ? 'entry' : 'entries'} ` +
-          'belonging to queries without a `queryId`. SSR serialization needs an explicit, stable ' +
-          'id shared by the server and client bundles — add `queryId: "<unique-string>"` to those ' +
-          'specs. Until then the client refetches them after hydration.',
-      )
     }
     return { version: 1, entries }
   }
@@ -1181,19 +1152,15 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as ClientEntry<T> | undefined
     if (!entry) {
-      const hkey = internal.__id === undefined ? undefined : hydrationKey(internal.__id, hash)
-      const hydrated = (hkey === undefined ? undefined : this.hydratedData.get(hkey)) as
-        | { data: T; lastUpdatedAt: number }
-        | undefined
-      if (hkey !== undefined && hydrated) this.hydratedData.delete(hkey)
+      const hkey = hydrationKey(internal.__id, hash)
+      const hydrated = this.hydratedData.get(hkey) as { data: T; lastUpdatedAt: number } | undefined
+      if (hydrated) this.hydratedData.delete(hkey)
       // Build the fetcher-success emitter here so `emitSetData` can stay
       // `private` — `ClientEntry` doesn't reach back into the client to call
       // it; the closure captures (query, keyArgs, this) in this scope and
       // is consumed by `Entry.onSuccessData` from inside `applySuccess`.
-      const onFetchSuccess: ((data: T) => void) | undefined =
-        internal.__spec.queryId != null
-          ? (data) => this.emitSetData(internal, keyArgs, data, 'data', 'fetch')
-          : undefined
+      const onFetchSuccess = (data: T): void =>
+        this.emitSetData(internal, keyArgs, data, 'data', 'fetch')
       entry = new ClientEntry<T>(
         this,
         internal,
@@ -1238,7 +1205,7 @@ export class QueryClient {
         // eslint-disable-next-line no-console
         console.warn(
           `[olas] bindEntry: hash collision with diverging callArgs for query` +
-            ` ${internal.__spec.queryId ?? '<anonymous>'} key=${JSON.stringify(keyArgs)}.` +
+            ` ${internal.__spec.id} key=${JSON.stringify(keyArgs)}.` +
             ` First bind's args are used by the fetcher; later args ignored.` +
             ` Either include the difference in spec.key(...) or pass identical args.`,
         )
@@ -1273,6 +1240,7 @@ export class QueryClient {
   private invalidateEntry(entry: {
     hasSubscribers(): boolean
     keyArgs: readonly unknown[]
+    query: { readonly __id: string }
     entry: { invalidate(): Promise<unknown>; markStale(): void }
   }): Promise<void> {
     if (entry.hasSubscribers()) {
@@ -1287,7 +1255,8 @@ export class QueryClient {
           dispatchError(this.onError, err, {
             kind: 'cache',
             controllerPath: [],
-            queryKey: entry.keyArgs,
+            queryId: entry.query.__id,
+            key: entry.keyArgs,
           })
         },
       )
@@ -1491,10 +1460,8 @@ export class QueryClient {
       // closure captures (query, keyArgs, this) and is consumed by
       // `InfiniteEntry.onSuccessData` from inside each successful page
       // batch (initial, next, prev).
-      const onFetchSuccess: ((pages: TPage[]) => void) | undefined =
-        internal.__spec.queryId != null
-          ? (pages) => this.emitSetData(internal, keyArgs, pages, 'infinite', 'fetch')
-          : undefined
+      const onFetchSuccess = (pages: TPage[]): void =>
+        this.emitSetData(internal, keyArgs, pages, 'infinite', 'fetch')
       entry = new InfiniteClientEntry<TPage, TItem, unknown>(
         this,
         internal,

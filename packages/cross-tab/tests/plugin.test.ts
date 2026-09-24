@@ -100,8 +100,8 @@ function makeUsersQuery(
   opts?: { crossTab?: boolean },
 ): Query<[string], { id: string; name: string }> {
   return defineQuery({
-    queryId,
-    crossTab: opts?.crossTab ?? true,
+    id: queryId,
+    meta: { crossTab: opts?.crossTab ?? true },
     key: (id: string) => ['user', id],
     fetcher: async (_ctx, id: string) => ({ id, name: 'fetcher' }),
     staleTime: 60_000, // suppress focus/reconnect refetch noise
@@ -215,44 +215,6 @@ describe('crossTabPlugin', () => {
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
-  })
-
-  test('4. crossTab: true without queryId warns and is skipped at core level', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // Build a query without a queryId.
-    const noIdQuery = defineQuery({
-      crossTab: true,
-      key: (id: string) => ['noid', id],
-      fetcher: async (_ctx, id: string) => ({ id }),
-      staleTime: 60_000,
-    })
-
-    const factory = busChannelFactory()
-    const def = defineController((ctx) => {
-      const u = createQuery(ctx, noIdQuery, () => ['1' as string])
-      return { user: u }
-    })
-    const a = createRoot(def, {
-      queries: queryEngine(),
-      deps: {},
-      plugins: [crossTabPlugin({ channelName: 'noid-chan', channelFactory: factory })],
-    })
-    await settle()
-
-    noIdQuery.setData('1', () => ({ id: 'tab-a' }))
-    await settle()
-
-    // No queryId → core skips firing onSetData → plugin never broadcasts.
-    expect(getBus('noid-chan').postCount).toBe(0)
-    // Dev-warning fired (from defineQuery's queryId check).
-    expect(
-      warnSpy.mock.calls.some(
-        (c) => typeof c[0] === 'string' && c[0].includes('requires a stable `queryId`'),
-      ),
-    ).toBe(true)
-
-    warnSpy.mockRestore()
-    a.dispose()
   })
 
   test('5. invalidation propagates → receiving tab refetches', async () => {
@@ -546,24 +508,6 @@ describe('crossTabPlugin', () => {
 
     root1.dispose()
     root2.dispose()
-  })
-
-  test('12. crossTab: "infinite" / "both" dev-warns (removed values, degrade to data) (T6.4)', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      // The type no longer allows these; a JS / cast caller still gets a warn.
-      defineQuery({
-        queryId: 'xtab-test/legacy-infinite',
-        crossTab: 'infinite' as never,
-        key: (id: string) => ['user', id],
-        fetcher: async (_ctx, id: string) => ({ id, name: 'x' }),
-      })
-      expect(warn.mock.calls.some((c) => /crossTab.*no longer supported/i.test(String(c[0])))).toBe(
-        true,
-      )
-    } finally {
-      warn.mockRestore()
-    }
   })
 
   test('13. receive-side filter — inbound writes for locally non-opted queries are ignored (T6.4)', async () => {

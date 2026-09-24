@@ -176,6 +176,21 @@ export type FetchCtx = {
 }
 
 /**
+ * Per-query plugin settings, carried on `QuerySpec.meta`. Empty in core:
+ * plugin packages add their fields through declaration merging.
+ *
+ * ```ts
+ * declare module '@kontsedal/olas-core' {
+ *   interface QueryMeta {
+ *     crossTab?: boolean
+ *   }
+ * }
+ * ```
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmented by plugin packages
+export interface QueryMeta {}
+
+/**
  * How a query behaves with respect to the network reachability signal.
  *
  * - `online` (default) — pause fetches while `navigator.onLine` is `false`;
@@ -204,6 +219,14 @@ export type NetworkMode = 'online' | 'always' | 'offlineFirst'
  * `ctx.deps.api` etc. — no `setApiForQuery(api)` module-level capture needed.
  */
 export type QuerySpec<Args extends unknown[], T> = {
+  /**
+   * Stable identity for this query: unique per query, and identical in the
+   * server and client bundles. It names the query in SSR payloads, plugin
+   * events, devtools and error contexts. Write it by hand — derived names
+   * (`fetcher.name`, a hash of the source) change under minification.
+   * Spec §5.2.
+   */
+  id: string
   key: (...args: Args) => unknown[]
   fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>
   staleTime?: number
@@ -233,28 +256,11 @@ export type QuerySpec<Args extends unknown[], T> = {
    */
   structuralShare?: boolean
   /**
-   * Stable identifier used by `QueryClientPlugin`s (e.g. `@kontsedal/olas-cross-tab`)
-   * to locate the same query across tabs / processes / persistence layers.
-   * REQUIRED for SSR dehydrate/hydrate and queries with `crossTab: true`.
-   * Anonymous queries are omitted from dehydration and fetch on the client.
-   * Must be unique per query and identical in server/client bundles. SPEC §13.2, §15.
-   *
-   * Don't auto-derive from `fetcher.name` or argument hashing — both are
-   * fragile under minification.
+   * Per-query settings for plugins. Each plugin package declares its fields
+   * by augmenting `QueryMeta`, so `meta` accepts exactly what the installed
+   * plugins understand. Core never reads it. Spec §13.
    */
-  queryId?: string
-  /**
-   * Opt this query into cross-tab cache sync (`@kontsedal/olas-cross-tab`).
-   * No effect without a `queryId` and without a plugin installed. SPEC §13.2.
-   *
-   * - `true` (legacy) — equivalent to `'data'`.
-   * - `'data'` — propagate explicit `setData`/`invalidate` writes.
-   *
-   * The `'infinite'` / `'both'` values were removed (T6.4): peers can't apply
-   * infinite-query page arrays cross-tab, so those broadcasts were channel
-   * noise. Infinite cross-tab is tracked in `BACKLOG.md`.
-   */
-  crossTab?: boolean | 'data'
+  meta?: QueryMeta
 }
 
 /**
@@ -271,8 +277,8 @@ export type QuerySpec<Args extends unknown[], T> = {
  * Deliberately NOT defaultable:
  * - `refetchInterval` — a root-wide interval would silently start polling
  *   every query in the app. Opt in per query.
- * - `key` / `fetcher` / `queryId` / `crossTab` — per-query identity and
- *   behavior; meaningless as an app-wide default.
+ * - `id` / `key` / `fetcher` / `meta` — per-query identity and plugin
+ *   settings; meaningless as an app-wide default.
  *
  * `refetchOnWindowFocus` / `refetchOnReconnect` apply to regular queries
  * only — infinite queries have no focus/reconnect subscription (see

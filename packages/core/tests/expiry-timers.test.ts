@@ -40,6 +40,7 @@ describe('stale timers', () => {
   test('infinite queries with Infinity stay fresh until explicitly invalidated', async () => {
     const fetcher = vi.fn(async () => 'page')
     const q = defineInfiniteQuery({
+      id: 'expiry-timers/42',
       key: () => [],
       fetcher,
       initialPageParam: 0,
@@ -113,6 +114,7 @@ describe('gc timers', () => {
   const roundTrip = async (gcTime: number, gap: number) => {
     const calls: string[] = []
     const q = defineQuery({
+      id: 'expiry-timers/115',
       key: (id: string) => [id],
       fetcher: async (_ctx, id: string) => {
         calls.push(id)
@@ -154,7 +156,13 @@ describe('gc timers', () => {
 
   test('an orphaned prefetch entry respects gcTime: Infinity', async () => {
     const fetcher = vi.fn(async () => 'v')
-    const q = defineQuery({ key: () => [], fetcher, staleTime: Infinity, gcTime: Infinity })
+    const q = defineQuery({
+      id: 'expiry-timers/157',
+      key: () => [],
+      fetcher,
+      staleTime: Infinity,
+      gcTime: Infinity,
+    })
     const root = createRoot(
       defineController(() => ({})),
       { queries: queryEngine(), deps: {} },
@@ -173,6 +181,7 @@ describe('gc timers', () => {
   test('infinite entries honour gcTime: Infinity and collect on a finite one', async () => {
     const calls: string[] = []
     const q = defineInfiniteQuery({
+      id: 'expiry-timers/175',
       key: (id: string) => [id],
       fetcher: async (_ctx, id: string) => {
         calls.push(id)
@@ -206,7 +215,13 @@ describe('every user-supplied duration is chunked, not clamped', () => {
 
   test('refetchInterval above the platform limit polls once, at the right time', async () => {
     const fetcher = vi.fn(async () => 'v')
-    const q = defineQuery({ key: () => [], fetcher, staleTime: 0, refetchInterval: OVERFLOW })
+    const q = defineQuery({
+      id: 'expiry-timers/209',
+      key: () => [],
+      fetcher,
+      staleTime: 0,
+      refetchInterval: OVERFLOW,
+    })
     const root = createRoot(
       defineController((ctx) => ({ sub: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: {} },

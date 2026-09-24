@@ -50,6 +50,7 @@ describe('cache key identities', () => {
 
   test('colliding legacy markers produce independent requests and cached values', async () => {
     const q = defineQuery({
+      id: 'cache-identity/52',
       key: (key: unknown) => [key],
       fetcher: async (_ctx, key: unknown) => typeof key,
       staleTime: Infinity,
@@ -70,14 +71,11 @@ describe('cache key identities', () => {
 })
 
 describe('SSR identity across separately evaluated bundles', () => {
-  test.each([
-    false,
-    true,
-  ])('reversed registration order is safe (explicit IDs: %s)', async (explicit) => {
+  test('reversed registration order is safe', async () => {
     vi.resetModules()
     const serverModule = await import('../src/query/define')
     const spec = (name: string) => ({
-      ...(explicit ? { queryId: `ssr-order/${name}` } : {}),
+      id: `ssr-order/${name}`,
       key: () => [],
       fetcher: async () => name,
       staleTime: Infinity,
@@ -95,7 +93,7 @@ describe('SSR identity across separately evaluated bundles', () => {
     )
     await server.waitForIdle()
     const state = JSON.parse(JSON.stringify(server.dehydrate()))
-    expect(state.entries).toHaveLength(explicit ? 2 : 0)
+    expect(state.entries).toHaveLength(2)
     server.dispose()
 
     vi.resetModules()
@@ -116,45 +114,26 @@ describe('SSR identity across separately evaluated bundles', () => {
     await client.waitForIdle()
     expect(client.api.users.data.peek()).toBe('users')
     expect(client.api.settings.data.peek()).toBe('settings')
-    expect(usersFetch).toHaveBeenCalledTimes(explicit ? 0 : 1)
-    expect(settingsFetch).toHaveBeenCalledTimes(explicit ? 0 : 1)
+    expect(usersFetch).toHaveBeenCalledTimes(0)
+    expect(settingsFetch).toHaveBeenCalledTimes(0)
   })
 
-  test('dehydrate warns once about the cached entries it had to skip', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      const anon = defineQuery({ key: (id: string) => [id], fetcher: async (_c, id: string) => id })
-      const named = defineQuery({
-        queryId: 'dehydrate-warn/named',
-        key: () => [],
-        fetcher: async () => 'named',
-      })
-      const root = keep(
-        createRoot(
-          defineController((ctx) => ({
-            a: createQuery(ctx, anon, () => ['a'] as const),
-            b: createQuery(ctx, anon, () => ['b'] as const),
-            named: createQuery(ctx, named),
-          })),
-          { queries: queryEngine(), deps: {} },
-        ),
-      )
-      await root.waitForIdle()
-      const state = root.dehydrate()
-      // The named query still ships; only the anonymous entries are dropped.
-      expect(state.entries.map((e) => e.id)).toEqual(['dehydrate-warn/named'])
-      expect(warn).toHaveBeenCalledTimes(1)
-      expect(String(warn.mock.calls[0]?.[0])).toMatch(/skipped 2 cached entries.*queryId/s)
-    } finally {
-      warn.mockRestore()
-    }
+  test('a query without an id is rejected at definition time', () => {
+    // Every entry in an SSR payload is named by its query's id. A query without
+    // one used to be skipped by `dehydrate()` with a warning; now it cannot be
+    // defined at all.
+    const spec = { key: () => [], fetcher: async () => 'x' } as unknown as Parameters<
+      typeof defineQuery
+    >[0]
+    expect(() => defineQuery(spec)).toThrow(/requires a non-empty `id`/)
+    expect(() => defineQuery({ ...spec, id: '' })).toThrow(/requires a non-empty `id`/)
   })
 
   test('dehydrate stays quiet when every cached query is identified', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
       const q = defineQuery({
-        queryId: 'dehydrate-warn/quiet',
+        id: 'dehydrate-warn/quiet',
         key: () => [],
         fetcher: async () => 'v',
       })
@@ -173,7 +152,12 @@ describe('SSR identity across separately evaluated bundles', () => {
   })
 
   test('anonymous queries cannot consume legacy auto-ID payloads', async () => {
-    const q = defineQuery({ key: () => [], fetcher: async () => 'own data', staleTime: Infinity })
+    const q = defineQuery({
+      id: 'cache-identity/176',
+      key: () => [],
+      fetcher: async () => 'own data',
+      staleTime: Infinity,
+    })
     const root = keep(
       createRoot(
         defineController((ctx) => ({ sub: createQuery(ctx, q) })),

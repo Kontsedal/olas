@@ -44,6 +44,7 @@ declare module '@kontsedal/olas-core' {
 // --- Shared query: symbol metadata, refetched on a slow interval. ---------
 
 export const symbolsQuery = defineQuery({
+  id: 'market/symbols',
   key: () => [],
   fetcher: ({ signal, deps }): Promise<SymbolMeta[]> => deps.market.getSymbols(signal),
   staleTime: 10_000,

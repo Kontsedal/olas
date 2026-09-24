@@ -8,8 +8,8 @@
 import { defineQuery } from '@kontsedal/olas-core'
 
 export const boardsListQuery = defineQuery({
-  queryId: 'boards.list',
-  crossTab: true,
+  id: 'boards.list',
+  meta: { crossTab: true },
   key: () => [],
   fetcher: ({ signal, deps }) => deps.api.listBoards(signal),
   staleTime: 60_000,
@@ -21,16 +21,16 @@ export const boardsListQuery = defineQuery({
  * propagates everywhere the entity is observed.
  */
 export const usersQuery = defineQuery({
-  queryId: 'users.list',
-  crossTab: true,
+  id: 'users.list',
+  meta: { crossTab: true },
   key: () => [],
   fetcher: ({ signal, deps }) => deps.api.listUsers(signal),
   staleTime: 5 * 60_000,
 })
 
 export const labelsQuery = defineQuery({
-  queryId: 'labels.list',
-  crossTab: true,
+  id: 'labels.list',
+  meta: { crossTab: true },
   key: () => [],
   fetcher: ({ signal, deps }) => deps.api.listLabels(signal),
   staleTime: 5 * 60_000,

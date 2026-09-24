@@ -59,8 +59,9 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
   test('persists an entry on enqueue and deletes on success', async () => {
     const adapter = memoryAdapter()
     const createOrder = defineMutation({
-      mutationId: MUTATION_ID,
+      id: MUTATION_ID,
       mutate: async (vars: { sku: string }) => ({ id: 'srv-1', ...vars }),
+      meta: { persist: true },
     })
     const def = defineController((ctx) => ({
       create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
@@ -97,11 +98,12 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
     const adapter = memoryAdapter()
     const calls = vi.fn()
     const failingMutation = defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (_vars: { x: number }) => {
         calls()
         throw new Error('server 500')
       },
+      meta: { persist: true },
     })
 
     const def = defineController((ctx) => ({
@@ -146,11 +148,12 @@ describe('mutationQueuePlugin — replay on init', () => {
 
     const replayCalls: Array<{ sku: string }> = []
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: { sku: string }) => {
         replayCalls.push(vars)
         return { id: 'srv-9', ...vars }
       },
+      meta: { persist: true },
     })
 
     const def = defineController(() => ({}))
@@ -221,8 +224,9 @@ describe('mutationQueuePlugin — replay on init', () => {
     adapter.store.set(`test/mq/giveup/${id}/run-x`, JSON.stringify(entry))
 
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async () => 'success',
+      meta: { persist: true },
     })
 
     const errors: Array<{ err: unknown; entry: QueueEntry }> = []
@@ -290,15 +294,17 @@ describe('mutationQueuePlugin — replay on init', () => {
 
     const aOrder: unknown[] = []
     defineMutation({
-      mutationId: idA,
+      id: idA,
       mutate: async (vars: unknown) => {
         await flush() // give the parallel B run a chance to interleave
         aOrder.push(vars)
       },
+      meta: { persist: true },
     })
     defineMutation({
-      mutationId: idB,
+      id: idB,
       mutate: async (vars: unknown) => vars,
+      meta: { persist: true },
     })
 
     const def = defineController(() => ({}))
@@ -373,25 +379,14 @@ describe('mutationQueuePlugin — config', () => {
     root.dispose()
   })
 
-  test('defineMutation throws on empty mutationId', () => {
+  test('defineMutation throws on an empty id', () => {
     expect(() =>
       defineMutation({
-        mutationId: '',
+        id: '',
         mutate: async () => undefined,
+        meta: { persist: true },
       }),
-    ).toThrow(/non-empty `mutationId`/)
-  })
-
-  test('ctx.mutation throws when persist: true without mutationId', () => {
-    expect(() => {
-      const def = defineController((ctx) =>
-        createMutation(ctx, {
-          persist: true,
-          mutate: async () => undefined,
-        }),
-      )
-      createRoot(def, { queries: queryEngine(), deps: {} })
-    }).toThrow(/persist: true.*requires.*mutationId/)
+    ).toThrow(/non-empty `id`/)
   })
 })
 
@@ -456,12 +451,14 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
     plugin.onMutationEnqueue?.({
+      meta: { persist: true },
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
       attempt: 0,
     })
     plugin.onMutationEnqueue?.({
+      meta: { persist: true },
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
@@ -481,6 +478,7 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
     plugin.onMutationEnqueue?.({
+      meta: { persist: true },
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
@@ -489,9 +487,15 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     await settle()
     expect(adapter.store.size).toBe(1)
     // Reload mid-run looks like a cancel — entry + key must survive.
-    plugin.onMutationSettle?.({ mutationId: 'm', runId: 'run-1', outcome: 'cancelled' })
+    plugin.onMutationSettle?.({
+      meta: { persist: true },
+      mutationId: 'm',
+      runId: 'run-1',
+      outcome: 'cancelled',
+    })
     // Re-enqueue the same logical mutation under a new runId → collapses.
     plugin.onMutationEnqueue?.({
+      meta: { persist: true },
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
@@ -511,16 +515,18 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
     seed(adapter, 'test/mq/settle', { mutationId: id, runId: 'r1', variables: { a: 1 } })
     let finishReplay!: (value: string) => void
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: () =>
         new Promise<string>((resolve) => {
           finishReplay = resolve
         }),
+      meta: { persist: true },
     })
 
     const settled: Array<{ result: unknown; runId: string }> = []
     const calls: string[] = []
     const query = defineQuery({
+      id: 'plugin/523',
       key: (id: number) => ['user', id],
       fetcher: async ({ deps }, id: number) => {
         calls.push(`${deps.owner}:${id}`)
@@ -564,12 +570,13 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
     seed(adapter, 'test/mq/replaynow', { mutationId: id, runId: 'r1' })
     let calls = 0
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async () => {
         calls += 1
         if (calls === 1) throw new Error('transient')
         return 'ok'
       },
+      meta: { persist: true },
     })
     const plugin = mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/replaynow', maxAttempts: 5 })
     const def = defineController(() => ({}))
@@ -599,7 +606,7 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       const adapter = memoryAdapter()
       seed(adapter, 'test/mq/online', { mutationId: id, runId: 'r1' })
       let calls = 0
-      defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
+      defineMutation({ id: id, mutate: async () => (calls += 1), meta: { persist: true } })
       const def = defineController(() => ({}))
       const root = createRoot(def, {
         queries: queryEngine(),
@@ -626,7 +633,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const adapter = memoryAdapter()
     seed(adapter, 'test/mq/ttl', { mutationId: id, runId: 'r1', enqueuedAt: Date.now() - 60_000 })
     let replayed = 0
-    defineMutation({ mutationId: id, mutate: async () => (replayed += 1) })
+    defineMutation({ id: id, mutate: async () => (replayed += 1), meta: { persist: true } })
     const errors: Array<{ code?: string }> = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
@@ -658,7 +665,11 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       JSON.stringify({ v: 0, mutationId: id, runId: 'r1', legacyVars: { n: 7 } }),
     )
     const replayed: unknown[] = []
-    defineMutation({ mutationId: id, mutate: async (vars: unknown) => replayed.push(vars) })
+    defineMutation({
+      id: id,
+      mutate: async (vars: unknown) => replayed.push(vars),
+      meta: { persist: true },
+    })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
       queries: queryEngine(),
@@ -698,6 +709,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       onWarn: (m) => warnings.push(m),
     })
     plugin.onMutationEnqueue?.({
+      meta: { persist: true },
       mutationId: 'm',
       runId: 'r1',
       variables: { blob: 'x'.repeat(500) },
@@ -716,10 +728,11 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const adapter = memoryAdapter()
     seed(adapter, 'test/mq/attempt', { mutationId: id, runId: 'r1', attempts: 0 })
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async () => {
         throw new Error('still down')
       },
+      meta: { persist: true },
     })
     const attemptFailures: unknown[] = []
     const finalErrors: unknown[] = []
@@ -766,11 +779,12 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     })
     const order: unknown[] = []
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: unknown) => {
         await flush()
         order.push(vars)
       },
+      meta: { persist: true },
     })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
@@ -791,7 +805,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       const adapter = memoryAdapter()
       seed(adapter, 'test/mq/backoff', { mutationId: id, runId: 'r1', attempts: 1 })
       let calls = 0
-      defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
+      defineMutation({ id: id, mutate: async () => (calls += 1), meta: { persist: true } })
       const def = defineController(() => ({}))
       const root = createRoot(def, {
         queries: queryEngine(),
@@ -827,10 +841,11 @@ describe('a run that completed before dispose must not be replayed', () => {
       resolveWrite = res
     })
     const createOrder = defineMutation({
-      mutationId: MUTATION_ID,
+      id: MUTATION_ID,
       // Not `async`: an async wrapper adds a microtask hop, and the window
       // below is measured in hops.
       mutate: (_vars: { sku: string }) => pending,
+      meta: { persist: true },
     })
     const def = defineController((ctx) => ({
       create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
@@ -877,12 +892,13 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
     const adapter = memoryAdapter()
     let calls = 0
     const createOrder = defineMutation({
-      mutationId: MUTATION_ID,
+      id: MUTATION_ID,
       mutate: async (vars: { sku: string }) => {
         calls += 1
         if (calls === 1) throw new Error('server 500')
         return { id: 'srv-1', ...vars }
       },
+      meta: { persist: true },
     })
     const def = defineController((ctx) => ({
       create: createMutation(ctx, { ...createOrder, retry: 0 }) as Mutation<
@@ -916,11 +932,12 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
     // distinct orders that both fail must both stay queued.
     const adapter = memoryAdapter()
     const createOrder = defineMutation({
-      mutationId: MUTATION_ID,
+      id: MUTATION_ID,
       mutate: async (vars: { sku: string }) => {
         if (vars.sku === 'A-1') throw new Error('server 500')
         return { id: 'srv-2', ...vars }
       },
+      meta: { persist: true },
     })
     const def = defineController((ctx) => ({
       create: createMutation(ctx, { ...createOrder, retry: 0 }) as Mutation<
@@ -961,23 +978,35 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
     plugin.onMutationEnqueue?.({
+      meta: { persist: true },
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
       attempt: 0,
     })
     await settle()
-    plugin.onMutationSettle?.({ mutationId: 'm', runId: 'run-1', outcome: 'error' })
+    plugin.onMutationSettle?.({
+      meta: { persist: true },
+      mutationId: 'm',
+      runId: 'run-1',
+      outcome: 'error',
+    })
     await settle()
     expect(adapter.store.size).toBe(1) // retained below maxAttempts
 
     plugin.onMutationEnqueue?.({
+      meta: { persist: true },
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
       attempt: 0,
     })
-    plugin.onMutationSettle?.({ mutationId: 'm', runId: 'run-2', outcome: 'success' })
+    plugin.onMutationSettle?.({
+      meta: { persist: true },
+      mutationId: 'm',
+      runId: 'run-2',
+      outcome: 'success',
+    })
     await settle()
     expect(adapter.store.size).toBe(0)
 
@@ -1003,11 +1032,12 @@ describe('mutationQueuePlugin — replay skips runs executing in this tab', () =
       release = res
     })
     const createOrder = defineMutation({
-      mutationId: MUTATION_ID,
+      id: MUTATION_ID,
       mutate: (_vars: { sku: string }) => {
         calls += 1
         return pending
       },
+      meta: { persist: true },
     })
     const plugin = mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/inflight' })
     const def = defineController((ctx) => ({
@@ -1049,7 +1079,7 @@ describe('mutationQueuePlugin — dispose releases the offline wait', () => {
       const adapter = memoryAdapter()
       seed(adapter, 'test/mq/dispose-offline', { mutationId: id, runId: 'r1' })
       let calls = 0
-      defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
+      defineMutation({ id: id, mutate: async () => (calls += 1), meta: { persist: true } })
       const def = defineController(() => ({}))
       const root = createRoot(def, {
         queries: queryEngine(),

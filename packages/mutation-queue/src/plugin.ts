@@ -536,7 +536,10 @@ export function mutationQueuePlugin(
     const abort = new AbortController()
     inFlightReplays.add(abort)
     try {
-      const result = await registered.mutate(entry.variables, abort.signal)
+      const result = await registered.mutate(entry.variables, {
+        signal: abort.signal,
+        deps: ownerApi?.deps ?? {},
+      })
       // Success — drop the entry.
       await deleteEntry(entry.mutationId, entry.runId)
       // Let the app reconcile its cache (a replay wrote server truth outside
@@ -786,6 +789,7 @@ export function mutationQueuePlugin(
     },
 
     onMutationEnqueue(event: MutationEnqueueEvent) {
+      if (event.meta.persist !== true) return
       const idempotencyKey = dedupeBy?.(event.mutationId, event.variables)
       runIdentity.set(event.runId, identityOf(event.mutationId, event.variables, idempotencyKey))
       if (idempotencyKey !== undefined) {
@@ -827,6 +831,7 @@ export function mutationQueuePlugin(
     },
 
     onMutationSettle(event: MutationSettleEvent) {
+      if (event.meta.persist !== true) return
       // The dedupe key is released ONLY when the durable entry is dropped
       // (success, or error after exhaustion). On a non-terminal error or a
       // 'cancelled' the entry stays pending replay, so its key must stay

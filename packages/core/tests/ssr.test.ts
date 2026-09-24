@@ -14,7 +14,7 @@ describe('dehydrate / hydrate', () => {
   test('dehydrate → hydrate round-trip restores cached data without re-fetching', async () => {
     let fetchCount = 0
     const userQuery = defineQuery({
-      queryId: 'ssr/basic-1',
+      id: 'ssr/basic-1',
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string) => {
         fetchCount++
@@ -48,7 +48,7 @@ describe('dehydrate / hydrate', () => {
   test('hydrated entries respect staleTime: 0 (refetch on subscribe)', async () => {
     let fetchCount = 0
     const q = defineQuery({
-      queryId: 'ssr/basic-2',
+      id: 'ssr/basic-2',
       key: () => ['x'],
       fetcher: async () => {
         fetchCount++
@@ -71,7 +71,7 @@ describe('dehydrate / hydrate', () => {
 
   test('only successful entries are serialized', async () => {
     const q = defineQuery({
-      queryId: 'ssr/basic-3',
+      id: 'ssr/basic-3',
       key: () => ['error'],
       fetcher: async () => {
         throw new Error('nope')
@@ -97,7 +97,7 @@ describe('waitForIdle', () => {
   test('blocks until a slow fetch completes', async () => {
     let resolveFetch: (() => void) | null = null
     const q = defineQuery({
-      queryId: 'ssr/basic-4',
+      id: 'ssr/basic-4',
       key: () => ['slow'],
       fetcher: () =>
         new Promise<number>((r) => {

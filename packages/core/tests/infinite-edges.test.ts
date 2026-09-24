@@ -14,6 +14,7 @@ const flush = async () => {
 describe('infinite query: error / retry paths', () => {
   test('fetcher rejection with retry=0 surfaces error status, isFetching flips back', async () => {
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/16',
       key: () => ['err'],
       fetcher: async () => {
         throw new Error('boom')
@@ -35,6 +36,7 @@ describe('infinite query: error / retry paths', () => {
   test('retry policy as number retries until exhausted, then settles into error', async () => {
     let calls = 0
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/37',
       key: () => ['retry-num'],
       fetcher: async () => {
         calls++
@@ -57,6 +59,7 @@ describe('infinite query: error / retry paths', () => {
   test('retry as function eventually returns false, settling into error', async () => {
     let calls = 0
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/59',
       key: () => ['retry-fn'],
       fetcher: async () => {
         calls++
@@ -79,6 +82,7 @@ describe('infinite query: error / retry paths', () => {
   test('fetchNextPage failure clears isFetchingNextPage and surfaces error', async () => {
     let phase = 0
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/81',
       key: () => ['fnp-err'],
       fetcher: async ({ pageParam }: { pageParam: number }) => {
         if (phase === 0) {
@@ -107,6 +111,7 @@ describe('infinite query: error / retry paths', () => {
     const pages: Record<number, string> = { 0: 'mid' }
     let mode = 'first'
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/109',
       key: () => ['fpp-err'],
       fetcher: async ({ pageParam }: { pageParam: number }) => {
         if (mode === 'first') {
@@ -136,6 +141,7 @@ describe('infinite query: short-circuit branches', () => {
   test('fetchPreviousPage is a no-op when getPreviousPageParam is not provided', async () => {
     let calls = 0
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/138',
       key: () => ['nofpp'],
       fetcher: async ({ pageParam }: { pageParam: number }) => {
         calls++
@@ -159,6 +165,7 @@ describe('infinite query: short-circuit branches', () => {
   test('fetchNextPage is a no-op once hasNextPage is false', async () => {
     let calls = 0
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/161',
       key: () => ['nofnp'],
       fetcher: async ({ pageParam }: { pageParam: number }) => {
         calls++
@@ -183,6 +190,7 @@ describe('infinite query: short-circuit branches', () => {
     // when fetchNextPage is invoked. The fallback should fire startFetch.
     const enabled = signal(false)
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/185',
       key: () => ['fallback'],
       fetcher: async ({ pageParam }: { pageParam: number }) => `p${pageParam}`,
       initialPageParam: 0,
@@ -205,6 +213,7 @@ describe('infinite query: short-circuit branches', () => {
     let calls = 0
     let resolveNext: (v: string) => void = () => {}
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/207',
       key: () => ['concurrent'],
       fetcher: async ({ pageParam }: { pageParam: number }) => {
         calls++
@@ -239,6 +248,7 @@ describe('infinite query: short-circuit branches', () => {
 describe('infinite query: reset / firstValue', () => {
   test('reset clears error and parks status at idle when there are no pages', async () => {
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/241',
       key: () => ['reset-empty'],
       fetcher: async () => {
         throw new Error('first-fail')
@@ -264,6 +274,7 @@ describe('infinite query: reset / firstValue', () => {
   test('reset keeps existing pages and only flips status to success / clears error', async () => {
     let mode = 'ok'
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/266',
       key: () => ['reset-pages'],
       fetcher: async ({ pageParam }: { pageParam: number }) => {
         if (mode === 'fail') throw new Error('flaky')
@@ -290,6 +301,7 @@ describe('infinite query: reset / firstValue', () => {
 
   test('firstValue resolves with the cached pages when status is already success', async () => {
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/292',
       key: () => ['fv-success'],
       fetcher: async ({ pageParam }: { pageParam: number }) => `p${pageParam}`,
       initialPageParam: 0,
@@ -306,6 +318,7 @@ describe('infinite query: reset / firstValue', () => {
 
   test('firstValue rejects immediately when status is error', async () => {
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/308',
       key: () => ['fv-error'],
       fetcher: async () => {
         throw new Error('die')
@@ -325,6 +338,7 @@ describe('infinite query: reset / firstValue', () => {
   test('firstValue resolves once a pending fetch settles to success', async () => {
     let resolveIt: (v: string) => void = () => {}
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/327',
       key: () => ['fv-pending-success'],
       fetcher: async () =>
         new Promise<string>((res) => {
@@ -347,6 +361,7 @@ describe('infinite query: reset / firstValue', () => {
   test('firstValue rejects when a pending fetch fails', async () => {
     let rejectIt: (err: unknown) => void = () => {}
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/349',
       key: () => ['fv-pending-error'],
       fetcher: async () =>
         new Promise<string>((_, rej) => {
@@ -374,6 +389,7 @@ describe('infinite query: staleTime + invalidate', () => {
   test('staleTime delays isStale; invalidate forces refetch and resets the timer', async () => {
     let calls = 0
     const q = defineInfiniteQuery({
+      id: 'infinite-edges/376',
       key: () => ['stale'],
       fetcher: async () => {
         calls++

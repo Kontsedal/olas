@@ -24,7 +24,7 @@ afterEach(() => {
 describe('createStreamingHydrator (server side)', () => {
   test('captures local setData writes to queries with a queryId', async () => {
     const users = defineQuery({
-      queryId: 'streaming-test-users',
+      id: 'streaming-test-users',
       key: () => [],
       fetcher: async () => ['alice', 'bob'],
     })
@@ -48,34 +48,16 @@ describe('createStreamingHydrator (server side)', () => {
     root.dispose()
   })
 
-  test("skips queries without a queryId — they can't round-trip", async () => {
-    const anon = defineQuery({
-      key: () => [],
-      fetcher: async () => 'x',
-    })
-    const def = defineController((ctx) => ({ anon: createQuery(ctx, anon) }))
-
-    const { plugin, flush, dispose } = createStreamingHydrator()
-    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
-    await root.waitForIdle()
-
-    // No queryId → cross-tab / streaming hooks don't fire.
-    expect(flush()).toBe('')
-
-    dispose()
-    root.dispose()
-  })
-
   // R-Q3.9 (T3.9) — an un-serializable payload must not throw out of flush()
   // and corrupt the whole stream chunk; skip it (dev-warn), keep the rest.
   test('flush skips an un-serializable entry instead of corrupting the chunk', async () => {
     const bad = defineQuery({
-      queryId: 'streaming-bad',
+      id: 'streaming-bad',
       key: () => [],
       fetcher: async () => ({ n: 10n }), // BigInt → JSON.stringify throws
     })
     const good = defineQuery({
-      queryId: 'streaming-good',
+      id: 'streaming-good',
       key: () => [],
       fetcher: async () => ['ok'],
     })
@@ -102,7 +84,7 @@ describe('createStreamingHydrator (server side)', () => {
 
   test('escapes </ in serialized data to prevent script-tag breakout', async () => {
     const evil = defineQuery({
-      queryId: 'streaming-evil',
+      id: 'streaming-evil',
       key: () => [],
       fetcher: async () => '</script><img src=x onerror=alert(1)>',
     })
@@ -145,7 +127,7 @@ describe('installStreamingIntake (client side)', () => {
 
   test('drains a pre-mount queue + forwards subsequent pushes to the root', async () => {
     const users = defineQuery({
-      queryId: 'streaming-test-users',
+      id: 'streaming-test-users',
       key: () => [],
       fetcher: async () => ['fresh-from-fetcher'],
     })
@@ -184,12 +166,12 @@ describe('installStreamingIntake (client side)', () => {
 
   test('intake apply runs inside a single signal batch per arriving batch', async () => {
     const q1 = defineQuery({
-      queryId: 'streaming-batch-q1',
+      id: 'streaming-batch-q1',
       key: () => [],
       fetcher: async () => 'v1',
     })
     const q2 = defineQuery({
-      queryId: 'streaming-batch-q2',
+      id: 'streaming-batch-q2',
       key: () => [],
       fetcher: async () => 'v2',
     })
@@ -253,7 +235,7 @@ describe('installStreamingIntake (client side)', () => {
         if (g !== undefined) g.q.push(batch)
       },
     }
-    const q = defineQuery({ queryId: 'streaming-late', key: () => [], fetcher: async () => 'x' })
+    const q = defineQuery({ id: 'streaming-late', key: () => [], fetcher: async () => 'x' })
     const def = defineController((ctx) => ({ v: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     const uninstall = installStreamingIntake(root)

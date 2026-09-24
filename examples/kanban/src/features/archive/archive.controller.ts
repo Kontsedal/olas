@@ -28,7 +28,7 @@ import { boardQuery } from '../board/board.query'
 
 export const archiveQuery = defineInfiniteQuery<[string], number, ArchivePage, Card>({
   // Note: infinite queries don't propagate cross-tab in v1 (SPEC §13.2).
-  queryId: 'archive',
+  id: 'archive',
   key: (boardId: string) => [boardId],
   fetcher: ({ pageParam, signal, deps }, boardId: string) =>
     deps.api.getArchive(boardId, pageParam, signal),
@@ -51,9 +51,9 @@ export const archiveController = defineController(
     const sub = createQuery(ctx, archiveQuery, () => [activeBoardId.value])
 
     const restore = createMutation<{ cardId: string; columnId: string }, void>(ctx, {
-      name: 'restoreCard',
+      id: 'restoreCard',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const card = await ctx.deps.api.restoreCard(
           activeBoardId.peek(),
           vars.cardId,

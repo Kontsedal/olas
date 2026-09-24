@@ -20,7 +20,11 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
   afterEach(() => vi.useRealTimers())
 
   test('root staleTime reaches the entry — freshness is timer-driven', async () => {
-    const q = defineQuery({ key: () => ['s'], fetcher: async () => 1 })
+    const q = defineQuery({
+      id: 'query-default-options/23',
+      key: () => ['s'],
+      fetcher: async () => 1,
+    })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createTestController(def, {
       deps: emptyDeps,
@@ -42,6 +46,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
   test('root staleTime gates a focus refetch until the data goes stale', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-default-options/44',
       key: () => ['s-focus'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -70,6 +75,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
 
   test('per-query staleTime overrides the root default', async () => {
     const q = defineQuery({
+      id: 'query-default-options/72',
       key: () => ['s-override'],
       fetcher: async () => 1,
       staleTime: 0,
@@ -88,7 +94,11 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
   })
 
   test('no defaultQueryOptions keeps the built-in staleTime: 0', async () => {
-    const q = defineQuery({ key: () => ['s-builtin'], fetcher: async () => 1 })
+    const q = defineQuery({
+      id: 'query-default-options/91',
+      key: () => ['s-builtin'],
+      fetcher: async () => 1,
+    })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
@@ -104,6 +114,7 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
   test('root retry + retryDelay apply to a query that omits them', async () => {
     let attempts = 0
     const q = defineQuery({
+      id: 'query-default-options/106',
       key: () => ['r'],
       fetcher: async () => {
         attempts++
@@ -129,6 +140,7 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
   test('per-query retry: 0 overrides a root default that would retry', async () => {
     let attempts = 0
     const q = defineQuery({
+      id: 'query-default-options/131',
       key: () => ['r-override'],
       fetcher: async () => {
         attempts++
@@ -176,7 +188,11 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
 
   test('root gcTime drops the entry after the last release', async () => {
     let fetchCount = 0
-    const q = defineQuery({ key: () => [], fetcher: async () => ++fetchCount })
+    const q = defineQuery({
+      id: 'query-default-options/179',
+      key: () => [],
+      fetcher: async () => ++fetchCount,
+    })
     const root = createRoot(openCloseRoot(q), {
       queries: queryEngine(),
       deps: emptyDeps,
@@ -198,7 +214,11 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
 
   test('control: a long root gcTime keeps the entry across the same gap', async () => {
     let fetchCount = 0
-    const q = defineQuery({ key: () => [], fetcher: async () => ++fetchCount })
+    const q = defineQuery({
+      id: 'query-default-options/201',
+      key: () => [],
+      fetcher: async () => ++fetchCount,
+    })
     const root = createRoot(openCloseRoot(q), {
       queries: queryEngine(),
       deps: emptyDeps,
@@ -219,6 +239,7 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
 
   test('root keepPreviousData holds prior data across a key change', async () => {
     const q = defineQuery({
+      id: 'query-default-options/221',
       key: (id: string) => [id],
       fetcher: async (_ctx, id: string) => `data-${id}`,
     })
@@ -249,7 +270,11 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
 
   test('refetchOnWindowFocus via defaultQueryOptions applies', async () => {
     let count = 0
-    const q = defineQuery({ key: () => ['rf'], fetcher: async () => ++count })
+    const q = defineQuery({
+      id: 'query-default-options/252',
+      key: () => ['rf'],
+      fetcher: async () => ++count,
+    })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
       queries: queryEngine(),
@@ -267,7 +292,11 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
 
   test('defaultQueryOptions wins over the flat refetchOnWindowFocus shorthand', async () => {
     let count = 0
-    const q = defineQuery({ key: () => ['rf-precedence'], fetcher: async () => ++count })
+    const q = defineQuery({
+      id: 'query-default-options/270',
+      key: () => ['rf-precedence'],
+      fetcher: async () => ++count,
+    })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
       queries: queryEngine(),
@@ -287,6 +316,7 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
   test('a per-query spec flag still overrides both', async () => {
     let count = 0
     const q = defineQuery({
+      id: 'query-default-options/289',
       key: () => ['rf-spec'],
       fetcher: async () => ++count,
       refetchOnWindowFocus: true,
@@ -346,6 +376,7 @@ describe('RootOptions.defaultQueryOptions — infinite queries', () => {
   test('root retry applies to an infinite query that omits it', async () => {
     let attempts = 0
     const q = defineInfiniteQuery({
+      id: 'query-default-options/348',
       key: () => ['inf-r'],
       fetcher: async () => {
         attempts++
@@ -369,6 +400,7 @@ describe('RootOptions.defaultQueryOptions — infinite queries', () => {
 
   test('root staleTime reaches the infinite entry', async () => {
     const q = defineInfiniteQuery({
+      id: 'query-default-options/371',
       key: () => ['inf-s'],
       fetcher: async () => ({ items: [1] as number[], next: null as number | null }),
       initialPageParam: 0,

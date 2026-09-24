@@ -50,7 +50,7 @@ describe('integration: SSR roundtrip', () => {
   test('dehydrate → JSON → hydrate restores cached data; client does not re-fetch', async () => {
     const fetchSpy = vi.fn(async (id: string) => ({ id, name: `User ${id}` }))
     const userQuery = defineQuery({
-      queryId: 'int/ssr/user',
+      id: 'int/ssr/user',
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string) => fetchSpy(id),
       staleTime: 60_000,
@@ -87,7 +87,7 @@ describe('integration: SSR roundtrip', () => {
 
   test('entities plugin populates from hydrated data and supports backprop', async () => {
     const feedQuery = defineQuery<[], { posts: Post[]; pinned: Post }>({
-      queryId: 'int/ssr/feed-hydrate',
+      id: 'int/ssr/feed-hydrate',
       key: () => [],
       fetcher: async () => {
         throw new Error('fetcher must not run when hydrated')
@@ -145,7 +145,7 @@ describe('integration: SSR roundtrip', () => {
   test('only success entries dehydrate; client re-fetches on mount', async () => {
     let fetches = 0
     const flaky = defineQuery({
-      queryId: 'int/ssr/flaky',
+      id: 'int/ssr/flaky',
       key: () => [],
       fetcher: async () => {
         fetches += 1
@@ -179,7 +179,7 @@ describe('integration: SSR roundtrip', () => {
     // refetching the list.
     type Card = { id: string; title: string; likes: number }
     const cardsQuery = defineQuery({
-      queryId: 'int/ssr/cards',
+      id: 'int/ssr/cards',
       key: () => [],
       fetcher: async (): Promise<Card[]> => {
         throw new Error('fetcher must not run after hydration')
@@ -232,7 +232,7 @@ describe('integration: SSR roundtrip', () => {
   test('hydrated entries with staleTime: 0 still refetch on subscribe', async () => {
     let fetches = 0
     const q = defineQuery({
-      queryId: 'int/ssr/stale-zero',
+      id: 'int/ssr/stale-zero',
       key: () => [],
       fetcher: async () => {
         fetches += 1

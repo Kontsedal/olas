@@ -61,7 +61,7 @@ export const tableController = defineController(
     // (spec §6.4). The snapshot closure captures `slot` + `prev`, so
     // rollback restores exactly the row that was edited.
     const updateStatus = createMutation<{ id: string; status: Status }, void>(ctx, {
-      name: 'updateStatus',
+      id: 'updateStatus',
       concurrency: 'parallel',
       onMutate: ({ id, status }) => {
         const slot = rowMap.get(id)
@@ -73,7 +73,8 @@ export const tableController = defineController(
           finalize: () => {},
         }
       },
-      mutate: ({ id, status }, abortSignal) => ctx.deps.api.saveStatus(id, status, abortSignal),
+      mutate: ({ id, status }, { signal: abortSignal }) =>
+        ctx.deps.api.saveStatus(id, status, abortSignal),
     })
 
     /** Bulk-update every selected row to `status`. Each row is its own run, so

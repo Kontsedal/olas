@@ -85,6 +85,7 @@ describe('useQuery(subscription)', () => {
   test('re-renders on query.invalidate() and surfaces fresh data', async () => {
     let value = 'first'
     const greetingQuery = defineQuery({
+      id: 'adapter/87',
       key: () => [],
       fetcher: async () => value,
     })

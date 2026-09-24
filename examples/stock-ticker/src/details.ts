@@ -27,7 +27,7 @@ export const detailsController = defineController(
     // sharing, no cache key gymnastics.
     const trades = createCache<Trade[]>(
       ctx,
-      (signal) => ctx.deps.market.getRecentTrades(props.symbol, signal),
+      ({ signal }) => ctx.deps.market.getRecentTrades(props.symbol, signal),
       { staleTime: 30_000 },
     )
 

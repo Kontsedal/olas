@@ -73,6 +73,7 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
     // Init with a no-op so TS CFA doesn't narrow to `null`.
     let resolveSecond: (p: Page) => void = () => {}
     const q = defineInfiniteQuery<[], number, Page>({
+      id: 'regressions/75',
       key: () => [],
       fetcher: abortingFetcher((pageParam) => {
         if (pageParam === 0) return { items: ['a'], next: 1, prev: null }
@@ -105,6 +106,7 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
   test('fetchPreviousPage superseded clears isFetchingPreviousPage', async () => {
     let resolvePrev: (p: Page) => void = () => {}
     const q = defineInfiniteQuery<[], number, Page>({
+      id: 'regressions/107',
       key: () => [],
       fetcher: abortingFetcher((pageParam) => {
         if (pageParam === 1) return { items: ['b'], next: 2, prev: 0 }
@@ -226,6 +228,7 @@ describe('regression: invalidate AbortError does not reach onError', () => {
       signal: AbortSignal
     }> = []
     const q = defineQuery({
+      id: 'regressions/228',
       key: () => ['k'],
       fetcher: async ({ signal }) =>
         new Promise<number>((resolve, reject) => {
@@ -325,6 +328,7 @@ describe('regression: invalidateAll re-runs every bound entry', () => {
   test('invalidateAll causes both keys to refetch', async () => {
     const counts = { a: 0, b: 0 }
     const q = defineQuery({
+      id: 'regressions/327',
       key: (id: string) => ['k', id],
       fetcher: async (_ctx, id: string) => {
         counts[id as 'a' | 'b'] += 1
@@ -359,6 +363,7 @@ describe('regression: suspend pauses refetchInterval', () => {
     vi.useFakeTimers()
     let calls = 0
     const q = defineQuery({
+      id: 'regressions/361',
       key: () => ['k'],
       fetcher: async () => {
         calls += 1
@@ -562,6 +567,7 @@ describe('gap: defineQuery isStale timer', () => {
   test('isStale flips from false → true after staleTime ms', async () => {
     vi.useFakeTimers()
     const q = defineQuery({
+      id: 'regressions/564',
       key: () => ['k'],
       fetcher: async () => 1,
       staleTime: 1_000,
@@ -585,6 +591,7 @@ describe('gap: query latest-wins under concurrent fetches', () => {
   test('a second startFetch supersedes the first; only the latter result lands', async () => {
     const sequence: { resolve: (n: number) => void; signal: AbortSignal }[] = []
     const q = defineQuery({
+      id: 'regressions/587',
       key: () => ['k'],
       fetcher: async ({ signal }) => {
         return new Promise<number>((resolve, reject) => {
@@ -620,7 +627,7 @@ describe('gap: query latest-wins under concurrent fetches', () => {
 describe('gap: dehydrate while a mutation is in flight', () => {
   test('waitForIdle blocks until in-flight mutation settles; dehydrate then includes the optimistic state', async () => {
     const q = defineQuery({
-      queryId: 'regression/ssr-mutation',
+      id: 'regression/ssr-mutation',
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
@@ -683,7 +690,7 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
   test('applyRemoteSetData leaves hasPendingMutations false', async () => {
     let api: QueryClientPluginApi | undefined
     const q = defineQuery({
-      queryId: 'r-q1a-user',
+      id: 'r-q1a-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
@@ -709,7 +716,7 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
   test('setEntryData leaves hasPendingMutations false', async () => {
     let api: QueryClientPluginApi | undefined
     const q = defineQuery({
-      queryId: 'r-q1b-user',
+      id: 'r-q1b-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
@@ -738,7 +745,7 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
     let api: QueryClientPluginApi | undefined
     type Page = { items: string[]; next: number | null }
     const q = defineInfiniteQuery<[], number, Page>({
-      queryId: 'r-q1c-feed',
+      id: 'r-q1c-feed',
       key: () => [] as const,
       fetcher: async ({ pageParam }) => ({ items: [`p${pageParam}`], next: null }),
       initialPageParam: 0,
@@ -774,13 +781,13 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
 describe('regression: hydration does not steal data across colliding-key queries (R-Q1.2)', () => {
   test('query B with a colliding key hydrates its OWN data, not query A payload', async () => {
     const qA = defineQuery({
-      queryId: 'regression/ssr-a',
+      id: 'regression/ssr-a',
       key: () => ['shared', 'k'] as const,
       fetcher: async () => 'A-data',
       staleTime: 60_000,
     })
     const qB = defineQuery({
-      queryId: 'regression/ssr-b',
+      id: 'regression/ssr-b',
       key: () => ['shared', 'k'] as const,
       fetcher: async () => 'B-data',
       staleTime: 60_000,
@@ -808,7 +815,7 @@ describe('regression: hydration does not steal data across colliding-key queries
   test('a query round-trips its own hydrated data without refetching (no regression)', async () => {
     let fetches = 0
     const q = defineQuery({
-      queryId: 'regression/ssr-solo',
+      id: 'regression/ssr-solo',
       key: () => ['solo'] as const,
       fetcher: async () => {
         fetches += 1
@@ -849,6 +856,7 @@ describe('regression: key change while suspended survives resume (R-L2.1)', () =
     const { signal } = await import('../src/signals')
     const fetched: string[] = []
     const q = defineQuery({
+      id: 'regressions/851',
       key: (id: string) => ['item', id] as const,
       fetcher: async (_ctx, id: string) => {
         fetched.push(id)
@@ -877,6 +885,7 @@ describe('regression: key change while suspended survives resume (R-L2.1)', () =
     let fetchCount = 0
     type Page = { items: number[]; next: number | null }
     const q = defineInfiniteQuery<[string], number, Page>({
+      id: 'regressions/879',
       key: (id: string) => ['feed', id] as const,
       fetcher: async ({ pageParam }) => {
         fetchCount += 1
@@ -1003,7 +1012,11 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
     let captured: any
     let capturedEmitter: any
     const childDef = defineController(() => ({}))
-    const q = defineQuery({ key: () => ['k'] as const, fetcher: async () => 1 })
+    const q = defineQuery({
+      id: 'regressions/1006',
+      key: () => ['k'] as const,
+      fetcher: async () => 1,
+    })
     const def = defineController((ctx) => {
       captured = ctx
       capturedEmitter = ctx.emitter<number>()
@@ -1262,6 +1275,7 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
     let starts = 0
     let completions = 0
     const q = defineQuery({
+      id: 'regressions/1264',
       key: () => ['k'],
       fetcher: ({ signal }) => {
         starts += 1
@@ -1304,6 +1318,7 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
     vi.useFakeTimers()
     let starts = 0
     const q = defineQuery({
+      id: 'regressions/1306',
       key: () => ['k'],
       fetcher: ({ signal }) => {
         starts += 1
@@ -1478,7 +1493,7 @@ describe('regression: optimistic rollback re-emits a SetDataEvent (R-Q3.6)', () 
     type User = { id: string; name: string }
     const events: Array<{ source: string; data: unknown; isRemote: boolean; kind: string }> = []
     const q = defineQuery({
-      queryId: 'r-q36-user',
+      id: 'r-q36-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string): Promise<User> => ({ id, name: 'server' }),
     })
@@ -1528,6 +1543,7 @@ describe('regression: infinite interval refetch retains all pages (R-Q3.7)', () 
     }
     const calls: number[] = []
     const q = defineInfiniteQuery({
+      id: 'regressions/1530',
       key: () => ['feed'],
       fetcher: async ({ pageParam }: { pageParam: number; signal: AbortSignal }) => {
         calls.push(pageParam)
@@ -1584,6 +1600,7 @@ describe('regression: query minor batch (R-Q3.9)', () => {
     const held: Array<(v: number) => void> = []
     let call = 0
     const q = defineQuery({
+      id: 'regressions/1586',
       key: () => ['s'],
       fetcher: ({ signal }: { signal: AbortSignal }) => {
         call += 1
@@ -1653,6 +1670,7 @@ describe('regression: query minor batch (R-Q3.9)', () => {
   test('invalidate on a subscriber-less entry marks stale only; refetches on next subscribe', async () => {
     const calls: Record<string, number> = {}
     const q = defineQuery({
+      id: 'regressions/1655',
       key: (id: string) => ['orphan', id],
       fetcher: async (_ctx, id: string) => {
         calls[id] = (calls[id] ?? 0) + 1
@@ -1685,10 +1703,10 @@ describe('regression: query minor batch (R-Q3.9)', () => {
 
   test('a different query overwriting a queryId dev-warns', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    defineQuery({ queryId: 'r-q39-dup', key: () => ['a'], fetcher: async () => 1 })
+    defineQuery({ id: 'r-q39-dup', key: () => ['a'], fetcher: async () => 1 })
     expect(warn).not.toHaveBeenCalled()
     // Re-register the SAME id with a DIFFERENT query object → collision warning.
-    defineQuery({ queryId: 'r-q39-dup', key: () => ['b'], fetcher: async () => 2 })
+    defineQuery({ id: 'r-q39-dup', key: () => ['b'], fetcher: async () => 2 })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('duplicate queryId'))
     warn.mockRestore()
   })
@@ -1922,7 +1940,7 @@ describe('regression: a stale serial continuation cannot advance a newer queue',
     const def = defineController((ctx) => ({
       save: createMutation(ctx, {
         concurrency: 'serial',
-        mutate: (v: number, signal: AbortSignal) => {
+        mutate: (v: number, { signal }) => {
           started.push(v)
           const d = deferred<number>()
           ds.set(v, d)
@@ -2086,6 +2104,7 @@ describe('regression: a fetcher-originated AbortError settles the entry', () => 
 
   test('root.waitForIdle() resolves after a self-aborting fetcher', async () => {
     const q = defineQuery({
+      id: 'regressions/2088',
       key: () => ['self-abort'],
       fetcher: () => Promise.reject(new DOMException('timeout', 'AbortError')),
     })
@@ -2110,6 +2129,7 @@ describe('regression: a fetcher-originated AbortError settles an infinite entry'
   test('initial fetch: flags clear, error surfaces, retry is not consulted', async () => {
     const retry = vi.fn(() => true)
     const q = defineInfiniteQuery({
+      id: 'regressions/2112',
       key: () => ['infinite-self-abort-initial'],
       fetcher: (): Promise<Page> => Promise.reject(selfAbort()),
       initialPageParam: 0,
@@ -2136,6 +2156,7 @@ describe('regression: a fetcher-originated AbortError settles an infinite entry'
   test('fetchNextPage: the direction flag clears and loaded pages are kept', async () => {
     let failNext = false
     const q = defineInfiniteQuery({
+      id: 'regressions/2138',
       key: () => ['infinite-self-abort-next'],
       fetcher: ({ pageParam }: { pageParam: number }): Promise<Page> =>
         failNext && pageParam > 0

@@ -32,6 +32,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
   test('initial fetch lands the first page; data exposes it', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/34',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 0,
@@ -52,6 +53,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
   test('fetchNextPage appends pages; hasNextPage flips to false at the end', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/54',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 0,
@@ -75,6 +77,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
   test('fetchPreviousPage prepends pages', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/77',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 1, // start in the middle
@@ -96,6 +99,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
   test('invalidate refetches all loaded pages in place (no collapse)', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/98',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 0,
@@ -121,6 +125,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
 
   test('flat falls back to pages when itemsOf is omitted', async () => {
     const q = defineInfiniteQuery({
+      id: 'infinite/123',
       key: () => ['raw'],
       fetcher: async ({ pageParam }) => `page${pageParam}`,
       initialPageParam: 0,
@@ -143,6 +148,7 @@ describe('infinite query: refetchInterval', () => {
     // wired in InfiniteClientEntry — periodic refetch silently did nothing.
     let count = 0
     const q = defineInfiniteQuery({
+      id: 'infinite/145',
       key: () => ['rfi-infinite'],
       fetcher: async () => `page${++count}`,
       initialPageParam: 0,
@@ -165,6 +171,7 @@ describe('infinite query: refetchInterval', () => {
     const seen: Array<string[] | undefined> = []
     let count = 0
     const q = defineInfiniteQuery({
+      id: 'infinite/167',
       key: () => ['rfi-infinite-fn'],
       fetcher: async () => `page${++count}`,
       initialPageParam: 0,
@@ -220,6 +227,7 @@ describe('infinite query: keepPreviousData', () => {
     })()
 
     const q = defineInfiniteQuery({
+      id: 'infinite/222',
       key: (k: number) => [k],
       fetcher: async (_, k: number) => (k === 1 ? dKey1.promise : dKey2.promise),
       initialPageParam: 0,
@@ -250,6 +258,7 @@ describe('infinite createQuery — keepDataWhileDisabled', () => {
   test('disabling keeps the loaded pages and their flattened items', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/252',
       key: () => ['chat-keep-disabled'],
       fetcher: fx.fetch,
       initialPageParam: 0,
@@ -273,6 +282,7 @@ describe('infinite createQuery — keepDataWhileDisabled', () => {
   test('without the flag, disabling blanks the pages (spec default)', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/275',
       key: () => ['chat-blank-disabled'],
       fetcher: fx.fetch,
       initialPageParam: 0,

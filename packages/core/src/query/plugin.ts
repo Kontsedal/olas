@@ -23,6 +23,8 @@
  * for queries the local tab actually has entries for).
  */
 export type QueryClientPluginApi = {
+  /** The root's `deps`, for work the plugin runs outside any controller (a replay). */
+  readonly deps: import('../controller/types').AmbientDeps
   /** Invalidate a query in this plugin's owning root, using original call arguments. */
   invalidate(query: import('./types').Query<any, any>, args: readonly unknown[]): Promise<void>
   /**
@@ -123,10 +125,10 @@ export type GcEvent = {
 }
 
 /**
- * Emitted when a persistable mutation (`spec.persist === true`) starts
- * executing — before the user's `mutate` is invoked. Plugins use this to
- * persist the variables to durable storage; if the page reloads mid-run,
- * the queue replays from these entries.
+ * Emitted when a mutation with an `id` starts executing — before the user's
+ * `mutate` is invoked. A queue plugin persists the variables here when the
+ * mutation's `meta` asks for it; if the page reloads mid-run, the queue
+ * replays from these entries.
  *
  * `runId` is unique per execution (a single `mutation.run(...)` call OR a
  * replay attempt). One event fires per run, and `attempt` is always `0`:
@@ -138,11 +140,13 @@ export type MutationEnqueueEvent = {
   runId: string
   variables: unknown
   attempt: number
+  /** The mutation's `meta` (`{}` when it set none). */
+  meta: import('./mutation').MutationMeta
 }
 
 /**
- * Emitted after a persistable mutation settles. Plugins use this to drop
- * the run from the durable queue (on `'success'` or `'error'` after retries
+ * Emitted after a mutation with an `id` settles. A queue plugin uses this to
+ * drop the run from the durable queue (on `'success'` or `'error'` after retries
  * exhaust), or to leave it pending (on `'cancelled'` — e.g. parent dispose
  * mid-flight).
  */
@@ -152,6 +156,8 @@ export type MutationSettleEvent = {
   outcome: 'success' | 'error' | 'cancelled'
   /** Only present on `'error'` — the final thrown value after retries. */
   error?: unknown
+  /** The mutation's `meta` (`{}` when it set none). */
+  meta: import('./mutation').MutationMeta
 }
 
 /**
@@ -192,22 +198,12 @@ export type QueryClientPlugin = {
 }
 
 /**
- * Internal helper — fetch the `queryId` from a query's spec without
- * peeking into private types. Returns `undefined` for queries that didn't
- * declare a `queryId`; plugin events are then skipped (a plugin can't route
- * by name without one).
- */
-export function readQueryId(query: { readonly __spec: { queryId?: string } }): string | undefined {
-  return query.__spec.queryId
-}
-
-/**
  * Shape of values stored in the `queryId → Query` registry. Either a
  * regular `Query` or an `InfiniteQuery`, both branded by `__olas`.
  */
 export type RegisteredQuery = {
   readonly __olas: 'query' | 'infiniteQuery'
-  readonly __spec: { queryId?: string; crossTab?: boolean }
+  readonly __spec: { id: string; meta?: import('./types').QueryMeta }
 }
 
 /**
@@ -283,20 +279,21 @@ export function _unregisterQueryById(queryId: string): void {
  * across page reloads (the controller doesn't exist yet).
  */
 export type RegisteredMutation = {
-  readonly mutationId: string
+  readonly id: string
   /**
-   * Replay-safe `mutate`. Matches `MutationSpec.mutate` 1:1 — receives the
-   * variables and an `AbortSignal`. The mutation-queue plugin invokes this
-   * directly on replay, so the implementation MUST NOT close over
-   * controller-instance state. Module-level deps (a shared `api` client,
-   * etc.) are fine.
+   * Replay-safe `mutate`, exactly as `defineMutation` received it. The
+   * mutation-queue plugin invokes it directly on replay, passing the root's
+   * `deps`, so it must not close over controller state.
    */
-  readonly mutate: (vars: unknown, signal: AbortSignal) => Promise<unknown>
+  readonly mutate: (
+    vars: unknown,
+    ctx: { signal: AbortSignal; deps: import('../controller/types').AmbientDeps },
+  ) => Promise<unknown>
 }
 
 const mutationRegistry = globalRegistry<RegisteredMutation>(Symbol.for('olas.mutationRegistry'))
 
-/** Register a mutation by its `mutationId`. Internal — called from `defineMutation`. */
+/** Register a mutation by its `id`. Internal — called from `defineMutation`. */
 export function registerMutationById(mutationId: string, entry: RegisteredMutation): void {
   mutationRegistry.set(mutationId, entry)
 }

@@ -139,9 +139,9 @@ export const cardDetailController = defineController(
     // ───────── Save mutation (serial) ─────────
 
     const save = createMutation<void, Card>(ctx, {
-      name: 'saveCard',
+      id: 'saveCard',
       concurrency: 'serial',
-      mutate: async (_v, signal) => {
+      mutate: async (_v, { signal }) => {
         const id = selectedCardId.peek()
         if (id === null) throw new Error('No card open')
         form.markAllTouched()
