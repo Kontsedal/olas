@@ -15,6 +15,14 @@ const env =
 /** Events per frame: 250 at 60 fps is 15,000 events a second, a heavy app. */
 const BATCH = 250
 
+/**
+ * The most a doubled workload may cost, as a multiple of the single one.
+ * Linear work doubles, and quadratic work quadruples. 3 still fails a
+ * quadratic regression, and leaves room for a loaded CI runner: 2.5 failed
+ * once on GitHub Actions at 2.54 with linear code.
+ */
+const LINEAR_BOUND = 3
+
 /** A deterministic PRNG, so every run replays the same workload. */
 function rng(seed: number): () => number {
   let s = seed
@@ -167,7 +175,7 @@ describe('DevtoolsStore under load — T8.2', () => {
           `max ${(sorted[sorted.length - 1] as number).toFixed(2)}ms`,
       )
     }
-    expect(tFull / tHalf).toBeLessThan(2.5)
+    expect(tFull / tHalf).toBeLessThan(LINEAR_BOUND)
   })
 
   test('a frame costs the same once the store is full as while it is filling', () => {
@@ -177,7 +185,7 @@ describe('DevtoolsStore under load — T8.2', () => {
     const { frames } = run(events)
     const early = median(frames.slice(8, 28)) // after the tree is built
     const late = median(frames.slice(-20))
-    expect(late / early).toBeLessThan(2.5)
+    expect(late / early).toBeLessThan(LINEAR_BOUND)
   })
 
   test('sibling fan-out: 10,000 children of one parent cost ~2× 5,000, not 4×', () => {
@@ -198,6 +206,6 @@ describe('DevtoolsStore under load — T8.2', () => {
     build(10_000) // warm-up
     const t5 = best(5, () => build(5_000))
     const t10 = best(5, () => build(10_000))
-    expect(t10 / t5).toBeLessThan(2.5)
+    expect(t10 / t5).toBeLessThan(LINEAR_BOUND)
   })
 })

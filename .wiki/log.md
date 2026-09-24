@@ -2132,3 +2132,12 @@ Checked:
 Docs: SPEC §23 "Devtools and production builds" is rewritten, and the devtools README and `modules/devtools.md` say which build the panel needs. New changeset `development-builds.md` (minor for the five packages). The BACKLOG item is removed.
 
 **The docs site is live** at https://kontsedal.github.io/olas/. Pages was enabled (`gh api -X POST …/pages`), but `docs.yml` could not deploy: GitHub dispatches only workflows on the default branch, and the `github-pages` environment allows only `main`. With the user's choice, the built site went to a new `gh-pages` branch, Pages was switched to "Deploy from a branch", and a build was requested. The home page, a guide, a reference page and an adapter page load with no errors. BACKLOG has the `[planned]` switch back to the Actions deploy once `release/1.0` is on `main`. `decisions/docs-site.md` and `docs/README.md` say where the site is served from.
+
+## [2026-09-25 15:10] ingest | the first GitHub Actions run of the 1.0 branch: two environment-dependent tests
+
+Opening PR #3 ran `ci.yml` on Linux for the first time; until then the chain ran only locally, on Windows with Node 26. Two tests failed there and nowhere else:
+
+- `packages/mutation-queue/tests/coverage-replay-lock.test.ts` used the real `navigator.locks`, which the CI job's Node 22 lacks. The Web Locks tests now install an in-memory lock manager with the semantics the plugin relies on (exclusive locks, `ifAvailable`, waiters in order), so they run the same on every Node version. With the fake's `ifAvailable` made non-exclusive, "the holder replays for it" fails, so the test still pins the lock.
+- `packages/devtools/tests/store-stress.test.ts` asserted a doubled workload costs under 2.5× the single one, and a loaded runner measured 2.54× on linear code. The three ratio checks share `LINEAR_BOUND = 3`: linear work doubles, quadratic work quadruples, so 3 still catches the regression the test exists for.
+
+The local `ci.sh` mirror runs on the machine's Node, so it cannot see a gap like the first one; the `dist-on-node` job covers only the dist smoke on 20.19, 22 and 24.

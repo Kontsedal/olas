@@ -1,7 +1,7 @@
 import { createRoot, defineController, defineMutation, queryEngine } from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { MutationQueue, mutationQueuePlugin, PROTOCOL_VERSION, type QueueEntry } from '../src'
 
 // Cross-tab replay coordination (`withReplayLock`): the Web Locks path, the
@@ -105,7 +105,55 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/**
+ * An in-memory Web Locks stand-in, with the semantics the plugin relies on:
+ * exclusive locks, `ifAvailable` answering `null` when held, and waiters
+ * granted in order. Node 22 has no `navigator.locks`, so these tests bring
+ * their own and run the same on every Node version.
+ */
+function fakeLocks() {
+  const held = new Set<string>()
+  const waiters = new Map<string, Array<() => void>>()
+  const release = (name: string) => {
+    const next = waiters.get(name)?.shift()
+    if (next === undefined) held.delete(name)
+    else next()
+  }
+  type Callback = (lock: { name: string; mode: 'exclusive' } | null) => unknown
+  return {
+    async request(
+      name: string,
+      optionsOrCallback: { ifAvailable?: boolean } | Callback,
+      maybeCallback?: Callback,
+    ) {
+      const options = typeof optionsOrCallback === 'function' ? {} : optionsOrCallback
+      const callback = (
+        typeof optionsOrCallback === 'function' ? optionsOrCallback : maybeCallback
+      ) as Callback
+      if (held.has(name)) {
+        if (options.ifAvailable === true) return callback(null)
+        await new Promise<void>((resolve) => {
+          waiters.set(name, [...(waiters.get(name) ?? []), resolve])
+        })
+      } else {
+        held.add(name)
+      }
+      try {
+        return await callback({ name, mode: 'exclusive' })
+      } finally {
+        release(name)
+      }
+    },
+  }
+}
+
 describe('replay lock — Web Locks', () => {
+  let locks: ReturnType<typeof fakeLocks>
+  beforeEach(() => {
+    locks = fakeLocks()
+    vi.stubGlobal('navigator', { onLine: true, locks })
+  })
+
   test('a pass that cannot get the lock skips; the holder replays for it', async () => {
     const prefix = 'cov/lock/held'
     const { adapter, calls } = pendingReplay('cov/lock-held', prefix)
@@ -118,7 +166,7 @@ describe('replay lock — Web Locks', () => {
     const holding = new Promise<void>((resolve) => {
       acquired = resolve
     })
-    const otherTab = navigator.locks.request(`olas-mq:${prefix}`, () => {
+    const otherTab = locks.request(`olas-mq:${prefix}`, () => {
       acquired()
       return held
     })
