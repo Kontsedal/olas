@@ -1,6 +1,6 @@
 import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
-import { clearPersisted, type StorageAdapter, usePersisted } from '../src'
+import { clearPersisted, createPersisted, type StorageAdapter } from '../src'
 
 const emptyDeps = {}
 
@@ -37,12 +37,12 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
-describe('usePersisted', () => {
+describe('createPersisted', () => {
   test('loads initial value from storage on construction', async () => {
     const store = memoryStorage({ draft: JSON.stringify('hello') })
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      const persisted = usePersisted(ctx, 'draft', s, { storage: store })
+      const persisted = createPersisted(ctx, 'draft', s, { storage: store })
       return { s, ready: persisted.ready }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -56,7 +56,7 @@ describe('usePersisted', () => {
     const store = memoryStorage()
     const def = defineController((ctx) => {
       const s = signal<number>(0)
-      usePersisted(ctx, 'counter', s, { storage: store })
+      createPersisted(ctx, 'counter', s, { storage: store })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -78,7 +78,7 @@ describe('usePersisted', () => {
     }
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      const p = usePersisted(ctx, 'x', s, { storage: adapter })
+      const p = createPersisted(ctx, 'x', s, { storage: adapter })
       return { s, ready: p.ready }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -96,7 +96,7 @@ describe('usePersisted', () => {
     const store = memoryStorage({ k: JSON.stringify('initial') })
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
+      createPersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -112,7 +112,7 @@ describe('usePersisted', () => {
     const store = memoryStorage()
     const def = defineController((ctx) => {
       const s = signal<number>(0)
-      usePersisted(ctx, 'n', s, { storage: store })
+      createPersisted(ctx, 'n', s, { storage: store })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -130,7 +130,7 @@ describe('usePersisted', () => {
       delete: () => {},
     }
     const def2 = defineController((ctx) => {
-      usePersisted(ctx, 'x', s, { storage: trackingStore })
+      createPersisted(ctx, 'x', s, { storage: trackingStore })
       return {}
     })
     const r2 = createRoot(def2, { queries: queryEngine(), deps: emptyDeps })
@@ -146,7 +146,7 @@ describe('usePersisted', () => {
     const store = memoryStorage({ broken: '{not json' })
     const def = defineController((ctx) => {
       const s = signal<string>('default')
-      usePersisted(ctx, 'broken', s, { storage: store })
+      createPersisted(ctx, 'broken', s, { storage: store })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -163,7 +163,7 @@ describe('usePersisted', () => {
     }
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: adapter })
+      createPersisted(ctx, 'k', s, { storage: adapter })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -178,7 +178,7 @@ describe('usePersisted', () => {
     const store = memoryStorage()
     const def = defineController((ctx) => {
       const s = signal<unknown>(null)
-      usePersisted(ctx, 'k', s, {
+      createPersisted(ctx, 'k', s, {
         storage: store,
         serialize: () => {
           throw new Error('not serializable')
@@ -197,7 +197,7 @@ describe('usePersisted', () => {
     const store = memoryStorage({ k: JSON.stringify('keep me') })
     const def = defineController((ctx) => {
       const s = signal<string | undefined>('initial')
-      usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
+      createPersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -214,7 +214,7 @@ describe('usePersisted', () => {
     const store = memoryStorage({ k: JSON.stringify('mine') })
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
+      createPersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -229,7 +229,7 @@ describe('usePersisted', () => {
     const store = memoryStorage({ k: JSON.stringify('start') })
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: store, crossTab: true })
+      createPersisted(ctx, 'k', s, { storage: store, crossTab: true })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -246,10 +246,10 @@ describe('localStorageAdapter', () => {
     // jsdom provides localStorage; node-only environment skips.
     if (typeof localStorage === 'undefined') return
     localStorage.clear()
-    localStorageAdapter.set('alpha', '1')
-    expect(localStorageAdapter.get('alpha')).toBe('1')
-    localStorageAdapter.delete('alpha')
-    expect(localStorageAdapter.get('alpha')).toBeNull()
+    localStorageAdapter().set('alpha', '1')
+    expect(localStorageAdapter().get('alpha')).toBe('1')
+    localStorageAdapter().delete('alpha')
+    expect(localStorageAdapter().get('alpha')).toBeNull()
   })
 
   test('no-ops gracefully when localStorage is absent', async () => {
@@ -259,11 +259,11 @@ describe('localStorageAdapter', () => {
     delete (globalThis as { localStorage?: Storage }).localStorage
     delete (globalThis as { window?: Window }).window
     try {
-      expect(localStorageAdapter.get('x')).toBeNull()
+      expect(localStorageAdapter().get('x')).toBeNull()
       // set/delete return void and shouldn't throw.
-      localStorageAdapter.set('x', '1')
-      localStorageAdapter.delete('x')
-      const off = localStorageAdapter.onChange?.(() => {})
+      localStorageAdapter().set('x', '1')
+      localStorageAdapter().delete('x')
+      const off = localStorageAdapter().onChange?.(() => {})
       expect(off).toBeDefined()
       off?.()
     } finally {
@@ -275,12 +275,12 @@ describe('localStorageAdapter', () => {
 
 // ─── T6.1: version / migrate / throttleMs / onError (were untested) ──────────
 
-describe('usePersisted — version + migrate', () => {
+describe('createPersisted — version + migrate', () => {
   test('version wraps writes in an envelope and reads them back', async () => {
     const store = memoryStorage()
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      const p = usePersisted(ctx, 'k', s, { storage: store, version: 2 })
+      const p = createPersisted(ctx, 'k', s, { storage: store, version: 2 })
       return { s, ready: p.ready }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -292,7 +292,7 @@ describe('usePersisted — version + migrate', () => {
     // A fresh root reads the envelope back.
     const def2 = defineController((ctx) => {
       const s = signal<string>('default')
-      const p = usePersisted(ctx, 'k', s, { storage: store, version: 2 })
+      const p = createPersisted(ctx, 'k', s, { storage: store, version: 2 })
       return { s, ready: p.ready }
     })
     const r2 = createRoot(def2, { queries: queryEngine(), deps: emptyDeps })
@@ -306,7 +306,7 @@ describe('usePersisted — version + migrate', () => {
     const seen: Array<[string, number | undefined]> = []
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, {
+      createPersisted(ctx, 'k', s, {
         storage: store,
         version: 2,
         migrate: (raw, from) => {
@@ -332,7 +332,7 @@ describe('usePersisted — version + migrate', () => {
     const store = memoryStorage({ k: JSON.stringify({ v: 1, d: JSON.stringify('old') }) })
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, {
+      createPersisted(ctx, 'k', s, {
         storage: store,
         version: 2,
         migrate: (raw, from) => (from === 1 ? `up:${JSON.parse(raw)}` : undefined),
@@ -349,7 +349,11 @@ describe('usePersisted — version + migrate', () => {
     const store = memoryStorage({ k: JSON.stringify({ v: 1, d: JSON.stringify('old') }) })
     const def = defineController((ctx) => {
       const s = signal<string>('default')
-      const p = usePersisted(ctx, 'k', s, { storage: store, version: 2, migrate: () => undefined })
+      const p = createPersisted(ctx, 'k', s, {
+        storage: store,
+        version: 2,
+        migrate: () => undefined,
+      })
       return { s, ready: p.ready }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -363,7 +367,7 @@ describe('usePersisted — version + migrate', () => {
     const store = memoryStorage({ k: JSON.stringify({ v: 1, d: JSON.stringify('old') }) })
     const def = defineController((ctx) => {
       const s = signal<string>('default')
-      usePersisted(ctx, 'k', s, { storage: store, version: 2 })
+      createPersisted(ctx, 'k', s, { storage: store, version: 2 })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -377,7 +381,7 @@ describe('usePersisted — version + migrate', () => {
     const ops: string[] = []
     const def = defineController((ctx) => {
       const s = signal<string>('default')
-      usePersisted(ctx, 'k', s, {
+      createPersisted(ctx, 'k', s, {
         storage: store,
         version: 2,
         migrate: () => {
@@ -395,14 +399,14 @@ describe('usePersisted — version + migrate', () => {
   })
 })
 
-describe('usePersisted — throttleMs', () => {
+describe('createPersisted — throttleMs', () => {
   test('debounces writes; only the last value lands after the delay', () => {
     vi.useFakeTimers()
     try {
       const store = memoryStorage()
       const def = defineController((ctx) => {
         const s = signal<number>(0)
-        usePersisted(ctx, 'k', s, { storage: store, throttleMs: 100 })
+        createPersisted(ctx, 'k', s, { storage: store, throttleMs: 100 })
         return { s }
       })
       const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -425,7 +429,7 @@ describe('usePersisted — throttleMs', () => {
       const store = memoryStorage()
       const def = defineController((ctx) => {
         const s = signal<number>(0)
-        usePersisted(ctx, 'k', s, { storage: store, throttleMs: 1000 })
+        createPersisted(ctx, 'k', s, { storage: store, throttleMs: 1000 })
         return { s }
       })
       const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -439,7 +443,7 @@ describe('usePersisted — throttleMs', () => {
   })
 })
 
-describe('usePersisted — onError routing', () => {
+describe('createPersisted — onError routing', () => {
   test('a synchronous storage.set throw routes onError("write"), not "serialize"', async () => {
     const ops: string[] = []
     const adapter: StorageAdapter = {
@@ -453,7 +457,7 @@ describe('usePersisted — onError routing', () => {
     }
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
+      createPersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -470,7 +474,7 @@ describe('usePersisted — onError routing', () => {
     const store = memoryStorage()
     const def = defineController((ctx) => {
       const s = signal<unknown>(null)
-      usePersisted(ctx, 'k', s, {
+      createPersisted(ctx, 'k', s, {
         storage: store,
         serialize: () => {
           throw new Error('not serializable')
@@ -497,7 +501,7 @@ describe('usePersisted — onError routing', () => {
     }
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
+      createPersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -513,7 +517,7 @@ describe('usePersisted — onError routing', () => {
     const ops: string[] = []
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, {
+      createPersisted(ctx, 'k', s, {
         storage: store,
         crossTab: true,
         onError: (_e, op) => ops.push(op),
@@ -537,7 +541,10 @@ describe('usePersisted — onError routing', () => {
     }
     const def = defineController((ctx) => {
       const s = signal<string>('default')
-      const p = usePersisted(ctx, 'k', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
+      const p = createPersisted(ctx, 'k', s, {
+        storage: adapter,
+        onError: (_e, op) => ops.push(op),
+      })
       return { s, ready: p.ready }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -549,7 +556,7 @@ describe('usePersisted — onError routing', () => {
   })
 })
 
-describe('usePersisted — ready-gate races (T6.1)', () => {
+describe('createPersisted — ready-gate races (T6.1)', () => {
   test('a user write before the async load settles WINS (not clobbered)', async () => {
     let resolveGet: (v: string | null) => void = () => {}
     const writes: string[] = []
@@ -565,7 +572,7 @@ describe('usePersisted — ready-gate races (T6.1)', () => {
     }
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      const p = usePersisted(ctx, 'k', s, { storage: adapter })
+      const p = createPersisted(ctx, 'k', s, { storage: adapter })
       return { s, ready: p.ready }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -599,7 +606,7 @@ describe('usePersisted — ready-gate races (T6.1)', () => {
     }
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: adapter, crossTab: true })
+      createPersisted(ctx, 'k', s, { storage: adapter, crossTab: true })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -649,12 +656,6 @@ describe('clearPersisted', () => {
     const storage = enumerable({ 'my-app/theme': '"dark"', 'ga/cid': '123' })
     await clearPersisted(storage, { all: true })
     expect(storage.store.size).toBe(0)
-  })
-
-  test('the positional prefix form still works', async () => {
-    const storage = enumerable({ 'my-app/theme': '"dark"', 'ga/cid': '123' })
-    await clearPersisted(storage, 'my-app/')
-    expect([...storage.store.keys()]).toEqual(['ga/cid'])
   })
 
   test('an adapter without keys() reports through onError and deletes nothing', async () => {

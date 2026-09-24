@@ -19,7 +19,7 @@ export type ReadSignal<T> = {
    * callback on subscribe — only fires on subsequent changes. Useful for
    * "react to user changes" semantics where the initial fire would be a
    * spurious notification (the most common consumer pattern — `useField`,
-   * `usePersisted`, and the React adapter all hand-rolled this).
+   * `createPersisted`, and the React adapter all hand-rolled this).
    *
    * Returns the unsubscribe function.
    */

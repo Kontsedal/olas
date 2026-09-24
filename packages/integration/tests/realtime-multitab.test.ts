@@ -25,7 +25,7 @@ import {
   queryEngine,
 } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
-import { onReconnect, type RealtimeService, useRealtimePatcher } from '@kontsedal/olas-realtime'
+import { createRealtimePatcher, onReconnect, type RealtimeService } from '@kontsedal/olas-realtime'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createBusFactory, fakeRealtime, settle } from './_helpers'
 
@@ -73,7 +73,7 @@ describe('integration: realtime + multi-tab', () => {
     const buildDef = (q: Query<[], { posts: Post[] }>) =>
       defineController((ctx) => {
         const feed = createQuery(ctx, q, () => [])
-        useRealtimePatcher<FeedEvent>(ctx, 'feed', {
+        createRealtimePatcher<FeedEvent>(ctx, 'feed', {
           'like-added': ({ postId }) => {
             q.setData(() => {
               const prev = feed.data.peek()
@@ -151,7 +151,7 @@ describe('integration: realtime + multi-tab', () => {
     const buildDef = (q: Query<[], { posts: Post[] }>) =>
       defineController((ctx) => {
         const feed = createQuery(ctx, q, () => [])
-        useRealtimePatcher<FeedEvent>(ctx, 'feed', {
+        createRealtimePatcher<FeedEvent>(ctx, 'feed', {
           'like-added': ({ postId }) => {
             q.setData(() => {
               const prev = feed.data.peek()

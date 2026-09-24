@@ -48,7 +48,7 @@ export type MemoryAdapter = StorageAdapter & {
 
 /**
  * Synchronous in-memory storage adapter with `keys()` (needed by the
- * mutation-queue replay path) and `onChange` (needed by `usePersisted`
+ * mutation-queue replay path) and `onChange` (needed by `createPersisted`
  * cross-tab sync).
  */
 export const memoryAdapter = (initial: Record<string, string> = {}): MemoryAdapter => {
@@ -144,7 +144,7 @@ export type FakeRealtime = RealtimeService & {
 /**
  * Hand-rolled realtime transport. `emit(channel, event)` synchronously
  * dispatches to every subscriber; `setState(s)` fires all registered
- * connection-state listeners (used to drive `useRealtimeConnection`).
+ * connection-state listeners (used to drive `createConnectionState`).
  */
 export const fakeRealtime = (): FakeRealtime => {
   const channels = new Map<string, Set<{ handler: RealtimeHandler<unknown> }>>()

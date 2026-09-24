@@ -10,11 +10,11 @@
  * - reset() restores initials and clears dirty / errors.
  *
  * This is a controller-level (no DOM) verification of the contract
- * between olas-core forms and olas-zod's `formFromZod` helper.
+ * between olas-core forms and olas-zod's `createZodForm` helper.
  */
 
 import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
-import { formFromZod } from '@kontsedal/olas-zod'
+import { createZodForm } from '@kontsedal/olas-zod'
 import { describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import { settle } from './_helpers'
@@ -35,8 +35,8 @@ describe('integration: forms + zod end-to-end', () => {
     const handler = vi.fn(async (value: UserForm) => ({ id: 'srv-1', ...value }))
 
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, userSchema, {
-        initials: {
+      form: createZodForm(ctx, userSchema, {
+        initial: {
           name: 'X', // too short
           email: 'not-an-email', // bad
           address: { street: 'Main', city: 'Sprawl' },
@@ -86,8 +86,8 @@ describe('integration: forms + zod end-to-end', () => {
 
   test('server-side validation errors map back to the right leaf via form.setErrors', async () => {
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, userSchema, {
-        initials: {
+      form: createZodForm(ctx, userSchema, {
+        initial: {
           name: 'Alice',
           email: 'alice@example.com',
           address: { street: 'Main', city: 'Sprawl' },
@@ -133,8 +133,8 @@ describe('integration: forms + zod end-to-end', () => {
       .refine((v) => v.password === v.confirm, { message: 'passwords must match' })
 
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, passwordSchema as unknown as z.ZodObject<z.ZodRawShape>, {
-        initials: { password: 'abcdefgh', confirm: 'mismatch!' },
+      form: createZodForm(ctx, passwordSchema as unknown as z.ZodObject<z.ZodRawShape>, {
+        initial: { password: 'abcdefgh', confirm: 'mismatch!' },
       }),
     }))
 
@@ -165,8 +165,8 @@ describe('integration: forms + zod end-to-end', () => {
 
   test('reset clears dirty + restores initials + clears server errors', async () => {
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, userSchema, {
-        initials: {
+      form: createZodForm(ctx, userSchema, {
+        initial: {
           name: 'Alice',
           email: 'alice@example.com',
           address: { street: 'Main', city: 'Sprawl' },

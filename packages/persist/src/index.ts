@@ -10,8 +10,8 @@ export type StorageAdapter = {
    * Optional — list every key currently in storage. Consumers that need to
    * enumerate keys (e.g. `@kontsedal/olas-mutation-queue` replaying the
    * pending queue on init) require this extension; consumers that only
-   * `get` / `set` known keys (the typical `usePersisted` shape) don't need
-   * it. Both built-in adapters (`localStorageAdapter`, `indexedDbAdapter`)
+   * `get` / `set` known keys (the typical `createPersisted` shape) don't need
+   * it. Both built-in adapters (`localStorageAdapter()`, `indexedDbAdapter()`)
    * implement it.
    */
   keys?(): Iterable<string> | Promise<Iterable<string>>
@@ -34,7 +34,7 @@ export type PersistOptions<T> = {
   /**
    * Storage backend. When omitted *or explicitly `undefined`* (handy for app
    * code that forwards a deps slot like `ctx.deps.storage`), the browser
-   * `localStorageAdapter` is used. SSR-safe — `localStorageAdapter` no-ops
+   * `localStorageAdapter()` is used. SSR-safe — the localStorage adapter no-ops
    * when `localStorage` isn't defined.
    */
   storage?: StorageAdapter | undefined
@@ -48,7 +48,7 @@ export type PersistOptions<T> = {
    * gate runs — payloads are read and written raw (current default).
    *
    * The on-disk shape with versioning enabled is `{"v": N, "d": <serialized>}`
-   * — `usePersisted` wraps every write and reads both shapes (legacy raw and
+   * — `createPersisted` wraps every write and reads both shapes (legacy raw and
    * versioned). Versioned writes only happen once `version` is set.
    */
   version?: number
@@ -56,16 +56,18 @@ export type PersistOptions<T> = {
    * Migrate a raw payload of a prior version. Receives the pre-deserialize
    * string and the version number it was written with (or `undefined` if no
    * version stamp existed, i.e. the legacy raw shape). Return the migrated
-   * payload AS A `T` value (post-deserialize); `usePersisted` re-serializes
+   * payload AS A `T` value (post-deserialize); `createPersisted` re-serializes
    * it before writing. Return `undefined` to drop the entry (the source
    * keeps its current value).
    */
   migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
   /**
-   * Debounce writes by `throttleMs` milliseconds. Useful for high-frequency
-   * sources (cursor position, scroll, every-keystroke field) where the
-   * default "write on every change" is too chatty. Defaults to `0` (no
-   * debounce). On `ctx.onDispose`, any pending write is flushed.
+   * Throttle writes: at most one per `throttleMs` milliseconds, carrying the
+   * latest value (a trailing write — the first change opens the window, and
+   * the value current when it closes is what lands). Useful for
+   * high-frequency sources (cursor position, scroll, every-keystroke field)
+   * where "write on every change" is too chatty. Defaults to `0`, a write per
+   * change. A pending write is flushed when the controller disposes.
    */
   throttleMs?: number
   /**
@@ -128,7 +130,7 @@ export type IndexedDbAdapterOptions = {
  * (SSR, restricted environments), every method resolves to a no-op.
  *
  * Storage is a single key/value object store inside a single database;
- * fine for the persisted-signal use case `usePersisted` is built around.
+ * fine for the persisted-signal use case `createPersisted` is built around.
  * For larger or schema-shaped data, write a custom adapter against your
  * own IDB layout.
  */
@@ -230,7 +232,7 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
     async get(key: string): Promise<string | null> {
       if (idbFactory === undefined) return null
       // A real read error (db closed, corrupt store) REJECTS so the caller's
-      // error routing runs (`usePersisted` → `onError('load')`). A missing key
+      // error routing runs (`createPersisted` → `onError('load')`). A missing key
       // is not an error — `req.result` is `undefined`, so we return null.
       const result = await runRequest<unknown>('readonly', (s) => s.get(key))
       return typeof result === 'string' ? result : null
@@ -238,7 +240,7 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
     async set(key: string, value: string): Promise<void> {
       if (idbFactory === undefined) return
       // Do NOT swallow — a rejected write (quota, closed db, aborted commit)
-      // propagates so `usePersisted`'s `onError('write')` fires (T6.1). The
+      // propagates so `createPersisted`'s `onError('write')` fires (T6.1). The
       // cross-tab broadcast only runs once the commit actually lands.
       await runRequest('readwrite', (s) => s.put(value, key))
       ensureChannel()?.postMessage({ key, value })
@@ -282,8 +284,8 @@ function getGlobalBroadcastChannel(): typeof BroadcastChannel | undefined {
   return typeof BroadcastChannel === 'undefined' ? undefined : BroadcastChannel
 }
 
-/** Default localStorage adapter — only viable in the browser. */
-export const localStorageAdapter: StorageAdapter = {
+/** The localStorage adapter. One object; every `localStorageAdapter()` call returns it. */
+const LOCAL_STORAGE: StorageAdapter = {
   get(key: string): string | null {
     if (typeof localStorage === 'undefined') return null
     return localStorage.getItem(key)
@@ -317,19 +319,29 @@ export const localStorageAdapter: StorageAdapter = {
 }
 
 /**
+ * The browser's `localStorage`, as a `StorageAdapter` — the default storage.
+ * SSR-safe: without `localStorage` every read is `null` and every write a
+ * no-op. A factory, like `indexedDbAdapter()`, so both adapters are chosen
+ * the same way.
+ */
+export function localStorageAdapter(): StorageAdapter {
+  return LOCAL_STORAGE
+}
+
+/**
  * Persist a signal-like source under `key`. Loads the stored value on
  * construction (sync for localStorage, async for any storage that returns a
  * promise). Subsequent writes to the source are mirrored to storage.
  *
  * Cleanup (unsubscribe + cross-tab listener removal) is bound to `ctx`.
  */
-export function usePersisted<T>(
+export function createPersisted<T>(
   ctx: Ctx,
   key: string,
   source: PersistableSource<T>,
   options?: PersistOptions<T>,
 ): Persisted {
-  const storage = options?.storage ?? localStorageAdapter
+  const storage = options?.storage ?? LOCAL_STORAGE
   const serialize = options?.serialize ?? JSON.stringify
   const deserialize = options?.deserialize ?? JSON.parse
   const crossTab = options?.crossTab ?? false
@@ -546,7 +558,7 @@ export function usePersisted<T>(
     applyLoaded(loaded)
   }
 
-  // Optional throttled writer. State is captured per-`usePersisted` call so
+  // Optional throttled writer. State is captured per-`createPersisted` call so
   // multiple persisted signals in the same controller don't interfere.
   let pendingWriteValue: T | undefined
   let hasPendingWrite = false
@@ -669,10 +681,10 @@ export type ClearPersistedOptions = {
  * enumeration reports under the key `'<keys>'`.
  *
  * Scope is never implicit: pass a `prefix`, or pass `all: true` to accept
- * that everything the adapter can see goes. Neither throws.
+ * that everything the adapter can see goes. With neither, it throws.
  *
  * ```ts
- * await clearPersisted(localStorageAdapter, { prefix: 'my-app/' })
+ * await clearPersisted(localStorageAdapter(), { prefix: 'my-app/' })
  * await clearPersisted(sessionAdapter, { all: true })
  * ```
  *
@@ -680,26 +692,11 @@ export type ClearPersistedOptions = {
  * `'<keys>'` through `onError` and deletes nothing.
  */
 export async function clearPersisted(
-  storage?: StorageAdapter,
-  options?: ClearPersistedOptions,
-): Promise<void>
-/** @deprecated Positional form. Pass `{ prefix }` instead. */
-export async function clearPersisted(
-  storage: StorageAdapter | undefined,
-  prefix: string,
-  onError?: (err: unknown, key: string) => void,
-): Promise<void>
-export async function clearPersisted(
-  storage: StorageAdapter = localStorageAdapter,
-  prefixOrOptions?: string | ClearPersistedOptions,
-  legacyOnError?: (err: unknown, key: string) => void,
+  storage: StorageAdapter = LOCAL_STORAGE,
+  options: ClearPersistedOptions = {},
 ): Promise<void> {
-  const options: ClearPersistedOptions =
-    typeof prefixOrOptions === 'string'
-      ? { prefix: prefixOrOptions, onError: legacyOnError }
-      : (prefixOrOptions ?? {})
   const prefix = options.prefix
-  const onError = options.onError ?? legacyOnError
+  const onError = options.onError
   if (prefix === undefined || prefix === '') {
     if (options.all !== true) {
       throw new Error(

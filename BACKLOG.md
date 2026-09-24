@@ -135,10 +135,6 @@ Worth doing before 1.0, because the published numbers are the ones consumers wil
 - `setAtPath` no-ops on a stale path, so a patch aimed at a moved node vanishes.
 - One test in `packages/entities/tests/entities.test.ts` ("reverse index drops bindings…") is vacuous, and its title contradicts the contract it claims to pin.
 
-### [planned] The mutation queue can persist before `mutate` runs
-
-The durable enqueue happens in the synchronous `onMutation` `'start'` hook, so the storage write is fire-and-forget, and a reload between `start` and the write landing loses the run. Plugin host v2 gives the queue a way out: `wrapMutate` runs around each attempt and may await before calling `next()`. Persisting there on attempt 0 means `mutate` runs only after the entry is durable. The cost is one storage write of latency before the first request, which is negligible for localStorage and a few ms for IndexedDB. Needs a test that a failed persist still lets the run proceed, as today.
-
 ### [idea] Two costs in `@kontsedal/olas-zod`
 
 [from the 0.9 review] `rootOnlyZodValidator` re-parses the whole schema on every validation, on top of the per-leaf validators that already ran. And `warnDuplicateZod` has no once-gate, so a duplicate zod copy warns on every leaf the walker visits.

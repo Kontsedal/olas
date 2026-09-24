@@ -6,7 +6,7 @@
 //  - `ctx.effect` + reactive watchlist  → resubscribe when the watchlist changes
 //  - `throttled(...)`                   → UI rate-limit for the prices signal
 //  - `debounced(...)`                   → debounce search-as-you-type
-//  - `usePersisted(ctx, key, signal)`   → watchlist + alerts survive reloads
+//  - `createPersisted(ctx, key, signal)`   → watchlist + alerts survive reloads
 //  - `defineController` + `createRoot`  → composition
 
 import {
@@ -23,7 +23,7 @@ import {
   signal,
   throttled,
 } from '@kontsedal/olas-core'
-import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
+import { createPersisted, type StorageAdapter } from '@kontsedal/olas-persist'
 import {
   type Alert,
   type AlertFiredEvent,
@@ -79,13 +79,13 @@ export const tickerController = defineController(
 
     const symbols = createQuery(ctx, symbolsQuery)
 
-    // Persisted state. `usePersisted` accepts `storage: undefined` and falls
+    // Persisted state. `createPersisted` accepts `storage: undefined` and falls
     // back to localStorage — so tests passing `deps.storage = memoryStorage()`
     // and the browser default both work without a fork.
     const watchlist = signal<string[]>(props.initialWatchlist ?? DEFAULTS.watchlist)
     const alerts = signal<Alert[]>([])
-    usePersisted(ctx, 'olas-ticker.watchlist', watchlist, { storage: ctx.deps.storage })
-    usePersisted(ctx, 'olas-ticker.alerts', alerts, { storage: ctx.deps.storage })
+    createPersisted(ctx, 'olas-ticker.watchlist', watchlist, { storage: ctx.deps.storage })
+    createPersisted(ctx, 'olas-ticker.alerts', alerts, { storage: ctx.deps.storage })
 
     // Internal events: live ticks (fan-in from the market) and alert fires.
     const priceEmitter = ctx.emitter<Tick>()

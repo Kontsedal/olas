@@ -1,7 +1,7 @@
-import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
-import { formFromZod, zodValidator, zodValidatorAsync } from '../src'
+import { createZodForm, zodValidator, zodValidatorAsync } from '../src'
 
 const emptyDeps = {}
 
@@ -39,14 +39,14 @@ describe('zodValidator', () => {
   })
 })
 
-describe('formFromZod', () => {
+describe('createZodForm', () => {
   test('builds a form whose value matches z.infer<schema>', () => {
     const schema = z.object({
       name: z.string().min(1).default('Alice'),
       age: z.number().int().default(0),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema),
+      form: createZodForm(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.api.form.value.value).toEqual({ name: 'Alice', age: 0 })
@@ -62,8 +62,8 @@ describe('formFromZod', () => {
       }),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema, {
-        initials: {
+      form: createZodForm(ctx, schema, {
+        initial: {
           name: 'Bob',
           address: { street: 'Main', city: 'Springfield' },
         },
@@ -82,7 +82,7 @@ describe('formFromZod', () => {
       tags: z.array(z.string().min(1)),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema, { initials: { tags: ['hello', 'world'] } }),
+      form: createZodForm(ctx, schema, { initial: { tags: ['hello', 'world'] } }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.api.form.value.value).toEqual({ tags: ['hello', 'world'] })
@@ -97,8 +97,8 @@ describe('formFromZod', () => {
     })
     const reservedTitles = new Set(['admin', 'root'])
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema, {
-        initials: { title: 'admin', address: { street: 'Main' } },
+      form: createZodForm(ctx, schema, {
+        initial: { title: 'admin', address: { street: 'Main' } },
         extraValidators: {
           title: (value) => (reservedTitles.has(value as string) ? 'title is reserved' : null),
         },
@@ -129,8 +129,8 @@ describe('formFromZod', () => {
     const schema = z.object({ tags: z.array(z.string().min(1)) })
     const seen: unknown[] = []
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema, {
-        initials: { tags: ['ok', 'banned'] },
+      form: createZodForm(ctx, schema, {
+        initial: { tags: ['ok', 'banned'] },
         extraValidators: {
           tags: (value) => {
             seen.push(value)
@@ -164,8 +164,8 @@ describe('formFromZod', () => {
       .refine((v) => v.password === v.confirm, { message: 'passwords must match' })
 
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema as unknown as z.ZodObject<z.ZodRawShape>, {
-        initials: { password: 'abc', confirm: 'xyz' },
+      form: createZodForm(ctx, schema as unknown as z.ZodObject<z.ZodRawShape>, {
+        initial: { password: 'abc', confirm: 'xyz' },
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -190,8 +190,8 @@ describe('formFromZod', () => {
       address: z.object({ city: z.string() }),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema, {
-        initials: { address: { city: 'forbidden' } },
+      form: createZodForm(ctx, schema, {
+        initial: { address: { city: 'forbidden' } },
         extraValidators: {
           'address.city': (value) => (value === 'forbidden' ? 'no go' : null),
         },
@@ -213,7 +213,7 @@ describe('formFromZod', () => {
       name: z.string().min(1),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema, { initials: { name: '' } }),
+      form: createZodForm(ctx, schema, { initial: { name: '' } }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
@@ -230,7 +230,7 @@ describe('formFromZod', () => {
       nullable: z.nullable(z.number()),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema),
+      form: createZodForm(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // optional/nullable have no Zod default → defaultInitial returns ''
@@ -246,7 +246,7 @@ describe('formFromZod', () => {
       kind: z.enum(['a', 'b', 'c']),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema),
+      form: createZodForm(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.api.form.value.value).toEqual({ flag: false, tags: [], kind: 'a' })
@@ -258,7 +258,7 @@ describe('formFromZod', () => {
       now: z.number().default(() => 42),
     })
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, schema),
+      form: createZodForm(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.api.form.value.value).toEqual({ now: 42 })
@@ -285,7 +285,7 @@ describe('zodValidatorAsync — abort-race cleanup (T6.5)', () => {
   })
 })
 
-describe('formFromZod — duplicate zod copy detection (T6.5)', () => {
+describe('createZodForm — duplicate zod copy detection (T6.5)', () => {
   test('warns when a nested schema is not an instanceof this package’s zod', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
@@ -294,7 +294,7 @@ describe('formFromZod — duplicate zod copy detection (T6.5)', () => {
       const foreign = { def: { type: 'object', shape: {} } } as unknown as z.ZodType
       const schema = z.object({ nested: foreign })
       const def = defineController((ctx) => ({
-        form: formFromZod(ctx, schema as z.ZodObject<z.ZodRawShape>),
+        form: createZodForm(ctx, schema as z.ZodObject<z.ZodRawShape>),
       }))
       const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       expect(warnSpy).toHaveBeenCalledWith(
@@ -307,14 +307,14 @@ describe('formFromZod — duplicate zod copy detection (T6.5)', () => {
   })
 })
 
-describe('formFromZod — defaultInitial gaps (T6.5)', () => {
+describe('createZodForm — defaultInitial gaps (T6.5)', () => {
   test('ZodDate → undefined; transform introspects input; union → undefined', () => {
     const schema = z.object({
       when: z.date(),
       len: z.string().transform((s) => s.length),
       either: z.union([z.string(), z.number()]),
     })
-    const def = defineController((ctx) => ({ form: formFromZod(ctx, schema) }))
+    const def = defineController((ctx) => ({ form: createZodForm(ctx, schema) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const fields = root.api.form.fields as unknown as {
       when: { value: unknown }
@@ -324,6 +324,48 @@ describe('formFromZod — defaultInitial gaps (T6.5)', () => {
     expect(fields.when.value).toBeUndefined() // was null (wrong for a Date field)
     expect(fields.len.value).toBe('') // transform → the INPUT (string) default
     expect(fields.either.value).toBeUndefined() // union → undefined fallback
+    root.dispose()
+  })
+})
+
+describe('createZodForm — a function initial is tracked', () => {
+  const schema = z.object({
+    name: z.string().default('anon'),
+    address: z.object({ city: z.string() }),
+  })
+
+  test('a clean form re-seats when the tracked source changes', () => {
+    const seed = signal<{ name: string; address: { city: string } } | undefined>(undefined)
+    const def = defineController((ctx) => ({
+      form: createZodForm(ctx, schema, { initial: () => seed.value }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    // No source value yet: every leaf starts at its Zod default or empty value.
+    expect(root.api.form.value.value).toEqual({ name: 'anon', address: { city: '' } })
+    seed.set({ name: 'Ada', address: { city: 'London' } })
+    expect(root.api.form.value.value).toEqual({ name: 'Ada', address: { city: 'London' } })
+    expect(root.api.form.isDirty.value).toBe(false)
+    root.dispose()
+  })
+
+  test('a dirty form keeps the user edit by default, and resetOnInitialChange overrides it', () => {
+    const seed = signal({ name: 'Ada', address: { city: 'London' } })
+    const def = defineController((ctx) => ({
+      kept: createZodForm(ctx, schema, { initial: () => seed.value }),
+      reseated: createZodForm(ctx, schema, {
+        initial: () => seed.value,
+        resetOnInitialChange: 'always',
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const city = (form: typeof root.api.kept) =>
+      (form.fields as { address: { fields: { city: { set(v: string): void; value: string } } } })
+        .address.fields.city
+    city(root.api.kept).set('Paris')
+    city(root.api.reseated).set('Paris')
+    seed.set({ name: 'Grace', address: { city: 'Arlington' } })
+    expect(city(root.api.kept).value).toBe('Paris')
+    expect(city(root.api.reseated).value).toBe('Arlington')
     root.dispose()
   })
 })

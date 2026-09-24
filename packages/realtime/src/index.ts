@@ -32,7 +32,7 @@ export type RealtimeService = {
   ): RealtimeSubscription
   /**
    * Optional. Subscribe to connection-state changes. When implemented,
-   * `useRealtimeConnection(ctx)` returns a live signal of the state;
+   * `createConnectionState(ctx)` returns a live signal of the state;
    * otherwise it returns a constant `'connected'` signal.
    *
    * Four states:
@@ -41,7 +41,7 @@ export type RealtimeService = {
    *   miss events during the gap.
    * - `'offline'`: no connection; subscriptions are paused at the
    *   transport.
-   * - `'unknown'`: only reported by `useRealtimeConnection` when the
+   * - `'unknown'`: only reported by `createConnectionState` when the
    *   transport doesn't implement `onConnectionChange` — the hook can't
    *   observe state, so it says so rather than claiming `'connected'`.
    *
@@ -85,7 +85,7 @@ export type PatcherHandlers<TEvent> = Partial<
  * whether a specific handler matched. Specific handlers run first; the
  * wildcard sees the same event afterwards (in the same `untracked` scope).
  */
-export function useRealtimePatcher<TEvent extends { type: string }>(
+export function createRealtimePatcher<TEvent extends { type: string }>(
   ctx: Ctx<RealtimeDeps>,
   channel: string,
   handlers: PatcherHandlers<TEvent>,
@@ -162,7 +162,7 @@ const DEFAULT_FLUSH_MS = 16
  * `isPaused.value` as a tracked dep).
  *
  * Naming: the `use*` prefix matches the spec convention for ctx-taking
- * composables (`usePersisted`, `useRealtimePatcher`). The `define*` prefix is
+ * composables (`createPersisted`, `createRealtimePatcher`). The `define*` prefix is
  * reserved for module-scope factories (`defineQuery`, `defineController`).
  *
  * Buffer semantics (SPEC §16.5):
@@ -175,14 +175,14 @@ const DEFAULT_FLUSH_MS = 16
  * - `clear()` resets the buffer (and any unflushed pending events) without
  *   touching the subscription.
  */
-export function useLiveStream<TEvent>(
+export function createLiveStream<TEvent>(
   ctx: Ctx<RealtimeDeps>,
   channel: string,
   options?: LiveStreamOptions<TEvent>,
 ): LiveStream<TEvent> {
   const capacity = options?.capacity ?? DEFAULT_CAPACITY
   if (capacity < 1) {
-    throw new RangeError(`[olas/realtime] useLiveStream: capacity must be >= 1, got ${capacity}`)
+    throw new RangeError(`[olas/realtime] createLiveStream: capacity must be >= 1, got ${capacity}`)
   }
   const flushMs = options?.flushMs ?? DEFAULT_FLUSH_MS
   const rafFlush = options?.rafFlush === true
@@ -309,7 +309,7 @@ export function useLiveStream<TEvent>(
  * the connection comes back up:
  *
  * ```ts
- * const conn = useRealtimeConnection(ctx)
+ * const conn = createConnectionState(ctx)
  * const orders = bindQuery(ctx, ordersQuery)
  * ctx.effect(() => {
  *   if (conn.value === 'connected') {
@@ -318,7 +318,7 @@ export function useLiveStream<TEvent>(
  * })
  * ```
  */
-export function useRealtimeConnection(ctx: Ctx<RealtimeDeps>): ReadSignal<ConnectionState> {
+export function createConnectionState(ctx: Ctx<RealtimeDeps>): ReadSignal<ConnectionState> {
   // A transport WITHOUT `onConnectionChange` can't report status — start at
   // `'unknown'` instead of claiming `'connected'` (T6.7). With a reporter,
   // start optimistically at `'connected'` until the first change corrects it.
@@ -342,7 +342,7 @@ export function useRealtimeConnection(ctx: Ctx<RealtimeDeps>): ReadSignal<Connec
  * in `untracked` so cache writes don't accidentally hook the effect.
  */
 export function onReconnect(ctx: Ctx<RealtimeDeps>, fn: () => void): void {
-  const conn = useRealtimeConnection(ctx)
+  const conn = createConnectionState(ctx)
   let prev: ConnectionState = conn.peek()
   ctx.effect(() => {
     const next = conn.value

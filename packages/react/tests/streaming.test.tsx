@@ -253,6 +253,38 @@ describe('installStreamingIntake (client side)', () => {
   })
 })
 
+describe('installStreamingIntake — several roots', () => {
+  test('every installed root receives each batch, and a late root catches up', async () => {
+    const q = defineQuery({
+      id: 'streaming-fanout',
+      key: () => [],
+      fetcher: async () => 'fetched',
+      staleTime: 60_000,
+    })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const a = createRoot(def, { queries: queryEngine(), deps: {} })
+    const offA = installStreamingIntake(a)
+    const intake = (globalThis as unknown as Record<string, { push: (b: unknown) => void }>)[
+      STREAMING_GLOBAL
+    ]
+    const b = createRoot(def, { queries: queryEngine(), deps: {} })
+    const offB = installStreamingIntake(b)
+    intake?.push([{ queryId: 'streaming-fanout', key: [], data: 'streamed', lastUpdatedAt: 1 }])
+    expect(a.api.x.data.peek()).toBe('streamed')
+    expect(b.api.x.data.peek()).toBe('streamed')
+
+    // A root installed after the batch arrived still gets it.
+    const late = createRoot(def, { queries: queryEngine(), deps: {} })
+    const offLate = installStreamingIntake(late)
+    expect(late.api.x.data.peek()).toBe('streamed')
+
+    offA()
+    offB()
+    offLate()
+    for (const r of [a, b, late]) r.dispose()
+  })
+})
+
 describe('createStreamingTransform', () => {
   test('interleaves flushed scripts after each upstream chunk', async () => {
     const flushed = ['<script>1</script>', '<script>2</script>', '']

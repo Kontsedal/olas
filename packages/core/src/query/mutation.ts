@@ -465,6 +465,8 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     // (empty) only in a production build of a non-persistable mutation, where
     // nothing consumes it. `crypto.randomUUID`-backed — see `makeRunId`.
     const runId = this.lifecycle !== undefined || __DEV__ ? makeRunId() : ''
+    /** Set once this run's single outcome has been reported to plugins. */
+    let settledOutcome = false
     let snapshot: Snapshot | undefined
     try {
       // Run `onMutate` under this run's cause so the optimistic `setData` it
@@ -523,6 +525,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         //   of a request that succeeded. It settled; say so.
         snapshot?.finalize()
         this.report(runId, vars, 'success', { result })
+        settledOutcome = true
         // The caller still walked away, so the promise still reports the abort:
         // whoever awaited this run is gone, and `data` / `status` belong to the
         // superseder or to nobody.
@@ -545,7 +548,8 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     } catch (err) {
       if (isAbortError(err) || abort.signal.aborted) {
         snapshot?.rollback()
-        this.report(runId, vars, 'cancel')
+        // The late-abort branch above already reported this run's one outcome.
+        if (!settledOutcome) this.report(runId, vars, 'cancel')
         // Reserve `error` signal for genuine failures.
         throw err
       }
@@ -603,7 +607,14 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         const call = (): Promise<R> => this.spec.mutate(vars, { signal, deps: this.deps })
         if (wrap === undefined) return await call()
         return (await wrap(
-          { mutation: this.ref, runId, variables: vars, signal, attempt },
+          {
+            mutation: this.ref,
+            runId,
+            variables: vars,
+            signal,
+            attempt,
+            origin: this.lifecycle?.origin,
+          },
           call,
         )) as R
       } catch (err) {

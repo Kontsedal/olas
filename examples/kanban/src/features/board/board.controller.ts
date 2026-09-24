@@ -13,7 +13,7 @@
  *  - `selection<string>()` for bulk move.
  *  - `signal` + `computed` for filter intersection.
  *  - `throttled` for streaming drag progress over the realtime channel.
- *  - `useRealtimePatcher` for receiving moves from other tabs.
+ *  - `createRealtimePatcher` for receiving moves from other tabs.
  *  - `entitiesPlugin` writes — patching a User propagates across cards.
  *  - `defineScope` provisions: currentBoard, selectedCard.
  */
@@ -31,7 +31,7 @@ import {
   throttled,
 } from '@kontsedal/olas-core'
 import { Entities } from '@kontsedal/olas-entities'
-import { useRealtimePatcher } from '@kontsedal/olas-realtime'
+import { createRealtimePatcher } from '@kontsedal/olas-realtime'
 import type { Board, Card, Column, Priority, RealtimeEvent, SearchResults } from '../../api'
 import { REALTIME_CHANNEL } from '../../api'
 import { UserEntity } from '../../entities'
@@ -397,12 +397,12 @@ export const boardController = defineController(
 
     // ───────── Realtime patcher — react to events from other tabs ─────────
     //
-    // `useRealtimePatcher` types each handler's arg as the full event union,
+    // `createRealtimePatcher` types each handler's arg as the full event union,
     // so we narrow with a small `Variant` alias on the way in.
 
     type Variant<K extends RealtimeEvent['type']> = Extract<RealtimeEvent, { type: K }>
 
-    useRealtimePatcher<RealtimeEvent>(ctx, REALTIME_CHANNEL, {
+    createRealtimePatcher<RealtimeEvent>(ctx, REALTIME_CHANNEL, {
       'card.moved': (raw) => {
         const e = raw as Variant<'card.moved'>
         if (e.by === ctx.deps.tabId) return

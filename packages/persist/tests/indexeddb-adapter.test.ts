@@ -10,7 +10,7 @@
  */
 import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
-import { type IndexedDbAdapterOptions, indexedDbAdapter, usePersisted } from '../src'
+import { createPersisted, type IndexedDbAdapterOptions, indexedDbAdapter } from '../src'
 
 // ─── Minimal in-memory IDB ──────────────────────────────────────────────────
 //
@@ -320,7 +320,7 @@ describe('indexedDbAdapter — cross-tab onChange', () => {
   })
 })
 
-describe('indexedDbAdapter — integration with usePersisted', () => {
+describe('indexedDbAdapter — integration with createPersisted', () => {
   test('persists a signal to IDB and reloads it on a fresh root', async () => {
     const idb = makeFakeIdb()
     const adapter = indexedDbAdapter({
@@ -330,7 +330,7 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
 
     const defWrite = defineController((ctx) => {
       const s = signal<string>('initial')
-      const p = usePersisted(ctx, 'draft', s, { storage: adapter })
+      const p = createPersisted(ctx, 'draft', s, { storage: adapter })
       return { s, ready: p.ready }
     })
     const r1 = createRoot(defWrite, { queries: queryEngine(), deps: {} })
@@ -347,7 +347,7 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
     })
     const defRead = defineController((ctx) => {
       const s = signal<string>('default-if-missing')
-      const p = usePersisted(ctx, 'draft', s, { storage: adapter2 })
+      const p = createPersisted(ctx, 'draft', s, { storage: adapter2 })
       return { s, ready: p.ready }
     })
     const r2 = createRoot(defRead, { queries: queryEngine(), deps: {} })
@@ -371,7 +371,7 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
     // Tab B holds a persisted signal listening for cross-tab updates.
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: tabB, crossTab: true })
+      createPersisted(ctx, 'k', s, { storage: tabB, crossTab: true })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
@@ -401,7 +401,7 @@ describe('indexedDbAdapter — commit-ack + error routing (T6.1)', () => {
     expect(await adapter.get('boom')).toBeNull()
   })
 
-  test('a failing IDB write routes to usePersisted onError("write")', async () => {
+  test('a failing IDB write routes to createPersisted onError("write")', async () => {
     const idb = makeFakeIdb({ commitAbortKeys: new Set(['draft']) })
     const adapter = indexedDbAdapter({
       indexedDB: idb,
@@ -410,7 +410,7 @@ describe('indexedDbAdapter — commit-ack + error routing (T6.1)', () => {
     const ops: string[] = []
     const def = defineController((ctx) => {
       const s = signal<string>('start')
-      usePersisted(ctx, 'draft', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
+      createPersisted(ctx, 'draft', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: {} })

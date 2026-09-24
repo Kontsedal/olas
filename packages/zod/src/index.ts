@@ -3,6 +3,7 @@ import {
   createField,
   createFieldArray,
   createForm,
+  type DeepPartial,
   type Field,
   type FieldArray,
   type Form,
@@ -75,7 +76,7 @@ function makeAbortError(): Error {
  * Heuristic: does `s` look like a zod schema from a DIFFERENT copy of zod?
  * A schema from the copy WE import is `instanceof z.ZodType`; a foreign one
  * fails that but still carries a `def` (Zod 4) / `_def` (Zod 3) marker. All of
- * `formFromZod`'s introspection is `instanceof`-based, so a foreign schema
+ * `createZodForm`'s introspection is `instanceof`-based, so a foreign schema
  * silently degrades to a flat field — hence the dev warning (T6.5).
  */
 function isForeignZod(s: unknown): boolean {
@@ -93,7 +94,7 @@ function warnDuplicateZod(): void {
   console.warn(
     '[olas-zod] a schema failed every zod `instanceof` check but looks like a zod schema ' +
       '(it has a `def`/`_def`). This almost always means TWO copies of `zod` are installed — ' +
-      '`formFromZod` can only introspect schemas built with the SAME copy it imports, so a ' +
+      '`createZodForm` can only introspect schemas built with the SAME copy it imports, so a ' +
       'nested object/array here silently degrades to a flat field. Dedupe zod (e.g. `pnpm why zod`).',
   )
 }
@@ -103,7 +104,7 @@ function warnDuplicateZod(): void {
  * `path`). Leaf issues are already covered by `zodValidator(propSchema)` on
  * each leaf field — surfacing them here would double-count.
  *
- * Used by `formFromZod` to lift root-level `.refine(...)` rules into a
+ * Used by `createZodForm` to lift root-level `.refine(...)` rules into a
  * form-level validator. Returns `null` when every issue belongs to a leaf
  * (or there are no issues at all).
  */
@@ -210,7 +211,7 @@ type UnwrapZod<S> =
  *  - everything else → `Field<infer<S>>`.
  *
  * `ZodToLeaf<S>` matches what `buildLeaf(ctx, s, ...)` returns at runtime,
- * so the public `formFromZod<T>` can publish a precise structural type
+ * so the public `createZodForm<T>` can publish a precise structural type
  * without the consumer needing a hand-written `CardForm = Form<{...}>` cast.
  */
 export type ZodToLeaf<S> =
@@ -238,7 +239,7 @@ export type ZodToLeaf<S> =
  * There is no path that addresses the `FieldArray` itself. An array-level
  * rule — "at least three tags", "no duplicates" — takes a
  * `FieldArrayValidator`, a different signature over the whole item list,
- * and `formFromZod` does not wire those; express it in the Zod schema
+ * and `createZodForm` does not wire those; express it in the Zod schema
  * (`z.array(...).min(3)`), which `zodValidator` already enforces on the
  * parent.
  *
@@ -246,8 +247,18 @@ export type ZodToLeaf<S> =
  */
 export type ExtraValidators = Record<string, Validator<any>>
 
-export type FormFromZodOptions<T extends z.ZodObject<z.ZodRawShape>> = {
-  initials?: Partial<z.infer<T>>
+/** Options for `createZodForm(ctx, schema, options?)`. */
+export type ZodFormOptions<T extends z.ZodObject<z.ZodRawShape>> = {
+  /**
+   * Initial values, as for `createForm`: a partial value, or a tracked
+   * function. A function re-seats the form when the signals it reads change,
+   * while the form is not dirty — the form-from-server pattern (spec §8.4).
+   * Fields the initial leaves out start at their Zod default, else an empty
+   * value for their type.
+   */
+  initial?: DeepPartial<z.infer<T>> | (() => DeepPartial<z.infer<T>> | undefined)
+  /** When a function `initial` changes: see `FormOptions.resetOnInitialChange`. */
+  resetOnInitialChange?: 'when-clean' | 'never' | 'always'
   extraValidators?: ExtraValidators
 }
 
@@ -267,12 +278,30 @@ export type FormFromZodOptions<T extends z.ZodObject<z.ZodRawShape>> = {
  * accepts the exact item shape, etc. Consumers do not need to hand-write
  * a `CardForm = Form<{...}>` matching the schema.
  */
-export function formFromZod<T extends z.ZodObject<z.ZodRawShape>>(
+export function createZodForm<T extends z.ZodObject<z.ZodRawShape>>(
   ctx: Ctx,
   schema: T,
-  options?: FormFromZodOptions<T>,
+  options?: ZodFormOptions<T>,
 ): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]> }> {
-  return buildForm(ctx, schema, options?.initials, '', options?.extraValidators, schema) as never
+  const initial = options?.initial
+  // A value seeds the leaves as they are built. A function is the root
+  // form's tracked initial, so it re-seats exactly as `createForm` does.
+  const tracked =
+    typeof initial === 'function'
+      ? {
+          initial: initial as () => Record<string, unknown> | undefined,
+          resetOnInitialChange: options?.resetOnInitialChange,
+        }
+      : undefined
+  return buildForm(
+    ctx,
+    schema,
+    typeof initial === 'function' ? undefined : (initial as Record<string, unknown> | undefined),
+    '',
+    options?.extraValidators,
+    schema,
+    tracked,
+  ) as never
 }
 
 function buildForm(
@@ -289,6 +318,10 @@ function buildForm(
    * without double-reporting leaf issues. See `rootOnlyZodValidator`.
    */
   rootSchema?: z.ZodObject<z.ZodRawShape>,
+  tracked?: {
+    initial: () => Record<string, unknown> | undefined
+    resetOnInitialChange: 'when-clean' | 'never' | 'always' | undefined
+  },
 ): AnyForm {
   const shape = schema.shape
   const fields: Record<string, Field<unknown> | Form<any> | FieldArray<any>> = {}
@@ -305,6 +338,14 @@ function buildForm(
   if (rootSchema !== undefined) {
     return createForm(ctx, fields, {
       validators: [rootOnlyZodValidator(rootSchema as z.ZodType<unknown>) as never],
+      ...(tracked !== undefined
+        ? {
+            initial: tracked.initial as never,
+            ...(tracked.resetOnInitialChange !== undefined
+              ? { resetOnInitialChange: tracked.resetOnInitialChange }
+              : {}),
+          }
+        : {}),
     }) as AnyForm
   }
   return createForm(ctx, fields) as AnyForm

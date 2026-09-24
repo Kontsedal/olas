@@ -3,7 +3,7 @@
  * selected.
  *
  * Library primitives demonstrated:
- *  - `formFromZod` + `FieldArray` for subtasks (already covered elsewhere,
+ *  - `createZodForm` + `FieldArray` for subtasks (already covered elsewhere,
  *    here we exercise async validators on a leaf field).
  *  - `debouncedValidator` — async "is this title already used?" check.
  *  - The controller exposes its own `suspend` / `resume` so a
@@ -21,7 +21,7 @@ import {
   defineController,
   signal,
 } from '@kontsedal/olas-core'
-import { formFromZod } from '@kontsedal/olas-zod'
+import { createZodForm } from '@kontsedal/olas-zod'
 import type { Card, SaveCardInput } from '../../api'
 import { type CardFormValue, cardFormSchema } from '../../api'
 import {
@@ -72,14 +72,14 @@ export const cardDetailController = defineController(
      * card is selected at construction (or blank). On every selection
      * change we re-anchor via `setAsInitial`, which doesn't dirty the form.
      */
-    const form = formFromZod(ctx, cardFormSchema, { initials: blankInitials })
+    const form = createZodForm(ctx, cardFormSchema, { initial: blankInitials })
 
     // Attach the async unique-title validator to the title field. Imperatively
     // pushing into the existing validator list isn't supported; instead we
     // wire a manual effect that re-runs the check.
     //
     // The simpler `debouncedValidator` approach is to declare it at form
-    // construction. Since `formFromZod` doesn't accept extra leaf validators
+    // construction. Since `createZodForm` doesn't accept extra leaf validators
     // today, we hand-roll one here that mirrors `debouncedValidator`'s shape.
     const titleValidator = debouncedValidator<string>(async (value, signal) => {
       const cardId = selectedCardId.peek()
@@ -94,7 +94,7 @@ export const cardDetailController = defineController(
     }, 400)
 
     // Track the validator's last run so we surface it in the field's errors.
-    // Manual since `formFromZod` doesn't accept extra leaf validators today.
+    // Manual since `createZodForm` doesn't accept extra leaf validators today.
     const titleAsyncError = signal<string | null>(null)
     const isTitleChecking = signal(false)
 

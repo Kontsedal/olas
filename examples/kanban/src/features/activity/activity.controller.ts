@@ -4,7 +4,7 @@
  *
  *  - `ctx.on(activityScope, handler)` — local events emitted by other
  *    features (move, save, archive, comment, error).
- *  - `useRealtimePatcher` already handled in `board.controller.ts` for
+ *  - `createRealtimePatcher` already handled in `board.controller.ts` for
  *    remote-actor events; those are forwarded into the same emitter so the
  *    UI doesn't care about the source.
  */

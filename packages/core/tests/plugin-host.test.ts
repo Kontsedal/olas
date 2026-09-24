@@ -467,6 +467,35 @@ describe('onMutation', () => {
   })
 })
 
+describe('onMutation — a completed run is never reported as cancelled', () => {
+  test('an abort landing after the work finished still reports success', async () => {
+    // A queue plugin reads `cancel` as "keep the durable entry and replay it
+    // next load". For a run the server already accepted, that would be a
+    // second write — so a run whose work completed reports `success` even when
+    // the abort beat its continuation.
+    const { log, plugin } = recorder()
+    let resolveWrite: (v: string) => void = () => {}
+    const pending = new Promise<string>((res) => {
+      resolveWrite = res
+    })
+    const def = defineController((ctx) => ({
+      // Not `async`: an async wrapper adds a microtask hop, and the window
+      // below is measured in hops.
+      save: createMutation(ctx, { mutate: (_v: void) => pending }),
+    }))
+    const root = keep(createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] }))
+    const run = root.api.save.run().catch((e: unknown) => e)
+    resolveWrite('accepted')
+    await Promise.resolve()
+    await Promise.resolve()
+    root.api.save.dispose()
+    // The window was hit: the caller sees the abort…
+    expect(((await run) as Error).name).toBe('AbortError')
+    // …but plugins hear that the run succeeded.
+    expect(log.mutations.map((e) => e.phase)).toEqual(['start', 'success'])
+  })
+})
+
 describe('host.mutations', () => {
   afterEach(() => _unregisterMutationById('plugin-host/replay'))
 

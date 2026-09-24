@@ -9,7 +9,7 @@
 //  - `ctx.effect` accumulator                → pages append as new cursors land
 //  - `root.waitForIdle` / `root.dehydrate`   → SSR snapshot
 //  - `createRoot(..., { hydrate })`          → client hydration
-//  - `usePersisted`                          → reading progress survives reloads
+//  - `createPersisted`                          → reading progress survives reloads
 //  - `ctx.emitter` + `ctx.on`                → analytics events
 //  - `onError` root option + `ErrorContext`  → centralized error handling
 //
@@ -28,7 +28,7 @@ import {
   queryEngine,
   signal,
 } from '@kontsedal/olas-core'
-import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
+import { createPersisted, type StorageAdapter } from '@kontsedal/olas-persist'
 import type { Api, Article, Page } from './api'
 import { composerController } from './composer-controller'
 
@@ -119,13 +119,13 @@ export const readerController = defineController(
     const theme = signal<Theme>('auto')
 
     if (ctx.deps.storage !== undefined) {
-      usePersisted(ctx, 'olas-reader.progress', progress, { storage: ctx.deps.storage })
-      usePersisted(ctx, 'olas-reader.bookmarks', bookmarks, { storage: ctx.deps.storage })
-      usePersisted(ctx, 'olas-reader.theme', theme, { storage: ctx.deps.storage })
+      createPersisted(ctx, 'olas-reader.progress', progress, { storage: ctx.deps.storage })
+      createPersisted(ctx, 'olas-reader.bookmarks', bookmarks, { storage: ctx.deps.storage })
+      createPersisted(ctx, 'olas-reader.theme', theme, { storage: ctx.deps.storage })
     } else {
-      usePersisted(ctx, 'olas-reader.progress', progress)
-      usePersisted(ctx, 'olas-reader.bookmarks', bookmarks)
-      usePersisted(ctx, 'olas-reader.theme', theme)
+      createPersisted(ctx, 'olas-reader.progress', progress)
+      createPersisted(ctx, 'olas-reader.bookmarks', bookmarks)
+      createPersisted(ctx, 'olas-reader.theme', theme)
     }
 
     const isBookmarked = (articleId: string): boolean => bookmarks.peek().includes(articleId)

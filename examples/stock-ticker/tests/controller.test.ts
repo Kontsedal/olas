@@ -15,7 +15,7 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await Promise.resolve()
 }
 
-// In-memory storage adapter — same shape as @kontsedal/olas-persist's localStorageAdapter
+// In-memory storage adapter — same shape as @kontsedal/olas-persist's localStorageAdapter()
 // but synchronous and assertable.
 const memoryStorage = (
   initial: Record<string, string> = {},

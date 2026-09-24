@@ -1595,3 +1595,27 @@ BACKLOG: the `isRemote` redundancy and "the plugin contract knows its plugins" i
 968 tests. CI chain green.
 
 Wiki pages whose `covers:` changed and still describe `QueryClientPlugin` get rewritten in the W6 docs pass: `modules/cross-tab.md`, `modules/entities.md`, `modules/mutation-queue.md`, `entities/query-client.md` and `flows/ssr.md`. A `flows/plugin-lifecycle.md` page follows there too.
+
+## [2026-09-24 21:00] ingest | 1.0 W3: the ecosystem on the v2 host, and the `create*` renames
+
+**Renames.** Every function that takes `ctx` and builds something is now named `create*`:
+- persist: `createPersisted`. `localStorageAdapter()` is a factory, and `clearPersisted` takes only the options form.
+- realtime: `createRealtimePatcher`, `createLiveStream`, `createConnectionState`.
+- zod: `createZodForm`, whose `initial` also takes a tracked function (`packages/zod/src/index.ts:286-300`).
+
+**router.** `createRouterAdapter()` returns `{ plugin, Bridge }` (`packages/router/src/adapter.tsx:55-63`). The plugin provides the three route scopes through `host.provide`, so `RootOptions.scopes` is no longer the install path.
+
+**react streaming intake.** `installStreamingIntake` upgrades the bootstrap queue into a fan-out intake. The intake keeps every batch, and each installed root catches up on install. Before, a second boundary or a StrictMode remount's root replaced the forwarder, and the first root stopped receiving batches.
+
+**mutation-queue.** Recording at `start` and writing at `start` are now two steps. `onMutation` records the entry in `unwritten`. `wrapMutate` writes the entry on attempt 0, before `next()`, so the entry is durable before the request goes out. A settle that arrives first drops the record.
+
+**core.** `MutateContext.origin` is set for plugin-started runs. `MutationImpl` reported both `success` and `cancel` when an abort landed after `mutate` resolved. A `settledOutcome` flag now keeps the report to one outcome, pinned by `packages/core/tests/plugin-host.test.ts` ("an abort landing after the work finished still reports success").
+
+**Tests.**
+- New zod tests cover the tracked `initial`: a clean form re-seats, a dirty form keeps its edit, and `'always'` re-seats a dirty form.
+- New mutation-queue tests show `mutate` waiting for the storage write, and a rejected write being reported while the run proceeds.
+- The positional `clearPersisted` test is deleted.
+
+BACKLOG: the `[planned]` "The mutation queue can persist before `mutate` runs" item is removed; it landed here.
+
+CI chain green.

@@ -13,7 +13,7 @@ export async function render(_url: string): Promise<{ html: string; state: Dehyd
   const root = createAppRoot({
     api,
     // Deliberately omit `storage` — localStorage is not available server-side.
-    // `usePersisted` handles this via `typeof localStorage === 'undefined'`.
+    // `createPersisted` handles this via `typeof localStorage === 'undefined'`.
   })
 
   // Subscribe at least once so `waitForIdle` sees the fetch.

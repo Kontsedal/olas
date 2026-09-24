@@ -1,10 +1,10 @@
 import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import {
+  createRealtimePatcher,
   type RealtimeHandler,
   type RealtimeService,
   type RealtimeSubscription,
-  useRealtimePatcher,
 } from '../src'
 
 declare module '@kontsedal/olas-core' {
@@ -54,11 +54,11 @@ type FeedEvent =
   | { type: 'like-added'; postId: string }
   | { type: 'comment-added'; postId: string; text: string }
 
-describe('useRealtimePatcher', () => {
+describe('createRealtimePatcher', () => {
   test('subscribes to the channel on mount', () => {
     const realtime = fakeRealtime()
     const def = defineController((ctx) => {
-      useRealtimePatcher<FeedEvent>(ctx, 'feed', {})
+      createRealtimePatcher<FeedEvent>(ctx, 'feed', {})
       return {}
     })
     const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
@@ -71,7 +71,7 @@ describe('useRealtimePatcher', () => {
     const onLike = vi.fn<(e: FeedEvent) => void>()
     const onComment = vi.fn<(e: FeedEvent) => void>()
     const def = defineController((ctx) => {
-      useRealtimePatcher<FeedEvent>(ctx, 'feed', {
+      createRealtimePatcher<FeedEvent>(ctx, 'feed', {
         'like-added': onLike,
         'comment-added': onComment,
       })
@@ -92,7 +92,7 @@ describe('useRealtimePatcher', () => {
     const realtime = fakeRealtime()
     const onLike = vi.fn<(e: FeedEvent) => void>()
     const def = defineController((ctx) => {
-      useRealtimePatcher<FeedEvent>(ctx, 'feed', {
+      createRealtimePatcher<FeedEvent>(ctx, 'feed', {
         'like-added': onLike,
       })
       return {}
@@ -109,7 +109,7 @@ describe('useRealtimePatcher', () => {
     const realtime = fakeRealtime()
     const onLike = vi.fn<(e: FeedEvent) => void>()
     const def = defineController((ctx) => {
-      useRealtimePatcher<FeedEvent>(ctx, 'feed', { 'like-added': onLike })
+      createRealtimePatcher<FeedEvent>(ctx, 'feed', { 'like-added': onLike })
       return {}
     })
     const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
@@ -132,7 +132,7 @@ describe('useRealtimePatcher', () => {
     const tick = signal(0)
 
     const def = defineController((ctx) => {
-      useRealtimePatcher<FeedEvent>(ctx, 'feed', {
+      createRealtimePatcher<FeedEvent>(ctx, 'feed', {
         'like-added': () => {
           // Tracked read attempt — should be neutralized by untracked wrap.
           void tick.value

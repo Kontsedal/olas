@@ -347,7 +347,8 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         } catch (cause) {
           onWarn(
             `[olas/mutation-queue] failed to persist enqueue for ${entry.mutationId}/${entry.runId}: ` +
-              'variables likely not JSON-serializable. The in-process run continues, but the entry is not durable.',
+              'the variables are not JSON-serializable, or the storage rejected the write. The in-process' +
+              ' run continues, but the entry is not durable.',
             cause,
           )
         }
@@ -432,7 +433,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
        * List every persisted entry under `keyPrefix`. The `StorageAdapter`
        * contract doesn't include `keys()`, so we attempt a structural cast to
        * an `Iterable`-shaped adapter; falls back to an empty list when the
-       * adapter doesn't expose one. Concrete adapters (`localStorageAdapter`,
+       * adapter doesn't expose one. Concrete adapters (`localStorageAdapter()`,
        * `indexedDbAdapter`) ship a `keys()` extension for this purpose.
        */
       const listEntries = async (): Promise<QueueEntry[]> => {
@@ -442,7 +443,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         if (typeof ext.keys !== 'function') {
           onWarn(
             '[olas/mutation-queue] storage adapter has no keys() method; replay disabled. ' +
-              'Use localStorageAdapter / indexedDbAdapter from @kontsedal/olas-persist, ' +
+              'Use localStorageAdapter() / indexedDbAdapter() from @kontsedal/olas-persist, ' +
               'or implement keys() on your custom adapter.',
           )
           return []
@@ -760,6 +761,13 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       const startup = runReplay()
       if (host.network.isOnline()) host.track(startup)
 
+      /**
+       * Entries recorded at `start` and not yet written — `wrapMutate` writes
+       * each one before its run's first attempt. A run that never reaches an
+       * attempt settles instead, and the settle drops the record.
+       */
+      const unwritten = new Map<string, QueueEntry>()
+
       const onStart = (event: MutationEvent, mutationId: string): void => {
         const idempotencyKey = dedupeBy?.(mutationId, event.variables)
         runIdentity.set(event.runId, identityOf(mutationId, event.variables, idempotencyKey))
@@ -790,14 +798,10 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           seq: seqCounter,
           idempotencyKey,
         }
-        // Fire-and-forget: `onMutation` is a synchronous plugin hook, so we can't
-        // await the durable write here. `pendingWrites` still orders a later
-        // delete after this write (no persist-after-delete race). Loss window: if
-        // the durable write REJECTS (quota, an IDB commit abort) the in-process
-        // run still proceeds and the failure is reported via `onWarn`, but a
-        // reload before the run completes loses that mutation. Inherent to a sync
-        // hook — see the README "best-effort" note.
-        void writeEntry(entry)
+        // Written by `wrapMutate`, before the first `mutate` call, so the run is
+        // durable before its request goes out. `onMutation` is synchronous and
+        // cannot await the write itself.
+        unwritten.set(event.runId, entry)
       }
 
       const onSettle = (event: MutationEvent, mutationId: string): void => {
@@ -810,6 +814,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         // Every branch acts on `ownerRunId`, the run whose entry is actually on
         // disk. For a `dedupeBy` collapse that is the run this one collapsed
         // onto, not `event.runId`.
+        unwritten.delete(event.runId)
         const ownerRunId = runAlias.get(event.runId) ?? event.runId
         const identity = runIdentity.get(event.runId)
         // One settle per run, so the per-run bookkeeping goes here whatever the
@@ -868,6 +873,20 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       }
 
       return {
+        async wrapMutate(context, next) {
+          if (context.attempt === 0) {
+            const entry = unwritten.get(context.runId)
+            if (entry !== undefined) {
+              unwritten.delete(context.runId)
+              // `writeEntry` reports a failed write through `onWarn` and
+              // resolves, so the run proceeds either way — only its
+              // durability is lost.
+              await writeEntry(entry)
+            }
+          }
+          return next()
+        },
+
         onMutation(event) {
           // Its own replays report here too; they are already on disk.
           if (event.origin === MUTATION_QUEUE_PLUGIN_NAME) return
@@ -884,6 +903,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           runIdentity.clear()
           inFlightRuns.clear()
           retainedFailures.clear()
+          unwritten.clear()
           // Release every pass parked in `waitForOnline` so the cross-tab replay
           // lock is handed back. `replayAll` re-checks `disposed` the moment the
           // wait returns. In-flight replays are cancelled by the engine when the

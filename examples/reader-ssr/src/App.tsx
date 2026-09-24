@@ -32,7 +32,7 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
   const articles = use(api.reader.flatArticles)
   const hasNextPage = use(api.reader.hasNextPage)
   const isFetching = use(api.reader.isFetching)
-  // `usePersisted` reads localStorage synchronously while the controller is
+  // `createPersisted` reads localStorage synchronously while the controller is
   // constructed, so on a returning visitor these three already hold the
   // stored values by the time `hydrateRoot` runs — and the server, which has
   // no localStorage, sent markup built from the defaults. Rendering the

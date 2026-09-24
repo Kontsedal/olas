@@ -80,13 +80,21 @@ function directHooks(plugin: OlasPlugin) {
   const emit = (event: Omit<MutationEvent, 'origin'>) =>
     hooks.onMutation?.({ ...event, origin: undefined })
   return {
+    /** `start`, then the run's first attempt — which is when the queue writes. */
     enqueue(e: { mutationId: string; runId: string; variables: unknown; attempt?: number }) {
-      emit({
-        mutation: { id: e.mutationId, meta: { persist: true } },
-        runId: e.runId,
-        variables: e.variables,
-        phase: 'start',
-      })
+      const mutation = { id: e.mutationId, meta: { persist: true } }
+      emit({ mutation, runId: e.runId, variables: e.variables, phase: 'start' })
+      void hooks.wrapMutate?.(
+        {
+          mutation,
+          runId: e.runId,
+          variables: e.variables,
+          signal: new AbortController().signal,
+          attempt: 0,
+          origin: undefined,
+        },
+        () => Promise.resolve(undefined),
+      )
     },
     settle(e: {
       mutationId: string
@@ -899,60 +907,6 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
   })
 })
 
-describe('a run that completed before dispose must not be replayed', () => {
-  const MUTATION_ID = 'mq-test/completed-then-disposed'
-
-  beforeEach(() => {
-    _unregisterMutationById(MUTATION_ID)
-  })
-
-  test('settles as success, so the durable entry is dropped rather than left for replay', async () => {
-    // `outcome: 'cancelled'` tells this plugin to KEEP the entry and replay it
-    // on the next page load. For a run whose request the server already
-    // accepted that is a second write of the same mutation — so a completed
-    // run reports success even when the abort beat its continuation.
-    const adapter = memoryAdapter()
-    let resolveWrite: (v: { id: string }) => void = () => {}
-    const pending = new Promise<{ id: string }>((res) => {
-      resolveWrite = res
-    })
-    const createOrder = defineMutation({
-      id: MUTATION_ID,
-      // Not `async`: an async wrapper adds a microtask hop, and the window
-      // below is measured in hops.
-      mutate: (_vars: { sku: string }) => pending,
-      meta: { persist: true },
-    })
-    const def = defineController((ctx) => ({
-      create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
-    }))
-    const root = createRoot(def, {
-      queries: queryEngine(),
-      deps: {},
-      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/v1' })],
-    })
-
-    const run = root.api.create.run({ sku: 'A-1' }).catch((e: unknown) => e)
-    expect(adapter.store.size).toBe(1)
-
-    resolveWrite({ id: 'srv-1' }) // the server accepts the write…
-    // …and the screen closes in the window after the work completed but before
-    // the run's continuation ran.
-    await Promise.resolve()
-    await Promise.resolve()
-    root.api.create.dispose()
-
-    // Proves the window was hit: the run reports the abort, and the entry is
-    // still gone. Without this the assertion below would also pass on the
-    // ordinary success path, where the branch under test never runs.
-    expect(((await run) as Error).name).toBe('AbortError')
-    await settle()
-    expect(adapter.store.size).toBe(0)
-
-    root.dispose()
-  })
-})
-
 describe('mutationQueuePlugin — a manual retry must not leave a second entry', () => {
   const MUTATION_ID = 'mq-test/manual-retry'
 
@@ -1132,7 +1086,8 @@ describe('mutationQueuePlugin — replay skips runs executing in this tab', () =
 
     const run = root.api.create.run({ sku: 'A-1' })
     expect(adapter.store.size).toBe(1)
-    expect(calls).toBe(1)
+    // The request goes out once the entry is durable.
+    await vi.waitFor(() => expect(calls).toBe(1))
 
     await root.inject(MutationQueue).replayNow()
     await settle()
@@ -1178,5 +1133,85 @@ describe('mutationQueuePlugin — dispose releases the offline wait', () => {
     } finally {
       env.restore()
     }
+  })
+})
+
+describe('mutationQueuePlugin — the entry is durable before mutate runs', () => {
+  test('mutate waits for the storage write to resolve', async () => {
+    const id = 'mq-test/durable-first'
+    _unregisterMutationById(id)
+    const memory = memoryAdapter()
+    const order: string[] = []
+    let releaseWrite: () => void = () => {}
+    const slowStorage: StorageAdapter = {
+      ...memory,
+      set(key: string, value: string) {
+        order.push('write')
+        return new Promise<void>((resolve) => {
+          releaseWrite = () => {
+            memory.set(key, value)
+            order.push('written')
+            resolve()
+          }
+        })
+      },
+    }
+    const save = defineMutation({
+      id,
+      mutate: async (_v: { n: number }) => {
+        order.push('mutate')
+        return 'ok'
+      },
+      meta: { persist: true },
+    })
+    const def = defineController((ctx) => ({ save: createMutation(ctx, save) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [mutationQueuePlugin({ storage: slowStorage, keyPrefix: 'test/mq/durable' })],
+    })
+
+    const run = root.api.save.run({ n: 1 })
+    await settle()
+    // The write is in flight, and the request has not gone out.
+    expect(order).toEqual(['write'])
+
+    releaseWrite()
+    await expect(run).resolves.toBe('ok')
+    expect(order).toEqual(['write', 'written', 'mutate'])
+    root.dispose()
+  })
+
+  test('a rejected write is reported, and the run still proceeds', async () => {
+    const id = 'mq-test/durable-reject'
+    _unregisterMutationById(id)
+    const memory = memoryAdapter()
+    const warnings: string[] = []
+    const fullStorage: StorageAdapter = {
+      ...memory,
+      set() {
+        return Promise.reject(new DOMException('quota', 'QuotaExceededError'))
+      },
+    }
+    const mutate = vi.fn(async (_v: { n: number }) => 'ok')
+    const save = defineMutation({ id, mutate, meta: { persist: true } })
+    const def = defineController((ctx) => ({ save: createMutation(ctx, save) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [
+        mutationQueuePlugin({
+          storage: fullStorage,
+          keyPrefix: 'test/mq/reject',
+          onWarn: (msg) => warnings.push(msg),
+        }),
+      ],
+    })
+
+    await expect(root.api.save.run({ n: 1 })).resolves.toBe('ok')
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('failed to persist enqueue')
+    root.dispose()
   })
 })

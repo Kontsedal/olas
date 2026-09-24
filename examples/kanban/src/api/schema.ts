@@ -1,7 +1,7 @@
 /**
  * Zod schemas for the card form + `AmbientDeps` augmentation.
  *
- * The card form is built via `formFromZod` so leaf validators, FieldArray
+ * The card form is built via `createZodForm` so leaf validators, FieldArray
  * walking, and TS inference all come from the same schema. An async
  * `debouncedValidator` for "title is unique on this board" attaches to
  * the title field at controller-construction time (see `card-detail`).

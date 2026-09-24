@@ -2,11 +2,11 @@ import { createRoot, defineController, effect, queryEngine } from '@kontsedal/ol
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   type ConnectionState,
+  createConnectionState,
+  createLiveStream,
   type RealtimeHandler,
   type RealtimeService,
   type RealtimeSubscription,
-  useLiveStream,
-  useRealtimeConnection,
 } from '../src'
 
 declare module '@kontsedal/olas-core' {
@@ -52,11 +52,11 @@ const fakeRealtime = () => {
   return service
 }
 
-describe('useLiveStream', () => {
+describe('createLiveStream', () => {
   test('buffer caps at capacity, oldest events drop (flushMs=0)', () => {
     const realtime = fakeRealtime()
     const def = defineController((ctx) => {
-      const stream = useLiveStream<string>(ctx, 'logs', {
+      const stream = createLiveStream<string>(ctx, 'logs', {
         capacity: 3,
         flushMs: 0,
       })
@@ -85,7 +85,7 @@ describe('useLiveStream', () => {
     test('flushMs coalesces N emissions into one signal write', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<number>(ctx, 'logs', {
+        const stream = createLiveStream<number>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
@@ -121,7 +121,7 @@ describe('useLiveStream', () => {
       // stranded forever after resume().
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 50,
         })
@@ -150,7 +150,7 @@ describe('useLiveStream', () => {
     test('pause stops buffering; resume continues; buffer survives the pause', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
@@ -181,7 +181,7 @@ describe('useLiveStream', () => {
     test('dispose clears the pending flush timer and unsubscribes', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 100,
         })
@@ -209,7 +209,7 @@ describe('useLiveStream', () => {
     test('clear() empties without killing the subscription', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
@@ -235,10 +235,10 @@ describe('useLiveStream', () => {
   })
 })
 
-describe('useRealtimeConnection (T6.7)', () => {
+describe('createConnectionState (T6.7)', () => {
   test("reports 'unknown' when the transport can't report connection state", () => {
     const realtime = fakeRealtime() // no onConnectionChange
-    const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
+    const def = defineController((ctx) => ({ conn: createConnectionState(ctx) }))
     const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     // Old behavior lied with 'connected'; a transport with no
     // onConnectionChange genuinely can't know → 'unknown'.
@@ -259,7 +259,7 @@ describe('useRealtimeConnection (T6.7)', () => {
         }
       },
     }
-    const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
+    const def = defineController((ctx) => ({ conn: createConnectionState(ctx) }))
     const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     expect(root.api.conn.value).toBe('connected') // optimistic initial (has a reporter)
     conn.handler?.('offline')

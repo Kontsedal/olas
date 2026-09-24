@@ -1,5 +1,5 @@
 /**
- * Preferences feature — usePersisted round-trip across two roots wired to the
+ * Preferences feature — createPersisted round-trip across two roots wired to the
  * same in-memory storage adapter (a stand-in for two browser tabs).
  */
 

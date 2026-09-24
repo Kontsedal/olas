@@ -227,9 +227,10 @@ export function createStreamingTransform(
 }
 
 /**
- * Drain the global intake queue into a live root. Called from
- * `HydrationBoundary` on mount; idempotent — subsequent pushes after
- * drain go directly through the forwarder this installs.
+ * Connect a live root to the streamed hydration entries. Called from
+ * `HydrationBoundary` on mount. The root first receives every batch that has
+ * already arrived, then each new batch as the stream delivers it. Several
+ * roots can be installed at once. Returns the uninstall function.
  *
  * Exposed so consumers writing custom Provider shells can wire up the
  * stream without reaching through `<HydrationBoundary>`.
@@ -240,12 +241,8 @@ export function installStreamingIntake<Api>(root: Root<Api>): () => void {
     unknown
   >
   type Entry = { queryId: string; key: readonly unknown[]; data: unknown; lastUpdatedAt: number }
-  type Intake = { q: Entry[][]; push: (entries: Entry[]) => void }
-  // Apply every entry in a single signal `batch(...)` so subscribers see
-  // ONE notification per arriving stream batch instead of N. Without
-  // this, a `<script>` with 100 hydrated entries causes 100 separate
-  // signal updates — React batches re-renders but the signal graph
-  // still does N runs of every downstream `computed`.
+  type Sink = (entries: Entry[]) => void
+  type Intake = { q: Entry[][]; push: (entries: Entry[]) => void; sinks?: Set<Sink> }
   const toState = (entries: Entry[]) => ({
     version: 1 as const,
     entries: entries.map((e) => ({
@@ -255,33 +252,39 @@ export function installStreamingIntake<Api>(root: Root<Api>): () => void {
       lastUpdatedAt: e.lastUpdatedAt,
     })),
   })
-  const apply = (entries: Entry[]): void => {
+  // Apply every entry of one stream batch in a single signal `batch(...)`, so
+  // subscribers see ONE notification per batch instead of one per entry.
+  const apply: Sink = (entries) => {
     batch(() => root.hydrate(toState(entries)))
   }
-  const existing = g[STREAMING_GLOBAL] as Intake | undefined
-  if (existing !== undefined && Array.isArray(existing.q)) {
-    // Drain the pre-mount queue inside a single batch too — the same
-    // multi-batch payload that bootstrap pushed should land as one
-    // notification on mount.
-    batch(() => {
-      for (const entries of existing.q) root.hydrate(toState(entries))
-    })
+
+  // Upgrade the bootstrap queue — or nothing, when the bootstrap script did
+  // not run — into a fan-out intake. It keeps every batch it has seen and
+  // delivers each new one to every installed root. So a second boundary, or a
+  // StrictMode remount's fresh root, catches up on the stream so far instead
+  // of taking the intake away from the first.
+  let intake = g[STREAMING_GLOBAL] as Intake | undefined
+  if (intake?.sinks === undefined) {
+    const q = intake !== undefined && Array.isArray(intake.q) ? intake.q : []
+    const sinks = new Set<Sink>()
+    const upgraded: Intake = {
+      q,
+      sinks,
+      push(entries) {
+        q.push(entries)
+        for (const sink of sinks) sink(entries)
+      },
+    }
+    g[STREAMING_GLOBAL] = upgraded
+    intake = upgraded
   }
-  // Replace the intake with a live forwarder. Any post-mount pushes from
-  // the still-arriving stream go straight to the root.
-  const forwarder: Intake = {
-    q: [],
-    push(entries) {
-      apply(entries)
-    },
-  }
-  g[STREAMING_GLOBAL] = forwarder
+  const sinks = intake.sinks as Set<Sink>
+  batch(() => {
+    for (const entries of intake.q) root.hydrate(toState(entries))
+  })
+  sinks.add(apply)
   return () => {
-    // Re-install a bootstrap-style QUEUE (not an inert sink) on teardown, so
-    // entries still arriving from the stream after unmount are buffered instead
-    // of dropped — a later `installStreamingIntake` (e.g. a StrictMode remount,
-    // or a second boundary) drains `q`. Matches OLAS_BOOTSTRAP_SCRIPT (T4.7).
-    const queued: Entry[][] = []
-    g[STREAMING_GLOBAL] = { q: queued, push: (entries: Entry[]) => queued.push(entries) }
+    // Later batches keep queueing on the intake for whatever root installs next.
+    sinks.delete(apply)
   }
 }

@@ -236,6 +236,8 @@ export type MutateContext = {
   readonly signal: AbortSignal
   /** 0 for the first attempt, then one more per retry. */
   readonly attempt: number
+  /** The plugin that started the run through `host.mutations.run`, else `undefined`. */
+  readonly origin: string | undefined
 }
 
 /**

@@ -3,7 +3,7 @@
  *
  * `createKanbanRoot` builds a root with the same plugin set as production, but
  * lets each test inject its own broadcaster (for cross-tab + realtime
- * isolation) and storage adapter (for usePersisted).
+ * isolation) and storage adapter (for createPersisted).
  */
 
 import { createRoot, queryEngine } from '@kontsedal/olas-core'

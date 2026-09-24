@@ -2,7 +2,7 @@
  * Comments thread for the currently selected card.
  *
  * Library primitive demonstrated:
- *  - `useLiveStream(ctx, channel)` over the BroadcastChannel-backed realtime
+ *  - `createLiveStream(ctx, channel)` over the BroadcastChannel-backed realtime
  *    service. The stream buffers events; we filter by `cardId` and append to
  *    the local thread.
  *
@@ -22,7 +22,7 @@ import {
   signal,
 } from '@kontsedal/olas-core'
 import { Entities } from '@kontsedal/olas-entities'
-import { useLiveStream } from '@kontsedal/olas-realtime'
+import { createLiveStream } from '@kontsedal/olas-realtime'
 import { type Comment, REALTIME_CHANNEL, type RealtimeEvent } from '../../api'
 import { UserEntity } from '../../entities'
 import { activityScope, selectedCardScope } from '../../scopes'
@@ -50,7 +50,7 @@ export const commentsController = defineController(
     // Live stream from broadcast. Events filtered to `comment.added`
     // matching the current card id. Coalesced flush at 32ms — fast enough
     // for "feels live", slow enough to coalesce bursts.
-    const stream = useLiveStream<RealtimeEvent>(ctx, REALTIME_CHANNEL, { flushMs: 32 })
+    const stream = createLiveStream<RealtimeEvent>(ctx, REALTIME_CHANNEL, { flushMs: 32 })
 
     /**
      * Comments that arrived via realtime since the last refetch — keyed by
