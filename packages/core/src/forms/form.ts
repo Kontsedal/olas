@@ -29,6 +29,10 @@ import type { FormIssue, ValidatorResult } from './types'
 const FORM_BRAND = Symbol.for('olas.form')
 const FIELD_ARRAY_BRAND = Symbol.for('olas.fieldArray')
 
+const brand = (node: object, key: symbol): void => {
+  ;(node as Record<symbol, unknown>)[key] = true
+}
+
 const isForm = (x: unknown): x is Form<FormSchema> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FORM_BRAND] === true
 
@@ -120,8 +124,6 @@ function routeFormIssues(
 }
 
 class FormImpl<S extends FormSchema> implements Form<S> {
-  readonly [FORM_BRAND] = true
-
   readonly fields: S
   private readonly value$: ReadSignal<FormValue<S>>
   readonly errors: ReadSignal<FormErrors<S>>
@@ -186,6 +188,10 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     options?: FormOptions<S>,
     internalOptions?: { onValidatorError?: (err: unknown) => void },
   ) {
+    // The brand is set here rather than as a computed class-field key: a
+    // bundler keeps a class with a computed field key even when nothing uses
+    // it, which kept all of forms in every bundle built from `dist`.
+    brand(this, FORM_BRAND)
     this.fields = schema
     this.options = options
     this.validators = options?.validators ?? []
@@ -746,8 +752,6 @@ function walkErrors(
 }
 
 class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> {
-  readonly [FIELD_ARRAY_BRAND] = true
-
   readonly items: ReadSignal<ReadonlyArray<I>>
   private readonly value$: ReadSignal<FieldArrayValue<I>>
   readonly errors: ReadSignal<Array<FieldArrayItemErrors<I> | undefined>>
@@ -800,6 +804,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     options?: FieldArrayOptions<I>,
     internalOptions?: { onValidatorError?: (err: unknown) => void },
   ) {
+    brand(this, FIELD_ARRAY_BRAND) // see FormImpl's constructor
     this.itemFactory = itemFactory
     this.validators = options?.validators ?? []
     this.onValidatorError = internalOptions?.onValidatorError ?? null

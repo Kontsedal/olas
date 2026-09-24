@@ -4,24 +4,29 @@
 //      defined`). Comments are stripped before this check — the dist ships
 //      unminified with JSDoc, and several doc comments mention `__DEV__` on
 //      purpose; a comment cannot throw. Comment-only hits print a warning;
-//   2. the ESM entry `import`s and the CJS entry `require`s, touching one real
-//      export — catches a dist that typechecks but won't load (bad `exports`,
-//      ESM/CJS interop breakage, a missing built file).
-// Exits non-zero on any failure. Zero-dependency; pairs with publint + attw
-// (which check the packaging metadata) — this checks the artifacts actually run.
+//   2. the entry `import`s, and `require()`s too — the packages are ESM-only,
+//      and Node >= 20.19 loads ESM through `require()`, so a CommonJS consumer
+//      still works. Catches a dist that typechecks but won't load (bad
+//      `exports`, top-level await breaking `require()`, a missing built file).
+//   3. a controllers-only bundle built from core's dist carries neither forms
+//      nor the query engine. `tsdown` emits one shared chunk, so this rests on
+//      statement-level dead-code elimination, which one computed class-field
+//      key was once enough to defeat. A positive control proves the check sees
+//      both subsystems when they are imported.
+// Exits non-zero on any failure. Pairs with publint + attw (which check the
+// packaging metadata) — this checks the artifacts actually run.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { build } from 'esbuild'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const root = resolve(here, '..')
 const require = createRequire(import.meta.url)
 
-const entryFrom = (pkg, dir, kind) => {
-  const dot = pkg.exports?.['.']
-  const cond = kind === 'esm' ? dot?.import : dot?.require
-  const rel = cond?.default ?? cond ?? (kind === 'esm' ? pkg.module : pkg.main) ?? dot?.default
+const entryFrom = (pkg, dir) => {
+  const rel = pkg.exports?.['.']?.default
   return typeof rel === 'string' ? resolve(dir, rel) : null
 }
 
@@ -105,7 +110,7 @@ for (const name of readdirSync(join(root, 'packages'))) {
 
   // 1. __DEV__ leak guard — code only; comment mentions are harmless.
   for (const f of readdirSync(distDir)) {
-    if (!/\.(mjs|cjs)$/.test(f)) continue
+    if (!/\.js$/.test(f)) continue
     const raw = readFileSync(join(distDir, f), 'utf8')
     if (!raw.includes('__DEV__')) continue
     const code = stripComments(raw)
@@ -123,9 +128,9 @@ for (const name of readdirSync(join(root, 'packages'))) {
   }
 
   // 2. ESM import.
-  const esm = entryFrom(pkg, dir, 'esm')
+  const esm = entryFrom(pkg, dir)
   if (!esm || !existsSync(esm)) {
-    failures.push(`${pkg.name}: ESM entry missing (${esm ?? 'unresolved from exports/module'})`)
+    failures.push(`${pkg.name}: entry missing (${esm ?? 'unresolved from exports'})`)
   } else {
     try {
       const mod = await import(pathToFileURL(esm).href)
@@ -135,19 +140,49 @@ for (const name of readdirSync(join(root, 'packages'))) {
     }
   }
 
-  // 3. CJS require.
-  const cjs = entryFrom(pkg, dir, 'cjs')
-  if (!cjs || !existsSync(cjs)) {
-    failures.push(`${pkg.name}: CJS entry missing (${cjs ?? 'unresolved from exports/main'})`)
-  } else {
+  // 3. require() of the ESM entry, as a CommonJS consumer on Node >= 20.19.
+  if (esm && existsSync(esm)) {
     try {
-      const mod = require(cjs)
+      const mod = require(esm)
       if (!mod || (typeof mod === 'object' && Object.keys(mod).length === 0)) {
-        failures.push(`${pkg.name}: CJS entry exports nothing`)
+        failures.push(`${pkg.name}: require() of the entry exports nothing`)
       }
     } catch (err) {
-      failures.push(`${pkg.name}: CJS require failed — ${err?.message ?? err}`)
+      failures.push(`${pkg.name}: require() of the ESM entry failed — ${err?.message ?? err}`)
     }
+  }
+}
+
+// 4. Tree-shaking against the built dist.
+const coreEntry = join(root, 'packages', 'core', 'dist', 'index.js')
+if (existsSync(coreEntry)) {
+  const bundle = async (names) => {
+    const contents = `export { ${names} } from ${JSON.stringify(coreEntry.replaceAll('\\', '/'))}`
+    const out = await build({
+      stdin: { contents, resolveDir: root, loader: 'js' },
+      bundle: true,
+      write: false,
+      format: 'esm',
+      treeShaking: true,
+      external: ['@preact/signals-core'],
+      logLevel: 'silent',
+    })
+    return out.outputFiles[0].text
+  }
+  const FORMS = /olas\.form/
+  // esbuild emits `var QueryClient = class {`. A doc comment that names the
+  // class must not count.
+  const ENGINE = /\bQueryClient = class\b|\bclass QueryClient\b/
+  const lean = await bundle('createRoot, defineController, signal, computed')
+  if (FORMS.test(lean)) failures.push('core: a controllers-only bundle from dist retains forms')
+  if (ENGINE.test(lean)) {
+    failures.push('core: a controllers-only bundle from dist retains the query engine')
+  }
+  const full = await bundle('createRoot, createForm, createQuery, queryEngine')
+  if (!FORMS.test(full) || !ENGINE.test(full)) {
+    failures.push(
+      'core: the tree-shaking check no longer sees forms or the engine when they ARE imported',
+    )
   }
 }
 
@@ -160,5 +195,5 @@ if (failures.length > 0) {
 }
 console.log(
   `✓ dist smoke test passed for ${checked.length} published packages ` +
-    `(ESM import + CJS require + no __DEV__ leak in code):\n  ${checked.join(', ')}`,
+    `(import + require() of ESM + no __DEV__ leak in code), and core's dist tree-shakes:\n  ${checked.join(', ')}`,
 )

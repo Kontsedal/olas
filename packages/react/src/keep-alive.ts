@@ -36,10 +36,10 @@ const refCounts = new WeakMap<SuspendableController, number>()
  * screen's unmount can't suspend a controller the entering screen still uses
  * (T4.6). `suspend()` should still be idempotent for safety.
  */
-export function SuspendOnUnmount(props: {
-  controller: SuspendableController
-  children: ReactNode
-}): ReactElement {
+/** Props of `<SuspendOnUnmount>`. */
+export type SuspendOnUnmountProps = { controller: SuspendableController; children: ReactNode }
+
+export function SuspendOnUnmount(props: SuspendOnUnmountProps): ReactElement {
   const { controller, children } = props
   useIsomorphicLayoutEffect(() => {
     const prev = refCounts.get(controller) ?? 0

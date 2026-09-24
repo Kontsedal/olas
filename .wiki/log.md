@@ -1669,3 +1669,26 @@ Wiki: `modules/react.md` (surface, subscription, a new `mutate`/`run` section), 
 Wiki: `decisions/brand-markers-not-classes.md` is rewritten, because its argument for a string `__olas` no longer holds. Also updated: `entities/scope.md`, `entities/ctx.md`, `flows/query-subscription.md`, `glossary.md`, `overview.md`, `modules/query.md`, `modules/controller.md`, and a new infinite section in `decisions/canonical-vs-optimistic-writes.md`. That page's plugin vocabulary (`SetDataEvent`, `'set'`, `setEntryData`) is pre-v2 and joins the W6 rewrite list.
 
 Tests: scope brand/identity (no internal keys in `Object.keys`), the entities brand, and three infinite parity tests. CI green.
+
+## [2026-09-25 00:30] ingest | 1.0 W5: ESM only, stripped types, dist tree-shaking and size budgets
+
+**Packaging.**
+- All ten packages build `format: ['esm']` to `dist/*.js` and `dist/*.d.ts`, with `{ types, default }` exports, no `main` or `module`, and `engines.node >= 20.19`. The root `attw` script uses `--profile esm-only`.
+- The mutation registry is a module-level `Map`; the `globalThis` slot is gone.
+- `scripts/verify-dist.mjs` loads each entry through `import()` and `require()`, and bundles a controllers-only entry from core's dist with esbuild. It asserts no `olas.form` and no `QueryClient = class`, with a positive control.
+- A new CI job, `dist-on-node`, runs the smoke on Node 20.19, 22 and 24. The main job moved to Node 22.
+
+**Types.**
+- `stripInternal` is on in `tsconfig.base.json`. `tsdown`'s declaration build honours it: core's type chunk went from 2,493 to 1,716 lines, and `QueryClient` and `CtxInternals` left the `.d.ts`.
+- New `scripts/check-public-types.ts` (`pnpm check:public-types`, in CI) walks every entry's `.d.ts`. A type a public signature names that no entry exports fails it.
+- The first run found `DebugEventBody`, `DefineControllerOptions`, `StandardSchemaV1Issue`, `StandardSchemaV1Result` and zod's `UnwrapZod`; all are now exported.
+- The anonymous option and result types are named: `QuerySelectOptions` (which also gained `keepDataWhileDisabled`), `TimingOptions`, `EntityOptions`, the React props types, `OlasContext`, `UseValueOptions` / `UseValueSelectOptions` and `UseFieldInputOptions`.
+- `isStandardSchema` and `ErrorContextInput` left core's index.
+- A `useValue` finding: an intersection in the `select` overload's options (`UseValueOptions<T, U> & { select }`) broke inference inside the object literal, so `isEqual`'s parameters lost the type `select` gave them. Two plain object types fixed it.
+
+**Bundle.**
+- `FormImpl` and `FieldArrayImpl` set their brands in the constructor. Computed class-field keys kept the classes in every bundle built from `dist`.
+- A controllers-only bundle from dist went from 8.62 to 6.35 KB gzipped, matching `src`. A negative test that reintroduced the class field made the smoke fail.
+- `size-limit` budgets for thirteen entries are in `.size-limit.json` (`pnpm size`, in CI).
+
+Wiki: new `decisions/esm-only-build.md`; CLAUDE.md's command list and CI line are updated. BACKLOG: the `[planned]` dist-retention item is removed, since it landed.

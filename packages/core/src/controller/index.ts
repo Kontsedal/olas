@@ -1,4 +1,4 @@
-export { defineController } from './define'
+export { type DefineControllerOptions, defineController } from './define'
 export { createRoot, createRootWithProps } from './root'
 export type {
   AmbientDeps,

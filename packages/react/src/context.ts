@@ -19,7 +19,10 @@ OlasContext.displayName = 'OlasContext'
  * (typically in `main.tsx`) and passed through here so React doesn't own the
  * controller's lifetime — the adapter only reads. See spec §16.
  */
-export function OlasProvider(props: { root: Root<unknown>; children: ReactNode }) {
+/** Props of `<OlasProvider>`. */
+export type OlasProviderProps = { root: Root<unknown>; children: ReactNode }
+
+export function OlasProvider(props: OlasProviderProps) {
   return createElement(OlasContext.Provider, { value: props.root }, props.children)
 }
 
@@ -63,11 +66,14 @@ export function useRoot<Api = unknown>(): Api {
  * Each call returns a *new* React context. The default `<OlasProvider>` /
  * `useRoot()` remain available for single-root apps.
  */
-export function createOlasContext<Api>(displayName?: string): {
+/** What `createOlasContext<Api>()` returns: a provider and `useRoot` typed to one root. */
+export type OlasContext<Api> = {
   Provider: (props: { root: Root<Api>; children: ReactNode }) => ReactNode
   useRoot: () => Api
   Context: Context<Root<Api> | null>
-} {
+}
+
+export function createOlasContext<Api>(displayName?: string): OlasContext<Api> {
   const Context = createContext<Root<Api> | null>(null)
   if (displayName !== undefined) Context.displayName = displayName
 
@@ -123,7 +129,8 @@ export function createOlasContext<Api>(displayName?: string): {
  * a controller def + the dehydrated state and produces a root that
  * matches what the server rendered.
  */
-export function HydrationBoundary<Api>(props: {
+/** Props of `<HydrationBoundary>`. */
+export type HydrationBoundaryProps<Api> = {
   def: import('@kontsedal/olas-core').ControllerDef<void, Api>
   options: RootOptions<Record<string, unknown>>
   /**
@@ -135,7 +142,9 @@ export function HydrationBoundary<Api>(props: {
    */
   streaming?: boolean
   children: ReactNode
-}): ReactNode {
+}
+
+export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): ReactNode {
   const { def, options, children, streaming = true } = props
 
   const rootRef = useRef<Root<Api> | null>(null)

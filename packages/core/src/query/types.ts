@@ -446,6 +446,19 @@ export type QuerySubscriptionOptions<Args extends readonly unknown[]> = {
 }
 
 /**
+ * `createQuery`'s options with a `select` projection: the subscription reports
+ * `select(data)` instead of the cached value. The projection runs per
+ * subscriber; the cache keeps the raw value.
+ */
+export type QuerySelectOptions<
+  Args extends readonly unknown[],
+  T,
+  U,
+> = QuerySubscriptionOptions<Args> & {
+  select: (data: T) => U
+}
+
+/**
  * Internal shape — what `createUse` accepts. Includes the optional `select`
  * field used by the `select` overload on `Ctx.use`. Not exported on the
  * public surface; consumers use the typed overload.

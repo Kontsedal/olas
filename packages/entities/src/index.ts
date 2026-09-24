@@ -75,6 +75,18 @@ export type EntityDef<T> = {
   readonly [PHANTOM]?: T
 }
 
+/** What `defineEntity` takes. */
+export type EntityOptions<T> = {
+  /** Unique among the entities one plugin is given; the store's partition key. */
+  name: string
+  /** The entity's id when `value` is one of this type, else `null` / `undefined`. */
+  idOf: (value: T) => string | null | undefined
+  /** See `EntityDef.isCanonical`. */
+  isCanonical?: (value: T) => boolean
+  /** Soft cap on unique ids retained — see `EntityDef.maxSlots`. */
+  maxSlots?: number
+}
+
 /**
  * Declare an entity type. `name` MUST be unique within a plugin instance;
  * the plugin uses it as the partition key in the normalized store and the
@@ -96,14 +108,7 @@ export type EntityDef<T> = {
  * })
  * ```
  */
-export function defineEntity<T>(opts: {
-  name: string
-  idOf: (value: T) => string | null | undefined
-  /** See `EntityDef.isCanonical`. */
-  isCanonical?: (value: T) => boolean
-  /** Soft cap on unique ids retained — see `EntityDef.maxSlots`. */
-  maxSlots?: number
-}): EntityDef<T> {
+export function defineEntity<T>(opts: EntityOptions<T>): EntityDef<T> {
   return {
     [BRAND]: 'entity',
     name: opts.name,

@@ -12,6 +12,7 @@ export type {
   CtrlApi,
   CtrlProps,
   Ctx,
+  DefineControllerOptions,
   Field,
   LazyChild,
   Root,
@@ -24,23 +25,30 @@ export { createRoot, defineController } from './controller'
 // genuinely needs it can reach the key through `Symbol.for('olas.ctx.internals')`,
 // which is the point of using a registered symbol, and takes the risk knowingly.
 // Errors & devtools
-export type { DebugBus, DebugCacheEntry, DebugEvent, DebugEventMeta } from './devtools'
+export type {
+  DebugBus,
+  DebugCacheEntry,
+  DebugEvent,
+  DebugEventBody,
+  DebugEventMeta,
+} from './devtools'
 // Emitter
 export type { Emitter, EmitterErrorReporter } from './emitter'
 export { createEmitter } from './emitter'
-export type { ErrorContext, ErrorContextInput, ErrorHandler } from './errors'
+export type { ErrorContext, ErrorHandler } from './errors'
 // Forms — stdlib validators + Standard Schema adapter + debouncedValidator
 export type {
   FieldTransform,
   FormIssue,
   StandardSchemaV1,
+  StandardSchemaV1Issue,
+  StandardSchemaV1Result,
   ValidateOn,
   Validator,
   ValidatorResult,
 } from './forms'
 export {
   email,
-  isStandardSchema,
   max,
   maxLength,
   min,
@@ -130,6 +138,7 @@ export type {
   QueryActions,
   QueryDefaults,
   QueryMeta,
+  QuerySelectOptions,
   QuerySpec,
   QuerySubscription,
   QuerySubscriptionOptions,
@@ -147,7 +156,7 @@ export { createSelection } from './selection'
 export type { Computed, ReadSignal, Signal } from './signals'
 export { batch, computed, effect, signal, untracked } from './signals'
 // Timing
-export type { TimingSignal } from './timing'
+export type { TimingOptions, TimingSignal } from './timing'
 export { debounced, throttled } from './timing'
 
 // Utilities

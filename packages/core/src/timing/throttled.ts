@@ -1,7 +1,7 @@
 import { effect, signal } from '../signals'
 import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
-import type { TimingSignal } from './debounced'
+import type { TimingOptions, TimingSignal } from './debounced'
 
 /**
  * Time source — `Date.now()`. Stays in lockstep with `vi.setSystemTime()`
@@ -29,7 +29,7 @@ function now(): number {
 export function throttled<T>(
   source: ReadSignal<T>,
   ms: number,
-  options?: { signal?: AbortSignal; leading?: boolean; trailing?: boolean },
+  options?: TimingOptions,
 ): TimingSignal<T> {
   const leading = options?.leading ?? true
   const trailing = options?.trailing ?? true

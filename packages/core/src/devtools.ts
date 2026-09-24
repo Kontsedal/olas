@@ -31,7 +31,7 @@ export type DebugEventMeta = {
  * {@link DebugEventMeta} onto each (see below). Spec §14. Adding new variants
  * is non-breaking — consumers `switch` on `type` and ignore unknowns.
  */
-type DebugEventBody =
+export type DebugEventBody =
   | {
       type: 'controller:constructed'
       path: readonly string[]

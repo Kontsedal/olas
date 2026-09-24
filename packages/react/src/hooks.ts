@@ -28,6 +28,20 @@ function subscribeOnChange<T>(s: ReadSignal<T>, onChange: () => void): () => voi
 const isAbortError = (err: unknown): boolean =>
   typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError'
 
+/** Options for `useValue`. */
+export type UseValueOptions<T> = {
+  /** Decides when a new value re-renders. Default `Object.is`. */
+  isEqual?: (a: T, b: T) => boolean
+}
+
+/** Options for `useValue` with a projection: the hook returns `select(value)`. */
+export type UseValueSelectOptions<T, U> = {
+  /** Project the value. The hook returns the projection and compares it with `isEqual`. */
+  select: (value: T) => U
+  /** Decides when a new projection re-renders. Default `Object.is`. */
+  isEqual?: (a: U, b: U) => boolean
+}
+
 /**
  * Subscribe to a single read-signal and return its current value. Any
  * `ReadSignal` works: a `signal`, a `computed`, a `Field`, a `Form` or a
@@ -51,12 +65,8 @@ const isAbortError = (err: unknown): boolean =>
  * })
  * ```
  */
-export function useValue<T>(signal: ReadSignal<T>): T
-export function useValue<T, U>(
-  signal: ReadSignal<T>,
-  options: { select: (value: T) => U; isEqual?: (a: U, b: U) => boolean },
-): U
-export function useValue<T>(signal: ReadSignal<T>, options: { isEqual: (a: T, b: T) => boolean }): T
+export function useValue<T, U>(signal: ReadSignal<T>, options: UseValueSelectOptions<T, U>): U
+export function useValue<T>(signal: ReadSignal<T>, options?: UseValueOptions<T>): T
 export function useValue<T, U = T>(
   signal: ReadSignal<T>,
   options?: { select?: (value: T) => U; isEqual?: (a: U, b: U) => boolean },
@@ -294,6 +304,14 @@ export function useField<T>(field: Field<T>): UseFieldResult<T> {
   return { ...snap, ...actions }
 }
 
+/** Options for `useFieldInput`. A field whose value is not a string needs `transform`. */
+export type UseFieldInputOptions<T> = {
+  /** Converts between the field's value and the input's string. */
+  transform?: FieldTransform<T>
+  /** Passed through as the input's `name`. */
+  name?: string
+}
+
 /** Props `useFieldInput` returns, ready to spread onto a native input. */
 export type UseFieldInputResult = {
   value: string
@@ -334,15 +352,15 @@ export type UseFieldInputResult = {
  */
 export function useFieldInput<T extends string>(
   field: Field<T>,
-  options?: { name?: string },
+  options?: UseFieldInputOptions<T>,
 ): UseFieldInputResult
 export function useFieldInput<T>(
   field: Field<T>,
-  options: { transform: FieldTransform<T>; name?: string },
+  options: UseFieldInputOptions<T> & { transform: FieldTransform<T> },
 ): UseFieldInputResult
 export function useFieldInput<T>(
   field: Field<T>,
-  options?: { transform?: FieldTransform<T>; name?: string },
+  options?: UseFieldInputOptions<T>,
 ): UseFieldInputResult {
   const transform = options?.transform
   // Keep the latest transform in a ref so the handlers memo keys on [field]

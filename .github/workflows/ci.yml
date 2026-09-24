@@ -17,7 +17,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
@@ -42,9 +42,41 @@ jobs:
       - run: pnpm --filter "./examples/*" test
 
       # Verify the shipped ARTIFACTS, not just the source (T7.2), against the
-      # dist/ built above: publint (packaging metadata), attw (type resolution
-      # across CJS/ESM), and a smoke test that ESM+CJS actually load and no
-      # `__DEV__` literal leaked into the production output.
+      # dist/ built above: publint (packaging metadata), attw (type resolution,
+      # ESM-only profile), and a smoke test that the entry imports, loads through
+      # require(), and leaked no `__DEV__` literal into the production output.
       - run: pnpm publint
       - run: pnpm attw
+      - run: pnpm smoke:dist
+
+      # Every type a public signature names must be exported, so a consumer
+      # can write down what a hover shows them.
+      - run: pnpm check:public-types
+
+      # Bundle-size budgets, per entry, against the built dist (.size-limit.json).
+      - run: pnpm size
+
+  # The packages are ESM-only and promise that a CommonJS consumer can still
+  # require() them on Node >= 20.19. Check that on the oldest supported Node and
+  # the current LTS lines, against the built dist.
+  dist-on-node:
+    name: dist loads on Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ['20.19', '22', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
       - run: pnpm smoke:dist

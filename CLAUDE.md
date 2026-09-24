@@ -21,7 +21,10 @@ pnpm lint                                          # biome check .
 pnpm exec biome check --write .                    # auto-fix lint + format
 pnpm test                                          # vitest run (all packages)
 pnpm test:watch                                    # vitest watch
-pnpm build                                         # tsdown per package → dist/{mjs,cjs,d.mts,d.cts}
+pnpm build                                         # tsdown per package → dist/{js,d.ts} (ESM only)
+pnpm smoke:dist                                    # after build: dist imports, require()s, tree-shakes
+pnpm check:public-types                            # after build: every type in a public signature is exported
+pnpm size                                          # after build: bundle-size budgets (.size-limit.json)
 
 pnpm vitest run packages/core/tests/query.test.ts  # run one test file
 pnpm vitest run -t "race protection"               # run by test-name substring
@@ -30,7 +33,7 @@ pnpm wiki:lint                                     # check .wiki/ for broken cit
 pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
-CI = `install → typecheck → lint → test → build`. Reproducing CI locally is the five commands above in order.
+CI = `install → build → typecheck → lint → test → examples → publint → attw → smoke:dist → check:public-types → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`.
 
 ## Releasing
 

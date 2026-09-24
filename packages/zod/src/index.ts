@@ -193,8 +193,12 @@ function defaultInitial(schema: AnyZodType): unknown {
 
 type AnyForm = Form<Record<string, Field<any> | Form<any> | FieldArray<any>>>
 
-// Strip the same wrappers as the runtime `unwrap` helper, at the type level.
-type UnwrapZod<S> =
+/**
+ * A Zod schema with its `.default()`, `.optional()` and `.nullable()` wrappers
+ * stripped — the type-level twin of the runtime unwrap `createZodForm` does
+ * before choosing a leaf.
+ */
+export type UnwrapZod<S> =
   S extends z.ZodDefault<infer Inner>
     ? UnwrapZod<Inner>
     : S extends z.ZodOptional<infer Inner>

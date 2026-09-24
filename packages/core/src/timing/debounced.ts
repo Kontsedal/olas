@@ -15,6 +15,16 @@ import type { ReadSignal } from '../signals/types'
  *
  * Both are no-ops when nothing is pending.
  */
+/** Options for `debounced` and `throttled`. */
+export type TimingOptions = {
+  /** Aborting it stops the timer and releases the source subscription. */
+  signal?: AbortSignal
+  /** Emit on the leading edge of a window. */
+  leading?: boolean
+  /** Emit on the trailing edge of a window. */
+  trailing?: boolean
+}
+
 export type TimingSignal<T> = ReadSignal<T> & {
   cancel(): void
   flush(): void
@@ -44,7 +54,7 @@ export type TimingSignal<T> = ReadSignal<T> & {
 export function debounced<T>(
   source: ReadSignal<T>,
   ms: number,
-  options?: { signal?: AbortSignal; leading?: boolean; trailing?: boolean },
+  options?: TimingOptions,
 ): TimingSignal<T> {
   const leading = options?.leading ?? false
   const trailing = options?.trailing ?? true

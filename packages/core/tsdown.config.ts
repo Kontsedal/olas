@@ -5,7 +5,7 @@ export default defineConfig({
     index: 'src/index.ts',
     testing: 'src/testing.ts',
   },
-  format: ['esm', 'cjs'],
+  format: ['esm'],
   dts: true,
   sourcemap: true,
   clean: true,
@@ -14,5 +14,5 @@ export default defineConfig({
   define: {
     __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
   },
-  outExtensions: ({ format }) => ({ js: format === 'es' ? '.mjs' : '.cjs' }),
+  outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
 })

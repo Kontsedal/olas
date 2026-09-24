@@ -88,20 +88,6 @@ Examples:
 
 [SPEC §14] An out-of-page extension that consumes `root.__debug.subscribe(...)` — controller tree inspector, cache timeline, mutation log, signal dependency graph, subscription view. The in-app `@kontsedal/olas-devtools` panel already covers the same surfaces; the extension would make them available without instrumenting the page.
 
-### [planned] `dist` retains the forms subsystem, costing half the tree-shaking win
-
-The ctx split made `createRoot` stop statically reaching forms and the query engine. Against `src/` a controllers-only bundle is 4.8 KB gzipped, down from 20.1. Against the published `dist/` it is **8.1 KB**, down from 19.9 — the `QueryClient` exclusion survives the build, the forms exclusion does not.
-
-Cause: `tsdown` flattens the package into one shared chunk, so exclusion inside it depends on statement-level dead-code elimination rather than module-level. `FormImpl` and `FieldArrayImpl` declare their brand markers as computed class-field keys (`readonly [FORM_BRAND] = true`, `forms/form.ts:121` and `:787`), and esbuild will not drop a class with a computed field key even when nothing references it. Verified: a signals-only bundle built from `dist/index.mjs` still contains `olas.form`.
-
-Three ways out, cheapest first: assign the brands inside the constructor instead of as computed field keys; add pure annotations; or configure tsdown to preserve module structure in the output. The first is a two-line change and should be measured before the others are considered.
-
-`sideEffects: false` does not help — it works at module granularity and the chunk is used.
-
-Also retained unconditionally in every bundle: the top-level `globalRegistry(Symbol.for('olas.queryRegistry'))` writes in `query/plugin.ts`. Small, but the same class of problem.
-
-Worth doing before 1.0, because the published numbers are the ones consumers will quote back.
-
 ### [idea] `useQuery` re-renders on every `isFetching` flip
 
 [from the 0.9 review] `useQuery` snapshots all eight signals on an `AsyncState`, so a component that reads only `data` still re-renders when a background refetch starts and again when it ends. TanStack answers this with `select` (derive and compare) and `notifyOnChangeProps` (subscribe to a subset). Two related findings in the same hook: the `isEqual` short-circuit is gated on selector identity (`packages/react/src/hooks.ts:90`), so an inline selector — the common case — never reaches it; and `useSuspenseQuery` throws a fresh promise per suspended render (`hooks.ts:208` with `packages/core/src/query/use.ts:123-130`), with the `!cur` path throwing an already-rejected one.

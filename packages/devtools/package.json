@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-devtools",
   "version": "0.8.0",
-  "description": "Olas in-app devtools \u2014 controller tree inspector, cache timeline, mutation log, signal graph.",
+  "description": "Olas in-app devtools — controller tree inspector, cache timeline, mutation log, signal graph.",
   "keywords": [
     "olas",
     "controller-tree",
@@ -14,7 +14,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   },
   "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
   "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/devtools#readme",
@@ -27,19 +27,11 @@
     "url": "https://github.com/Kontsedal/olas/issues"
   },
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.cts",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": {
-        "types": "./dist/index.d.mts",
-        "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./dist/index.d.cts",
-        "default": "./dist/index.cjs"
-      }
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     }
   },
   "files": [

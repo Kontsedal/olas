@@ -1,17 +1,23 @@
 export {
   createOlasContext,
   HydrationBoundary,
+  type HydrationBoundaryProps,
+  type OlasContext,
   OlasProvider,
+  type OlasProviderProps,
   useRoot,
 } from './context'
 export {
   type MutateFn,
+  type UseFieldInputOptions,
   type UseFieldInputResult,
   type UseFieldResult,
   type UseMutationCallbacks,
   type UseMutationResult,
   type UseQueryResult,
   type UseSuspenseQueryResult,
+  type UseValueOptions,
+  type UseValueSelectOptions,
   useField,
   useFieldInput,
   useMutation,
@@ -22,6 +28,7 @@ export {
 export {
   type SuspendableController,
   SuspendOnUnmount,
+  type SuspendOnUnmountProps,
   useSuspendOnHidden,
 } from './keep-alive'
 export {

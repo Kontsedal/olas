@@ -17,6 +17,7 @@ import type {
   LocalCache,
   Query,
   QueryActions,
+  QuerySelectOptions,
   QuerySubscription,
   QuerySubscriptionOptions,
 } from './types'
@@ -35,11 +36,7 @@ import { createInfiniteUse, createUse } from './use'
 export function createQuery<Args extends unknown[], T, U>(
   ctx: Ctx,
   source: Query<Args, T>,
-  options: {
-    key?: () => readonly [...Args]
-    enabled?: () => boolean
-    select: (data: T) => U
-  },
+  options: QuerySelectOptions<readonly [...Args], T, U>,
 ): QuerySubscription<U>
 export function createQuery<Args extends unknown[], T>(
   ctx: Ctx,

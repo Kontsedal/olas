@@ -6,7 +6,7 @@
   "license": "MIT",
   "packageManager": "pnpm@10.29.3",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   },
   "scripts": {
     "build": "cross-env NODE_ENV=production pnpm -r --filter \"./packages/*\" build",
@@ -18,22 +18,27 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "publint": "pnpm -r --filter \"./packages/*\" --filter \"!@kontsedal/olas-integration-tests\" exec publint",
-    "attw": "pnpm -r --filter \"./packages/*\" --filter \"!@kontsedal/olas-integration-tests\" exec attw --pack . --profile node16",
+    "attw": "pnpm -r --filter \"./packages/*\" --filter \"!@kontsedal/olas-integration-tests\" exec attw --pack . --profile esm-only",
     "smoke:dist": "node scripts/verify-dist.mjs",
-    "verify:dist": "pnpm build && pnpm publint && pnpm attw && pnpm smoke:dist",
+    "verify:dist": "pnpm build && pnpm publint && pnpm attw && pnpm smoke:dist && pnpm check:public-types && pnpm size",
     "changeset": "changeset",
     "release": "pnpm build && changeset publish",
     "wiki:lint": "tsx scripts/wiki-lint.ts",
-    "prose:lint": "node scripts/prose-lint.mjs"
+    "prose:lint": "node scripts/prose-lint.mjs",
+    "size": "size-limit",
+    "check:public-types": "tsx scripts/check-public-types.ts"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.4.15",
     "@changesets/cli": "^2.31.0",
+    "@size-limit/preset-small-lib": "^14.0.0",
     "@types/node": "^25.9.0",
     "@vitest/coverage-v8": "4.1.6",
     "cross-env": "^10.1.0",
+    "esbuild": "^0.28.0",
     "publint": "^0.3.22",
+    "size-limit": "^14.0.0",
     "ts-morph": "^28.0.0",
     "tsdown": "^0.22.0",
     "tsx": "^4.22.2",
