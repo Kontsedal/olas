@@ -28,7 +28,6 @@ import {
 import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
-import type { AppApi } from '../../app.controller'
 import { Button, Card, Skeleton } from '../../ui'
 import { FilterChips } from '../filters/FilterChips'
 import { SearchBar } from '../search/SearchBar'
@@ -37,7 +36,7 @@ import { Column } from './Column'
 import { NewColumnButton } from './NewColumnButton'
 
 export function Board() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const board = app.board.board
   const boardQuery = useQuery(board)
 

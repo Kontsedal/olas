@@ -678,36 +678,6 @@ export class ControllerInstance {
         }
       },
 
-      session<Props, Api>(
-        def: ControllerDef<Props, Api>,
-        props: Props,
-        options?: { deps?: Partial<Record<string, unknown>> },
-      ): readonly [Api, () => void] {
-        assertLive('session')
-        const segment = self.makeChildSegment(getFactory(def), getName(def))
-        const override = options?.deps
-        const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
-        const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
-        const api = childInstance.construct(getFactory(def), props)
-        const entry: LifecycleEntry = { kind: 'child', instance: childInstance }
-        const node = self.entries.push(entry)
-        let disposed = false
-        const dispose = (): void => {
-          if (disposed) return
-          disposed = true
-          self.entries.unlink(node)
-          try {
-            childInstance.dispose()
-          } catch (err) {
-            dispatchError(self.rootShared.onError, err, {
-              kind: 'effect',
-              controllerPath: self.path,
-            })
-          }
-        }
-        return [api, dispose] as const
-      },
-
       collection<Item, K, Props, Api, R extends CollectionFactoryResult>(
         options:
           | CollectionHomogeneousOptions<Item, K, Props, Api>

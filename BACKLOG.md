@@ -90,24 +90,11 @@ Examples:
 
 ### [idea] `useQuery` re-renders on every `isFetching` flip
 
-[from the 0.9 review] `useQuery` snapshots all eight signals on an `AsyncState`, so a component that reads only `data` still re-renders when a background refetch starts and again when it ends. TanStack answers this with `select` (derive and compare) and `notifyOnChangeProps` (subscribe to a subset). Two related findings in the same hook: the `isEqual` short-circuit is gated on selector identity (`packages/react/src/hooks.ts:90`), so an inline selector — the common case — never reaches it; and `useSuspenseQuery` throws a fresh promise per suspended render (`hooks.ts:208` with `packages/core/src/query/use.ts:123-130`), with the `!cur` path throwing an already-rejected one.
+[from the 0.9 review] `useQuery` snapshots all eight signals on an `AsyncState`, so a component that reads only `data` still re-renders when a background refetch starts and again when it ends. TanStack answers this with `select` (derive and compare) and `notifyOnChangeProps` (subscribe to a subset). A related finding in the same hook: `useValue`'s `isEqual` short-circuit is gated on selector identity, so an inline selector, the common case, never reaches it.
 
 ### [idea] No `useInfiniteQuery`
 
 [from the 0.9 review] `defineInfiniteQuery` exists in core, and the React adapter has no hook for it. `examples/kanban/src/features/archive/ArchiveDrawer.tsx` hand-rolls five separate `use(...)` subscriptions to cover what one hook should return. That example is the evidence for the shape the hook needs.
-
-### [idea] Four smaller defects in the React adapter
-
-[from the 0.9 review]
-
-- `packages/react/src/context.ts:160-163` disposes a live root during render when `def` identity changes, and the replacement root reuses the original `options.hydrate` — so the new root hydrates from the old root's server state.
-- The streaming intake teardown clobbers a second boundary (`packages/react/src/streaming.ts:281-288`).
-- `useField` and `useMutation.reset` return unmemoized action closures, so every consumer of a memoized child re-renders.
-- `packages/react/package.json` declares a top-level `"types": "./dist/index.d.cts"` next to `"module": "./dist/index.mjs"`. A bundler that falls back to the top-level `types` gets CJS declarations for an ESM entry.
-
-### [idea] `useFieldInput` and `createOlasContext` have no consumers
-
-[from the 0.9 review] Neither is used by any example or test. An export nobody calls is an export nobody has checked. Either give each one an example and a test, or deprecate it. `useFieldInput` is the more defensible of the two — it is the accessible-input shape — and the four examples all hand-roll `value`/`onChange`/`onBlur` instead, which is itself the argument for wiring one of them through it.
 
 ### [idea] Three gaps in `@kontsedal/olas-realtime`
 
@@ -176,18 +163,6 @@ Each of the four could be a separate change; they share one question, which is w
 [noticed during T5.2] Core's `validator()` now returns `FormIssue[]` with paths, and form-level validators route them onto fields. But `formFromZod` still lifts root refines via `rootOnlyZodValidator`, which keeps only **empty-path** issues — so `z.object({...}).refine(fn, { path: ['confirm'] })` is dropped rather than landing on `confirm`. Routing them means distinguishing "root refine targeting a field" from a leaf-schema failure at the same path (leaf validators already own the latter), else the message double-reports. Options: filter root issues to `code: 'custom'` refinements and return them as `FormIssue[]`, or drop per-leaf `zodValidator`s and drive everything from one whole-form `validator(schema)` (bigger change — affects per-leaf `validateOn` and async semantics). Needs its own tests.
 
 ## Queries / data layer
-
-### [idea] `useQuery({ suspense: true })` on a disabled query suspends forever
-
-A disabled query, meaning `enabled: () => false`, is `status: 'idle'` with no data. A suspense hook therefore throws `subscription.promise()` and stays suspended indefinitely, and the fallback never resolves. T4.7 tried throwing a descriptive error instead, but an idle-with-no-data subscription is **indistinguishable from one torn down during `root.dispose()`** (both detach → idle), so the hard throw fired during teardown (false positives) and — thrown in render — React 19 re-reports it to node's `uncaughtException`, failing the vitest run. A clean fix needs a way to tell "intentionally disabled" from "transiently idle": e.g. surface an `enabled`/`disabled` flag on the subscription, or a dedicated `status: 'disabled'`. Until then, don't combine `suspense` with a disabled query; gate the whole subtree instead (`{condition && <SuspenseView/>}`).
-
-### [idea] `peek` / `write` for infinite queries
-
-`Query` gained `peek`, a synchronous non-creating read per §5.5, and `write`, a canonical no-snapshot patch per §6.4. `InfiniteQuery` has neither, so the leak `write` fixes is still reachable there. A fire-and-forget `infiniteQuery.setData(...)` leaves a live snapshot per call, and folding a server push into a page array is exactly the shape the realtime recipe uses. The plumbing exists on both sides — `InfiniteEntry.setData` already takes `{ track: false }` and `setEntryData` already routes infinite writes through it — so this is mostly `peekPages` and `writePages` on the client plus two handle methods. Open question worth settling first: `peek` on an infinite query should probably return the **pages array** (`TPage[] | undefined`, matching what `setData`'s updater sees) rather than the flattened `items`, but the flattened form is what most callers want to read.
-
-### [idea] `subscription.refetch()` rejects when the subscription is detached
-
-`SubscriptionImpl.refetch` rejects with `new Error('[olas] no active subscription')` when there is no bound entry — i.e. whenever `enabled` is false (§5.7's detach). Consumers wiring a "Retry" button to `refetch()` therefore need a `.catch(() => {})` on every call site whose `enabled` can be false. That exists purely to silence a rejection carrying no information, and one real app has four of them. Options: resolve to `undefined` instead (breaks the `Promise<T>` return type — a major), expose `isAttached` on `AsyncState` so callers can branch, or keep the rejection and export the sentinel as a named error so it can be filtered rather than blanket-caught. Not obviously worth an API change; recorded because the `.catch()` noise reads like carelessness at the call sites and it isn't.
 
 ### [dropped] A React hook that creates a query subscription (`useQuery(query, { key })`)
 

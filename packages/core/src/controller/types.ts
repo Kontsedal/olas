@@ -32,7 +32,7 @@ export interface AmbientDeps {
  * A reactive form field. Extends `ReadSignal<T>` for the current value, plus
  * five signals for state (errors / isValid / isDirty / touched / isValidating)
  * and four methods (`set`, `reset`, `markTouched`, `revalidate`). Created via
- * `createField(ctx, initial, validators?)`. Spec §8, §20.7.
+ * `createField(ctx, initial, { validators, validateOn })`. Spec §8, §20.7.
  */
 export type Field<T> = ReadSignal<T> & {
   /**
@@ -67,6 +67,12 @@ export type Field<T> = ReadSignal<T> & {
   setErrors(errors: ReadonlyArray<string>): void
   /** Idempotent. Called by the owning controller's dispose. */
   dispose(): void
+}
+
+/** Options for `root.suspend(options?)`. */
+export type SuspendOptions = {
+  /** Dispose the root if it is not resumed within this many milliseconds. */
+  maxIdleTime?: number
 }
 
 /**
@@ -220,23 +226,6 @@ export type Ctx<TDeps = AmbientDeps> = {
     props: Props,
     options?: { deps?: Partial<TDeps> },
   ): { api: Api; dispose: () => void; suspend: () => void; resume: () => void }
-
-  /**
-   * Ephemeral child controller bound to either (a) the explicit `dispose()`
-   * call returned in the tuple, or (b) the parent's disposal — whichever
-   * comes first. Same lifecycle semantics as `ctx.attach` minus suspend /
-   * resume (sessions are short-lived, not pause-able). Returns a `[api,
-   * dispose]` tuple so the api shape is exactly the controller's return
-   * type, with no wrapper to unpack.
-   *
-   * Use cases: modal forms, inline edit sessions, wizards, command palette.
-   * SPEC §11.1.
-   */
-  session<Props, Api>(
-    def: ControllerDef<Props, Api>,
-    props: Props,
-    options?: { deps?: Partial<TDeps> },
-  ): readonly [api: Api, dispose: () => void]
 
   /**
    * Diff-by-key set of child controllers driven by a reactive `source`.
@@ -393,10 +382,10 @@ export type Root<Api> = {
   dispose(): void
   /**
    * Freeze the tree: effects stop, subscriptions release their entries,
-   * `onSuspend` handlers run. With `maxIdle`, the root disposes itself if it
+   * `onSuspend` handlers run. With `maxIdleTime`, the root disposes itself if it
    * is not resumed within that many milliseconds. Spec §4.1, §4.3.
    */
-  suspend(options?: { maxIdle?: number }): void
+  suspend(options?: SuspendOptions): void
   /** Thaw a suspended tree: effects re-run, stale entries refetch. */
   resume(): void
   /** Serialize the query cache for SSR. Spec §15. */

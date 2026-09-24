@@ -1,5 +1,6 @@
 import type { Field } from '../controller/types'
 import type { ReadSignal } from '../signals/types'
+import type { ValidateOn } from './field'
 import type { Validator } from './types'
 
 export type FormSchema = {
@@ -63,6 +64,17 @@ export type FormOptions<S extends FormSchema> = {
    * Spec §20.7.
    */
   resetOnInitialChange?: 'when-clean' | 'never' | 'always'
+}
+
+/** Options for `createField(ctx, initial, options?)`. */
+export type FieldOptions<T> = {
+  validators?: ReadonlyArray<Validator<T>>
+  /**
+   * When validation first runs: `'change'` (default) at once, `'blur'` after
+   * the first `markTouched()`, `'submit'` after the first `revalidate()` or
+   * `Form.validate()`. Once it has run, every change re-validates.
+   */
+  validateOn?: ValidateOn
 }
 
 export type FieldArrayOptions<I> = {

@@ -1,11 +1,10 @@
 import { useRoot, useValue } from '@kontsedal/olas-react'
 import { Loader2, Search, X } from 'lucide-react'
 import { useEffect, useRef } from 'react'
-import type { AppApi } from '../../app.controller'
 import { IconButton, Kbd } from '../../ui'
 
 export function SearchBar() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const value = useValue(app.board.searchInputRaw)
   const isSearching = useValue(app.board.isSearching)
   const ref = useRef<HTMLInputElement>(null)

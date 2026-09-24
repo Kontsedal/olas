@@ -116,7 +116,7 @@ This is a *silent* failure — data still renders, it refetches constantly — w
 - finite → walked in chunks against an absolute deadline, so a long delay stays accurate across chunk boundaries.
 - returns a **cancellation closure** rather than a handle, so callers can't accidentally `clearTimeout` a chunked timer's stale inner id.
 
-Every user-supplied duration in core routes through it: the staleness timer in `Entry` and `InfiniteEntry`, the gc timer in `ClientEntry` and `InfiniteClientEntry`, the `refetchInterval` chain in `ClientEntry.armIntervalTick` and its infinite twin, the retry backoff in `abortableSleep` fed by user `retryDelay`, and `suspend({ maxIdle })` in `controller/root.ts`.
+Every user-supplied duration in core routes through it: the staleness timer in `Entry` and `InfiniteEntry`, the gc timer in `ClientEntry` and `InfiniteClientEntry`, the `refetchInterval` chain in `ClientEntry.armIntervalTick` and its infinite twin, the retry backoff in `abortableSleep` fed by user `retryDelay`, and `suspend({ maxIdleTime })` in `controller/root.ts`.
 
 `refetchInterval` is worth calling out, because it looks guarded and is not quite. `resolveRefetchInterval` at `client.ts:60-91` rejects non-finite and non-positive gaps and stops the chain loudly, which covers `Infinity`. A *finite* gap above the 32-bit limit sails through that guard and overflows anyway, turning the longest interval you can ask for into a ~1ms poll storm. Rejecting `Infinity` is not the same as handling overflow; both halves need the scheduler.
 

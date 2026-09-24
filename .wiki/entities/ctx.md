@@ -89,6 +89,6 @@ The TS overloads in `Ctx<TDeps>` declare two signatures: one for `Query`, one fo
 
 ## Dynamic-child surface
 
-`ctx.session(...)`, `ctx.collection(...)` and `ctx.lazyChild(...)` cover the three dynamic-child cases. A singleton with a key, such as a tenant switch. A keyed homogeneous list, such as board cards. A code-split-loaded child, such as a modal. Construction failures route through `onError({ kind: 'construction' })`. See [`modules/controller.md`](../modules/controller.md) and `packages/core/tests/dynamic-children.test.ts`.
+`ctx.attach(...)`, `ctx.collection(...)` and `ctx.lazyChild(...)` cover the three dynamic-child cases. A child with its own early-dispose handle, such as a modal form or a tenant switch. A keyed homogeneous list, such as board cards. A code-split-loaded child, such as a modal. Construction failures route through `onError({ kind: 'construction' })`. See [`modules/controller.md`](../modules/controller.md) and `packages/core/tests/dynamic-children.test.ts`.
 
 `provide` and `inject` cover cross-tree dependency injection — see [`scope.md`](scope.md) for the semantics and [`modules/react.md`](../modules/react.md) for the React adapter that composes with them.

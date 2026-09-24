@@ -1,10 +1,16 @@
 // @vitest-environment jsdom
 
-import { createQuery, defineController, defineQuery, queryEngine } from '@kontsedal/olas-core'
+import {
+  createQuery,
+  defineController,
+  defineQuery,
+  queryEngine,
+  type ReadSignal,
+} from '@kontsedal/olas-core'
 import { act, cleanup, render } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { HydrationBoundary, useRoot } from '../src'
+import { HydrationBoundary, useRoot, useValue } from '../src'
 
 afterEach(() => cleanup())
 
@@ -132,5 +138,45 @@ describe('HydrationBoundary lifecycle (R4.1)', () => {
     act(() => rerender(<Parent which={defB} />))
     expect(disposesA).toHaveBeenCalledTimes(1)
     expect(constructsB).toHaveBeenCalledTimes(1)
+  })
+
+  test('(e) the root rebuilt for a new def does not re-apply the first hydrate payload', async () => {
+    const fetcher = vi.fn(async () => 'fresh')
+    const greeting = defineQuery({
+      id: 'hydration-boundary/rehydrate',
+      key: () => [],
+      fetcher,
+      staleTime: 60_000,
+    })
+    const defA = defineController((ctx) => ({ greeting: createQuery(ctx, greeting) }))
+    const defB = defineController((ctx) => ({ greeting: createQuery(ctx, greeting) }))
+    const hydrate = {
+      version: 1 as const,
+      entries: [
+        { id: 'hydration-boundary/rehydrate', key: [], data: 'server', lastUpdatedAt: Date.now() },
+      ],
+    }
+    function Show() {
+      const api = useRoot<{ greeting: { data: ReadSignal<string | undefined> } }>()
+      return <span data-testid="g">{useValue(api.greeting.data) ?? 'none'}</span>
+    }
+    const options = { deps: {}, queries: queryEngine(), hydrate }
+    function Parent({ which }: { which: typeof defA }) {
+      return (
+        <HydrationBoundary def={which} options={options}>
+          <Show />
+        </HydrationBoundary>
+      )
+    }
+    const { rerender, getByTestId } = render(<Parent which={defA} />)
+    expect(getByTestId('g').textContent).toBe('server')
+    expect(fetcher).not.toHaveBeenCalled()
+    await act(async () => {
+      rerender(<Parent which={defB} />)
+      await Promise.resolve()
+    })
+    // The new root fetched for itself instead of adopting the stale payload.
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(getByTestId('g').textContent).toBe('fresh'))
   })
 })

@@ -265,7 +265,7 @@ describe('every user-supplied duration is chunked, not clamped', () => {
     expect(parked).toEqual(['aborted'])
   })
 
-  test('suspend({ maxIdle }) above the platform limit does not dispose early', async () => {
+  test('suspend({ maxIdleTime }) above the platform limit does not dispose early', async () => {
     const disposed: string[] = []
     const root = createRoot(
       defineController((ctx) => {
@@ -274,14 +274,14 @@ describe('every user-supplied duration is chunked, not clamped', () => {
       }),
       { queries: queryEngine(), deps: {} },
     )
-    root.suspend({ maxIdle: OVERFLOW })
+    root.suspend({ maxIdleTime: OVERFLOW })
     await vi.advanceTimersByTimeAsync(2_147_483_647)
     expect(disposed).toEqual([])
     await vi.advanceTimersByTimeAsync(5_000)
     expect(disposed).toEqual(['root'])
   })
 
-  test('suspend({ maxIdle: Infinity }) never auto-disposes', async () => {
+  test('suspend({ maxIdleTime: Infinity }) never auto-disposes', async () => {
     const disposed: string[] = []
     const root = createRoot(
       defineController((ctx) => {
@@ -291,7 +291,7 @@ describe('every user-supplied duration is chunked, not clamped', () => {
       { queries: queryEngine(), deps: {} },
     )
     try {
-      root.suspend({ maxIdle: Number.POSITIVE_INFINITY })
+      root.suspend({ maxIdleTime: Number.POSITIVE_INFINITY })
       await vi.advanceTimersByTimeAsync(60_000)
       expect(vi.getTimerCount()).toBe(0)
       expect(disposed).toEqual([])

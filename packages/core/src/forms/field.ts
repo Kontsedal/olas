@@ -98,7 +98,7 @@ export type ValidatorErrorReporter = (err: unknown) => void
  */
 export type ValidateOn = 'change' | 'blur' | 'submit'
 
-export type FieldOptions = {
+export type FieldImplOptions = {
   onValidatorError?: ValidatorErrorReporter
   validateOn?: ValidateOn
 }
@@ -160,7 +160,11 @@ class FieldImpl<T> implements Field<T> {
    * re-validate). `reset()` flips it back to false. */
   private readonly validateUnlocked$: Signal<boolean>
 
-  constructor(initial: T, validators: ReadonlyArray<Validator<T>> = [], options?: FieldOptions) {
+  constructor(
+    initial: T,
+    validators: ReadonlyArray<Validator<T>> = [],
+    options?: FieldImplOptions,
+  ) {
     this.initial = initial
     this.validators = validators
     // Capture the reporter BEFORE the validator effect kicks off so a sync
@@ -535,7 +539,7 @@ export function bindFieldValidatorErrorReporter<T>(
 export function createField<T>(
   initial: T,
   validators?: ReadonlyArray<Validator<T>>,
-  options?: FieldOptions,
+  options?: FieldImplOptions,
 ): Field<T> {
   return new FieldImpl(initial, validators, options)
 }

@@ -8,7 +8,7 @@ import type { DehydratedState } from '../query/types'
 import type { Scope } from '../scope'
 import { getFactory } from './define'
 import { ControllerInstance, type RootShared } from './instance'
-import type { AmbientDeps, ControllerDef, Root, RootOptions } from './types'
+import type { AmbientDeps, ControllerDef, Root, RootOptions, SuspendOptions } from './types'
 
 /**
  * Construct a root controller.
@@ -125,19 +125,19 @@ function buildRootHandle<Api>(
     queryClient?.dispose()
   }
 
-  const suspend = (opts?: { maxIdle?: number }): void => {
+  const suspend = (opts?: SuspendOptions): void => {
     instance.suspend()
     if (suspendTimer != null) {
       suspendTimer()
       suspendTimer = null
     }
-    const maxIdle = opts?.maxIdle
-    if (maxIdle != null) {
+    const maxIdleTime = opts?.maxIdleTime
+    if (maxIdleTime != null) {
       // `scheduleExpiry` returns `null` for `Infinity` (stay suspended until
-      // something else disposes) and chunks a finite value, so a `maxIdle`
+      // something else disposes) and chunks a finite value, so a `maxIdleTime`
       // above the signed 32-bit limit can't overflow into "dispose on the next
       // tick" — the opposite of asking to idle for a month. §21.5.
-      suspendTimer = scheduleExpiry(maxIdle, () => {
+      suspendTimer = scheduleExpiry(maxIdleTime, () => {
         suspendTimer = null
         dispose()
       })

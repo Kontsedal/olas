@@ -15,4 +15,5 @@ export type {
   LazyChild,
   Root,
   RootOptions,
+  SuspendOptions,
 } from './types'

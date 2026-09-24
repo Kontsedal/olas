@@ -397,5 +397,5 @@ function buildLeaf(
   const validators: Array<Validator<unknown>> = [zodValidator(schema as z.ZodType<unknown>)]
   const extra = extras?.[path]
   if (extra !== undefined) validators.push(extra as Validator<unknown>)
-  return createField(ctx, ini, validators)
+  return createField(ctx, ini, { validators: validators })
 }

@@ -27,15 +27,36 @@ export function OlasProvider(props: OlasProviderProps) {
 }
 
 /**
+ * Register the app's root type once, and `useRoot()` returns its api with no
+ * type argument. Empty here: the app adds `root` through declaration merging.
+ *
+ * ```ts
+ * const root = createRoot(appController, { deps })
+ *
+ * declare module '@kontsedal/olas-react' {
+ *   interface Register {
+ *     root: typeof root
+ *   }
+ * }
+ * ```
+ */
+// biome-ignore lint/suspicious/noEmptyInterface: augmented by the app, once
+export interface Register {}
+
+/** The api `useRoot()` returns by default: the registered root's, else `unknown`. */
+export type RegisteredApi = Register extends { root: Root<infer Api> } ? Api : unknown
+
+/**
  * Resolve the root's public api from `<OlasProvider>`. Throws if called
  * outside a provider — this catches the common "I forgot to wrap" mistake at
  * the first hook call. See spec §20.10.
  *
- * For multi-root apps, prefer `createOlasContext<Api>()` which returns a
- * Provider + useRoot bound to a specific api type. Casting `as Api` here
- * is unchecked.
+ * The return type is the root registered through `Register`. Without a
+ * registration it is `unknown`, and `useRoot<Api>()` names it per call, as an
+ * unchecked cast. For several roots, `createOlasContext<Api>()` gives each its
+ * own provider and a typed `useRoot`.
  */
-export function useRoot<Api = unknown>(): Api {
+export function useRoot<Api = RegisteredApi>(): Api {
   const root = useContext(OlasContext)
   if (root === null) {
     throw new Error('[olas] useRoot() called outside <OlasProvider>')
@@ -155,9 +176,15 @@ export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): Reac
   const [, forceRender] = useReducer((n: number) => n + 1, 0)
 
   // `def` identity change → dispose the old root; a fresh one is created below.
+  // The server payload in `options.hydrate` described the FIRST root's tree:
+  // the replacement starts from its own fetches rather than re-applying stale
+  // server state. (A StrictMode remount of the same `def` still hydrates.)
   if (rootRef.current !== null && defRef.current !== def) {
     rootRef.current.dispose()
     rootRef.current = null
+    if (optionsRef.current.hydrate !== undefined) {
+      optionsRef.current = { ...optionsRef.current, hydrate: undefined }
+    }
   }
   // Create lazily during render. `createRoot` is side-effectful (fetches,
   // timers, focus/online listeners), so it must NOT run in `useMemo` /

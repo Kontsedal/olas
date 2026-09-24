@@ -3,7 +3,7 @@
 // field shows `isValidating` while the server thinks, then either
 // `errors[0]` or "ready to post".
 
-import { useField, useValue } from '@kontsedal/olas-react'
+import { useField, useFieldInput, useValue } from '@kontsedal/olas-react'
 import { Loader2, MessageCircle, Send, X } from 'lucide-react'
 import { type ReactElement, useEffect, useReducer, useRef } from 'react'
 import type { AppApi } from './controller'
@@ -52,7 +52,9 @@ export function Composer({
     }
   }, [api, articleId])
 
-  const author = useField(handle.api.author)
+  // A plain text input: `useFieldInput` supplies value, onChange, onBlur and
+  // aria-invalid in one spread.
+  const authorInput = useFieldInput(handle.api.author, { name: 'author' })
   const body = useField(handle.api.body)
   const isPending = useValue(handle.api.submit.isPending)
   const error = useValue(handle.api.submit.error)
@@ -86,9 +88,7 @@ export function Composer({
 
       <form onSubmit={onSubmit} className="flex flex-col gap-2 text-[length:var(--text-body)]">
         <input
-          value={author.value}
-          onChange={(e) => author.set(e.target.value)}
-          onBlur={author.markTouched}
+          {...authorInput}
           placeholder="Your name"
           className="rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30"
         />

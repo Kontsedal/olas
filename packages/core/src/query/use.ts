@@ -1,7 +1,9 @@
 import { computed, effect, type Signal, signal, untracked } from '../signals'
+import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
 import { isAbortError } from '../utils'
 import type { ClientEntry, InfiniteClientEntry, QueryClient } from './client'
+import { QueryDisabledError } from './errors'
 import type { InfiniteQuery, InfiniteQuerySpec, InfiniteQuerySubscription } from './infinite'
 import type {
   AsyncStatus,
@@ -16,9 +18,65 @@ type QueryInternal<Args extends unknown[], T> = Query<Args, T> & {
   readonly __spec: QuerySpec<Args, T>
 }
 
+const disposedError = (): DOMException => new DOMException('Subscription disposed', 'AbortError')
+
+/**
+ * The entry-less half of a subscription's lifetime. A subscription is
+ * detached while its `enabled` is false; `firstValue()` called then waits here
+ * for the next attach instead of rejecting, so suspense on a dependent query
+ * suspends until the query is enabled and loaded. Dispose rejects every waiter.
+ */
+class AttachWaiters<E> {
+  private waiters: Array<{ resolve: (entry: E) => void; reject: (err: unknown) => void }> = []
+  closed = false
+
+  wait(): Promise<E> {
+    if (this.closed) return Promise.reject(disposedError())
+    return new Promise<E>((resolve, reject) => {
+      this.waiters.push({ resolve, reject })
+    })
+  }
+
+  attached(entry: E): void {
+    const ws = this.waiters
+    this.waiters = []
+    for (const w of ws) w.resolve(entry)
+  }
+
+  close(): void {
+    this.closed = true
+    const ws = this.waiters
+    this.waiters = []
+    for (const w of ws) w.reject(disposedError())
+  }
+}
+
+/**
+ * One `firstValue()` promise per attached entry, reused while it is pending, so
+ * a suspended render that asks again gets the promise it already threw.
+ */
+class FirstValueCache<E, V> {
+  private cached: { entry: E | null; promise: Promise<V> } | null = null
+
+  get(entry: E | null, make: () => Promise<V>): Promise<V> {
+    if (this.cached !== null && this.cached.entry === entry) return this.cached.promise
+    const promise = make()
+    const slot = { entry, promise }
+    this.cached = slot
+    const clear = (): void => {
+      if (this.cached === slot) this.cached = null
+    }
+    promise.then(clear, clear)
+    return promise
+  }
+}
+
 class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
   private readonly current$: Signal<ClientEntry<T> | null> = signal(null)
   private readonly previousData$: Signal<T | undefined> = signal(undefined)
+  private readonly enabled$: Signal<boolean> = signal(true)
+  private readonly waiters = new AttachWaiters<ClientEntry<T>>()
+  private readonly firstValues = new FirstValueCache<ClientEntry<T>, U>()
 
   readonly data: ReadSignal<U | undefined>
   readonly error: ReadSignal<unknown | undefined>
@@ -29,8 +87,10 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
   readonly lastUpdatedAt: ReadSignal<number | undefined>
   readonly hasPendingMutations: ReadSignal<boolean>
   readonly isPaused: ReadSignal<boolean>
+  readonly isEnabled: ReadSignal<boolean> = readOnly(this.enabled$)
 
   constructor(
+    private readonly queryId: string,
     private readonly keepPreviousData: boolean,
     private readonly select?: (data: T) => U,
     private readonly keepDataWhileDisabled: boolean = false,
@@ -84,6 +144,11 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
       if (prevData !== undefined) this.previousData$.set(prevData)
     }
     this.current$.set(entry)
+    this.waiters.attached(entry)
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.enabled$.set(enabled)
   }
 
   detach(retainData = false): void {
@@ -97,9 +162,18 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     this.current$.set(null)
   }
 
+  /** Dispose: detach and reject every `firstValue()` still waiting to attach. */
+  close(): void {
+    this.detach()
+    this.waiters.close()
+  }
+
   refetch = (): Promise<U> => {
     const cur = this.current$.peek()
-    if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
+    if (!cur) {
+      if (this.waiters.closed) return Promise.reject(disposedError())
+      return Promise.reject(new QueryDisabledError(this.queryId))
+    }
     return cur.entry.refetch().then(
       (v) => this.project(v),
       (err) => {
@@ -122,8 +196,11 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
 
   firstValue = (): Promise<U> => {
     const cur = this.current$.peek()
-    if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
-    return cur.entry.firstValue().then((v) => this.project(v))
+    return this.firstValues.get(cur, () =>
+      (cur !== null ? Promise.resolve(cur) : this.waiters.wait())
+        .then((entry) => entry.entry.firstValue())
+        .then((v) => this.project(v)),
+    )
   }
 
   private project(v: T): U {
@@ -167,7 +244,7 @@ export function createUse<Args extends unknown[], T, U = T>(
       ? (keyOrOptions.keepDataWhileDisabled ?? false)
       : false
 
-  const sub = new SubscriptionImpl<T, U>(keepPreviousData, select, keepDataWhileDisabled)
+  const sub = new SubscriptionImpl<T, U>(spec.id, keepPreviousData, select, keepDataWhileDisabled)
   let currentEntry: ClientEntry<T> | null = null
   let suspended = false
 
@@ -187,6 +264,7 @@ export function createUse<Args extends unknown[], T, U = T>(
 
     if (!isEnabled) {
       untracked(() => {
+        sub.setEnabled(false)
         if (currentEntry) {
           currentEntry.release()
           currentEntry = null
@@ -199,6 +277,7 @@ export function createUse<Args extends unknown[], T, U = T>(
     }
 
     untracked(() => {
+      sub.setEnabled(true)
       const entry = client.bindEntry<Args, T>(query, args as Args)
       if (currentEntry === entry) return
       if (currentEntry) currentEntry.release()
@@ -222,7 +301,7 @@ export function createUse<Args extends unknown[], T, U = T>(
       currentEntry.release()
       currentEntry = null
     }
-    sub.detach()
+    sub.close()
   }
 
   const suspend = (): void => {
@@ -276,6 +355,12 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   private readonly current$: Signal<InfiniteClientEntry<TPage, TItem, unknown> | null> =
     signal(null)
   private readonly previousPages$: Signal<TPage[] | undefined> = signal(undefined)
+  private readonly enabled$: Signal<boolean> = signal(true)
+  private readonly waiters = new AttachWaiters<InfiniteClientEntry<TPage, TItem, unknown>>()
+  private readonly firstValues = new FirstValueCache<
+    InfiniteClientEntry<TPage, TItem, unknown>,
+    TPage[]
+  >()
 
   readonly data: ReadSignal<TPage[] | undefined>
   readonly pages: ReadSignal<TPage[]>
@@ -292,8 +377,10 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   readonly hasPreviousPage: ReadSignal<boolean>
   readonly isFetchingNextPage: ReadSignal<boolean>
   readonly isFetchingPreviousPage: ReadSignal<boolean>
+  readonly isEnabled: ReadSignal<boolean> = readOnly(this.enabled$)
 
   constructor(
+    private readonly queryId: string,
     private readonly keepPreviousData: boolean,
     keepDataWhileDisabled = false,
     itemsOf?: (page: TPage) => TItem[],
@@ -356,6 +443,17 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
       if (prevPages.length > 0) this.previousPages$.set(prevPages)
     }
     this.current$.set(entry)
+    this.waiters.attached(entry)
+  }
+
+  setEnabled(enabled: boolean): void {
+    this.enabled$.set(enabled)
+  }
+
+  /** Dispose: detach and reject every `firstValue()` still waiting to attach. */
+  close(): void {
+    this.detach()
+    this.waiters.close()
   }
 
   detach(retainData = false): void {
@@ -370,7 +468,10 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
 
   refetch = (): Promise<TPage[]> => {
     const cur = this.current$.peek()
-    if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
+    if (!cur) {
+      if (this.waiters.closed) return Promise.reject(disposedError())
+      return Promise.reject(new QueryDisabledError(this.queryId))
+    }
     return cur.entry.refetch().then(
       () => cur.entry.pages.peek(),
       (err) => {
@@ -391,8 +492,11 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
 
   firstValue = (): Promise<TPage[]> => {
     const cur = this.current$.peek()
-    if (!cur) return Promise.reject(new Error('[olas] no active subscription'))
-    return cur.entry.firstValue()
+    return this.firstValues.get(cur, () =>
+      (cur !== null ? Promise.resolve(cur) : this.waiters.wait()).then((entry) =>
+        entry.entry.firstValue(),
+      ),
+    )
   }
 
   fetchNextPage = (): Promise<void> => {
@@ -429,6 +533,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
       : false
 
   const sub = new InfiniteSubscriptionImpl<TPage, TItem>(
+    spec.id,
     keepPreviousData,
     keepDataWhileDisabled,
     spec.itemsOf,
@@ -448,6 +553,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
 
     if (!isEnabled) {
       untracked(() => {
+        sub.setEnabled(false)
         if (currentEntry) {
           currentEntry.release()
           currentEntry = null
@@ -458,6 +564,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
     }
 
     untracked(() => {
+      sub.setEnabled(true)
       const entry = client.bindInfiniteEntry<Args, TPage, TItem>(query, args as Args)
       if (currentEntry === entry) return
       if (currentEntry) currentEntry.release()
@@ -481,7 +588,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
       currentEntry.release()
       currentEntry = null
     }
-    sub.detach()
+    sub.close()
   }
 
   const suspend = (): void => {

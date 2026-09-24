@@ -1,10 +1,9 @@
 import { useRoot, useValue } from '@kontsedal/olas-react'
 import { Activity, Eraser } from 'lucide-react'
-import type { AppApi } from '../../app.controller'
 import { cx, IconButton } from '../../ui'
 
 export function ActivityFeed() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const events = useValue(app.activity.events)
   const visible = useValue(app.preferences.prefs).showActivity
 

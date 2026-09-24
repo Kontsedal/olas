@@ -6,13 +6,12 @@
 import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { X } from 'lucide-react'
 import type { Priority } from '../../api'
-import type { AppApi } from '../../app.controller'
 import { cx } from '../../ui'
 
 const ALL_PRIORITIES: Priority[] = ['urgent', 'high', 'med', 'low']
 
 export function FilterChips() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const labels = useQuery(app.labels)
   const selPri = useValue(app.board.selectedPriorities)
   const selLab = useValue(app.board.selectedLabelIds)

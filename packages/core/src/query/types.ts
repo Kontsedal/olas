@@ -42,6 +42,13 @@ export type AsyncState<T> = {
    * flips to `error` for the parked attempt). Spec §5.5.
    */
   isPaused: ReadSignal<boolean>
+  /**
+   * `false` while a subscription's `enabled` returns `false`. A disabled
+   * subscription holds no entry: `refetch()` rejects with `QueryDisabledError`,
+   * and `firstValue()` waits until it is enabled and loaded. Always `true` for
+   * a `LocalCache`.
+   */
+  isEnabled: ReadSignal<boolean>
 
   refetch: () => Promise<T>
   reset: () => void

@@ -5,6 +5,8 @@ export {
   type OlasContext,
   OlasProvider,
   type OlasProviderProps,
+  type Register,
+  type RegisteredApi,
   useRoot,
 } from './context'
 export {

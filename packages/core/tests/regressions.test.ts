@@ -261,11 +261,13 @@ describe('regression: sync validator throws are surfaced', () => {
   test('throwing validator on a field marks invalid AND calls root.onError', async () => {
     const onError = vi.fn()
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, '', [
-        () => {
-          throw new Error('validator-boom')
-        },
-      ]),
+      name: createField<string>(ctx, '', {
+        validators: [
+          () => {
+            throw new Error('validator-boom')
+          },
+        ],
+      }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, onError })
     await vi.waitFor(() => expect(root.api.name.errors.value).toContain('validator-boom'))
@@ -513,7 +515,7 @@ describe('debouncedValidator', () => {
       return value.length < 3 ? 'too short' : null
     }, 50)
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, '', [validator]),
+      name: createField<string>(ctx, '', { validators: [validator] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
@@ -544,7 +546,9 @@ describe('field — async validator rejection (non-abort) surfaces as an error m
     const v = (async () => {
       throw new Error('network down')
     }) as (value: string, signal: AbortSignal) => Promise<string | null>
-    const def = defineController((ctx) => ({ name: createField<string>(ctx, 'x', [v]) }))
+    const def = defineController((ctx) => ({
+      name: createField<string>(ctx, 'x', { validators: [v] }),
+    }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.api.name.errors.value).toContain('network down'))
     root.dispose()
@@ -554,7 +558,9 @@ describe('field — async validator rejection (non-abort) surfaces as an error m
     const v = (async () => {
       throw 'plain string reason' // eslint-disable-line no-throw-literal
     }) as (value: string, signal: AbortSignal) => Promise<string | null>
-    const def = defineController((ctx) => ({ name: createField<string>(ctx, 'x', [v]) }))
+    const def = defineController((ctx) => ({
+      name: createField<string>(ctx, 'x', { validators: [v] }),
+    }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(root.api.name.errors.value).toContain('plain string reason'))
     root.dispose()
@@ -1035,7 +1041,6 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
     throws(() => captured.on(capturedEmitter, () => {}))
     throws(() => captured.child(childDef, {}))
     throws(() => captured.attach(childDef, {}))
-    throws(() => captured.session(childDef, {}))
     throws(() =>
       captured.collection({
         source: signal([]),
@@ -1051,7 +1056,7 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
     root.dispose()
   })
 
-  test('ctx.session after dispose does not construct a child (no leak)', async () => {
+  test('ctx.attach after dispose does not construct a child (no leak)', async () => {
     let captured: any
     let constructed = 0
     const childDef = defineController(() => {
@@ -1065,7 +1070,7 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.dispose()
     expect(constructed).toBe(0)
-    expect(() => captured.session(childDef, {})).toThrow(/disposed/)
+    expect(() => captured.attach(childDef, {})).toThrow(/disposed/)
     expect(constructed).toBe(0) // the child must NOT be constructed
     root.dispose()
   })

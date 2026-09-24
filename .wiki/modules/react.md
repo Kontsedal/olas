@@ -17,6 +17,8 @@ edges:
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/ctx.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
+  - { type: related, target: ../decisions/typed-use-root.md }
+  - { type: related, target: ../decisions/disabled-subscriptions.md }
 last_verified: 2026-09-24
 confidence: medium
 ---
@@ -30,7 +32,7 @@ The React adapter. Pure binding layer on top of `useSyncExternalStore` — no co
 ```ts
 // context.ts
 function OlasProvider(props: { root: Root<unknown>; children: ReactNode }): JSX.Element
-function useRoot<Api = unknown>(): Api               // root.api; throws outside <OlasProvider>
+function useRoot<Api = RegisteredApi>(): Api         // root.api, typed by the augmented Register; throws outside <OlasProvider>
 function createOlasContext<Api>(displayName?): { Provider, useRoot, Context }
                                                      // typed-per-root variant, for apps with several roots
 function HydrationBoundary<Api>(props: { root: Root<Api>; ... }): ReactElement
@@ -40,8 +42,9 @@ function HydrationBoundary<Api>(props: { root: Root<Api>; ... }): ReactElement
 function useValue<T>(signal: ReadSignal<T>): T      // any ReadSignal: signal, computed, Field, Form, FieldArray
 function useValue<T, U>(signal, { select, isEqual? }): U
 function useQuery<T>(sub: AsyncState<T>): UseQueryResult<T>
-    // every AsyncState signal as a value (incl. isPaused) + refetch, reset, cancel
-function useSuspenseQuery<T>(sub): UseSuspenseQueryResult<T>   // throws sub.firstValue() until data lands
+    // every AsyncState signal as a value (incl. isPaused, isEnabled) + refetch, reset, cancel
+function useSuspenseQuery<T>(sub): UseSuspenseQueryResult<T>   // throws sub.firstValue() until data lands;
+    // a disabled query suspends until enabled + loaded (dev warns) — decisions/disabled-subscriptions.md
 function useField<T>(field: Field<T>): UseFieldResult<T>
     // value, errors, isValid, isDirty, touched, isValidating + set, setAsInitial, reset, markTouched, revalidate, setErrors
 function useFieldInput<T>(field: Field<T>, opts?): UseFieldInputResult  // spread onto a native <input>

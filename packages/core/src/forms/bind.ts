@@ -11,35 +11,30 @@ import {
 import type {
   FieldArray,
   FieldArrayOptions,
+  FieldOptions,
   Form,
   FormOptions,
   FormSchema,
   ItemInitial,
 } from './form-types'
-import type { Validator } from './types'
 
 /**
  * A reactive form field owned by this controller's lifetime (§8.1).
  *
  * ```ts
- * const email = createField(ctx, '', [required('Required')])
+ * const email = createField(ctx, '', { validators: [required('Required')] })
  * ```
  *
  * A free function rather than a `ctx` method, so a controller that never builds
  * a field does not ship the forms subsystem.
  */
-export function createField<T>(
-  ctx: Ctx,
-  initial: T,
-  validators?: ReadonlyArray<Validator<T>>,
-  options?: { validateOn?: 'change' | 'blur' | 'submit' },
-): Field<T> {
+export function createField<T>(ctx: Ctx, initial: T, options?: FieldOptions<T>): Field<T> {
   const internals = ctxInternals(ctx, 'createField')
   internals.assertLive('createField')
   // The reporter is passed at construct time so the FIRST validator pass —
   // which runs synchronously inside the FieldImpl constructor's effect — is
   // covered.
-  const field = createFieldImpl(initial, validators, {
+  const field = createFieldImpl(initial, options?.validators, {
     onValidatorError: (err) => internals.report(err, 'effect'),
     validateOn: options?.validateOn,
   })

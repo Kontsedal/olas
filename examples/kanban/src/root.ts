@@ -47,3 +47,11 @@ export function createAppRoot(opts?: { api?: Api; broadcaster?: Broadcaster }) {
 }
 
 export type AppRoot = ReturnType<typeof createAppRoot>['root']
+
+// Register the root's type once, so `useRoot()` returns the app api in every
+// component without a type argument.
+declare module '@kontsedal/olas-react' {
+  interface Register {
+    root: AppRoot
+  }
+}

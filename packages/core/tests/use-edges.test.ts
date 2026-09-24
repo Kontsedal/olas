@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createQuery } from '../src'
+import { createQuery, QueryDisabledError } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { queryEngine } from '../src/query/engine'
@@ -11,41 +11,79 @@ const flush = async () => {
   for (let i = 0; i < 3; i++) await Promise.resolve()
 }
 
-describe('subscription.refetch / firstValue when not yet bound', () => {
-  test('regular subscription with enabled=false rejects refetch / firstValue', async () => {
+describe('a disabled subscription: isEnabled, refetch, firstValue', () => {
+  test('regular: isEnabled is false, refetch rejects QueryDisabledError, firstValue waits', async () => {
+    const enabled = signal(false)
     const q = defineQuery({
       id: 'use-edges/16',
       key: () => ['unbound'],
-      fetcher: async () => 'never',
+      fetcher: async () => 'loaded',
     })
     const def = defineController((ctx) => ({
-      x: createQuery(ctx, q, { key: () => [], enabled: () => false }),
+      x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    await expect(root.api.x.refetch()).rejects.toThrow(/no active subscription/)
-    await expect(root.api.x.firstValue()).rejects.toThrow(/no active subscription/)
+    expect(root.api.x.isEnabled.value).toBe(false)
+    const refetch = root.api.x.refetch()
+    await expect(refetch).rejects.toBeInstanceOf(QueryDisabledError)
+    await expect(refetch).rejects.toMatchObject({ queryId: 'use-edges/16' })
+
+    // firstValue does not reject while disabled: it resolves once the
+    // subscription is enabled and the entry loads.
+    let settled: unknown = 'pending'
+    const first = root.api.x.firstValue().then((v) => {
+      settled = v
+    })
+    await flush()
+    expect(settled).toBe('pending')
+    // Asked again while pending, it is the same promise, so a suspended render
+    // that re-throws does not mint a new one.
+    expect(root.api.x.firstValue()).toBe(root.api.x.firstValue())
+    enabled.set(true)
+    expect(root.api.x.isEnabled.value).toBe(true)
+    await first
+    expect(settled).toBe('loaded')
     root.dispose()
   })
 
-  test('infinite subscription with enabled=false rejects refetch / firstValue and no-ops fetchNextPage', async () => {
+  test('regular: a firstValue waiting on a disabled subscription rejects on dispose', async () => {
+    const q = defineQuery({
+      id: 'use-edges/disposed-wait',
+      key: () => [],
+      fetcher: async () => 'never',
+    })
+    const def = defineController((ctx) => ({
+      x: createQuery(ctx, q, { enabled: () => false }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const waiting = root.api.x.firstValue()
+    root.dispose()
+    await expect(waiting).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  test('infinite: the same contract, and fetchNextPage stays a silent no-op', async () => {
+    const enabled = signal(false)
     const q = defineInfiniteQuery({
       id: 'use-edges/31',
       key: () => ['unbound-inf'],
-      fetcher: async () => 'never',
+      fetcher: async () => 'page',
       initialPageParam: 0,
       getNextPageParam: () => null,
     })
     const def = defineController((ctx) => ({
-      x: createQuery(ctx, q, { key: () => [], enabled: () => false }),
+      x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    await expect(root.api.x.refetch()).rejects.toThrow(/no active subscription/)
-    await expect(root.api.x.firstValue()).rejects.toThrow(/no active subscription/)
+    expect(root.api.x.isEnabled.value).toBe(false)
+    await expect(root.api.x.refetch()).rejects.toBeInstanceOf(QueryDisabledError)
     // fetchNextPage / fetchPreviousPage are silent no-ops without a current entry.
     await expect(root.api.x.fetchNextPage()).resolves.toBeUndefined()
     await expect(root.api.x.fetchPreviousPage()).resolves.toBeUndefined()
+    const first = root.api.x.firstValue()
+    enabled.set(true)
+    await expect(first).resolves.toEqual(['page'])
     root.dispose()
   })
 })

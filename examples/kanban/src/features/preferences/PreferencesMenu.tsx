@@ -5,11 +5,10 @@
 
 import { useRoot, useValue } from '@kontsedal/olas-react'
 import { Archive, Moon, ScrollText, Sun, SunMoon } from 'lucide-react'
-import type { AppApi } from '../../app.controller'
 import { IconButton } from '../../ui'
 
 export function PreferencesMenu() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const prefs = useValue(app.preferences.prefs)
   const { setTheme, setDensity, toggleActivity, toggleArchive } = app.preferences
 

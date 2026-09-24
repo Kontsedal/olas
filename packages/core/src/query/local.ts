@@ -11,6 +11,17 @@ export type LocalCacheOptions<T> = {
   initialData?: T | undefined
 }
 
+/** A local cache has no `enabled` switch; its `isEnabled` never changes. */
+const ALWAYS_ENABLED: ReadSignal<boolean> = Object.freeze({
+  value: true,
+  peek: () => true,
+  subscribe(handler: (value: boolean) => void): () => void {
+    handler(true)
+    return () => {}
+  },
+  subscribeChanges: (): (() => void) => () => {},
+})
+
 class LocalCacheImpl<T> implements LocalCache<T> {
   private readonly entry: Entry<T>
   private keyEffectDispose: (() => void) | null = null
@@ -86,6 +97,9 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   }
   get isPaused(): ReadSignal<boolean> {
     return this.entry.isPaused
+  }
+  get isEnabled(): ReadSignal<boolean> {
+    return ALWAYS_ENABLED
   }
 
   refetch = (): Promise<T> => this.entry.refetch()

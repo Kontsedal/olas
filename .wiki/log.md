@@ -1692,3 +1692,28 @@ Tests: scope brand/identity (no internal keys in `Object.keys`), the entities br
 - `size-limit` budgets for thirteen entries are in `.size-limit.json` (`pnpm size`, in CI).
 
 Wiki: new `decisions/esm-only-build.md`; CLAUDE.md's command list and CI line are updated. BACKLOG: the `[planned]` dist-retention item is removed, since it landed.
+
+## [2026-09-25 01:40] ingest | 1.0 W8: API consistency — createField options, no ctx.session, durations, disabled subscriptions, typed useRoot
+
+**core.**
+- `createField(ctx, initial, { validators, validateOn })`. The public `FieldOptions<T>` lives in `form-types.ts`; the internal impl options type was renamed `FieldImplOptions` to free the name. `scripts/codemods/create-field.ts` rewrote 37 call sites.
+- `ctx.session` is removed from `Ctx` and from `instance.ts`. Its two unique tests (an idempotent dispose, the deps override) moved to `ctx.attach`.
+- `suspend({ maxIdle })` is renamed `suspend({ maxIdleTime })` with a named `SuspendOptions`. New `decisions/duration-naming.md` records the rule.
+- `AsyncState.isEnabled`; `QueryDisabledError` (new `query/errors.ts`).
+- `firstValue()` on a detached subscription waits through `AttachWaiters`, and repeats hand back the same promise through `FirstValueCache`. Both live in `query/use.ts`, shared by the regular and infinite subscriptions. Dispose now calls `sub.close()`, which rejects the waiters. `LocalCache.isEnabled` is a frozen constant, to stay tree-shakeable.
+- New `decisions/disabled-subscriptions.md`.
+
+**react.**
+- `Register` / `RegisteredApi` type `useRoot()`. The kanban example registers its root, and its 17 `useRoot<AppApi>()` calls became `useRoot()`. That proves the augmentation merges against the built `.d.ts`.
+- The suspense path warns once in development on a disabled query (`warnSuspendedWhileDisabled`). The package gained `src/__dev__.d.ts`.
+- `HydrationBoundary` drops `hydrate` from the options it reuses after a `def` change.
+- `useFieldInput` and `createOlasContext` have tests, and the reader-ssr Composer uses `useFieldInput`. New `decisions/typed-use-root.md`.
+
+**BACKLOG.** Removed as landed or decided:
+- the four React-adapter defects (fixed across W3–W8);
+- `useFieldInput`/`createOlasContext`;
+- suspense on a disabled query;
+- infinite `peek`/`write` (W4c);
+- the detached `refetch`.
+
+The fine-grained `useQuery` item lost its now-fixed "fresh promise per suspended render" sentence.

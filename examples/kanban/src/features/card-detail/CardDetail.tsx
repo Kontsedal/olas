@@ -14,7 +14,6 @@
 import { SuspendOnUnmount, useField, useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { Archive, Loader2, MoveRight, X } from 'lucide-react'
 import type { Card } from '../../api'
-import type { AppApi } from '../../app.controller'
 import { Button, IconButton, Select, Textarea } from '../../ui'
 import { CommentsThread } from '../comments/CommentsThread'
 import { AssigneesRow } from './AssigneesRow'
@@ -22,7 +21,7 @@ import { LabelsRow } from './LabelsRow'
 import { SubtasksRow } from './SubtasksRow'
 
 export function CardDetail() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const card = useValue(app.cardDetail.card)
   if (card === null) return null
   return (
@@ -33,7 +32,7 @@ export function CardDetail() {
 }
 
 function DetailPanel({ card }: { card: Card }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const board = useQuery(app.board.board)
   const titleField = useField(app.cardDetail.form.fields.title)
   const descField = useField(app.cardDetail.form.fields.description)

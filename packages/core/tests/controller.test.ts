@@ -169,7 +169,7 @@ describe('ctx.emitter / ctx.on', () => {
 describe('ctx.field — sync validators', () => {
   test('initial errors reflect the initial value', () => {
     const def = defineController((ctx) => ({
-      name: createField(ctx, '', [(v) => (v.length === 0 ? 'required' : null)]),
+      name: createField(ctx, '', { validators: [(v) => (v.length === 0 ? 'required' : null)] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     expect(root.api.name.errors.value).toEqual(['required'])
@@ -179,7 +179,7 @@ describe('ctx.field — sync validators', () => {
 
   test('set runs validators and updates errors / dirty', () => {
     const def = defineController((ctx) => ({
-      n: createField(ctx, 0, [(v) => (v < 5 ? 'too small' : null)]),
+      n: createField(ctx, 0, { validators: [(v) => (v < 5 ? 'too small' : null)] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     expect(root.api.n.isDirty.value).toBe(false)
@@ -193,7 +193,7 @@ describe('ctx.field — sync validators', () => {
 
   test('field.set is bound — safe to pass as a value (detached), still runs validators', () => {
     const def = defineController((ctx) => ({
-      n: createField(ctx, 0, [(v) => (v < 5 ? 'too small' : null)]),
+      n: createField(ctx, 0, { validators: [(v) => (v < 5 ? 'too small' : null)] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     // Detach `set`, as with `onChange={field.set}` or `setName: field.set`.
@@ -208,7 +208,9 @@ describe('ctx.field — sync validators', () => {
 
   test('reset returns to initial and clears dirty/touched/errors', () => {
     const def = defineController((ctx) => ({
-      s: createField(ctx, 'init', [(v) => (v === 'init' ? null : 'must equal init')]),
+      s: createField(ctx, 'init', {
+        validators: [(v) => (v === 'init' ? null : 'must equal init')],
+      }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     root.api.s.set('other')
@@ -229,7 +231,9 @@ describe('ctx.field — sync validators', () => {
   test('a validator that reads another signal re-runs when that signal changes', () => {
     const password = signal('hunter2')
     const def = defineController((ctx) => ({
-      confirm: createField(ctx, '', [(v) => (v === password.value ? null : 'must match')]),
+      confirm: createField(ctx, '', {
+        validators: [(v) => (v === password.value ? null : 'must match')],
+      }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     expect(root.api.confirm.errors.value).toEqual(['must match'])
@@ -245,12 +249,14 @@ describe('ctx.field — async validators', () => {
   test('isValidating goes true while pending and false on settle', async () => {
     let resolveValidator: (v: string | null) => void = () => {}
     const def = defineController((ctx) => ({
-      name: createField(ctx, 'foo', [
-        () =>
-          new Promise<string | null>((r) => {
-            resolveValidator = r
-          }),
-      ]),
+      name: createField(ctx, 'foo', {
+        validators: [
+          () =>
+            new Promise<string | null>((r) => {
+              resolveValidator = r
+            }),
+        ],
+      }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
 
@@ -274,7 +280,9 @@ describe('ctx.field — async validators', () => {
   test('latest value wins — older async result is dropped', async () => {
     const resolvers: Array<(v: string | null) => void> = []
     const def = defineController((ctx) => ({
-      n: createField(ctx, 'a', [() => new Promise<string | null>((r) => resolvers.push(r))]),
+      n: createField(ctx, 'a', {
+        validators: [() => new Promise<string | null>((r) => resolvers.push(r))],
+      }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
 
@@ -385,7 +393,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
     expect(cleanups).toHaveBeenCalledTimes(1)
   })
 
-  test('suspend with maxIdle auto-disposes when the timer fires', () => {
+  test('suspend with maxIdleTime auto-disposes when the timer fires', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
@@ -393,7 +401,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
       return {}
     })
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(999)
     expect(onDispose).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
@@ -401,7 +409,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('resume cancels a pending maxIdle timer', () => {
+  test('resume cancels a pending maxIdleTime timer', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
@@ -409,7 +417,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
       return {}
     })
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(500)
     root.resume()
     vi.advanceTimersByTime(10_000)
@@ -418,7 +426,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('dispose clears a pending maxIdle timer (no double-fire)', () => {
+  test('dispose clears a pending maxIdleTime timer (no double-fire)', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
@@ -426,7 +434,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
       return {}
     })
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    root.suspend({ maxIdleTime: 1000 })
     root.dispose()
     expect(onDispose).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(10_000)
@@ -434,7 +442,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('a second suspend({maxIdle}) restarts the idle timer from zero', () => {
+  test('a second suspend({maxIdleTime}) restarts the idle timer from zero', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
@@ -442,11 +450,11 @@ describe('lifecycle — suspend / resume / dispose', () => {
       return {}
     })
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(900)
     // Re-suspend before the first timer fires — the prior timer is cleared
     // and the new 1000ms window starts now.
-    root.suspend({ maxIdle: 1000 })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(200)
     expect(onDispose).not.toHaveBeenCalled()
     vi.advanceTimersByTime(800)
@@ -588,7 +596,9 @@ describe('three-level tree (root → feature → leaf)', () => {
     const log: string[] = []
 
     const leaf = defineController((ctx, props: { name: string }) => {
-      const field = createField(ctx, '', [(v) => (v.length === 0 ? 'required' : null)])
+      const field = createField(ctx, '', {
+        validators: [(v) => (v.length === 0 ? 'required' : null)],
+      })
       ctx.onDispose(() => log.push(`leaf:${props.name}:disposed`))
       return { field, name: props.name }
     })

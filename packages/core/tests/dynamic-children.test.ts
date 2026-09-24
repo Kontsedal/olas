@@ -5,10 +5,10 @@ import { signal } from '../src/signals'
 
 const emptyDeps = {}
 
-// ─── ctx.session ────────────────────────────────────────────────────────────
+// ─── ctx.attach ─────────────────────────────────────────────────────────────
 
-describe('ctx.session', () => {
-  test('returns [api, dispose]; explicit dispose tears down early', () => {
+describe('ctx.attach', () => {
+  test('dispose is idempotent', () => {
     const log: string[] = []
     const editor = defineController(
       (ctx, props: { initial: string }) => {
@@ -17,64 +17,23 @@ describe('ctx.session', () => {
       },
       { name: 'editor' },
     )
-
-    let session: readonly [{ draft: { value: string } }, () => void] | undefined
+    let handle: { api: { draft: { value: string } }; dispose: () => void } | undefined
     const root = createRoot(
       defineController((ctx) => {
-        session = ctx.session(editor, { initial: 'hello' })
+        handle = ctx.attach(editor, { initial: 'hello' })
         return {}
       }),
       { queries: queryEngine(), deps: emptyDeps },
     )
-
-    expect(session![0].draft.value).toBe('hello')
-    session![1]()
+    expect(handle?.api.draft.value).toBe('hello')
+    handle?.dispose()
+    handle?.dispose()
     expect(log).toEqual(['editor:hello:disposed'])
-    // Idempotent.
-    session![1]()
+    root.dispose()
     expect(log).toEqual(['editor:hello:disposed'])
-
-    root.dispose()
   })
 
-  test('parent dispose tears down a session that was never explicitly disposed', () => {
-    const log: string[] = []
-    const child = defineController((ctx) => {
-      ctx.onDispose(() => log.push('child:disposed'))
-      return {}
-    })
-    const root = createRoot(
-      defineController((ctx) => {
-        ctx.session(child, undefined)
-        return {}
-      }),
-      { queries: queryEngine(), deps: emptyDeps },
-    )
-    root.dispose()
-    expect(log).toEqual(['child:disposed'])
-  })
-
-  test('session children participate in suspend/resume cascade', () => {
-    const log: string[] = []
-    const child = defineController((ctx) => {
-      ctx.onSuspend(() => log.push('child:suspend'))
-      ctx.onResume(() => log.push('child:resume'))
-      return {}
-    })
-    const root = createRoot(
-      defineController((ctx) => {
-        ctx.session(child, undefined)
-        return {}
-      }),
-      { queries: queryEngine(), deps: emptyDeps },
-    )
-    root.suspend()
-    root.resume()
-    expect(log).toEqual(['child:suspend', 'child:resume'])
-    root.dispose()
-  })
-
-  test('dispose-override on options.deps applies to the session controller', () => {
+  test('options.deps overrides the parent deps for the attached controller', () => {
     type Deps = { tag: string }
     let seen: string | undefined
     const child = defineController((ctx) => {
@@ -83,7 +42,7 @@ describe('ctx.session', () => {
     })
     const root = createRoot(
       defineController((ctx) => {
-        ctx.session(child, undefined, { deps: { tag: 'override' } })
+        ctx.attach(child, undefined, { deps: { tag: 'override' } })
         return {}
       }),
       { queries: queryEngine(), deps: { tag: 'parent' } },

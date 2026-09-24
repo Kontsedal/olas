@@ -19,7 +19,7 @@ describe('ctx.form — basic aggregation', () => {
   test('value aggregates leaf fields', () => {
     const def = defineController((ctx) => ({
       form: createForm(ctx, {
-        name: createField<string>(ctx, 'Alice', [required()]),
+        name: createField<string>(ctx, 'Alice', { validators: [required()] }),
         age: createField<number>(ctx, 30),
       }),
     }))
@@ -56,7 +56,7 @@ describe('ctx.form — basic aggregation', () => {
   test('errors aggregate per-field; isValid reflects whole tree', () => {
     const def = defineController((ctx) => ({
       form: createForm(ctx, {
-        name: createField<string>(ctx, '', [required()]),
+        name: createField<string>(ctx, '', { validators: [required()] }),
         age: createField(ctx, 0),
       }),
     }))
@@ -86,8 +86,8 @@ describe('ctx.form — basic aggregation', () => {
   test('markAllTouched + reset cascade', () => {
     const def = defineController((ctx) => ({
       form: createForm(ctx, {
-        name: createField<string>(ctx, '', [required()]),
-        nested: createForm(ctx, { x: createField<string>(ctx, '', [required()]) }),
+        name: createField<string>(ctx, '', { validators: [required()] }),
+        nested: createForm(ctx, { x: createField<string>(ctx, '', { validators: [required()] }) }),
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -108,7 +108,7 @@ describe('ctx.form — basic aggregation', () => {
   test('validate() awaits children and returns overall isValid', async () => {
     const def = defineController((ctx) => ({
       form: createForm(ctx, {
-        name: createField<string>(ctx, '', [required()]),
+        name: createField<string>(ctx, '', { validators: [required()] }),
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -207,9 +207,9 @@ describe('ctx.form — flatErrors', () => {
       form: createForm(
         ctx,
         {
-          name: createField<string>(ctx, '', [required()]),
+          name: createField<string>(ctx, '', { validators: [required()] }),
           address: createForm(ctx, {
-            city: createField<string>(ctx, '', [required()]),
+            city: createField<string>(ctx, '', { validators: [required()] }),
           }),
         },
         {
@@ -262,7 +262,7 @@ describe('ctx.fieldArray', () => {
         createForm(
           ctx,
           {
-            sku: createField<string>(ctx, '', [required()]),
+            sku: createField<string>(ctx, '', { validators: [required()] }),
             qty: createField<number>(ctx, 1),
           },
           { initial: initial as { sku?: string; qty?: number } | undefined },
@@ -320,7 +320,7 @@ describe('ctx.fieldArray', () => {
     const def = defineController((ctx) => ({
       tags: createFieldArray(
         ctx,
-        (initial) => createField<string>(ctx, initial ?? '', [required()]),
+        (initial) => createField<string>(ctx, initial ?? '', { validators: [required()] }),
         {
           validators: [
             async (items) => {
@@ -342,7 +342,7 @@ describe('ctx.fieldArray', () => {
   test('FieldArray.markAllTouched cascades into sub-form items', () => {
     const def = defineController((ctx) => ({
       items: createFieldArray(ctx, () =>
-        createForm(ctx, { sku: createField<string>(ctx, '', [required()]) }),
+        createForm(ctx, { sku: createField<string>(ctx, '', { validators: [required()] }) }),
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -573,7 +573,7 @@ describe('flatErrors walker — fieldArray of forms', () => {
         items: createFieldArray(ctx, (initial?: { sku?: string }) =>
           createForm(
             ctx,
-            { sku: createField<string>(ctx, '', [required()]) },
+            { sku: createField<string>(ctx, '', { validators: [required()] }) },
             {
               initial,
               validators: [(v) => (v.sku === 'banned' ? 'sku is banned' : null)],
@@ -597,7 +597,7 @@ describe('flatErrors walker — fieldArray of forms', () => {
   test('emits leaf errors at items[idx] when fieldArray items are plain fields', async () => {
     const def = defineController((ctx) => ({
       tags: createFieldArray(ctx, (initial?: string) =>
-        createField<string>(ctx, initial ?? '', [required()]),
+        createField<string>(ctx, initial ?? '', { validators: [required()] }),
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -619,7 +619,7 @@ describe('flatErrors walker — fieldArray of forms', () => {
 describe('field validateOn (T5.3)', () => {
   test("'blur' defers validation until markTouched, then re-validates on change", async () => {
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, '', [required()], { validateOn: 'blur' }),
+      name: createField<string>(ctx, '', { validators: [required()], validateOn: 'blur' }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Locked: an invalid (empty) value surfaces NO error and reads valid.
@@ -641,7 +641,7 @@ describe('field validateOn (T5.3)', () => {
 
   test("'submit' defers until revalidate(); markTouched does NOT unlock it", async () => {
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, '', [required()], { validateOn: 'submit' }),
+      name: createField<string>(ctx, '', { validators: [required()], validateOn: 'submit' }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.api.name.errors.value).toEqual([])
@@ -656,7 +656,7 @@ describe('field validateOn (T5.3)', () => {
 
   test('reset() re-locks a blur/submit field', async () => {
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, '', [required()], { validateOn: 'blur' }),
+      name: createField<string>(ctx, '', { validators: [required()], validateOn: 'blur' }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.api.name.markTouched()
@@ -717,7 +717,7 @@ describe('field isValid stays stable while validating (T5.3)', () => {
   test('async validation holds last-known validity mid-flight (no strobe)', async () => {
     let gate = deferred<string | null>()
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, 'ok', [() => gate.promise]),
+      name: createField<string>(ctx, 'ok', { validators: [() => gate.promise] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Initial run in flight: default last-known validity is `true`, so isValid

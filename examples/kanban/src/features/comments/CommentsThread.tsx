@@ -1,12 +1,11 @@
 import { useRoot, useValue } from '@kontsedal/olas-react'
 import { Send } from 'lucide-react'
 import type { Comment } from '../../api'
-import type { AppApi } from '../../app.controller'
 import { UserEntity } from '../../entities'
 import { Avatar, Button } from '../../ui'
 
 export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const visible = useValue(app.comments.visible)
   const draft = useValue(app.comments.draft)
   const isPending = useValue(app.comments.addComment.isPending)
@@ -65,7 +64,7 @@ export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
  * comment count.
  */
 function CommentRow({ comment }: { comment: Comment }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const author = useValue(app.entities.signal(UserEntity, comment.authorId))
   return (
     <li className="olas-comment">

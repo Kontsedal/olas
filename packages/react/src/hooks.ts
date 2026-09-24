@@ -117,6 +117,18 @@ export function useValue<T, U = T>(
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 }
 
+const warnedDisabled = new WeakSet<object>()
+
+function warnSuspendedWhileDisabled(subscription: object): void {
+  if (warnedDisabled.has(subscription)) return
+  warnedDisabled.add(subscription)
+  console.warn(
+    '[olas] useQuery({ suspense: true }) is suspending on a disabled query. It stays ' +
+      'suspended until the query is enabled and loads. If the query may never be ' +
+      'enabled, render this subtree only when it is.',
+  )
+}
+
 /**
  * What `useQuery` returns: every `AsyncState` signal read as a plain value,
  * plus its actions.
@@ -129,6 +141,8 @@ export type UseQueryResult<T> = {
   isFetching: boolean
   isStale: boolean
   isPaused: boolean
+  /** `false` while the subscription's `enabled` returns `false`. */
+  isEnabled: boolean
   lastUpdatedAt: number | undefined
   hasPendingMutations: boolean
   refetch: () => Promise<T>
@@ -154,9 +168,10 @@ export type UseSuspenseQueryResult<T> = Omit<UseQueryResult<T>, 'data'> & { data
  *    background-refetch failure that keeps the last-good data does NOT throw.
  *  - On success the hook returns synchronously and `data` is narrowed to
  *    `T` (never `undefined`).
- *  - A DISABLED (`enabled: () => false`) query has no data and never fetches,
- *    so it suspends indefinitely — don't combine `suspense` with a disabled
- *    query.
+ *  - A disabled (`enabled: () => false`) query suspends until it is enabled
+ *    and loads, because `firstValue()` waits for the subscription to attach.
+ *    That is what a dependent query wants. A query that is never enabled keeps
+ *    the fallback up, and development builds warn once when that starts.
  *
  *  Refetches AFTER a first success do NOT re-suspend — only the initial load
  *  throws. `reset()` does NOT re-suspend either: it clears `error`/`status` but
@@ -188,6 +203,7 @@ export function useQuery<T>(
         isFetching: subscription.isFetching.value,
         isStale: subscription.isStale.value,
         isPaused: subscription.isPaused.value,
+        isEnabled: subscription.isEnabled.value,
         lastUpdatedAt: subscription.lastUpdatedAt.value,
         hasPendingMutations: subscription.hasPendingMutations.value,
       })),
@@ -209,11 +225,14 @@ export function useQuery<T>(
     if (snap.status === 'error') {
       throw subscription.error.peek() // → ErrorBoundary (no data yet)
     }
-    // No data and not errored → suspend (pending / idle / offline-parked); the
-    // thrown promise resolves once data lands. NB: a DISABLED (idle) query stays
-    // suspended forever. Throwing a hard error for the idle case was tried
-    // (T4.7) but is indistinguishable from a query torn down during dispose, so
-    // it produced teardown false-positives.
+    // No data and not errored → suspend (pending / idle / offline-parked / disabled).
+    // The thrown promise resolves once data lands; for a disabled query that
+    // means once it is enabled and loaded. `firstValue()` returns the same
+    // promise while it is pending, so a re-render re-throws the one React holds.
+    // A hard error for the disabled case was tried (T4.7): an idle subscription
+    // could not be told from one torn down during dispose, so it fired during
+    // teardown. `isEnabled` tells them apart now, and a warning is enough.
+    if (__DEV__ && !snap.isEnabled) warnSuspendedWhileDisabled(subscription)
     throw subscription.firstValue()
   }
 

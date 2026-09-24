@@ -11,7 +11,7 @@ describe('form.submit lifecycle', () => {
     const handler = vi.fn(async (value: { name: string }) => ({ id: 'srv-1', ...value }))
     const def = defineController((ctx) => ({
       form: createForm(ctx, {
-        name: createField<string>(ctx, 'Alice', [required()]),
+        name: createField<string>(ctx, 'Alice', { validators: [required()] }),
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -37,7 +37,7 @@ describe('form.submit lifecycle', () => {
     const handler = vi.fn()
     const def = defineController((ctx) => ({
       form: createForm(ctx, {
-        name: createField<string>(ctx, '', [required()]),
+        name: createField<string>(ctx, '', { validators: [required()] }),
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -57,7 +57,7 @@ describe('form.submit lifecycle', () => {
     const handler = vi.fn(async () => 'sent')
     const def = defineController((ctx) => ({
       form: createForm(ctx, {
-        name: createField<string>(ctx, '', [required()]),
+        name: createField<string>(ctx, '', { validators: [required()] }),
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
@@ -186,7 +186,7 @@ describe('form.submit lifecycle', () => {
 describe('form.setErrors / field.setErrors', () => {
   test('field.setErrors pins server errors that survive validator re-runs', () => {
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, 'Alice', [required()]),
+      name: createField<string>(ctx, 'Alice', { validators: [required()] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
@@ -203,7 +203,7 @@ describe('form.setErrors / field.setErrors', () => {
 
   test('field.setErrors merges with validator errors (validator first)', () => {
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, '', [required('Required')]),
+      name: createField<string>(ctx, '', { validators: [required('Required')] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
@@ -219,7 +219,7 @@ describe('form.setErrors / field.setErrors', () => {
 
   test('field.setErrors([]) clears the server-error channel without touching validators', () => {
     const def = defineController((ctx) => ({
-      name: createField<string>(ctx, '', [required('Required')]),
+      name: createField<string>(ctx, '', { validators: [required('Required')] }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 

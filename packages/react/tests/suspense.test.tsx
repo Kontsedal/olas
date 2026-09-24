@@ -6,6 +6,7 @@ import {
   defineController,
   defineQuery,
   queryEngine,
+  signal,
 } from '@kontsedal/olas-core'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { Component, type ErrorInfo, type ReactNode, Suspense } from 'react'
@@ -324,5 +325,53 @@ describe('subscription.firstValue()', () => {
 
     await expect(root.api.sub.firstValue()).rejects.toBe(boom)
     root.dispose()
+  })
+})
+
+describe('useQuery({ suspense: true }) on a disabled query', () => {
+  test('suspends until the query is enabled and loads, and warns once in development', async () => {
+    const warns: unknown[] = []
+    const prevWarn = console.warn
+    console.warn = (...args: unknown[]) => {
+      warns.push(args[0])
+    }
+    try {
+      const enabled = signal(false)
+      const q = defineQuery({
+        id: 'suspense-test/dependent',
+        key: () => [],
+        fetcher: async () => 'dependent-data',
+      })
+      const def = defineController((ctx) => ({
+        dep: createQuery(ctx, q, { enabled: () => enabled.value }),
+        enable: () => enabled.set(true),
+      }))
+      const root = createRoot(def, { queries: queryEngine(), deps: {} })
+
+      function View() {
+        const { data } = useQuery(root.api.dep, { suspense: true })
+        return <span data-testid="dep">{data}</span>
+      }
+
+      render(
+        <OlasProvider root={root}>
+          <Suspense fallback={<span data-testid="fallback">waiting</span>}>
+            <View />
+          </Suspense>
+        </OlasProvider>,
+      )
+      expect(screen.getByTestId('fallback').textContent).toBe('waiting')
+      expect(warns.filter((w) => String(w).includes('disabled query'))).toHaveLength(1)
+
+      await act(async () => {
+        root.api.enable()
+        await root.api.dep.firstValue()
+      })
+      expect(screen.getByTestId('dep').textContent).toBe('dependent-data')
+      expect(warns.filter((w) => String(w).includes('disabled query'))).toHaveLength(1)
+      root.dispose()
+    } finally {
+      console.warn = prevWarn
+    }
   })
 })

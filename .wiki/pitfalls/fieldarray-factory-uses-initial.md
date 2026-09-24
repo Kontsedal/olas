@@ -19,7 +19,7 @@ confidence: high
 Spec §8.5 example reads naturally:
 
 ```ts
-const tags = createFieldArray(ctx, () => createField(ctx, '', [required()]))
+const tags = createFieldArray(ctx, () => createField(ctx, '', { validators: [required()] }))
 tags.add('hello')
 tags.value         // string[]
 ```

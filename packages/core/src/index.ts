@@ -17,6 +17,7 @@ export type {
   LazyChild,
   Root,
   RootOptions,
+  SuspendOptions,
 } from './controller'
 export { createRoot, defineController } from './controller'
 // CTX_INTERNALS and CtxInternals are deliberately NOT exported. The handle is
@@ -70,6 +71,7 @@ export type {
   FieldArrayOptions,
   FieldArrayValidator,
   FieldArrayValue,
+  FieldOptions,
   Form,
   FormErrors,
   FormOptions,
@@ -105,6 +107,7 @@ export type { BindQueryOptions } from './query/client'
 export { defineInfiniteQuery, defineQuery } from './query/define'
 export type { QueryEngine, QueryEngineOptions } from './query/engine'
 export { queryEngine } from './query/engine'
+export { QueryDisabledError } from './query/errors'
 export type {
   InfiniteFetchCtx,
   InfiniteQuery,

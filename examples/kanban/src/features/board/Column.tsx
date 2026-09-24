@@ -12,7 +12,6 @@ import { useRoot, useValue } from '@kontsedal/olas-react'
 import { MoreHorizontal, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { Board as BoardData, Column as ColumnData } from '../../api'
-import type { AppApi } from '../../app.controller'
 import { cx, IconButton } from '../../ui'
 import { identityColor } from '../../ui/identity'
 import { CardTile } from './CardTile'
@@ -27,7 +26,7 @@ export function Column({
   board: BoardData
   draggingCardId: string | null
 }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const matches = useValue(app.board.filterMatches)
   const style = { ['--column-color' as string]: identityColor(column.hue) } as React.CSSProperties
   const [createOpen, setCreateOpen] = useState(false)

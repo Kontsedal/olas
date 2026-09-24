@@ -24,18 +24,20 @@ const VALIDATION_DEBOUNCE_MS = 220
 
 export const composerController = defineController(
   (ctx: Ctx, props: ComposerProps) => {
-    const author = createField<string>(ctx, '', [required<string>()])
+    const author = createField<string>(ctx, '', { validators: [required<string>()] })
 
     // Body field has TWO validators: a fast sync one (required) AND an async
     // debounced one that calls the api. `debouncedValidator` resets its
     // timer on every value change and aborts in-flight calls when superseded.
-    const body = createField<string>(ctx, '', [
-      required<string>(),
-      debouncedValidator(
-        (value, signal) => ctx.deps.api.validateCommentBody(value, signal),
-        VALIDATION_DEBOUNCE_MS,
-      ),
-    ])
+    const body = createField<string>(ctx, '', {
+      validators: [
+        required<string>(),
+        debouncedValidator(
+          (value, signal) => ctx.deps.api.validateCommentBody(value, signal),
+          VALIDATION_DEBOUNCE_MS,
+        ),
+      ],
+    })
 
     const form = createForm(ctx, { author, body })
 

@@ -170,13 +170,13 @@ describe('queryEngine({ defaults }) — gcTime + keepPreviousData', () => {
   function openCloseRoot(q: ReturnType<typeof defineQuery<[], number>>) {
     const sub = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     return defineController((ctx) => {
-      let handle: readonly [{ x: unknown }, () => void] | null = null
+      let handle: { dispose: () => void } | null = null
       return {
         open: () => {
-          handle = ctx.session(sub, undefined)
+          handle = ctx.attach(sub, undefined)
         },
         close: () => {
-          handle?.[1]()
+          handle?.dispose()
           handle = null
         },
       }

@@ -1,7 +1,6 @@
 import type { Field, Form } from '@kontsedal/olas-core'
 import { useField, useRoot, useValue } from '@kontsedal/olas-react'
 import { Plus, Trash2 } from 'lucide-react'
-import type { AppApi } from '../../app.controller'
 import { IconButton } from '../../ui'
 
 type SubtaskForm = Form<{ text: Field<string>; done: Field<boolean> }>
@@ -34,7 +33,7 @@ const keyOf = (item: object): string => {
 }
 
 export function SubtasksRow() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const array = app.cardDetail.form.fields.subtasks
   const items = useValue(array.items)
 
@@ -60,7 +59,7 @@ export function SubtasksRow() {
 }
 
 function SubtaskRow({ item, idx }: { item: SubtaskForm; idx: number }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const array = app.cardDetail.form.fields.subtasks
   const textField = useField(item.fields.text)
   const doneField = useField(item.fields.done)

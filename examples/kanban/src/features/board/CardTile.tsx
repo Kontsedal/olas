@@ -16,7 +16,6 @@ import { useRoot, useValue } from '@kontsedal/olas-react'
 import { CalendarDays, GripVertical, MessageSquare } from 'lucide-react'
 import type { CSSProperties, MouseEvent } from 'react'
 import type { Card as CardData, Priority } from '../../api'
-import type { AppApi } from '../../app.controller'
 import { LabelEntity, UserEntity } from '../../entities'
 import { Avatar, cx, Tag } from '../../ui'
 
@@ -35,7 +34,7 @@ const PRIORITY_LABEL: Record<Priority, string> = {
 }
 
 export function CardTile({ card, ordered }: { card: CardData; ordered: readonly string[] }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
   })
@@ -144,7 +143,7 @@ export function CardTile({ card, ordered }: { card: CardData; ordered: readonly 
  * because React matches hooks by call order and the id list changes length.
  */
 function LabelTag({ id }: { id: string }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const label = useValue(app.entities.signal(LabelEntity, id))
   if (label === undefined) return null
   return <Tag hue={label.hue}>{label.name}</Tag>
@@ -170,7 +169,7 @@ function AssigneeAvatars({ ids, max = 3 }: { ids: readonly string[]; max?: numbe
 }
 
 function AssigneeAvatar({ id }: { id: string }) {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const user = useValue(app.entities.signal(UserEntity, id))
   if (user === undefined) return null
   return <Avatar name={user.name} hue={user.hue} size="sm" />

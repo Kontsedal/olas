@@ -136,6 +136,7 @@ export function fakeAsyncState<T>(
     lastUpdatedAt: number | undefined
     hasPendingMutations: boolean
     isPaused: boolean
+    isEnabled: boolean
     refetch: () => Promise<T>
     reset: () => void
     cancel: () => void
@@ -153,6 +154,7 @@ export function fakeAsyncState<T>(
   const lastUpdatedAt$: ReadSignal<number | undefined> = signal(overrides?.lastUpdatedAt)
   const hasPendingMutations$: ReadSignal<boolean> = signal(overrides?.hasPendingMutations ?? false)
   const isPaused$: ReadSignal<boolean> = signal(overrides?.isPaused ?? false)
+  const isEnabled$: ReadSignal<boolean> = signal(overrides?.isEnabled ?? true)
 
   const refetch = overrides?.refetch ?? (async () => data$.peek() as T)
   const reset = overrides?.reset ?? (() => {})
@@ -169,6 +171,7 @@ export function fakeAsyncState<T>(
     lastUpdatedAt: lastUpdatedAt$,
     hasPendingMutations: hasPendingMutations$,
     isPaused: isPaused$,
+    isEnabled: isEnabled$,
     refetch,
     reset,
     cancel,

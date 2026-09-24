@@ -1,9 +1,8 @@
 import { useRoot, useValue } from '@kontsedal/olas-react'
-import type { AppApi } from '../../app.controller'
 import { Toast, ToastRegion } from '../../ui'
 
 export function Notifications() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const queue = useValue(app.notifications.queue)
   return (
     <ToastRegion>

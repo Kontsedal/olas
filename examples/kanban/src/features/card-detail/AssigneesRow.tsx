@@ -1,9 +1,8 @@
 import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
-import type { AppApi } from '../../app.controller'
 import { Avatar, cx } from '../../ui'
 
 export function AssigneesRow() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const users = useQuery(app.users)
   const array = app.cardDetail.form.fields.assigneeIds
   const value = useValue(array)

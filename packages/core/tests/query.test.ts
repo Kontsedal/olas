@@ -648,18 +648,18 @@ describe('refetchInterval', () => {
 
   // The subscriber has to come and go inside ONE root — a second root would be
   // a second client and a second cache, and a "no more ticks" assertion would
-  // pass for the wrong reason. `ctx.session` gives an open/close handle on the
+  // pass for the wrong reason. `ctx.attach` gives an open/close handle on the
   // same entry (same trick as `query-default-options.test.ts`).
   function openCloseRoot(q: ReturnType<typeof defineQuery<[], number>>) {
     const sub = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     return defineController((ctx) => {
-      let handle: readonly [{ x: unknown }, () => void] | null = null
+      let handle: { dispose: () => void } | null = null
       return {
         open: () => {
-          handle = ctx.session(sub, undefined)
+          handle = ctx.attach(sub, undefined)
         },
         close: () => {
-          handle?.[1]()
+          handle?.dispose()
           handle = null
         },
       }
