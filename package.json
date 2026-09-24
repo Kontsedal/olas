@@ -28,7 +28,8 @@
     "size": "size-limit",
     "check:public-types": "tsx scripts/check-public-types.ts",
     "bench": "vitest bench --run",
-    "mutation": "stryker run"
+    "mutation": "stryker run",
+    "check:doc-snippets": "tsx scripts/check-doc-snippets.ts"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",

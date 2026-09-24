@@ -2,26 +2,26 @@
 
 In-app devtools UI for an Olas root, as two React components. `<DevtoolsLauncher>` is a floating draggable window with a launcher button. `<DevtoolsPanel>` is the panel itself, for embedding in your own chrome. Both read the same `root.debug` event stream.
 
-A standalone browser extension reading the same stream is tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
-
 ## Install
 
 ```bash
 pnpm add @kontsedal/olas-devtools @kontsedal/olas-core @kontsedal/olas-react @preact/signals-core react
 ```
 
-`react >= 18` and the three Olas packages are peer deps.
+`react >= 18`, `@kontsedal/olas-core` and `@kontsedal/olas-react` are peer deps, and core brings its own peer, `@preact/signals-core`.
 
 ## 30-second example
 
 ```tsx
-import { OlasProvider } from '@kontsedal/olas-react'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
-import { createRoot } from '@kontsedal/olas-core'
+import { OlasProvider } from '@kontsedal/olas-react'
+import { App } from './App'
+import { appController } from './app.controller'
 
-const root = createRoot(appController, { deps })
+const root = createRoot(appController, { deps: {}, queries: queryEngine() })
 
-function AppShell() {
+export function AppShell() {
   return (
     <OlasProvider root={root}>
       <App />
@@ -30,6 +30,8 @@ function AppShell() {
   )
 }
 ```
+
+`import.meta.env.DEV` is Vite's development flag; use your bundler's equivalent. The package declares no side effects, so a production build where the flag is `false` drops the panel.
 
 `DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open and minimized state persist to `localStorage`.
 
@@ -52,7 +54,7 @@ Every long view mounts only the rows in view, so a 10,000-event timeline scrolls
 
 ## API
 
-```ts
+```ts nocheck
 function DevtoolsLauncher(props: {
   root: Pick<Root<unknown>, 'debug'>
   defaultTab?: DevtoolsTab
@@ -61,7 +63,7 @@ function DevtoolsLauncher(props: {
   urlHashKey?: string         // forwarded to the panel; persists tab + filters in the URL
   storageKey?: string         // localStorage key for window position/size; default 'olas-devtools-window'
   initial?: { x?: number; y?: number; w?: number; h?: number }
-}): JSX.Element
+}): ReactElement
 
 function DevtoolsPanel(props: {
   root: Pick<Root<unknown>, 'debug'>
@@ -69,23 +71,28 @@ function DevtoolsPanel(props: {
   maxEntries?: number
   maxTimelineEntries?: number
   urlHashKey?: string
-}): JSX.Element
+}): ReactElement
 
 type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
 
 // Lower-level store — exported so consumers can build their own UI.
 class DevtoolsStore {
+  constructor(options?: DevtoolsStoreOptions) // maxEntries, maxTimelineEntries, maxDisposedNodes, coalesce, now
+
   readonly tree$: ReadSignal<ControllerNode>
   readonly cache$: ReadSignal<CacheEntry[]>
   readonly mutations$: ReadSignal<MutationEntry[]>
   readonly fields$: ReadSignal<FieldEntry[]>
   readonly events$: ReadSignal<TimelineEvent[]>   // the timeline's ring buffer
   readonly droppedEvents$: ReadSignal<number>     // events the ring overwrote
+  readonly cacheState$: Signal<DebugCacheEntry[]> // live cache entries, for the inspector
 
-  attach(root): () => void   // subscribes; returns unsubscribe
-  handle(event): void        // for tests or programmatic feed
+  attach(root: Pick<Root<unknown>, 'debug'>): () => void // subscribes; returns unsubscribe
+  handle(event: DebugEvent): void                        // for tests or programmatic feed
+  pause(): void                                          // drop new events until resume()
+  resume(): void
   clearLogs(): void
-  search(query): SearchGroup[]
+  search(query: string, limitPerKind?: number): SearchGroup[]
 }
 ```
 
@@ -114,7 +121,7 @@ Spec §20.9 lists the full `DebugEvent` union. In development builds the runtime
 - **field:** `validated`
 - **plugin:** `event`, for each `host.debug(payload)` a plugin makes
 
-`cache:subscribed` is declared in the type but not wired yet. The panel renders it when it arrives, and you can feed it through `store.handle(event)` from your own instrumentation.
+`cache:subscribed` is declared in the type, and the runtime does not emit it. The panel renders it when it arrives, and you can feed it through `store.handle(event)` from your own instrumentation.
 
 ## Further reading
 

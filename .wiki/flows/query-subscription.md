@@ -54,7 +54,7 @@ const effectDispose = effect(() => {
   if (!enabled()) {                     # enabledFn from options
     # sub.detach(keepDataWhileDisabled): when that opt-in is set, detach snapshots
     # the entry's current data into previousData$ first, so `data` keeps reporting
-    # it while disabled (rq-style) instead of blanking. Default false → blanks (§5.7).
+    # it while disabled (rq-style) instead of blanking. Default false → blanks (§5.2).
     untracked(() => { release(currentEntry); sub.detach(keepDataWhileDisabled) })
     return
   }

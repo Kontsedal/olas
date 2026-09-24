@@ -33,7 +33,7 @@ export type RealtimeService = {
   /**
    * Optional. Subscribe to connection-state changes. When implemented,
    * `createConnectionState(ctx)` returns a live signal of the state;
-   * otherwise it returns a constant `'connected'` signal.
+   * otherwise it returns a constant `'unknown'` signal.
    *
    * Four states:
    * - `'connected'`: subscriptions actively receive events.
@@ -161,7 +161,7 @@ const DEFAULT_FLUSH_MS = 16
  * subscription lives inside `ctx.effect` so pause/resume re-runs it (we read
  * `isPaused.value` as a tracked dep).
  *
- * Naming: the `use*` prefix matches the spec convention for ctx-taking
+ * Naming: the `create*` prefix is the convention for ctx-taking
  * composables (`createPersisted`, `createRealtimePatcher`). The `define*` prefix is
  * reserved for module-scope factories (`defineQuery`, `defineController`).
  *

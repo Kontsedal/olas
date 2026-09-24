@@ -40,11 +40,11 @@ confidence: medium
 
 # `@kontsedal/olas-devtools`
 
-Drop-in React panel that subscribes to a root's `debug` bus and renders six live views under one search box. The **default and headline view is the causal Timeline**. Every event is ordered by `seq` and grouped by `causeId` into collapsible cause-chains, and each `cache:set-data` expands to a structural before-and-after diff. The other tabs are the controller Tree, the Cache event log, the Inspector for live cache state, Mutations and Fields. Every long view is windowed, so it mounts only the rows in its viewport. A floating `<DevtoolsLauncher>` hosts the panel inside a draggable, resizable window, with state persisted to `localStorage`. Spec §13, §14. The overhaul this implements is [../decisions/devtools-overhaul.md](../decisions/devtools-overhaul.md).
+Drop-in React panel that subscribes to a root's `debug` bus and renders six live views under one search box. The **default and headline view is the causal Timeline**. Every event is ordered by `seq` and grouped by `causeId` into collapsible cause-chains, and each `cache:set-data` expands to a structural before-and-after diff. The other tabs are the controller Tree, the Cache event log, the Inspector for live cache state, Mutations and Fields. Every long view is windowed, so it mounts only the rows in its viewport. A floating `<DevtoolsLauncher>` hosts the panel inside a draggable, resizable window, with state persisted to `localStorage`. Spec §14. The overhaul this implements is [../decisions/devtools-overhaul.md](../decisions/devtools-overhaul.md).
 
 ## Public surface
 
-```ts
+```ts nocheck
 type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
 
 function DevtoolsPanel(props: {
@@ -54,7 +54,7 @@ function DevtoolsPanel(props: {
   maxTimelineEntries?: number // timeline ring capacity, default 10,000
   urlHashKey?: string
   inspectorPollMs?: number    // deprecated + ignored — the inspector is event-driven
-}): JSX.Element
+}): ReactElement
 
 function DevtoolsLauncher(props: {
   root: Pick<Root<unknown>, 'debug'>
@@ -64,7 +64,7 @@ function DevtoolsLauncher(props: {
   urlHashKey?: string
   storageKey?: string
   initial?: { x?: number; y?: number; w?: number; h?: number }
-}): JSX.Element
+}): ReactElement
 
 class DevtoolsStore {
   readonly tree$: ReadSignal<ControllerNode>          // live controller tree (not a log)
@@ -167,7 +167,7 @@ With `urlHashKey`, the panel reads its tab and filters from the URL hash. `readU
 
 ## Post-mount observability
 
-Spec §13 phrasing: "Without devtools, large signal graphs become opaque." The bus replays the live-controller snapshot to a new subscriber, so the Tree is complete on mount. Cache, mutation and field events from before the mount are not replayed. Mount the panel early to capture them, or build a `DevtoolsStore` next to `createRoot` and hand it to a custom UI later. `attach` flushes the replay at once, so the tree shows on the first render after mount.
+The bus replays the live-controller snapshot to a new subscriber, so the Tree is complete on mount. Cache, mutation and field events from before the mount are not replayed. Mount the panel early to capture them, or build a `DevtoolsStore` next to `createRoot` and hand it to a custom UI later. `attach` flushes the replay at once, so the tree shows on the first render after mount.
 
 ## The six tabs
 
@@ -190,7 +190,7 @@ A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.
 
 A tree row whose `ControllerNode.debug` record is non-empty renders a **Variables** section, open by default, listing each `name: value` a controller registered via `ctx.debug({...})`. The store sets the record from `controller:constructed`'s `debug` field and updates it on `controller:debug`. `controller:debug` is kept off the timeline, because it is a state re-registration rather than a causal event.
 
-Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `use()`. Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
+Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:606-607`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
 
 ## Event-driven inspector (the poll is gone)
 
@@ -213,4 +213,4 @@ The older suites still pin the rest: `store.test.ts`, `panel.test.tsx`, `diff.te
 - **`cache:subscribed`** wiring, for subscriber counts. It needs subscriber-path threading through `use → acquire`, which is overhaul T8.5. Declared in the union, not emitted.
 - **Per-plugin lane payloads** from cross-tab, entities and mutation-queue. The lanes exist; those plugins do not call `host.debug` yet.
 - The rest of the overhaul: T8.5 tracing, T8.6 live actions, T8.7 environment simulation and the forms inspector, T8.9 session export and import, and the T8.10 UX pass. See [../decisions/devtools-overhaul.md](../decisions/devtools-overhaul.md).
-- Signal dependency graph view (spec §13 mentions it).
+- Signal dependency graph view.

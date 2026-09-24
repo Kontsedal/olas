@@ -114,14 +114,17 @@ fan-out" separation in real deployments.
 These came out while building the kanban app. Filed as BACKLOG items where
 they imply a library change.
 
-1. **Optimistic mutation rollback is NOT automatic on regular errors.** Olas
-   auto-rolls back when a run is *aborted* (latest-wins supersede, dispose),
-   but for ordinary errors the user calls `snapshot.rollback()` inside
-   `onError(err, vars, snapshot)`. See `packages/core/src/query/mutation.ts:196-208`.
-2. **`root.dehydrate()` does NOT serialize `defineInfiniteQuery` entries.**
-   Only entries from regular `defineQuery` caches are written.
-   See `packages/core/src/query/client.ts:246-260`. The kanban archive
-   drawer keeps cursor-paged history per-tab; SSR is out of scope for it.
+1. **Optimistic rollback on an ordinary error.** Resolved: a failed run rolls
+   its snapshot back after the user's `onError(err, vars, snapshot)` returns
+   (`packages/core/src/query/mutation.ts:591-594`). The snapshot is
+   single-consume, so an `onError` that already rolled back makes the
+   automatic call a no-op. The kanban column-reorder `onError` rolls back
+   explicitly on purpose, to show both styles
+   (`examples/kanban/src/features/board/board.controller.ts:331-334`).
+2. **Infinite queries in `root.dehydrate()`.** Resolved in 1.0 (W10): an
+   infinite entry dehydrates with its pages in `data` and its `pageParams`
+   (`packages/core/src/query/client.ts:1159`). The kanban archive drawer
+   keeps cursor-paged history per tab and does not use SSR.
 3. **`createZodForm` does NOT promote array-level `.min(N)` rules** from the
    outer Zod schema to a `FieldArray`-level validator. Leaf fields and nested
    object schemas walk correctly. Root-level `.refine(...)` on the top-level

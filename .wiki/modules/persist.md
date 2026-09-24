@@ -22,7 +22,7 @@ confidence: medium
 
 Two ways to persist, over one storage contract:
 
-- **`createPersisted(ctx, key, source, options?)`** persists one signal-like value. Spec §13, §20.11.
+- **`createPersisted(ctx, key, source, options?)`** persists one signal-like value. Spec §13.4, §20.11.
 - **`persistQueryCachePlugin(options?)`** persists the query cache: see "The query cache" below.
 
 `StorageAdapter`, the `localStorageAdapter()` default and its `LOCAL_STORAGE` object live in `storage.ts`, so the plugin module can import them without a cycle through `index.ts`. `indexedDbAdapter()` stays in `index.ts`.

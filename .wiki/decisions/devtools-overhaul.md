@@ -122,7 +122,7 @@ possibly-stale data) but you can't *do* anything.
 ## North star
 
 Olas owns the whole vertical — signals, controllers, lifecycle, query cache, mutations,
-forms, plugins — through one dev-event bus (`root.__debug`). No competitor (Redux
+forms, plugins — through one dev-event bus (`root.debug`). No competitor (Redux
 DevTools, TanStack Query devtools, MobX tools) can correlate across those layers; each
 sees one slice. The exceptional panel answers the three questions every debugging
 session is about, in one place:
@@ -143,7 +143,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   `DebugEvent` union so the cache narrates itself, `__DEV__`-gated and zero-cost when the
   bus has no subscribers. New events: `cache:fetch-start`, `cache:fetch-settle`
   (success/error/aborted + duration), `cache:set-data` (with `source:
-  'mutate'|'set'|'remote'|'fetch'`, reusing the §13.2 plugin vocabulary),
+  'mutate'|'set'|'remote'|'fetch'`, reusing the §13.1 plugin vocabulary),
   `cache:invalidate`, `cache:gc`, `cache:subscribe`/`unsubscribe` (per entry, with
   subscriber controller path), `mutation:enqueue/run/settle` (add a stable `runId`),
   `snapshot:push/rollback/finalize` (the optimistic stack), `form:field-change` and
@@ -197,9 +197,10 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
 ## 8C — act on state: the panel does things
 
 - **T8.6 — debug control API + cache actions.** A `__DEV__`-only `DebugControls` next to
-  the bus on `root.__debug`: `refetch, invalidate, removeEntry, setEntryData,
+  the bus on `root.debug`: `refetch, invalidate, removeEntry, write,
   forceEntryState('loading'|'error'), suspendController, resumeController,
-  disposeController`, implemented over existing internals (`forceEntryState` sets the
+  disposeController`, implemented over existing internals (`write` is the canonical
+  write `host.queries.write` makes; `forceEntryState` sets the
   entry's signals directly and marks it "forced" until the next real fetch). Panel: per
   entry — Refetch, Invalidate, Remove, Edit-as-JSON (validated), Force loading or
   Force error; per controller — Suspend, Resume and Dispose (confirm); per form — Reset,

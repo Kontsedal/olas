@@ -20,17 +20,13 @@ import { type Message, PROTOCOL_VERSION } from '../src/protocol'
  * Strategy: a fake `BroadcastChannel` bus shared across two `QueryClient`s
  * — same channelName routes to the same bus.
  *
- * Module-graph caveat: in real life each tab is its own process with its
- * own `defineQuery` call, so `query.__clients` has only the local client.
- * In a single-process test, if both tabs share one `defineQuery` value,
- * `query.__clients` holds BOTH clients and `query.setData(...)` writes to
- * both synchronously — masking the cross-tab path. To preserve isolation,
- * each test mounts each "tab" with its OWN `defineQuery` value that
- * shares only the `queryId`. The registry's "last write wins" semantics
- * mean the most-recent definition routes inbound messages — that's fine
- * because every tab's `applyRemoteSetData` only applies if the LOCAL
- * `QueryClient` has an entry for the key, and each tab's local entries
- * are bound against its OWN query object.
+ * Module-graph caveat: in real life each tab evaluates its own modules, so
+ * a query's `__clients` holds only the local client. In a single-process
+ * test, two roots that bind one `defineQuery` value both land in it, and an
+ * unbound `query.setData(...)` throws as ambiguous. The `mountTabs` cases
+ * therefore mint one `defineQuery` value per tab with the same `id`, so each
+ * unbound call reaches one client. Inbound messages route by id through each
+ * root's own `host.queries`, so the routing is per root either way.
  */
 
 // ---- shared in-memory bus -------------------------------------------------
@@ -192,8 +188,8 @@ describe('crossTabPlugin', () => {
     queryA.setData('1', () => ({ id: '1', name: 'X' }))
     await settle()
 
-    // tabA broadcast once. tabB applied as remote (isRemote: true → no
-    // outbound). Total postCount: 1.
+    // tabA broadcast once. tabB applied it with the plugin's origin, which
+    // the default `origins` does not mirror. Total postCount: 1.
     expect(tabs.postCount()).toBe(1)
     tabs.tabA.dispose()
     tabs.tabB.dispose()

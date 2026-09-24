@@ -5,7 +5,7 @@ import type { AsyncState, AsyncStatus } from './query/types'
 import { computed, type ReadSignal, type Signal, signal } from './signals'
 
 // Test-only registry teardown — lives on the `@kontsedal/olas-core/testing`
-// sub-path, NOT the public entry (T3.9). Lets tests reusing a `mutationId`
+// sub-path, NOT the public entry (T3.9). Lets tests reusing a mutation `id`
 // across cases avoid registry bleed.
 export { _unregisterMutationById } from './query/mutation-registry'
 export {

@@ -8,7 +8,7 @@ The Svelte adapter for [Olas](../..). An Olas `ReadSignal` already satisfies Sve
 pnpm add @kontsedal/olas-svelte @kontsedal/olas-core @preact/signals-core svelte
 ```
 
-`svelte >= 4` is a peer dependency. The tests run on Svelte 5.
+`svelte >= 4` is a peer dependency. The tests run on Svelte 5, and the examples below use Svelte 5 syntax: on Svelte 4, write `on:click` where they write `onclick`.
 
 ## Example
 

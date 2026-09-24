@@ -1,135 +1,156 @@
 ---
 name: entities
-description: "@kontsedal/olas-entities — entity-normalization plugin built on QueryClientPlugin (auto-walk + reverse index + backprop)."
+description: "@kontsedal/olas-entities — entity normalization as an OlasPlugin: auto-walk on every write, a reverse index, backprop through host.queries.write, and the store as the Entities scope service."
 type: module
 covers:
   - packages/entities/src/index.ts
 edges:
   - { type: related, target: ../decisions/trust-model.md }
+  - { type: related, target: ../decisions/plugin-host-v2.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: documented-in, target: ../../BACKLOG.md }
   - { type: tested-by, target: ../../packages/entities/tests/entities.test.ts }
+  - { type: tested-by, target: ../../packages/entities/tests/coverage-store-edges.test.ts }
+  - { type: tested-by, target: ../../packages/entities/tests/merge-security.test.ts }
+  - { type: uses, target: ../flows/plugin-lifecycle.md }
   - { type: uses, target: query.md }
   - { type: uses, target: signals.md }
   - { type: related, target: cross-tab.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: high
 ---
 
 # `@kontsedal/olas-entities`
 
-Layered on the `QueryClientPlugin` surface (SPEC §13.2). Solves the cross-query update problem (SPEC §18.1): when the same `Post`/`User` lives in `newsfeedQuery`, `profileQuery`, `searchQuery`, etc., `entities.update(Post, id, patch)` patches every query holding that id, in one call.
+An `OlasPlugin` built on the plugin host (`../flows/plugin-lifecycle.md`, SPEC §13). It solves the cross-query update problem of SPEC §18.1. When one `Post` lives in `newsfeedQuery`, `profileQuery` and `searchQuery`, one `update(Post, id, patch)` patches every query holding that id.
+
+```ts
+import { createQuery, createRoot, defineController, defineQuery, queryEngine } from '@kontsedal/olas-core'
+import { defineEntity, Entities, entitiesPlugin } from '@kontsedal/olas-entities'
+
+type Post = { id: string; title: string; liked: boolean }
+
+const Post = defineEntity<Post>({
+  name: 'Post',
+  idOf: (v) => (typeof v?.id === 'string' && typeof v?.title === 'string' ? v.id : null),
+})
+
+const feedQuery = defineQuery({
+  id: 'posts/feed',
+  key: () => ['feed'],
+  fetcher: async (): Promise<Post[]> => [],
+})
+
+const app = defineController((ctx) => {
+  const feed = createQuery(ctx, feedQuery)
+  const entities = ctx.inject(Entities)
+  return { feed, like: (id: string) => entities.update(Post, id, { liked: true }) }
+})
+
+export const root = createRoot(app, {
+  deps: {},
+  queries: queryEngine(),
+  plugins: [entitiesPlugin({ entities: [Post] })],
+})
+```
 
 ## Surface
 
 | Name | Signature | Notes |
 |---|---|---|
-| `defineEntity<T>` | `({ name, idOf: (v) => string \| null }) => EntityDef<T>` | Module-scope; the handle is the `entity` argument to every plugin method. |
-| `entitiesPlugin` | `(entities: EntityDef<unknown>[]) => EntitiesPlugin` | Installed via `RootOptions.plugins[]`. One instance per root (reuse throws via `onError`, mirroring cross-tab). Duplicate `name`s throw at construction. |
-| `plugin.signal<T>(entity, id)` | `(entity, id) => ReadSignal<T \| undefined>` | Lazily-allocated per-id signal. Stable across calls. Throws when `entity` wasn't registered (catches the mistake at the call site instead of leaking orphan signals). |
-| `plugin.get<T>(entity, id)` | `(entity, id) => T \| undefined` | Non-reactive peek. Same registration check. |
-| `plugin.upsert<T>(entity, value)` | `(entity, value) => void` | Explicit branding for non-query sources (WebSocket events, preloads). |
-| `plugin.update<T extends object>(entity, id, patchOrUpdater, options?)` | `(entity, id, Partial<T> \| ((prev: T) => T), { merge?: 'shallow' \| 'deep' }?) => void` | Backpropagate to every query holding the id. Batched. `Partial<T>` patch merges per `options.merge` (default `'shallow'`); `(prev) => next` updaters compute the result directly. `'deep'` recurses into plain objects (arrays / non-plain values replace). Warns in dev when the entity isn't in the store (no-op in prod). |
-| `plugin.invalidate<T>(entity, id)` | `(entity, id) => void` | Remove from store. Does NOT mutate queries. |
-| `plugin.entries<T>(entity)` | `(entity) => ReadonlyMap<string, T>` | Devtools snapshot. Fresh `Map<id, T>` per call — mutating it does not affect the store. |
-| `plugin.bindings<T>(entity, id)` | `(entity, id) => readonly EntityBinding[]` | Devtools view of the reverse index for one id. Deep-cloned; safe to mutate. Empty array when the entity isn't held by any query. |
+| `defineEntity<T>` | `({ name, idOf, isCanonical?, maxSlots? }) => EntityDef<T>` | Module scope. `idOf(value)` returns the id when the value is this entity, else `null` or `undefined` (`packages/entities/src/index.ts:111-121`). |
+| `entitiesPlugin` | `({ entities }) => OlasPlugin` | A duplicate `name` throws when `entitiesPlugin` is called (`index.ts:337-346`). The value is a definition: each root it is installed in gets its own store. `setup` throws without a query engine (`index.ts:350-356`). |
+| `Entities` | `Scope<EntityStore>` | `setup` provides the store under it (`index.ts:302`, `index.ts:357-358`). Read it with `ctx.inject(Entities)` or `root.inject(Entities)`. A test seeds a fake through `RootOptions.scopes`. |
+| `ENTITIES_PLUGIN_NAME` | `'olas-entities'` | The plugin's name, and the `origin` of its backprop writes (`index.ts:295`). |
+| `store.signal(entity, id)` | `ReadSignal<T \| undefined>` | Allocated on first call and stable after it. Throws for an entity the plugin was not given. |
+| `store.get(entity, id)` | `T \| undefined` | Non-reactive. Allocates no slot (`index.ts:757-766`). |
+| `store.upsert(entity, value)` | `void` | For sources no query carries, such as a WebSocket event. A value whose `idOf` is null is ignored. |
+| `store.update(entity, id, patch, { merge? })` | `void` | Backprops to every query holding the id, in one `batch`. `patch` is a `Partial<T>` merged per `merge` (`'shallow'` by default, or `'deep'`), or an updater `(prev) => next`. A missing entity warns in development and is a no-op. |
+| `store.remove(entity, id)` | `void` | Drops the id from the store and the reverse index. It touches no query (`index.ts:846-859`). 1.0 renamed it from `invalidate`. |
+| `store.list(entity, { filter? })` | `ReadSignal<T[]>` | Every stored entity of one type, re-derived when a slot for that type changes (`index.ts:892-916`). |
+| `store.entries(entity)` | `ReadonlyMap<string, T>` | Devtools snapshot. A fresh `Map` with shallow-cloned, frozen values (`index.ts:861-890`). |
+| `store.bindings(entity, id)` | `readonly EntityBinding[]` | Devtools view of the reverse index for one id. Frozen copies; `[]` for an id no query holds (`index.ts:918-940`). |
 
 ## How auto-walk works
 
-On every `SetDataEvent` with `kind: 'data'` (sources `'fetch' | 'set' | 'remote'`), the plugin:
+The plugin's `onWrite` observes every write of either query kind, whatever its source, except writes whose `origin` is its own name (`index.ts:360-364`). For each one, `observe` (`index.ts:679-696`):
 
-1. Drops the previous reverse-index bindings for the `(queryId, keyArgs)` pair (rebuild rather than diff — simpler, bounded by query size).
-2. Recursively walks `event.data`. For every reachable subtree node, runs every registered entity's `idOf(node)`. A non-null id means the node IS an entity instance.
-3. Upserts the entity into the per-id signal AND registers a binding `(queryId, keyArgs, path)` in the reverse index.
+1. Drops the reverse-index bindings the previous walk of that entry recorded. It rebuilds rather than diffs, bounded by the size of the query.
+2. Walks `event.data`. For each reachable plain object or array, it runs every registered entity's `idOf`. A non-null id means the node is that entity.
+3. Records a binding `(queryId, keyArgs, path)` and writes the node into the entity's slot. With `isCanonical` set, a node that fails it gets the binding but no store write (`index.ts:619-627`), so a stub like `{ id: '1' }` cannot overwrite the full record.
+
+For an infinite query, `data` is the pages array, and the walker's array branch records `[pageIndex, …pathInPage]`.
 
 ### Path accumulator
 
-The walker reuses **one mutable `Array<string | number>`** across the whole traversal — pushed on descent, popped on ascent. Allocations happen only at binding boundaries (`.slice()` inside `addBinding`). This drops the per-recursion allocation cost from `O(N × D)` to `O(bindings recorded)`.
+The walker reuses **one mutable `Array<string | number>`** for the whole traversal. It pushes on descent and pops on ascent. `addBinding` clones it with `.slice()` (`index.ts:534-555`), so allocation happens only per recorded binding.
 
 ### Cycle vs DAG handling
 
-The cycle guard is a `WeakSet` of objects **currently being descended into** — added on entry, removed on exit. This is true depth-first cycle detection, not "ever visited":
+The cycle guard is a `WeakSet` of objects **currently being descended into**, added on entry and removed on exit (`index.ts:594-669`). It detects cycles depth-first rather than marking nodes as visited:
 
-- **True cycle** (`post.self = post`): the second descent finds the node already in `inProgress` and short-circuits.
-- **Shared-reference DAG** (same `Post` object reached via `posts[3]` AND `pinned`): the second visit happens AFTER the first has popped, so it walks again and records both bindings. The earlier `WeakSet`-of-ever-visited would have lost the second path and silently broken `entity.update`'s backprop for that path.
+- **True cycle** (`post.self = post`): the second descent finds the node in `inProgress` and returns.
+- **Shared-reference DAG** (one `Post` object at `posts[3]` and at `pinned`): the second visit comes after the first has popped, so the walk records both bindings. A visited-ever set would have lost the second path and broken `update`'s backprop for it.
 
-See `packages/entities/src/index.ts:283-329`.
+## How backprop avoids loops
 
-## How backprop avoids infinite loops
+`update(Post, id, patch)` (`index.ts:778-844`) does this inside one `batch`:
 
-`entities.update(Post, id, patch)` does (`src/index.ts:347-373`):
+1. Reads the current value from the partition without allocating a slot. A missing one warns in development and returns.
+2. Computes `next` from the updater, a deep merge, or a shallow spread.
+3. Writes `next` into the slot.
+4. For each binding, calls `host.queries.write(queryId, keyArgs, prev => setAtPath(prev, path, next))` for every recorded path (`index.ts:825-835`).
+5. Re-walks that entry with `observe(queryId, keyArgs, queries.peek(queryId, keyArgs))` (`index.ts:840`). A nested entity the patch brought in is normalized, and the entry's bindings follow the patch.
+6. With no bindings at all, `absorbNested` stores the nested entities of `next` (`index.ts:703-721`), since no query walk will reach them.
 
-1. Read current entity from the slot.
-2. Compute `next = { ...current, ...patch }` (one new object reference).
-3. `slot.set(next)` — store update.
-4. For each binding in the reverse index, call `api.setEntryData(queryId, keyArgs, prev => setAtPath(prev, path, next))`.
+The host stamps each write with `origin: 'olas-entities'`, so the plugin's own `onWrite` skips it and step 5 stands in for that walk. The walk writes nothing back to the cache, so it cannot loop. `setAtPath` (`index.ts:732-749`) shares untouched siblings by reference, so the re-walk sets sibling slots to the value they already hold, and `@preact/signals-core`'s `Object.is` check makes those writes silent.
 
-`setEntryData` fires a `SetDataEvent` with `source: 'set'`. The plugin's own `onSetData` runs and re-walks. It finds `next` at the same path, calls `slot.set(next)` again — but `@preact/signals-core` dedups via `Object.is`, so it's a no-op. **The loop terminates after one cycle.**
+`host.queries.write` is a canonical patch: no snapshot, and an in-flight fetch is left alone. It writes nothing for an entry the root no longer holds.
 
-This relies on `setAtPath` returning a structure that shares siblings by reference (immutable spread), so sibling entities also stay `===` to their slot values and dedup the same way. See `src/index.ts:303-326`.
+## What the plugin uses from the host
 
-## Where the new core hooks live
+- `onWrite` feeds the walker, and `onRemove` drops the removed entry's bindings (`index.ts:365-371`).
+- `host.queries.write` and `peek` carry backprop and the re-walk.
+- `host.queries.hashKey` builds the binding key, `${queryId}\u0000${hashKey(keyArgs)}` (`index.ts:676-677`). It is the engine's own hash, so a binding collides with the cache entry it points at exactly when the same key would. Date values hash to ISO strings and object keys sort.
+- `host.provide(Entities, store)` exposes the store, and the hook `dispose` clears it.
 
-- **`WriteEvent.source`** (`packages/core/src/plugin/types.ts`) — `'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'write' | 'replace'`, plus `origin`. The plugin walks every source and skips writes whose origin is its own name. See `decisions/plugin-host-v2.md`.
-- **`Entry.onSuccessData` callback** — `packages/core/src/query/entry.ts:21-32, 178-187`. Fires from `applySuccess` after the batched signal writes. `ClientEntry` wires it in `client.ts:69-77` to call `client.emitSetData(query, keyArgs, data, 'data', 'fetch')`.
-- **`QueryClientPluginApi.setEntryData(queryId, keyArgs, updater)`** — `plugin.ts:34-58`, implemented at `client.ts:577-595`. Local-originated setData by keyArgs. Cross-tab WILL rebroadcast (`source: 'set'`).
-- **Cross-tab now skips `source: 'fetch'`** — `packages/cross-tab/src/plugin.ts:163-168`. Each tab runs its own fetcher; broadcasting fetch results would be quadratic noise.
+## Constraints
 
-## Constraints (v1)
-
-- **Regular and infinite queries both walked.** Infinite payloads, carrying `kind: 'infinite'`, traverse the `TPage[]` shape transparently. The walker's existing array branch handles page indices, and `setEntryData` in `packages/core/src/query/client.ts` routes infinite-keyed writes back through `InfiniteEntry.setData`. Cross-tab still skips infinite, which is a separate concern about payload size.
-- **One plugin instance per root.** Sharing a plugin instance across `createRoot(...)` calls would clobber the store and corrupt the reverse index. Construct a fresh `entitiesPlugin([...])` per root.
-- **Entity must be registered.** All public methods throw when called with an `EntityDef` not in the plugin's entities array. Catches the mistake at the call site instead of leaking orphan signals.
-- **`update` default is shallow-merge** (`Partial<T>`). The function form `update(id, prev => next)` covers non-shallow updates without forcing a third package.
-- **No `entity.update` without a stored value.** No value to patch onto. `__DEV__` builds emit a `console.warn` to make this loud; production builds silently bail.
-
-## bindingKey uses `stableHash`
-
-Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the same canonicalizer the core `QueryClient` uses for its own per-entry hash. Date values canonicalize to ISO strings, object keys sort, `undefined` is distinguishable from absent, and functions, symbols, Map and Set throw. So an entities binding key collides with the `QueryClient` entry it points at exactly when the same `keyArgs` would, and `api.setEntryData(queryId, keyArgs, ...)` always finds the right entry.
+- **Regular and infinite queries are both walked**, and backprop reaches both through `host.queries.write`, which keeps an infinite entry's `pageParams` aligned.
+- **A backprop does not cross tabs by default.** `crossTabPlugin` mirrors only origin-`undefined` writes, so an `update` stays in its tab unless cross-tab's `origins` lists `ENTITIES_PLUGIN_NAME`. See `cross-tab.md`.
+- **The entity must be registered.** Every store method calls `assertRegistered` (`index.ts:431-449`) and throws for an `EntityDef` the plugin was not given. That catches the mistake at the call site instead of leaking orphan signals.
+- **`update` defaults to a shallow merge.** The updater form covers anything else.
+- **No `update` without a stored value.** There is nothing to patch onto. Development builds warn, and production builds return.
 
 ## Memory model
 
-- Per-id signals are interned in a `Map<entityName, Map<id, Signal>>`. They survive until plugin `dispose` (the slot Map is cleared all at once).
-- `dispose()` also sets a `disposed` flag, and `assertRegistered` checks it first. The clear and "never registered" are the same state to a `store.get(name)` probe, so without the flag every post-dispose call reported `entity "X" was not registered with entitiesPlugin([...])` and sent the reader after a registration that was there all along (0.9 review). Pinned in `entities.test.ts`.
-- Reverse-index entries are tied to query entries. On `onGc(event)`, the bindings for the gc'd entry are dropped from the reverse index. The entity slot stays (a detail view subscribed to that entity should keep working even when its source query is gc'd).
-- Orphaned entity slots accumulate over the app's lifetime. Set `defineEntity({ maxSlots })` to cap the slot map: on overflow, the plugin evicts orphans (entities with no live bindings) in LRU order on the next slot insert. Bound entities are never evicted; if the cap is smaller than the bound-entity count, the cap is silently exceeded. A one-shot dev warning still fires at `SLOT_BLOAT_WARN_AT` (10k) for partitions without a cap.
+- Per-id signals live in a `Map<entityName, Map<id, Signal>>` until the plugin disposes, which clears the whole map (`index.ts:943-951`).
+- `dispose()` also sets a `disposed` flag, and `assertRegistered` checks it first. An emptied store and a never-registered entity look the same to a `store.get(name)` probe. Without the flag, every call after dispose reported `entity "X" was not registered…` and sent the reader after a registration that was there all along (0.9 review). Pinned by "calling into the store after dispose says it was disposed, not unregistered".
+- The reverse index follows the cache. On `onRemove`, the plugin drops the removed entry's bindings and keeps the entity's slot, so a detail view subscribed to that entity keeps working after its source query is collected.
+- Orphan slots accumulate over the app's lifetime. `defineEntity({ maxSlots })` caps a partition: on overflow, `getSlot` evicts orphans, meaning slots with no live bindings, in LRU order (`index.ts:460-526`). It never evicts a bound slot, so a cap below the bound count is exceeded without a warning. A partition without a cap warns once in development at `SLOT_BLOAT_WARN_AT`, 10,000 ids.
 
 ## Tests
 
-`packages/entities/tests/entities.test.ts` covers (25 tests):
+`packages/entities/tests/entities.test.ts` covers:
 
-- defineEntity branding + idOf semantics
-- duplicate-name rejection
-- auto-walk from fetch into the store
-- per-id signal observation
-- explicit `upsert` + idOf null no-op
-- `update` patching a single query
-- `update` reaching the same id at multiple paths in one query
-- `update` reaching the same id across multiple queries
-- update is a no-op when entity isn't in the store (dev warning fires)
-- subscriber notifications coalesce (one call per affected query/signal per update)
-- plugin reuse across roots → `onError` with `kind: 'plugin'`
-- reverse index drops bindings when an entity disappears from a query (via `setData`)
-- signal handle stability per id
-- `invalidate` is store-only (doesn't touch queries)
-- cycle in query data doesn't stack-overflow
-- non-entity objects with an `id` field aren't classified (idOf discriminator works)
-- **shared-reference DAG** — one `Post` object at two paths records both bindings
-- **true cycle (`post.self = post`)** — short-circuits, records one binding at the root path
-- **unregistered entity** — every public method throws
-- **Date in keyArgs** — bindingKey via `stableHash` matches the QueryClient's entry hash
-- **updater function** — `update(id, prev => next)` works alongside `Partial<T>`
-- **`entries()`** — returns a fresh Map snapshot; mutating it doesn't affect the live store
-- **`bindings()`** — deep-cloned; safe to mutate; unknown ids return `[]`
+- `defineEntity` branding and `idOf`, duplicate-name rejection, and one store per root;
+- auto-walk from a fetch, per-id signal observation, explicit `upsert`, and SSR-hydrated data reaching the store;
+- `update` against one query, several queries, several paths in one query, and infinite-query pages;
+- one subscriber notification per affected query per `update`;
+- bindings dropped when an entity leaves a query, and `remove` touching no query;
+- cycles, the shared-reference DAG, and non-entity objects with an `id` field;
+- unregistered entities, calls after dispose, a `Date` in the key, the updater form, `merge: 'deep'`, `entries()` and `bindings()` snapshots, and `maxSlots` eviction;
+- nested entities a patch brings in, with and without a query holding the entity.
 
-## Where to read next
-
-- `packages/entities/src/index.ts` — ~440 lines, whole package.
-- `SPEC.md` §18.1 — the worked example this package replaces.
-- `modules/query.md` — the underlying `setData` and fetch lifecycle.
-- `modules/cross-tab.md` — closest sibling plugin (lifecycle + plugin reuse pattern).
-- `BACKLOG.md` → `@kontsedal/olas-entities` entry (now `[done]`).
+`coverage-store-edges.test.ts` covers `list()`, `isCanonical`, reverse-index maintenance across queries and gc, the setup guard, the bloat warning, and paths that no longer exist. `merge-security.test.ts` covers the `__proto__` case below.
 
 ## Deep merge and prototype keys (1.0)
 
-`deepMerge` reads the current value with `Object.hasOwn` and writes each key with `Object.defineProperty`. A patch parsed from JSON can carry an own `__proto__` key; an assignment `out[key] = v` with that key replaced the merged entity's prototype, and the read `current[key]` returned `Object.prototype` as if it were a plain object to merge into. Pinned by `tests/merge-security.test.ts`; the same bug class is `pitfalls/proto-key-assignment.md`.
+`deepMerge` reads the current value with `Object.hasOwn` and writes each key with `Object.defineProperty` (`index.ts:177-190`). A patch parsed from JSON can carry an own `__proto__` key. An assignment `out[key] = v` with that key replaced the merged entity's prototype, and the read `current[key]` returned `Object.prototype` as if it were a plain object to merge into. Pinned by `tests/merge-security.test.ts`; the bug class is `../pitfalls/proto-key-assignment.md`.
+
+## Where to read next
+
+- `packages/entities/src/index.ts` — the whole package.
+- SPEC §18.1 — the worked example this package replaces.
+- `query.md` — the write methods and the fetch lifecycle.
+- `cross-tab.md` — the sibling plugin, and whose writes cross.

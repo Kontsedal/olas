@@ -54,7 +54,7 @@ export class MutationDisposedError extends Error {
  * - `latest-wins`: a new call aborts any in-flight previous call (`AbortSignal` fires).
  * - `serial`: calls queue and run one at a time in order.
  *
- * Spec §6.3.
+ * Spec §6.1.
  */
 export type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
 

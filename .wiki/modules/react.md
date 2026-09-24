@@ -1,6 +1,6 @@
 ---
 name: react
-description: "@kontsedal/olas-react — Provider, useRoot, useValue/useQuery/useInfiniteQuery/useSuspenseQuery/useField/useFieldInput/useMutation, SuspendOnUnmount, HydrationBoundary, streaming SSR hydrator. Built on useSyncExternalStore; runs under preact/compat."
+description: "@kontsedal/olas-react — OlasProvider, useRoot (root.api, typed by Register), useValue, useQuery, useInfiniteQuery, useSuspenseQuery, useField, useFieldInput, useMutation, SuspendOnUnmount, HydrationBoundary, and the streaming SSR hydrator plugin. Built on useSyncExternalStore; runs under preact/compat."
 type: module
 covers:
   - packages/react/src/index.ts
@@ -17,40 +17,47 @@ edges:
   - { type: tested-by, target: ../../packages/react/tests/hooks-surface.test.tsx }
   - { type: tested-by, target: ../../packages/react/tests/fine-grained.test.tsx }
   - { type: tested-by, target: ../../packages/react/tests/preact-compat.test.tsx }
+  - { type: tested-by, target: ../../packages/react/tests/hydration-boundary.test.tsx }
+  - { type: tested-by, target: ../../packages/react/tests/streaming.test.tsx }
   - { type: related, target: ../decisions/framework-adapters.md }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/ctx.md }
+  - { type: uses, target: ../flows/use-root.md }
+  - { type: uses, target: ../flows/ssr.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
   - { type: related, target: ../decisions/typed-use-root.md }
+  - { type: related, target: ../decisions/root-handle-separate.md }
   - { type: related, target: ../decisions/disabled-subscriptions.md }
-last_verified: 2026-09-24
-confidence: medium
+last_verified: 2026-09-25
+confidence: high
 ---
 
 # `@kontsedal/olas-react`
 
-The React adapter. Pure binding layer on top of `useSyncExternalStore` — no controller construction happens here; React only reads signals. The root is created once outside React (typically in `main.tsx`) and resolved via context. Spec §16, §20.10.
+The React adapter. Pure binding layer on top of `useSyncExternalStore` — no controller construction happens here; React only reads signals. The root is created once outside React (typically in `main.tsx`) and resolved via context, and `useRoot()` returns its `root.api`. Spec §16, §20.10.
 
 ## Public surface
 
-```ts
+```ts nocheck
 // context.ts
-function OlasProvider(props: { root: Root<unknown>; children: ReactNode }): JSX.Element
+function OlasProvider(props: { root: Root<unknown>; children: ReactNode })
 function useRoot<Api = RegisteredApi>(): Api         // root.api, typed by the augmented Register; throws outside <OlasProvider>
-function createOlasContext<Api>(displayName?): { Provider, useRoot, Context }
+interface Register {}                                // the app augments it with { root: typeof root }
+function createOlasContext<Api>(displayName?): OlasContext<Api>   // { Provider, useRoot, Context }
                                                      // typed-per-root variant, for apps with several roots
-function HydrationBoundary<Api>(props: { root: Root<Api>; ... }): ReactElement
-                                                     // mounts the streaming hydrator (see "Streaming SSR")
+function HydrationBoundary<Api>(props: { def: ControllerDef<void, Api>; options: RootOptions<…>;
+                                         streaming?: boolean; children: ReactNode }): ReactNode
+                                                     // creates and owns the root; installs the streaming intake
 
 // hooks.ts
-function useValue<T>(signal: ReadSignal<T>): T      // any ReadSignal: signal, computed, Field, Form, FieldArray
+function useValue<T>(signal: ReadSignal<T>, { isEqual? }?): T   // any ReadSignal: signal, computed, Field, Form, FieldArray
 function useValue<T, U>(signal, { select, isEqual? }): U
-function useQuery<T>(sub: AsyncState<T>): UseQueryResult<T>
+function useQuery<T>(sub: AsyncState<T>, { suspense? }?): UseQueryResult<T>
     // every AsyncState signal as a value (incl. isPaused, isEnabled) + refetch, reset, cancel
-function useInfiniteQuery<P, I>(sub: InfiniteQuerySubscription<P, I>, opts?): UseInfiniteQueryResult<P, I>
+function useInfiniteQuery<P, I>(sub: InfiniteQuerySubscription<P, I>, { suspense? }?): UseInfiniteQueryResult<P, I>
     // useQuery's fields + pages, flat, hasNext/PreviousPage, isFetchingNext/PreviousPage + fetchNextPage, fetchPreviousPage
-function useSuspenseQuery<T>(sub): UseSuspenseQueryResult<T>   // throws sub.firstValue() until data lands;
-    // a disabled query suspends until enabled + loaded (dev warns) — decisions/disabled-subscriptions.md
+function useSuspenseQuery<T>(sub): UseSuspenseQueryResult<T>   // useQuery(sub, { suspense: true }); throws sub.firstValue()
+    // until data lands; a disabled query suspends until enabled + loaded (dev warns) — decisions/disabled-subscriptions.md
 function useField<T>(field: Field<T>): UseFieldResult<T>
     // value, errors, isValid, isDirty, touched, isValidating + set, setAsInitial, reset, markTouched, revalidate, setErrors
 function useFieldInput<T>(field: Field<T>, opts?): UseFieldInputResult  // spread onto a native <input>
@@ -63,12 +70,14 @@ function useSuspendOnHidden(controller: SuspendableController): void
 type SuspendableController = { suspend(): void; resume(): void }
 
 // streaming.ts
-function createStreamingHydrator(): StreamingHydrator     // server-side: plugin + flush() for SSR streams
-function createStreamingTransform(): TransformStream      // Web-streams sibling of the above
-function installStreamingIntake(): void                   // client-side: bootstrap shim for <HydrationBoundary>
+function createStreamingHydrator({ nonce? }?): StreamingHydrator  // server: { plugin, flush, dispose }
+function createStreamingTransform(flush: () => string): TransformStream<Uint8Array, Uint8Array>
+function installStreamingIntake<Api>(root: Root<Api>): () => void // client: connect a root to the streamed batches
 const OLAS_BOOTSTRAP_SCRIPT: string                       // drop into bootstrapScriptContent
 const STREAMING_GLOBAL: '__OLAS_HYDRATION__'              // intake queue's window key
 ```
+
+The listing matches `packages/react/src/index.ts:1-47`. `useRoot` is at `context.ts:59-65` and `HydrationBoundary` at `context.ts:156-229`.
 
 ## How subscription works
 
@@ -79,7 +88,7 @@ const STREAMING_GLOBAL: '__OLAS_HYDRATION__'              // intake queue's wind
 
 Olas's `signal.subscribe(handler)` fires the handler **synchronously with the current value** on subscribe (same as `@preact/signals-core`). That initial fire MUST NOT translate into a store-change notification: React already has the initial value via `getSnapshot`, and notifying during the subscribe phase confuses tear-detection.
 
-The fix is core's `subscribeChanges`, which skips that first fire. `useValue` calls it through `subscribeOnChange` (`hooks.ts:24-26`), and the multi-signal hooks call it on their snapshot computed.
+The fix is core's `subscribeChanges`, which skips that first fire. `useValue` calls it through `subscribeOnChange` (`hooks.ts:37-39`), and the multi-signal hooks call it on their snapshot computed.
 
 ## `useQuery` and `useInfiniteQuery` re-render only for what the component reads (1.0)
 
@@ -92,7 +101,7 @@ Three rules keep it safe:
 
 Spreading the result (`{ ...useQuery(sub) }`) calls every getter, so it tracks every field. Pinned by `packages/react/tests/fine-grained.test.tsx`; against the pre-1.0 hooks, the tests for the new behaviour fail and the four pinning old behaviour pass.
 
-`useInfiniteQuery` is the same hook over sixteen fields: `useQuery's` ten plus `pages`, `flat` and the four paging flags. It takes `{ suspense: true }` with `useQuery's` rules.
+`useInfiniteQuery` is the same hook over sixteen fields: `useQuery`'s ten plus `pages`, `flat` and the four paging flags. It takes `{ suspense: true }` with `useQuery`'s rules.
 
 ## `useField` / `useMutation` — multi-signal batching
 
@@ -144,7 +153,9 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 
 - The root is created **lazily during render** in a `useRef` (`if (rootRef.current === null) …`) — a ref mutated in render creates exactly one root across StrictMode's double render.
 - `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render). The root is recreated only when the **`def` identity** changes (dispose old + create new, in render).
-- A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount, unmount and remount **without re-rendering between them**. The effect's remount-setup therefore recreates the disposed root and calls `forceRender()`, so the Provider hands descendants a live root. This is a dev-only double-construct, as TanStack does. Pinned by `packages/react/tests/hydration-boundary.test.tsx`.
+- A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount, unmount and remount **without re-rendering between them**. The effect's remount-setup therefore recreates the disposed root and calls `forceRender()`, so the Provider hands descendants a live root. This is a dev-only double-construct, as TanStack does. The rebuilt root reuses the same options, and so the same `queryEngine()` value, which works because an engine is a definition. Pinned by `packages/react/tests/hydration-boundary.test.tsx`, "(b2) StrictMode with a query engine and a hydrate payload".
+- A `def` change drops `hydrate` from the options it reuses (`context.ts:180-190`). The server payload described the first root's tree, so the replacement starts from its own fetches. A StrictMode remount of the same `def` still hydrates. Pinned by "(e) the root rebuilt for a new def does not re-apply the first hydrate payload".
+- A second effect calls `installStreamingIntake` on the current root, unless `streaming={false}` (`context.ts:218-226`). It reads `rootRef.current`, so a StrictMode remount installs on the fresh root. See `../flows/ssr.md`.
 
 ## SSR round trip, end to end (0.9 review)
 
@@ -158,7 +169,11 @@ The adapter imports only hooks, `createContext` and three types from `react`, an
 
 ## Fakes for UI tests
 
-`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` or `AsyncState<T>` so a test can pass them straight into a `useField`/`useQuery`-consuming component without building a real controller. See `testing.ts:31-132`.
+`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` or `AsyncState<T>`, so a test can pass them straight into a component that calls `useField` or `useQuery` without building a real controller. See `packages/core/src/testing.ts:67-190`.
+
+## Streaming SSR
+
+The server half is a plugin. `createStreamingHydrator` returns `{ plugin, flush, dispose }`, and the plugin's `onWrite` captures the committed writes of the root it is installed in, meaning sources `'fetch'`, `'write'` and `'replace'` (`streaming.ts:118-186`). It skips `'hydrate'`, `'optimistic'` and `'rollback'`. `createStreamingTransform(flush)` places the batches in React's HTML stream. On the client, `installStreamingIntake(root)` applies every batch through `root.hydrate(state)`, one signal `batch` per arriving batch, to every installed root (`streaming.ts:387-440`). The whole flow is `../flows/ssr.md`.
 
 ## Streaming SSR security (1.0)
 

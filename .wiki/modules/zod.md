@@ -16,7 +16,7 @@ confidence: high
 
 ## What an `extraValidators` path means (0.9 review)
 
-A path names a position in the SCHEMA, not in the value, and an array contributes no segment to it. So `'tags'` on `z.array(z.string())` attaches to EVERY tag field, and `'tags.name'` on `z.array(z.object({ name }))` attaches to every item's `name`. No path addresses the `FieldArray` itself: an array-level rule takes a `FieldArrayValidator` over the whole item list, a different signature that `createZodForm` does not wire — put those in the Zod schema (`z.array(...).min(3)`), where `zodValidator` enforces them on the parent. The doc claimed the opposite for both halves; the implementation never changed. `zod.test.ts` pins the element behavior.
+A path names a position in the SCHEMA, not in the value, and an array contributes no segment to it. So `'tags'` on `z.array(z.string())` attaches to EVERY tag field, and `'tags.name'` on `z.array(z.object({ name }))` attaches to every item's `name`. No path addresses the `FieldArray` itself: an array-level rule takes a `FieldArrayValidator` over the whole item list, a different signature that `createZodForm` does not wire. An array-level rule in the schema (`z.array(...).min(3)`) is not enforced either: its issue carries the path `['tags']`, and `rootOnlyZodValidator` keeps only path-less issues, so `form.isValid` stays `true` with one tag. The W6 docs pass found this by running it; the source comment had claimed `zodValidator` enforced it on the parent. A root `.refine(...)` with no `path` is the way to state such a rule. `zod.test.ts` pins the element behavior.
 
 Four exports: `zodValidator(schema)`, `zodValidatorAsync(schema)`, `rootOnlyZodValidator(schema)`, and `createZodForm(ctx, schema, options?)`. Spec §8.7, §10.
 

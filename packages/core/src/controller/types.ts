@@ -182,10 +182,9 @@ export type LazyChild<Api> = {
 /**
  * `ctx` is the lifecycle-bound surface every controller factory receives.
  * Every primitive constructed through `ctx` is owned by the controller and
- * disposed when the controller disposes.
- *
- * Phase 3 surface — caches, mutations, forms, collections, scopes, etc.
- * land in later phases.
+ * disposed when the controller disposes. The primitives are free functions
+ * that take `ctx` first (`createField`, `createQuery`, `createMutation` and
+ * the rest); `ctx` itself carries the tree and the lifetime.
  */
 export type Ctx<TDeps = AmbientDeps> = {
   /**
@@ -254,7 +253,7 @@ export type Ctx<TDeps = AmbientDeps> = {
    * Code-split child controller. The loader is invoked on `load()`
    * (idempotent), then the controller is constructed with the supplied
    * `props`. `status` / `api` / `error` are reactive signals; subscribe
-   * via `use(child.api)` in your view layer.
+   * via `useValue(child.api)` in your view layer.
    *
    * Parent disposal disposes the loaded child (if any) and flags any
    * in-flight load so its eventual settle is dropped on the floor.

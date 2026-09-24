@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: fourteen published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 911 tests across 63 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
+Current implementation status: fourteen published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 2,012 tests across 158 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -18,6 +18,7 @@ Current implementation status: fourteen published packages ship, plus the privat
 pnpm install                                       # link workspace + install deps
 pnpm typecheck                                     # tsc --noEmit per package
 pnpm lint                                          # biome check .
+pnpm check:doc-snippets [file.md]                  # typecheck the ts/tsx blocks in the docs against src
 pnpm exec biome check --write .                    # auto-fix lint + format
 pnpm test                                          # vitest run (all packages)
 pnpm test:watch                                    # vitest watch
@@ -33,7 +34,7 @@ pnpm wiki:lint                                     # check .wiki/ for broken cit
 pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
-CI = `install → build → typecheck → lint → test → examples → publint → attw → smoke:dist → check:public-types → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`.
+CI = `install → build → typecheck → lint → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`.
 
 ## Releasing
 
@@ -53,17 +54,17 @@ Merging the version PR does **not** release. Someone has to run the publish work
 ```
 packages/
   core/            # @kontsedal/olas-core           — signals, controllers, queries, mutations, forms, SSR + streaming SSR
-  react/           # @kontsedal/olas-react          — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden, HydrationBoundary, streaming hydrator
+  react/           # @kontsedal/olas-react          — OlasProvider, useRoot/useValue/useQuery/useInfiniteQuery/useField/useMutation, SuspendOnUnmount, useSuspendOnHidden, HydrationBoundary, streaming hydrator (also Preact through preact/compat)
   vue/             # @kontsedal/olas-vue            — olasPlugin, useRoot, useValue/useQuery/useInfiniteQuery/useField/useMutation as refs
   svelte/          # @kontsedal/olas-svelte         — setRoot/getRoot, queryStore/infiniteQueryStore/fieldStore/mutationStore; signals are stores
-  persist/         # @kontsedal/olas-persist        — usePersisted + localStorageAdapter + indexedDbAdapter
-  zod/             # @kontsedal/olas-zod            — zodValidator, formFromZod
+  persist/         # @kontsedal/olas-persist        — createPersisted + localStorageAdapter() + indexedDbAdapter(), persistQueryCachePlugin
+  zod/             # @kontsedal/olas-zod            — zodValidator, createZodForm
   devtools/        # @kontsedal/olas-devtools       — in-app DevtoolsPanel + floating launcher
-  cross-tab/       # @kontsedal/olas-cross-tab      — BroadcastChannel-backed cross-tab cache sync (QueryClientPlugin)
-  entities/        # @kontsedal/olas-entities       — defineEntity + auto-walk + reverse-index backprop (QueryClientPlugin)
-  realtime/        # @kontsedal/olas-realtime       — useRealtimePatcher + useLiveStream over a consumer-supplied RealtimeService
-  mutation-queue/  # @kontsedal/olas-mutation-queue — durable persist + reload-safe replay for `persist: true` mutations (QueryClientPlugin)
-  router/          # @kontsedal/olas-router         — createRouterAdapter + RouteParams/Search/Pathname scopes (TanStack Router / React Router v6)
+  cross-tab/       # @kontsedal/olas-cross-tab      — BroadcastChannel-backed cross-tab cache sync (plugin; meta.crossTab)
+  entities/        # @kontsedal/olas-entities       — defineEntity + auto-walk + reverse-index backprop (plugin; the Entities scope)
+  realtime/        # @kontsedal/olas-realtime       — createRealtimePatcher + createLiveStream + createConnectionState over a consumer-supplied RealtimeService
+  mutation-queue/  # @kontsedal/olas-mutation-queue — durable persist + reload-safe replay for `meta: { persist: true }` mutations (plugin; the MutationQueue scope)
+  router/          # @kontsedal/olas-router         — createRouterAdapter → { plugin, Bridge }; RouteParams/Search/Pathname scopes (TanStack Router / React Router v6)
   eslint-plugin/   # @kontsedal/olas-eslint-plugin  — six syntax-only lint rules + recommended/strict flat configs
   codemod/         # @kontsedal/olas-codemod        — 0.8 → 1.0 migration CLI on ts-morph (npx @kontsedal/olas-codemod 1.0)
   integration/     # private — cross-package integration test suite, not published
@@ -244,7 +245,7 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 - **`latest-wins` mutations roll back the previous snapshot synchronously before calling the new `onMutate`** — not on the previous run's catch. Doing it later stacks snapshots wrong. See `.wiki/pitfalls/latest-wins-rollback-order.md`.
 - **`isStale` cannot be a `Date.now()` computed** — its deps don't change as time passes. Must be timer-driven. See `.wiki/pitfalls/isstale-needs-timer.md`.
 - **Mutations race against their abort signal** so misbehaving mutate fns can't block forever. See `.wiki/pitfalls/raceabort-for-misbehaving-mutate.md`.
-- **`createField(ctx, '')` infers `Field<''>`** because of literal narrowing. Annotate: `createField<string>(ctx, '')`. See `.wiki/pitfalls/literal-type-narrowing.md`.
+- **`createField` infers `T` from the initial value.** A bare `createField(ctx, '')` widens to `Field<string>`, but with a `validators` array the literal sticks (`Field<''>`), and `null` or `[]` give a field that holds only that. Annotate: `createField<string>(ctx, '', { validators })`. See `.wiki/pitfalls/literal-type-narrowing.md`.
 - **`@preact/signals-core`'s overloaded `signal()` gives `Signal<T | undefined>`** through `ReturnType` because the last overload wins. We use `PreactSignal<T>` directly to dodge it. See `.wiki/pitfalls/preact-signals-overload-return.md`.
 
 ---

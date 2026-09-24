@@ -1,70 +1,48 @@
 ---
 name: literal-type-narrowing
-description: createField(ctx, '') infers Field<''> because of literal narrowing. Annotate the type parameter.
+description: createField infers T from its initial value. With validators the literal sticks (Field<''>), and null or [] give a field that holds only that. Annotate the type parameter.
 type: pitfall
 covers:
-  - packages/core/src/controller/types.ts:114
-  - packages/core/src/controller/define.ts
+  - packages/core/src/forms/bind.ts:31
+  - packages/core/src/forms/validators.ts:66-69
+  - packages/core/src/controller/types.ts:37-47
 edges:
-  - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
-last_verified: 2026-05-22
+  - { type: tested-by, target: ../../packages/core/tests/type-pitfalls.test-d.ts }
+last_verified: 2026-09-25
 confidence: high
 ---
 
-# `createField(ctx, '')` infers `Field<''>` — annotate
+# `createField` infers `T` from the initial value: annotate it
 
-## The trap
+`createField<T>(ctx, initial: T, options?: FieldOptions<T>): Field<T>` (`packages/core/src/forms/bind.ts:31`) infers `T` from `initial`. What it infers depends on the call:
 
-```ts
-const name = createField(ctx, '')          # infers as Field<''>, not Field<string>
-name.set('Alice')                   # ERROR — '"Alice"' not assignable to '""'
-
-const n = createField(ctx, 0)              # Field<0>
-n.set(42)                           # ERROR — '42' not assignable to '0'
+```ts nocheck
+createField(ctx, '')                                         // Field<string>   fine
+createField(ctx, '', { validators: [required(), email()] })  // Field<''>       set('a@b.c') is an error
+createField(ctx, null)                                       // Field<null>     set('x') is an error
+createField(ctx, [])                                         // Field<never[]>  set(['x']) is an error
+createField(ctx, 'light')                                    // Field<string>   the union is lost
 ```
 
-`createField<T>(ctx, initial: T, validators?: ReadonlyArray<Validator<T>>): Field<T>` infers `T` from `initial`. TypeScript narrows literal types (`''`, `0`, `false`, etc.) to their literal form by default. The result is a Field that can only hold that exact literal value — useless.
+## Why the validators case keeps the literal
+
+With no other inference site, TypeScript widens a literal argument, so `''` becomes `string`. A `validators` array gives `T` a second, contravariant site: `required` is generic (`<T>(message?) => Validator<T>`, `validators.ts:66-69`), and `email()` is a `Validator<string>`. The initial value gives a covariant candidate, `''`, and the validator a contravariant one, `string`. With both, TypeScript picks the covariant literal. The field then accepts only `''`.
+
+The first compiler error shows at the first `set(...)` with a real value, often far from the declaration.
 
 ## The fix
 
-Annotate explicitly:
+Annotate the type parameter whenever the initial value is narrower than what the field holds:
 
-```ts
-const name = createField<string>(ctx, '')
-const n    = createField<number>(ctx, 0)
-const flag = createField<boolean>(ctx, false)
+```ts nocheck
+const address = createField<string>(ctx, '', { validators: [required(), email()] })
+const note = createField<string | null>(ctx, null)
+const tags = createField<string[]>(ctx, [])
+const theme = createField<'light' | 'dark'>(ctx, 'light')
 ```
 
-Or pass a non-literal initial — `let s: string = ''; createField(ctx, s)` works, but the annotation form is clearer.
+The same holds one level up, in a `createForm` schema: the form's value type is built from its leaves' `T`s.
 
-## Why we don't widen automatically
+## History
 
-Two options to avoid the trap:
-
-1. Generic widening: `field<T>(initial: T): Field<Widen<T>>` where `Widen<''>=string, Widen<0>=number, ...`. Complicates the type, and consumers who DO want a literal field (`createField<'light' | 'dark'>(ctx, 'light')`) would lose that.
-2. Make `initial` typed as `T` via a different inference position (e.g. accept a thunk that returns `T`). Awkward API.
-
-Neither is worth it. Annotation is one extra character (`<string>`) and is grep-able.
-
-## Where you'll hit this
-
-- Empty-string initial fields: `createField<string>(ctx, '')`.
-- Numeric initials that should accept any number: `createField<number>(ctx, 0)`.
-- Pre-fill an enum-typed field with a default: `createField<'light' | 'dark'>(ctx, 'light')`. (No annotation = `Field<'light'>`.)
-
-If you forget, TypeScript will complain at the first `.set(otherValue)` call.
-
-## Form schemas — the same trap, one level up
-
-```ts
-createForm(ctx, {
-  name: createField(ctx, ''),                       # Form<{ name: Field<''> }>  ← bad
-  name: createField<string>(ctx, ''),               # Form<{ name: Field<string> }>  ← good
-})
-```
-
-The `FormValue<S>` mapping flows the literal type through. Every leaf with a literal initial widens the whole form's type incorrectly. Catch this at the leaf level.
-
-## See also
-
-The form tests in `packages/core/tests/form.test.ts` use `createField<string>(ctx, ...)` everywhere to dodge this. Use them as a reference for new test code.
+Until the W6 docs pass (2026-09-25), this page and CLAUDE.md said a bare `createField(ctx, '')` infers `Field<''>`. It does not. The type test that claimed to pin it asserted `expectTypeOf(value).toMatchTypeOf<string>()`, which `''` and `string` both satisfy, and `expectTypeOf(x)` widens a literal as it infers its type argument in any case. `packages/core/tests/type-pitfalls.test-d.ts` now pins all three behaviours with `expectTypeOf<typeof x>()`. The wrong claim had led the repo's tests and docs to annotate every `createField<string>(ctx, '')`. That annotation is harmless, and it is needed as soon as validators are added.

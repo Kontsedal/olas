@@ -23,4 +23,4 @@
 - `isStandardSchema` and `ErrorContextInput` are no longer exported from core.
 - `createQuery`'s `select` form accepts `keepDataWhileDisabled`, like the other forms.
 
-**Bundle size.** A bundle that imports only controllers and signals no longer carries the forms code. Built from the published files, it drops from 8.6 KB to 6.4 KB gzipped.
+**Bundle size.** A bundle built from the published files that imports only controllers and signals carries no forms code. The forms classes had set their brands as class fields, which kept them in every bundle.

@@ -87,7 +87,7 @@ type Focus = { tab: DevtoolsTab; key: string; nonce: number }
  *
  * Styled inline (no CSS import needed) and scoped to the `.olas-devtools-*`
  * class prefix. Hosts override the palette via `--olas-*` custom properties.
- * Spec §13.
+ * Spec §14.
  */
 export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const { root, defaultTab = 'timeline', maxEntries, maxTimelineEntries, urlHashKey } = props

@@ -19,7 +19,7 @@ export async function render(_url: string): Promise<{ html: string; state: Dehyd
   })
 
   // Subscribe at least once so `waitForIdle` sees the fetch.
-  // Subscriptions are created during construction (ctx.use), so a microtask
+  // Subscriptions are created during construction (createQuery), so a microtask
   // tick is enough to schedule the first fetch.
   await Promise.resolve()
   await root.waitForIdle()

@@ -27,7 +27,8 @@ import { activeBoardScope, activityScope, notificationsScope } from '../../scope
 import { boardQuery } from '../board/board.query'
 
 export const archiveQuery = defineInfiniteQuery<[string], number, ArchivePage, Card>({
-  // Note: infinite queries don't propagate cross-tab in v1 (SPEC §13.2).
+  // No `meta.crossTab`: the archive is per tab. An infinite query can opt in
+  // like any other, and its pages sync with their page params (SPEC §13.2).
   id: 'archive',
   key: (boardId: string) => [boardId],
   fetcher: ({ pageParam, signal, deps }, boardId: string) =>

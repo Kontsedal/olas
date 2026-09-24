@@ -1974,3 +1974,94 @@ Built by an agent in a git worktree and merged as one commit. New package `packa
 **BACKLOG.** New ideas: run the codemod over the 0.8 examples in CI, and report the tsdown `banner` bug.
 
 For the W6 docs pass: MIGRATING's 0.8 → 1.0 section opens with the codemod, and the README lists the package.
+
+## [2026-09-25 09:30] ingest | 1.0 W6: the docs pass, and typechecked doc snippets
+
+Every user-facing doc now describes 1.0, and a checker keeps their code compiling.
+
+**The guard.** New `scripts/check-doc-snippets.ts` (`pnpm check:doc-snippets`, in CI after lint and in `ci.sh`) compiles every ts/tsx block in README, API, RECIPES, PLUGINS, MIGRATING and every package and example README against the package sources. New page `decisions/typechecked-doc-snippets.md` explains it.
+- It builds one program per doc, so each doc's `AmbientDeps` and `Register` augmentations stay its own. A shared program had pushed RECIPES off the `ctx.deps` idiom, which is now restored.
+- It has three annotations: `<!-- snippet-prelude -->`, `file=` and `nocheck`.
+- **Finding:** a `declare module` augmentation alone does not load its module, because only an import adds a file to a TypeScript program. The checker passes every package entry as a root file.
+- The first run found 913 errors in 172 blocks across 19 files: 0.8 names, the pre-handle root, pre-v2 plugin shapes, `queryId`, and React 18's global `JSX`. The final run is 0 errors in 159 blocks across 24 files.
+
+**The docs** were split among eight agents by file, briefed from one shared sheet (the rename table, what 1.0 added, the checker rules and prose-rules.md):
+- **README:**
+  - adapters (React, Preact, Vue, Svelte), all fourteen packages, and a tooling section;
+  - an SSR example that waits before rendering and gives the client root an engine;
+  - two false claims removed: rollback on error is automatic, and the examples do not use the fakes.
+- **API.md:**
+  - `Root` as the handle, `queryEngine({ defaults })`, and every React hook;
+  - `Plugins` and `Selection` sections, and short sections for Vue, Svelte, eslint-plugin and codemod;
+  - `serializeForScript` and `MutationHost.get`;
+  - 302 checker errors went to 0.
+- **MIGRATING:** one "Upgrading from 0.8 to 1.0" section, in this order:
+  1. the codemod first;
+  2. the rename table by area, with a codemod column;
+  3. the TODO fixes;
+  4. what the codemod leaves to the reader.
+- **RECIPES:** `create*` composables, `ctx.attach` in place of `ctx.session`, and new SSR and optimistic recipes. **PLUGINS:** every hook and host member checked against `plugin/types.ts` and `host.ts`.
+- **Package READMEs:**
+  - react: `useInfiniteQuery`, the fine-grained rule, Preact setup, and streaming without a hand-written Node `Transform`;
+  - persist: `persistQueryCachePlugin`;
+  - cross-tab: `origins` and `validate`;
+  - also entities, mutation-queue, realtime, router, zod, devtools and the rest.
+- **The rest:** `.cursorrules`, and the example READMEs.
+
+**SPEC.** §13 is now "Plugins & persistence", with four subsections: 13.1, the v2 plugin contract; 13.2, cross-tab; 13.3, the mutation queue, the section eight citations already pointed at; and 13.4, persistence. No existing number changed. Elsewhere in SPEC:
+- §16 documents React, Vue, Svelte and Preact.
+- §18's non-goals no longer rule out the queue or entities.
+- §19 lists the fourteen packages, their peers and ESM only.
+- Every §20 listing is rebuilt from source.
+- The phantom APIs are gone: `ctx.dynamicCollection`, `ctx.withDeps`, `debounce()` and `ParamCache`.
+
+Where SPEC and code disagreed, SPEC now follows the code. Suspended controllers release their entries (§4.1, §4.2, §23). §20.3's "Style B" never compiled, and it is now the helper-parameter pattern. Citations elsewhere are repointed: §13 → §13.1, §13.3 or §13.4 where specific; §17.5 → §16.5; §5.7 → §5.2; §6.3 → §6.1.
+
+**Found by the pass:**
+- **`createField` literal inference, re-checked with tsc.** A bare `createField(ctx, '')` widens to `Field<string>`. The pitfall page and CLAUDE.md had said it gives `Field<''>`. With a `validators` array the literal does stick, and `createField(ctx, null)` is `Field<null>`.
+  - The old type test was vacuous: `toMatchTypeOf<string>()` accepts both, and `expectTypeOf(x)` widens a literal as it infers.
+  - `type-pitfalls.test-d.ts` now pins all three with `expectTypeOf<typeof x>()`.
+  - `pitfalls/literal-type-narrowing.md` is rewritten, and so are the CLAUDE.md gotcha and the API.md line.
+- **zod:** the `ExtraValidators` doc claimed `z.array(...).min(3)` is enforced on the parent. A probe showed a one-tag form reads valid. The doc, README and `modules/zod.md` now give the path-less root `.refine` workaround, and a new test pins both halves.
+- **Stale hover docs** fixed, with a patch changeset (`hover-docs-1-0.md`):
+  - cross-tab's infinite-query note and its `origins` rationale;
+  - react's streaming examples, which put a `HydrationBoundary` on the server without an engine;
+  - mutation-queue's serialization claims;
+  - realtime's `'unknown'` fallback and `create*` naming;
+  - core's `AsyncState` signal count, `DehydratedEntry.id`, `Ctx.use` and the §17.5 citation;
+  - devtools' `use()`;
+  - the example and test comments.
+- **Five wiki citations into `mutation.ts`** had pointed at the wrong code for months: latest-wins, raceAbort (whose fix snippet is now current), devtools and examples. They are fixed. A BACKLOG item asks for a lint that can tell a drifted range from a right one.
+
+**Wiki:**
+- Rewritten to v2 vocabulary:
+  - modules: cross-tab, entities, mutation-queue, controller, react, query, errors, devtools;
+  - entities: query-client, controller-instance, entry, ctx;
+  - flows: ssr, use-root;
+  - decisions: canonical-vs-optimistic-writes;
+  - also overview and glossary.
+- `devtools-overhaul` and `plugin-host-v2` corrected in place.
+- New: `flows/plugin-lifecycle.md` and `decisions/typechecked-doc-snippets.md`.
+- `modules/examples.md`: findings 1 and 2 are marked resolved.
+
+**Changesets.** Thirteen rewritten so the 1.0 CHANGELOG describes 1.0:
+- `root-isolation-cache-identity` and `ctx-primitives-free-functions` described 0.9, `ctx.bindQuery`, `ctx.session` and the since-reversed "an engine belongs to one root";
+- the rest named `scripts/codemods/*` or 0.8 APIs.
+
+**BACKLOG.**
+- A line now says every open item is deferred to 1.x.
+- Removed as landed: the CRLF item, the realtime test gaps, the Web Locks tests, the `throttleMs` doc, the cross-tab reuse guard and the wiki citations.
+- New:
+  - realtime handler narrowing;
+  - the server-side `HydrationBoundary` root leak;
+  - zod array rules;
+  - a cross-tab plus entities test and its default;
+  - three devtools event gaps;
+  - `ErrorContext.attempt`/`cause` and the `replace` asymmetry;
+  - the unused query barrel;
+  - the wiki-lint range check.
+- A decision before the 1.0 publish: devtools shows an empty tree against the npm core, whose build strips every `__DEV__` emit site.
+- A `defineController` generic for per-root deps.
+- The two release items are `[planned]` for W7.
+
+CLAUDE.md: the roster and the gotcha now use 1.0 names, and the doc-snippets command and CI step are added. Test count: 2,012 tests across 158 files.

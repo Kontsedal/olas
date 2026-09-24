@@ -20,6 +20,8 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 - Cite `SPEC.md §X.Y` when an item amends the spec; that signals "spec change required, not only an implementation."
 - If a backlog item is implied by an existing spec line, quote the line.
 
+**At 1.0, every open item below is deferred to 1.x.** None blocks the release, and none needs a breaking change except where its entry says so.
+
 ---
 
 ## Packages
@@ -37,7 +39,7 @@ Deferred out of the change that introduced it because it needs a scheduling poli
 
 ### [idea] `@kontsedal/olas-offline` — offline-first reconnection layer atop the mutation queue
 
-`@kontsedal/olas-mutation-queue` (shipped 0.0.5) covers durable enqueue + reload-replay for `defineMutation({ persist: true })`. The remaining offline layer would add navigator-online detection, a connection-state signal, conflict-resolution helpers, an exponential-backoff schedule for inter-attempt waits, and an opinionated mid-session retry policy. Today the queue only retries across page loads. Likely a thin package layered on top of `mutation-queue` + `@kontsedal/olas-persist`.
+`@kontsedal/olas-mutation-queue` covers durable enqueue and reload-safe replay for a mutation with `meta: { persist: true }`. Its replays run through the core runner, so the definition's `retry` applies within a page load. The remaining offline layer would add a connection-state signal, conflict-resolution helpers and an opinionated retry policy for a long offline stretch. It would likely be a thin package on top of `mutation-queue` and `@kontsedal/olas-persist`.
 
 ### [idea] Framework-agnostic `bindField(el, field, opts)`
 
@@ -56,17 +58,24 @@ The plugin shipped in 1.0 with six rules (`.wiki/modules/eslint-plugin.md`). Two
 
 - **A fetcher or `mutate` that ignores its `signal`.** Without it, a superseded request runs to completion and `raceAbort` only hides the result. Syntax can see whether the `{ signal }` parameter is destructured and used; it cannot see whether a helper the body calls forwards it, so the rule would need an escape hatch.
 - **`@kontsedal/olas-core/testing` imported outside test files.** The sub-path exists so the import is greppable. The rule needs a file-glob option for what counts as a test.
+
 ### [idea] `@kontsedal/olas-vite-plugin` — HMR automation
 
 [from SPEC §16.5] Today's recommended HMR shape is "full root rebuild on hot update" (`root.dispose()` then `createRoot(...)` again, ~10 lines of Vite plugin glue). A first-party plugin would automate this.
 
 ### [idea] Devtools browser extension
 
-[SPEC §14] An out-of-page extension that consumes `root.__debug.subscribe(...)` — controller tree inspector, cache timeline, mutation log, signal dependency graph, subscription view. The in-app `@kontsedal/olas-devtools` panel already covers the same surfaces; the extension would make them available without instrumenting the page.
+[SPEC §14] An out-of-page extension that consumes `root.debug.subscribe(...)` — controller tree inspector, cache timeline, mutation log, signal dependency graph, subscription view. The in-app `@kontsedal/olas-devtools` panel already covers the same surfaces; the extension would make them available without instrumenting the page.
 
 ### [idea] Three gaps in `@kontsedal/olas-realtime`
 
-[from the 0.9 review] `channel` is a plain string, not a signal, so a controller cannot express a per-route room without tearing down and rebuilding the subscription. `onReconnect` opens a second transport subscription rather than reusing the first. And `rafFlush`, `onDrop` and the capacity `RangeError` have no tests.
+[from the 0.9 review] `channel` is a plain string, not a signal, so a controller cannot express a per-route room without tearing down and rebuilding the subscription. `onReconnect` opens a second transport subscription rather than reusing the first.
+
+[from W6] `PatcherHandlers<TEvent>` gives every handler the whole event union, so a handler for `'comment.added'` must narrow `ev` by hand before it reads `ev.comment`. RECIPES and the kanban example cast around it. Typing each handler as `(ev: Extract<TEvent, { type: K }>) => …` would narrow it for them.
+
+### [idea] A server-rendered `HydrationBoundary` never disposes its root
+
+[from W6] `HydrationBoundary` builds its root during render and disposes it in an effect cleanup (`packages/react/src/context.ts`). A server render runs no effects, so each request's root stays alive, with its gc timers. The docs now render the server through `OlasProvider` with a per-request root. The boundary could detect the server and warn in development, or skip building an engine-backed root there.
 
 ### [idea] Three known costs and silent no-ops in `@kontsedal/olas-entities`
 
@@ -80,41 +89,45 @@ The plugin shipped in 1.0 with six rules (`.wiki/modules/eslint-plugin.md`). Two
 
 [from the 0.9 review] `rootOnlyZodValidator` re-parses the whole schema on every validation, on top of the per-leaf validators that already ran. And `warnDuplicateZod` has no once-gate, so a duplicate zod copy warns on every leaf the walker visits.
 
+[from W6] An array-level rule in the schema (`z.array(...).min(3)`) is dropped, because its issue has a path and the root validator keeps only path-less ones. The README documents it, with a path-less root `.refine` as the workaround, and `zod.test.ts` pins both. Lifting such a rule onto the `FieldArray` would close it.
+
 ## Storage / sync
 
-### [idea] Cross-`mutationId` causal ordering in the mutation queue
+### [idea] Causal ordering across mutation ids in the mutation queue
 
-[from T6.2] `@kontsedal/olas-mutation-queue` replays entries serially **within** a `mutationId` (sorted by `seq`), but different `mutationId`s replay in parallel and cross-tab order isn't coordinated. So a logical dependency like `order/cancel` needing to land after `order/create` (distinct ids) isn't guaranteed on replay. A full fix needs a cross-id dependency DAG (or a global replay sequence with per-entry `dependsOn` edges) plus cross-tab agreement on that order — significant design. Today's guidance: model dependent steps under one `mutationId`, or make the server tolerant of out-of-order arrival (idempotency + reconciliation). Documented as a limitation in the package README.
+[from T6.2] `@kontsedal/olas-mutation-queue` replays entries serially **within** a mutation `id` (sorted by `seq`), but different ids replay in parallel and cross-tab order isn't coordinated. So a logical dependency like `order/cancel` needing to land after `order/create` (distinct ids) isn't guaranteed on replay. A full fix needs a cross-id dependency DAG (or a global replay sequence with per-entry `dependsOn` edges) plus cross-tab agreement on that order — significant design. Today's guidance: model dependent steps under one mutation `id`, or make the server tolerant of out-of-order arrival (idempotency + reconciliation). Documented as a limitation in the package README.
 
 ### [idea] The mutation queue replays a 422 until `maxAttempts`
 
 [from the 0.9 review] `@kontsedal/olas-mutation-queue` treats every replay failure as transient. A 422, a 400 or a 409 that will never succeed burns all `maxAttempts` — with `backoffMs` set, over several page loads — before `onReplayError` fires. Shape: an `isRetryable(err, entry)` option, defaulting to today's "everything is", that drops an entry on the first non-retryable failure and reports it. The awkward part is the contract: `mutate` is a consumer function returning whatever it likes, so the queue cannot read a status code without the consumer handing it one.
 
-### [idea] Two mutation-queue replay paths have no tests
+### [idea] The mutation queue's async-storage write ordering has no test
 
-[from the 0.9 review] `packages/mutation-queue/tests/plugin.test.ts` drives a synchronous in-memory adapter in a Node environment, so two paths never execute: the `pendingWrites` ordering that exists for an async adapter (`indexedDbAdapter`, where a `delete` can overtake its own `write`), and the Web Locks branch of `withReplayLock` (Node has no `navigator.locks`, so every test takes the uncoordinated fallback). Both are the parts most likely to break. Needs a promise-returning fake adapter with controllable resolution order, and a fake `navigator.locks` that can grant or refuse.
+[from the 0.9 review] The tests drive a synchronous in-memory storage, so the `pendingWrites` ordering never executes. It exists for an async storage (`indexedDbAdapter`), where a `delete` can overtake its own `write`. The replay lock's branches are covered since 1.0 (`packages/mutation-queue/tests/coverage-replay-lock.test.ts`). This path needs a promise-returning fake storage with controllable resolution order.
 
 ### [idea] The mutation queue's `seqCounter` can collide across tabs
 
-[from the 0.9 review] `seqCounter` is seeded from `Date.now()` (`packages/mutation-queue/src/plugin.ts`), so two tabs that open in the same millisecond start from the same number and mint the same `seq` for unrelated entries. Replay then orders those entries arbitrarily within a `mutationId`. The `replayAll` priming loop raises the counter past anything already on disk, which narrows the window to entries enqueued before either tab has listed storage. A per-tab random suffix, or a `(seq, tabId)` composite sort key, would close it.
+[from the 0.9 review] `seqCounter` is seeded from `Date.now()` (`packages/mutation-queue/src/plugin.ts`), so two tabs that open in the same millisecond start from the same number and mint the same `seq` for unrelated entries. Replay then orders those entries arbitrarily within a mutation `id`. The `replayAll` priming loop raises the counter past anything already on disk, which narrows the window to entries enqueued before either tab has listed storage. A per-tab random suffix, or a `(seq, tabId)` composite sort key, would close it.
 
 ### [idea] Cross-tab sync is last-message-wins with no causality
 
-[from the 0.9 review] `@kontsedal/olas-cross-tab` applies whatever arrives, in arrival order, with no version vector and no conflict resolution. Two tabs editing the same entry converge on whichever message landed last, which need not be the last write. Three related gaps found alongside it:
+[from the 0.9 review] `@kontsedal/olas-cross-tab` applies whatever arrives, in arrival order, with no version vector and no conflict resolution. Two tabs editing the same entry converge on whichever message landed last, which need not be the last write. Two related gaps found alongside it:
 
-- An optimistic write broadcast under `source: 'set'` reaches a peer that has no knowledge of the mutation behind it. If the origin tab crashes before its rollback or commit, the peer holds optimistic state forever.
-- A peer silently skips an entry that is not currently bound (`packages/core/src/query/client.ts:851-855`), so a tab drops updates for data it has cached but nobody is subscribed to.
-- The plugin-reuse-across-roots guard throws from `init`, but `callPlugin` catches it and routes it to `onError`. The half-installed plugin stays attached to the second root. `@kontsedal/olas-entities` has the same shape at `packages/entities/src/index.ts:651-659`.
+- An optimistic write mirrors to a peer that has no knowledge of the mutation behind it. If the origin tab closes before its rollback or commit, the peer holds optimistic state until its next fetch. `optimistic: false` avoids it, by mirroring canonical writes only.
+- A peer skips an entry it has no bound query for, so a tab drops updates for data it has cached but nobody is subscribed to.
 
-Each of the four could be a separate change; they share one question, which is what guarantee the transport is supposed to give.
+Each of the three could be a separate change; they share one question, which is what guarantee the transport is supposed to give.
 
-### [idea] Three sharp edges in `@kontsedal/olas-persist`
+### [idea] cross-tab with entities: no test, and a default to decide
+
+[from W6] An `entities.update(...)` patch backprops into queries with the entities plugin's origin, and cross-tab mirrors no plugin origin by default. So the patch stays in its tab unless `crossTabPlugin({ origins: [ENTITIES_PLUGIN_NAME] })`. The cross-tab and entities READMEs describe this, but no test covers the combination. A test should come first. Then decide whether cross-tab mirrors the entities origin by default: a backprop that follows a mirrored query write is re-derived by the peer, while a direct patch is not.
+
+### [idea] Two sharp edges in `@kontsedal/olas-persist`
 
 [from the 0.9 review]
 
-- **Version skew.** A peer running `version: undefined` hands the raw versioned envelope to `deserialize` (`packages/persist/src/index.ts:404-405`), so a tab on the old build parses `{"v":2,"d":"…"}` as the value.
-- **`skipFirstDelivery` assumes an immediately-emitting source** (`index.ts:597-601`). A source that does not emit on subscribe has its first real change swallowed instead.
-- **`throttleMs` is documented as a debounce and implemented as a trailing throttle** (`index.ts:66-70` against `580-592`). Pick one — the implementation is the safer behavior under a stream of writes, so the doc is probably what should move.
+- **Version skew.** A peer running `version: undefined` hands the raw versioned envelope to `deserialize`, so a tab on the old build parses `{"v":2,"d":"…"}` as the value.
+- **`skipFirstDelivery` assumes an immediately-emitting source** (`packages/persist/src/index.ts`, in `createPersisted`). A source that does not emit on subscribe has its first real change swallowed instead.
 
 ## Forms
 
@@ -122,9 +135,9 @@ Each of the four could be a separate change; they share one question, which is w
 
 [from SPEC §20.7] The current public API uses the nested `form.fields.a.fields.b.fields.c` access. A `fieldAt<P extends FormPath<S>>(path: P): FieldAt<S, P>` would be ergonomic for deep forms but needs template-literal-type machinery that's implementation-heavy. Nested access covers ~95% of cases today, so this is opportunistic, not blocking.
 
-### [idea] Route `formFromZod` root `.refine({ path })` issues onto fields
+### [idea] Route `createZodForm` root `.refine({ path })` issues onto fields
 
-[noticed during T5.2] Core's `validator()` now returns `FormIssue[]` with paths, and form-level validators route them onto fields. But `formFromZod` still lifts root refines via `rootOnlyZodValidator`, which keeps only **empty-path** issues — so `z.object({...}).refine(fn, { path: ['confirm'] })` is dropped rather than landing on `confirm`. Routing them means distinguishing "root refine targeting a field" from a leaf-schema failure at the same path (leaf validators already own the latter), else the message double-reports. Options: filter root issues to `code: 'custom'` refinements and return them as `FormIssue[]`, or drop per-leaf `zodValidator`s and drive everything from one whole-form `validator(schema)` (bigger change — affects per-leaf `validateOn` and async semantics). Needs its own tests.
+[noticed during T5.2] Core's `validator()` now returns `FormIssue[]` with paths, and form-level validators route them onto fields. But `createZodForm` still lifts root refines via `rootOnlyZodValidator`, which keeps only **empty-path** issues — so `z.object({...}).refine(fn, { path: ['confirm'] })` is dropped rather than landing on `confirm`. Routing them means distinguishing "root refine targeting a field" from a leaf-schema failure at the same path (leaf validators already own the latter), else the message double-reports. Options: filter root issues to `code: 'custom'` refinements and return them as `FormIssue[]`, or drop per-leaf `zodValidator`s and drive everything from one whole-form `validator(schema)` (bigger change — affects per-leaf `validateOn` and async semantics). Needs its own tests.
 
 ### [idea] A no-op field reset can hide a form-level error until the next change
 
@@ -143,6 +156,12 @@ Each of the four could be a separate change; they share one question, which is w
 ### [idea] A `retry` or `retryDelay` callback that throws wedges `isFetching`
 
 [from the 1.0 Stryker triage] `Entry` and `InfiniteEntry` call the query's `retry(attempt, err)` and `retryDelay(attempt)` inside their fetch loop's `catch`. A throw there escapes the loop: the fetch promise rejects, but `isFetching` stays true, which also hangs `waitForIdle()`. An infinite page request clears its page flag and still leaves `isFetching` set. It takes a bug in user code, and it is the same wedge the fetcher-originated `AbortError` fix closed. Shape: treat a throwing policy callback as the attempt's failure, settled through `applyFailure` with the thrown error.
+
+### [idea] Two loose ends in the query host and `ErrorContext`
+
+[from W6]
+- `ErrorContext` declares `attempt` and `cause`, and the docs describe them, but no core call site sets either. Set them where retries and wrapped errors happen, or remove them.
+- `host.queries.replace` on a regular query cancels an in-flight fetch only when the new value is defined. On an infinite query it always cancels, unlike the app-side `replace`, which checks first (`packages/core/src/query/client.ts`). One rule for both would be clearer.
 
 ### [idea] `ctx.debug` while suspended stores the value but sends no devtools event
 
@@ -171,6 +190,10 @@ Next.js is misaligned with olas's philosophy: the controller-tree model assumes 
 Keep this entry as a reference: future contributors will ask "why not Next?" and the answer needs to be findable.
 
 ## Controllers
+
+### [idea] A `defineController` generic for per-root deps
+
+[from W6] `defineController` types its factory's `ctx` as `Ctx<AmbientDeps>`, one app-wide deps type. A factory typed with a narrower `Ctx<MyDeps>` does not compile, which SPEC §20.3's old "Style B" example assumed it would. Two roots with different deps have to share the augmentation or reach deps through a helper parameter, as `@kontsedal/olas-realtime` does. A `defineController<Props, Api, TDeps>` overload would type them per root.
 
 ### [idea] `root.replaceController(path, newDef)` — in-place HMR-friendly swap
 
@@ -207,6 +230,21 @@ it needs the subscriber's controller path threaded through `createQuery` → `Cl
 (and a matching `cache:unsubscribed` on `release` 1→0). Feeds per-entry subscriber counts
 in the inspector and "who's watching this" in the timeline. Part of overhaul T8.5.
 
+### [idea] Devtools against the published core shows an empty tree
+
+[from W6] `pnpm build` runs with `NODE_ENV=production`, and core's tsdown config inlines `__DEV__` from it (`packages/core/tsdown.config.ts`). So the core on npm has every `emit(...)` site stripped. SPEC §23 says so, and that was also true of 0.8. The consequence is that `@kontsedal/olas-devtools`, installed next to the npm core, shows an empty controller tree and timeline; only the cache inspector (`root.debug.queryEntries()`) works. The two usual shapes:
+- a `development` export condition pointing at a dev build, which Vite, webpack and Node's `--conditions` pick up;
+- leaving `process.env.NODE_ENV !== 'production'` in the output for the app's bundler to replace, with a `typeof process` guard for no-bundler use.
+
+Either changes the dist, the smoke checks and the size budgets. Decide before the 1.0 publish, since devtools ships at 1.0.
+
+### [idea] Three devtools event gaps found by the docs pass
+
+[from W6]
+- Mutation events carry the mutation's `id` in a field called `name` (`packages/core/src/devtools.ts`, `query/mutation.ts` `emit`), though 1.0 removed `name` from mutations. The bus is not a public contract (see "Graduate the `DebugEvent` contract" above), so the rename can land in a minor.
+- `host.queries.invalidate` emits no `cache:invalidated`, while an app's `invalidate` does (`packages/core/src/query/client.ts`, the host's `invalidate`). A plugin's invalidation is invisible on the timeline.
+- `DevtoolsPanelProps.inspectorPollMs` is deprecated and ignored. Drop it in the next major.
+
 ### [idea] Timeline group ordering by most-recent activity
 
 `groupByCause` positions a cause-group at its FIRST event's `seq`, so a long-running group
@@ -216,7 +254,7 @@ gets confusing — order groups by their last event's `seq` instead.
 
 ## Documentation / polish
 
-### [in-progress] Inline TSDoc on all exported types
+### [idea] Inline TSDoc on all exported types
 
 The major exports carry one-line descriptions (e.g. `defineQuery`, `defineController`, `useField`). What's still missing: `@example` blocks attached to public surfaces and TSDoc on the long tail of utility exports. Going through each package's `index.ts` re-exports systematically and adding one `@example` per primitive would materially improve IDE hover. Worth doing alongside the next API.md sweep.
 
@@ -244,46 +282,27 @@ The other three examples (kanban, reader-ssr, stock-ticker) each ship a `tests/`
 
 ## Tooling / DX
 
-### [idea] Local `pnpm lint` fails on Windows (CRLF vs biome `lineEnding: "lf"`)
-
-`biome.json` sets `formatter.lineEnding: "lf"` but the repo has no `.gitattributes`, so with `core.autocrlf=true` (the default on the maintainer's Windows box) every source file is CRLF in the working tree and `biome check .` reports "Formatter would have printed…" for *every* file. CI passes only because Linux checks out LF. Fix options: add `.gitattributes` (`* text=auto eol=lf`) so checkouts are LF, then `git add --renormalize .` once; or set `core.autocrlf=input` locally. Deferred because renormalizing mid-remediation would bury the real diffs in line-ending noise. Local rule-checking meanwhile is `pnpm exec biome lint .` (skips the formatter); CI verifies formatting.
-
 ### [idea] Three biome rules are off, and the examples are why
 
 [from the 0.9 review] `biome.json` disables `useHookAtTopLevel`, `useExhaustiveDependencies` and `noArrayIndexKey`. The review found one real instance of two of them in the examples — a conditional return above seven hooks, and an index key on a list with a delete — both since fixed. The rules were off, so nothing caught them. Re-enabling all three repo-wide would flag existing code in the packages too; the narrower move is to enable them for `examples/**` only, where the code is meant to be exemplary, and to record here what the package-level exceptions would be.
 
 ### [idea] Satellite/integration packages typecheck against built `dist`, not `src`
 
-`tsconfig.base.json` has no `paths`. So `@kontsedal/olas-*` imports in the satellite packages, such as react, persist and entities, and in the integration suite, resolve to each package's built `dist/*.d.ts` via `exports.types`. Consequences: (1) `pnpm typecheck` needs a prior `pnpm build` or it sees stale/absent types — and **CI runs `typecheck` BEFORE `build`**, so a fresh checkout can't resolve them; (2) core src type changes aren't seen by satellites until a rebuild. Adding `paths` → src does NOT work cleanly (it pulls core src into each satellite's `rootDir`, and `__DEV__` isn't declared outside the build-time define). Proper fix belongs in T7.2: reorder CI to `build` before `typecheck` (or add a pre-typecheck build step), and/or add TS project references plus a `__DEV__` ambient declaration so src↔src typecheck is viable. Surfaced when T1.2 added `DehydratedEntry.id` — the integration suite's hand-built payload only typechecked after a rebuild.
-
-## Documentation / polish
-
-### [idea] Five wiki line-range citations into `mutation.ts` point at the wrong code
-
-Found while re-verifying citations after §6.5 landed (2026-09-03). `wiki-lint` only checks that a
-`file:N-M` range is within the file, so a range that drifted onto unrelated code is silent. These
-five were already wrong *before* that change — they are not shift damage from it, and they were left
-alone rather than fixed mid-task:
-
-- `pitfalls/latest-wins-rollback-order.md` → `mutation.ts:138-154` lands on the `MutationRun` type
-  doc; the synchronous rollback it describes is the `case 'latest-wins'` block.
-- `pitfalls/raceabort-for-misbehaving-mutate.md` → `mutation.ts:184-247` lands on `RunHandle` and
-  `SerialEntry`, and `:347-374` on the `onMutate`-throw path. `raceAbort` itself is at the bottom of
-  the file.
-- `modules/devtools.md` → `mutation.ts:230-246` lands on the constructor parameter list, not the
-  `emit` overloads it names.
-- `modules/examples.md` → `mutation.ts:196-208` lands on `MutationLifecycleHooks`, not the
-  `onError(err, vars, snapshot)` signature it cites.
-
-Worth fixing as one pass over every `file:N-M` in `.wiki/`, and worth asking whether lint can do
-better than an EOF check — e.g. store a hash of the cited range, or require citations to name a
-symbol the range must contain.
+`tsconfig.base.json` has no `paths`. So `@kontsedal/olas-*` imports in the satellite packages, such as react, persist and entities, and in the integration suite, resolve to each package's built `dist/*.d.ts` via `exports.types`. CI builds first, so it passes. Locally, `pnpm typecheck` needs a prior `pnpm build`, and a satellite does not see a core type change until the next build. Adding `paths` → src does NOT work cleanly: it pulls core src into each satellite's `rootDir`, and `__DEV__` isn't declared outside the build-time define. TS project references plus a `__DEV__` ambient declaration would make a src↔src typecheck viable. Surfaced when T1.2 added `DehydratedEntry.id`: the integration suite's hand-built payload only typechecked after a rebuild.
 
 ## Loose ends
+
+### [idea] `wiki-lint` cannot tell a drifted line range from a right one
+
+`wiki-lint` checks only that a `file:N-M` range fits inside the file, so a range that drifted onto unrelated code passes. The W6 docs pass found five such citations into `mutation.ts`, all months old, and fixed them. Lint could store a hash of the cited range, or require each citation to name a symbol the range must contain.
 
 ### [idea] Run the codemod over the 0.8 example apps in CI
 
 [from W15c] `@kontsedal/olas-codemod` was checked once over the four example apps taken from the 0.8 tag: 208 sites in 47 files, 11 TODOs, and the migrated controllers typecheck against 1.0. A CI job could repeat that on every change: extract the tag with `git archive`, run the built CLI, and typecheck the result. It would catch a transform that a later 1.0 rename breaks.
+
+### [idea] `packages/core/src/query/index.ts` is a barrel nothing imports
+
+[from W6] The core entry imports each query module directly. Delete the barrel, or route the entry through it.
 
 ### [idea] Report the tsdown `banner` caching bug upstream
 
@@ -297,7 +316,7 @@ symbol the range must contain.
 
 [from W12] `tsc` checks the Svelte test files, through the `*.svelte` declaration Svelte ships, but not the `<script lang="ts">` inside the fixtures in `packages/svelte/tests/fixtures/` and `packages/integration/tests/adapter-parity/svelte/`. The compiler strips those types at test time without checking them. `svelte-check` in the Svelte package's `typecheck` script would close the gap, for the cost of one more dev dependency.
 
-### Internal peer ranges have no upper bound
+### [planned] Internal peer ranges have no upper bound
 
 **Resolved for 0.x.** The nine sub-packages declared `peerDependencies: { "@kontsedal/olas-core": ">=0.3.0" }` with no ceiling. That was cosmetic while all ten shipped in lockstep at one version. Dropping the `fixed` group made it load-bearing, so every internal peer range now carries `<1.0.0`. The ranges read `>=0.3.0 <1.0.0`, and `>=0.9.0 <1.0.0` on mutation-queue.
 
@@ -305,7 +324,9 @@ Verified against this tree with throwaway changesets. An in-range bump, core 0.8
 
 **What remains.** On that cascade `changeset version` rewrites `>=0.3.0 <1.0.0` to `>=1.0.0`, dropping the ceiling again: it manages the floor and discards the rest of the range. So the ceiling survives normal operation but is stripped exactly when a major lands. This is tolerable now that publishing is manual. The rewrite shows up in the "Version Packages" PR diff, which a human reviews before merging, and again before running the publish workflow. If it starts being missed, the fix is a post-`version` script that re-applies ceilings, run as part of `changeset version`.
 
-### CI releases cannot complete without two repo-settings changes
+**For the 1.0 release.** Core's major cascades to every package, so the 1.0 Version Packages PR is where the ceiling goes. That PR hand-sets every internal peer to `^1.0.0` before merge. The new vue and svelte packages carry `>=0.3.0 <1.0.0` on core today, like the rest. eslint-plugin and codemod have no core peer.
+
+### [planned] CI releases cannot complete without two repo-settings changes
 
 The 0.4.0 release had to be finished by hand twice, for reasons the workflow cannot fix from inside:
 

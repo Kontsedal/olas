@@ -3,13 +3,13 @@ import { readOnly } from './signals/readonly'
 import type { ReadSignal } from './signals/types'
 
 /**
- * Multi-select state for tables / lists with bulk actions (spec §17.5).
+ * Multi-select state for tables / lists with bulk actions (spec §16.5).
  *
  * Plain function — not bound to `ctx`. Place it in a controller's closure so
  * it dies with the closure. The phantom `T` parameter brands the selection by
  * item type; IDs are always strings.
  */
-// biome-ignore lint/correctness/noUnusedVariables: phantom branding param (spec §17.5)
+// biome-ignore lint/correctness/noUnusedVariables: phantom branding param (spec §16.5)
 export type Selection<T = unknown> = {
   selectedIds: ReadSignal<ReadonlySet<string>>
   size: ReadSignal<number>
@@ -37,7 +37,7 @@ export type Selection<T = unknown> = {
  * - shift-click → range from anchor to `id` along `ordered` (anchor sticks,
  *   so subsequent shift-clicks extend from the same origin)
  *
- * Spec §16.5 / §17.5.
+ * Spec §16.5.
  */
 export function createSelection<T = unknown>(options?: {
   initial?: readonly string[]

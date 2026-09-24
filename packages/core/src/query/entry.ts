@@ -514,7 +514,7 @@ export class Entry<T> {
    * mutation's `onMutate` uses (spec §6.4).
    *
    * `track: false` is a canonical cache write — cross-tab receive, entities
-   * backprop, realtime patches (spec §13.2). It updates the data signal but
+   * backprop, realtime patches (spec §6.4). It updates the data signal but
    * pushes NO snapshot and does NOT flip `hasPendingMutations`, so a
    * fire-and-forget plugin write can't wedge the pending flag at `true`
    * forever. Returns a no-op `Snapshot`.

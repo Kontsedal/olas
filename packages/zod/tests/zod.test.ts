@@ -185,6 +185,32 @@ describe('createZodForm', () => {
     root.dispose()
   })
 
+  test('an array-level .min(N) is not lifted; the same rule as a path-less root refine is', async () => {
+    // The README's documented limitation and its workaround. The array's
+    // issue carries the path ['tags'], and the root validator keeps only
+    // path-less issues, so the schema rule alone leaves the form valid.
+    const tags = z.array(z.string().min(1))
+    const lifted = z.object({ tags: tags.min(3) })
+    const restated = z
+      .object({ tags })
+      .refine((v) => v.tags.length >= 3, { message: 'Add at least three tags' })
+
+    const def = defineController((ctx) => ({
+      lifted: createZodForm(ctx, lifted, { initial: { tags: ['a'] } }),
+      restated: createZodForm(ctx, restated as unknown as z.ZodObject<z.ZodRawShape>, {
+        initial: { tags: ['a'] },
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await flush()
+
+    expect(root.api.lifted.isValid.value).toBe(true)
+    expect(root.api.restated.isValid.value).toBe(false)
+    expect(root.api.restated.topLevelErrors.value).toContain('Add at least three tags')
+
+    root.dispose()
+  })
+
   test('extraValidators on a nested leaf via dotted path', async () => {
     const schema = z.object({
       address: z.object({ city: z.string() }),

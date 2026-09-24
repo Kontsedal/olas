@@ -139,7 +139,7 @@ export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
 
 /**
  * Holds an array of pages plus their pageParams. Supports fetchNextPage /
- * fetchPreviousPage / invalidate (drops all pages). Race-protected.
+ * fetchPreviousPage / invalidate (re-fetches every loaded page). Race-protected.
  *
  * Internal.
  */

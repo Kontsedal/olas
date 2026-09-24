@@ -9,7 +9,7 @@ of all features doubles as a coverage map for the library.
 
 | Visible feature | Library primitive |
 |---|---|
-| Multi-board sidebar with switching | `defineQuery({ crossTab: true })`, reactive key thunks |
+| Multi-board sidebar with switching | `defineQuery({ meta: { crossTab: true } })`, reactive key thunks |
 | Active board grid | `defineQuery` + `createQuery(ctx, query, () => [...])` |
 | Drag-drop reorder *within* a column | `createMutation(ctx, { concurrency: 'serial' })` |
 | Drag-drop *across* columns | `createMutation(ctx, { concurrency: 'parallel' })` with optimistic snapshot |
@@ -17,14 +17,14 @@ of all features doubles as a coverage map for the library.
 | Filter chips (priority / label / assignee) | `computed()` composition over signals |
 | Bulk move + multi-select | `selection<string>()` (handleClick range / meta) |
 | Detail panel | `<SuspendOnUnmount controller={cardDetail}>` (suspend/resume on unmount) |
-| Card detail form | `formFromZod` + `FieldArray` for subtasks |
+| Card detail form | `createZodForm` + `FieldArray` for subtasks |
 | Async title-uniqueness check | `debouncedValidator()` |
 | Assignee picker with shared user data | `entitiesPlugin` + `defineEntity<User>` |
 | Label picker with shared label data | `entitiesPlugin` + `defineEntity<Label>` |
 | Comments thread | `useLiveStream` over a BroadcastChannel realtime |
 | "Another tab just moved a card" log | `useRealtimePatcher` |
 | Two-tab cache convergence | `crossTabPlugin` |
-| Persisted theme / density / sidebar / last-open board | `usePersisted` × N |
+| Persisted theme / density / sidebar / last-open board | `createPersisted` × N |
 | Theme + density mirror to `<html>` | standalone `effect()` |
 | Archived-cards drawer with paged scroll | `defineInfiniteQuery` |
 | Background-tab polling pause | `useSuspendOnHidden(root)` |
@@ -58,7 +58,7 @@ src/
 │   ├── activity/            # emitter feed + remote-actor events
 │   ├── notifications/       # ErrorContext-driven toasts
 │   ├── archive/             # defineInfiniteQuery drawer
-│   └── preferences/         # usePersisted theme/density/sidebar
+│   └── preferences/         # createPersisted theme/density/sidebar
 └── ui/                      # kanban-local design system
     ├── tokens.css, motion.css, globals.css, primitives.css
     └── Button, Card, Input, Tag, Avatar, Toast, Dialog, …
@@ -101,5 +101,5 @@ pnpm --filter @kontsedal/olas-example-kanban build
 1. `src/api/types.ts` — domain shapes.
 2. `src/app.controller.ts` — the *orchestrator*. Reads top-down like a wiring diagram.
 3. `src/features/board/board.controller.ts` — three mutation modes side-by-side; this is where the testability claim lives.
-4. `src/features/card-detail/card-detail.controller.ts` — `formFromZod` + `debouncedValidator` + SuspendOnUnmount shape.
+4. `src/features/card-detail/card-detail.controller.ts` — `createZodForm` + `debouncedValidator` + SuspendOnUnmount shape.
 5. `tests/board.test.ts` + `tests/cross-tab.test.ts` — see the mutations and the two-tab convergence verified deterministically.

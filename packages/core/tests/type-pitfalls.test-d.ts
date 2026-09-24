@@ -2,9 +2,10 @@
  * Type-level regression tests for the two TS pitfalls documented in
  * `.wiki/pitfalls/`:
  *
- *  - `literal-type-narrowing` — `createField(ctx, '')` would infer `Field<''>` (the
- *    literal type) without an explicit annotation; we want `Field<string>` so
- *    subsequent `.set('hello')` works.
+ *  - `literal-type-narrowing` — `createField(ctx, '')` widens to
+ *    `Field<string>`, but with a `validators` array it keeps the literal
+ *    (`Field<''>`), and `createField(ctx, null)` is `Field<null>`. Annotate
+ *    the type parameter in both cases.
  *  - `preact-signals-overload-return` — `ReturnType<typeof signal<T>>` picks
  *    the last overload (`Signal<T | undefined>`), so our wrapped `signal()`
  *    must be careful to return `Signal<T>`.
@@ -14,7 +15,7 @@
  * inferences would fail typecheck.
  */
 import { describe, expectTypeOf, test } from 'vitest'
-import { createField } from '../src'
+import { createField, email, required } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { queryEngine } from '../src/query/engine'
 import { type Signal, signal } from '../src/signals'
@@ -26,23 +27,42 @@ describe('type pitfall: literal-type-narrowing', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // Explicit annotation widens — `.set('anything')` is valid.
-    expectTypeOf(root.api.name.value).toEqualTypeOf<string>()
+    expectTypeOf<typeof root.api.name.value>().toEqualTypeOf<string>()
     root.api.name.set('anything')
     root.dispose()
   })
 
-  test("createField(ctx, '') without annotation narrows to '' (pitfall pin)", () => {
+  test("createField(ctx, '') with no validators widens to string", () => {
     const def = defineController((ctx) => ({
-      narrow: createField(ctx, ''),
+      bare: createField(ctx, ''),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    // The inferred type is `Field<''>` — `.set` accepts only the literal ''.
-    // This is the documented pitfall (`.wiki/pitfalls/literal-type-narrowing.md`):
-    // the assertion exists so a future change that *auto-widens* literals
-    // shows up as a typecheck failure (then update the test).
-    expectTypeOf(root.api.narrow.value).toMatchTypeOf<string>()
-    // Empty-string is a valid value.
-    root.api.narrow.set('')
+    // `expectTypeOf<typeof x>()`, not `expectTypeOf(x)`: inferring the type
+    // argument from a value widens a literal, so `expectTypeOf(x)` cannot see
+    // one. That is how an earlier version of this pin passed while wrong.
+    expectTypeOf<typeof root.api.bare.value>().toEqualTypeOf<string>()
+    root.api.bare.set('anything')
+    root.dispose()
+  })
+
+  test("createField(ctx, '', { validators }) keeps the literal '' (pitfall pin)", () => {
+    // The documented pitfall (`.wiki/pitfalls/literal-type-narrowing.md`). A
+    // validator typed for `string` gives `T` a second, contravariant
+    // inference site, and TypeScript then keeps the literal `''` from the
+    // initial value. If this changes, update the pitfall page.
+    defineController((ctx) => {
+      const validated = createField(ctx, '', { validators: [required(), email()] })
+      expectTypeOf<typeof validated.value>().toEqualTypeOf<''>()
+      return { validated }
+    })
+  })
+
+  test('createField(ctx, null) is a field that only holds null (pitfall pin)', () => {
+    const def = defineController((ctx) => ({
+      empty: createField(ctx, null),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
+    expectTypeOf<typeof root.api.empty.value>().toEqualTypeOf<null>()
     root.dispose()
   })
 })

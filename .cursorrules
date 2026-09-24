@@ -1,53 +1,142 @@
 # Olas — coding rules for AI assistants
 
-This project uses Olas (controller-tree architecture). Business logic lives
-in pure-TypeScript controllers; React components are thin renderers.
+This project uses Olas 1.0 (controller-tree architecture). Business logic
+lives in pure-TypeScript controllers; React, Vue or Svelte components are
+thin renderers.
 
 ## Hard invariants
 
 - Business logic — fetching, mutations, derivation, multi-step flows — lives
-  in controllers (`defineController((ctx) => api)`), not in components.
-- React components subscribe via @kontsedal/olas-react hooks (`useRoot`, `use(signal)`,
-  `useQuery`, `useField`). They never call `fetch`, never own a query or
-  mutation, never hold long-lived state.
-- Controller factories are SYNCHRONOUS. Async work goes inside `ctx.cache`,
-  `ctx.mutation`, or `ctx.effect` callbacks. `defineController(async ...)`
-  silently breaks construction-rollback — never write it.
-- Fetchers (`fetcher`) and mutation `mutate` functions receive an
-  `AbortSignal`. Forward it to every network call (`fetch`, `axios`,
-  `ctx.deps.api.*`). Not forwarding is a bug.
-- Every primitive created on `ctx` (effects, child controllers, fields,
-  queries, mutations, emitters) is auto-disposed with the controller. Don't
-  write manual cleanup.
+  in controllers (`defineController((ctx, props) => api)`), not in components.
+- Components read controllers through the adapter and nothing else. In
+  React: `useRoot()`, `useValue(signal)`, `useQuery(sub)`, `useField(field)`
+  and `useMutation(m)` from @kontsedal/olas-react. They never call `fetch`,
+  never own a query or mutation, never hold long-lived state.
+- Controller factories are SYNCHRONOUS. Async work goes inside query and
+  cache fetchers, mutation `mutate` functions, or `ctx.effect` callbacks.
+  `defineController(async ...)` makes the api a promise and breaks
+  construction-rollback — never write it.
+- Lifetime-owned primitives are free functions that take `ctx` first:
+  `createField`, `createForm`, `createFieldArray`, `createCache`,
+  `createQuery`, `createMutation` and `bindQuery`. Import them, and `signal`
+  and `computed`, from @kontsedal/olas-core. `ctx.field`, `ctx.use`,
+  `ctx.mutation`, `ctx.signal` and `ctx.session` do not exist.
+- `ctx` keeps what binds to the tree: `child`, `attach`, `collection`,
+  `lazyChild`, `effect`, `on`, `emitter`, `provide`, `inject`, `debug`,
+  `deps`, and `onDispose` / `onSuspend` / `onResume`.
+- Everything created through `ctx` or a `create*(ctx, ...)` call is disposed
+  with the controller. Don't write manual cleanup.
+- `defineQuery`, `defineInfiniteQuery`, `defineMutation` and `defineScope`
+  live at module scope. Every query and defined mutation has a hand-written
+  `id`: required, unique, and the same in the server and client bundles.
+  Don't derive it from a function name or a hash; minification changes both.
+- Plugin settings go in `meta`: `meta: { crossTab: true }` on a query,
+  `meta: { persist: true }` on a `defineMutation`. Nothing persists unless
+  it says so.
+- Query fetchers receive `({ signal, deps }, ...args)`, `mutate` receives
+  `(vars, { signal, deps })`, and a `createCache` fetcher receives
+  `({ signal, deps })`. Forward `signal` to every network call. Reach
+  services through `deps` (typed by augmenting `AmbientDeps`), not through
+  module imports.
+- `defineMutation` takes no hooks. The owning controller adds them:
+  `createMutation(ctx, def, { onMutate, onSuccess, onError })`.
+
+## Roots
+
+- `createRoot(appController, { deps, queries: queryEngine() })` returns a
+  handle. The controller's api is `root.api`. The handle's own members are
+  `dispose`, `suspend`, `resume`, `dehydrate`, `hydrate`, `waitForIdle`,
+  `bindQuery`, `inject` and `debug`.
+- A root whose controllers create a query, a mutation or a bound query
+  needs `queries: queryEngine()`. Root-wide query defaults go in
+  `queryEngine({ defaults: { staleTime, retry, ... } })`. `plugins` and
+  `hydrate` are root options.
+- A plugin is a `definePlugin({ name, setup(host) { return hooks } })`
+  value, passed in `plugins: [...]`. Read a plugin's service with
+  `ctx.inject(Scope)`, such as `ctx.inject(Entities)`.
+- Register the root's type once, and `useRoot()` needs no type argument:
+
+      declare module '@kontsedal/olas-react' {
+        interface Register { root: typeof root }
+      }
+
+## Queries and mutations
+
+- Imperative cache operations go through a handle bound to one root:
+  `const users = bindQuery(ctx, userQuery)` in a controller,
+  `root.bindQuery(userQuery)` outside one. An unbound `userQuery.peek(...)`,
+  `write(...)` or `invalidate(...)` throws once two roots have touched the
+  query.
+- Optimistic update: in `onMutate`, call `users.cancel(...args)` first, then
+  return the snapshot from `users.setData(...args, updater)`. The mutation
+  rolls the snapshot back on an error or an abort, and finalizes it on
+  success.
+- A patch that is already true (a server push, a realtime event) uses
+  `users.write(...args, updater)`, or `users.replace(...args, value)` for a
+  whole record. A `setData` snapshot that nothing settles leaks.
+- In React, `useMutation(m).mutate(vars)` is for event handlers and returns
+  nothing; a failure lands on `error`. `run(vars)` returns the promise.
 
 ## Testing
 
 Test controllers in pure Node, no jsdom:
 
     import { createTestController } from '@kontsedal/olas-core/testing'
-    const { api, dispose } = createTestController(myController, { deps: fakes })
+    const { api, dispose } = createTestController(myController, {
+      deps: fakes,
+      props: { id: 'u1' },   // omit for a controller that takes no props
+    })
     // call api.someMethod(), assert against api.someSignal.peek()
     dispose()
+
+`createTestController` returns the same handle as `createRoot`, with a live
+query engine by default. It also takes `queries`, `plugins`, `scopes` and
+`hydrate`. `mockFetchPlugin` from the same entry answers query fetches by
+query id, with no network.
 
 `@kontsedal/olas-core/testing` is reserved for test files (`*.test.ts`, `*.spec.ts`).
 Don't import it from production code.
 
-Run with `pnpm vitest run packages/<name>/tests/<file>.test.ts`.
+Run one file with `vitest run path/to/file.test.ts`.
+
+## Enforced by lint
+
+@kontsedal/olas-eslint-plugin turns the conventions above that syntax can
+show into lint errors. Keep `olas.configs.recommended` (or `strict`) on, and
+fix a finding rather than disabling the rule:
+
+- `no-react-hooks-in-controllers` — no React hook inside a
+  `defineController` factory.
+- `define-at-module-scope` — `defineQuery`, `defineInfiniteQuery`,
+  `defineMutation` and `defineScope` at module scope only.
+- `no-async-controller-factory` — no `async` factory.
+- `optimistic-returns-snapshot` — `onMutate` returns its `setData` snapshot,
+  and no code discards one.
+- `cancel-before-optimistic` — `cancel` on the same query before an
+  optimistic `setData` (a warning in `recommended`, an error in `strict`).
+- `no-network-in-components` — no `fetch` or `axios` inside a React
+  component (on in `strict` only).
 
 ## Common gotchas
 
-- `Field<T>.value` returns `T`. `Form.value` and `FieldArray.value` return
-  `ReadSignal<T>`. They are NOT symmetric — branching code must handle both.
-- `ctx.field('')` infers `Field<''>` from the empty-string literal. Annotate
-  as `ctx.field<string>('')`.
-- Per-query optimistic updates use `query.setData(...key, updater)`. The
-  `onMutate` returns the snapshot; `onError` calls `snapshot.rollback()`.
-  Automatic rollback fires only on abort, not on normal errors.
+- `Field`, `Form` and `FieldArray` are all `ReadSignal`s of their value:
+  `form.value` is the value, and `useValue(form)` subscribes to it. There is
+  no `form.value.value`.
+- `form.submit(handler)` resolves a `SubmitResult`: check `result.ok`, then
+  `result.reason` (`'invalid'`, `'busy'`, `'disposed'` or `'error'`).
+- Validators go in the options bag:
+  `createField(ctx, '', { validators: [required()], validateOn: 'blur' })`.
+- React reads a signal with `useValue(signal)`. React 19's `use` is a
+  different function.
+- Durations are milliseconds. Lifetime policies end in `Time` (`staleTime`,
+  `gcTime`, `maxIdleTime`); every other duration option ends in `Ms`.
 
 ## Where to look
 
+These are in the Olas repository:
+
 - `SPEC.md` — authoritative API contract (cite as `§N.M`).
 - `API.md` — every exported type, signature, and usage example.
-- `RECIPES.md` — reusable composables (`useDebounced`, `usePagination`,
-  `useSubmit`, `useInlineEdit`, `useTail`, `useRealtimePatcher`).
-- `BACKLOG.md` — open work. Append follow-up ideas here, never in SPEC.md.
+- `RECIPES.md` — reusable composables built from the primitives.
+- `PLUGINS.md` — writing a plugin against the host.
+- `MIGRATING.md` — upgrading from 0.8; start with `npx @kontsedal/olas-codemod 1.0`.

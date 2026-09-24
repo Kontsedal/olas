@@ -20,13 +20,17 @@ That's a controller: a function that returns an object. Components subscribe to 
 
 Because it's *a function*, here's the entire test — no renderer, no jsdom, no Testing Library:
 
+<!-- snippet-prelude
+import { counter } from './counter'
+-->
 ```ts
 import { createTestController } from '@kontsedal/olas-core/testing'
+import { expect, test } from 'vitest'
 
 test('counter increments', () => {
-  const ctrl = createTestController(counter, { deps: {}, props: undefined })
-  ctrl.increment()
-  expect(ctrl.count.peek()).toBe(1)
+  const { api } = createTestController(counter, { deps: {} })
+  api.increment()
+  expect(api.count.peek()).toBe(1)
 })
 ```
 
@@ -46,6 +50,7 @@ Scale that controller up — shared queries, optimistic mutations with rollback,
   - [Writes with mutations](#5-writes-with-mutations)
   - [Forms](#6-forms)
 - [Common patterns](#common-patterns)
+- [Tooling](#tooling)
 - [Working with AI assistants](#working-with-ai-assistants)
 - [How it scales](#how-it-scales)
 - [Packages](#packages)
@@ -79,8 +84,8 @@ graph LR
     root --> session
     userProfile --> data["queries / mutations / forms"]
   end
-  ProfilePage -.->|"use()"| userProfile
-  Toolbar -.->|"use()"| session
+  ProfilePage -.->|"useValue()"| userProfile
+  Toolbar -.->|"useValue()"| session
 ```
 
 Two trees, one arrow between them: components reach *into* the controller tree to read a signal, and that's the entire coupling. The logic doesn't know a component exists.
@@ -90,7 +95,7 @@ The practical wins:
 - **Logic without renderers.** A controller is a function. Tests pass in fake `deps`, call methods, and assert against signals. No `render(<App />)`, no Testing Library, no fake timers chasing effect flushes.
 - **Explicit lifetimes.** Every field, query, mutation, and child controller dies with its parent. No "what owns this subscription?" mystery.
 - **Shared queries by default.** Two controllers subscribing to the same query share one fetch and one cache entry. The same primitive scales from "one widget" to "every screen on the dashboard."
-- **Framework-agnostic core.** `@kontsedal/olas-core` declares no React dependency and does not import it. The React adapter is a thin layer on top of `useSyncExternalStore`. The same controllers can drive Vue, Svelte, or vanilla DOM with a small adapter.
+- **Framework-agnostic core.** `@kontsedal/olas-core` declares no UI-framework dependency and does not import one. The React, Vue and Svelte adapters are thin layers: React's sits on `useSyncExternalStore`, Vue's turns a signal into a read-only ref, and in Svelte a signal already is a store. Preact runs the React adapter through `preact/compat`, and plain DOM code subscribes to signals directly.
 
 ---
 
@@ -98,13 +103,20 @@ The practical wins:
 
 ```bash
 pnpm add @kontsedal/olas-core @kontsedal/olas-react @preact/signals-core react
+# Vue or Svelte instead of React:
+pnpm add @kontsedal/olas-core @kontsedal/olas-vue @preact/signals-core vue
+pnpm add @kontsedal/olas-core @kontsedal/olas-svelte @preact/signals-core svelte
 # optional add-ons (each independent — pick what you use)
 pnpm add @kontsedal/olas-persist @kontsedal/olas-zod @kontsedal/olas-devtools zod
 pnpm add @kontsedal/olas-cross-tab @kontsedal/olas-entities @kontsedal/olas-realtime
 pnpm add @kontsedal/olas-mutation-queue @kontsedal/olas-router
+# lint rules for the conventions below
+pnpm add -D @kontsedal/olas-eslint-plugin eslint
 ```
 
 `@preact/signals-core` is a peer dep on `@kontsedal/olas-core` — the library does not bundle it.
+
+Every package ships ES modules only and needs Node 20.19 or later, where `require()` of an ES module works.
 
 ---
 
@@ -137,10 +149,11 @@ Olas wraps [`@preact/signals-core`](https://github.com/preactjs/signals) behind 
 
 A controller is a function from `ctx` to an API object.
 
-```ts
+```ts file=counter.ts
+// counter.ts
 import { defineController, signal } from '@kontsedal/olas-core'
 
-const counter = defineController((ctx) => {
+export const counter = defineController((ctx) => {
   const count = signal(0)
 
   ctx.effect(() => {
@@ -155,20 +168,23 @@ const counter = defineController((ctx) => {
 })
 ```
 
-`ctx` is a factory bound to *this* controller's lifetime. Anything created through `ctx` — effects, child controllers, fields, queries, mutations, emitters — is disposed when the controller is disposed.
+`ctx` is bound to *this* controller's lifetime. Anything created through `ctx` or the `create*` functions that take it — effects, child controllers, fields, queries, mutations, emitters — is disposed when the controller is disposed.
 
 Mount the controller as a root once, near your app entry point.
 
 ```ts
 import { createRoot } from '@kontsedal/olas-core'
+import { counter } from './counter'
 
 const root = createRoot(counter, { deps: {} })
 
-root.increment()
-console.log(root.count.value)     // 1
+root.api.increment()
+console.log(root.api.count.value) // 1
 
 root.dispose()                    // tears down the effect, signals, everything
 ```
+
+`createRoot` returns a handle. The controller's api is on `root.api`, and the root's own controls sit beside it: `dispose`, `suspend`, `resume`, `dehydrate`, `hydrate`, `waitForIdle`, `bindQuery`, `inject` and `debug`.
 
 `deps` is required (more on this in [Dependency injection](#dependency-injection)). For trivial apps, `{}` is fine.
 
@@ -184,6 +200,13 @@ import { App } from './App'
 
 const root = createOlasRoot(counter, { deps: {} })
 
+// Register the root's type once, so `useRoot()` needs no type argument.
+declare module '@kontsedal/olas-react' {
+  interface Register {
+    root: typeof root
+  }
+}
+
 createReactRoot(document.getElementById('root')!).render(
   <OlasProvider root={root}>
     <App />
@@ -191,27 +214,13 @@ createReactRoot(document.getElementById('root')!).render(
 )
 ```
 
-Export the api type alongside the controller so components can reach for it without poking at framework types:
-
-```ts
-// counter.ts (cont.)
-import type { ReadSignal } from '@kontsedal/olas-core'
-
-export type CounterApi = {
-  count: ReadSignal<number>
-  increment: () => void
-  reset: () => void
-}
-```
-
-```tsx
+```tsx file=App.tsx
 // App.tsx
-import { use, useRoot } from '@kontsedal/olas-react'
-import type { CounterApi } from './counter'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 
 export function App() {
-  const api = useRoot<CounterApi>()
-  const count = use(api.count)
+  const api = useRoot()
+  const count = useValue(api.count)
 
   return (
     <div>
@@ -223,17 +232,20 @@ export function App() {
 }
 ```
 
-`use(signal)` subscribes a component to one signal. `useRoot<Api>()` resolves the controller's public API from the provider. The component is a thin renderer — all behavior lives on `api`.
+`useValue(signal)` subscribes a component to one signal. `useRoot()` resolves the root's api from the provider, typed through the `Register` augmentation in `main.tsx`. Without one it returns `unknown`, and `useRoot<Api>()` names the type per call, as §4 does. The component is a thin renderer — all behavior lives on `api`.
+
+Vue and Svelte read the same controller. `@kontsedal/olas-vue` installs the root with `app.use(olasPlugin(root))` and returns refs, and `@kontsedal/olas-svelte` puts it in context with `setRoot(root)`. See [Packages](#packages).
 
 ### 4. Async data with `defineQuery`
 
 For data that comes from the network and might be shared across screens, define a query at module scope:
 
-```ts
+```ts file=queries.ts
+// queries.ts
 import { defineQuery } from '@kontsedal/olas-core'
 
 export const userQuery = defineQuery({
-  queryId: 'users/detail', // stable across server/client bundles for SSR
+  id: 'users/detail', // required, unique, and the same in the server and client bundles
   key: (id: string) => [id],
   fetcher: async ({ signal }, id) => {
     const res = await fetch(`/api/users/${id}`, { signal })
@@ -244,24 +256,34 @@ export const userQuery = defineQuery({
 })
 ```
 
-Subscribe to it from a controller. `createQuery` returns an `AsyncState<T>` — eight signals you can read individually.
+The `id` names the query everywhere a query has to be found by name: SSR payloads, plugins and devtools. Write it by hand, because a derived name changes under minification.
 
-```ts
-import { defineController } from '@kontsedal/olas-core'
+Subscribe to it from a controller. `createQuery` returns an `AsyncState<T>`: ten signals you can read one at a time, such as `data`, `error`, `isLoading` and `isFetching`, plus `refetch`, `cancel`, `reset` and `firstValue`.
+
+```ts file=userProfile.ts
+// userProfile.ts
+import { createQuery, type CtrlApi, defineController } from '@kontsedal/olas-core'
+import { userQuery } from './queries'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
   const user = createQuery(ctx, userQuery, () => [props.id])
 
   return { user }
 })
+
+export type UserProfileApi = CtrlApi<typeof userProfile>
 ```
 
-In a component, `useQuery` collapses those eight signals into one render:
+A root whose controllers create a query or a mutation needs a query engine: `createRoot(app, { deps, queries: queryEngine() })`. Without one, `createQuery` throws an error that names the fix. A root with no queries leaves the engine out, and its bundle leaves out the query cache.
+
+In a component, `useQuery` reads the whole state in one hook, and re-renders only when a field the component read changes:
 
 ```tsx
 import { useQuery, useRoot } from '@kontsedal/olas-react'
+import { ErrorBox, Spinner } from './ui'
+import type { UserProfileApi } from './userProfile'
 
-function UserCard() {
+export function UserCard() {
   const api = useRoot<UserProfileApi>()
   const { data, isLoading, error } = useQuery(api.user)
 
@@ -271,7 +293,9 @@ function UserCard() {
 }
 ```
 
-**Two controllers subscribing to the same `userQuery` with the same id share one fetch and one cache entry.** When the last subscriber disposes, the entry is collected after `gcTime`, which defaults to five minutes.
+`useSuspenseQuery(api.user)` is the Suspense form: it suspends until the first value lands, and its `data` is never `undefined`.
+
+**Two controllers subscribing to the same `userQuery` with the same key share one fetch and one cache entry.** When the last subscriber disposes, the entry is collected after `gcTime`, which defaults to five minutes.
 
 ```mermaid
 graph TD
@@ -286,14 +310,15 @@ You do not wire this up. Subscribing *is* the sharing. The same primitive scales
 ### 5. Writes with mutations
 
 ```ts
-import { defineController } from '@kontsedal/olas-core'
+import { bindQuery, createMutation, createQuery, defineController } from '@kontsedal/olas-core'
+import { userQuery } from './queries'
 
 export const userProfile = defineController((ctx, props: { id: string }) => {
   const user = createQuery(ctx, userQuery, () => [props.id])
 
   const users = bindQuery(ctx, userQuery)
   const updateName = createMutation<string, void>(ctx, {
-    mutate: async (newName, signal) => {
+    mutate: async (newName, { signal }) => {
       const res = await fetch(`/api/users/${props.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ name: newName }),
@@ -308,16 +333,15 @@ export const userProfile = defineController((ctx, props: { id: string }) => {
         return { ...prev, name: newName }
       })
     },
-    onError: (_err, _vars, snapshot) => {
-      snapshot?.rollback()
-    },
   })
 
   return { user, updateName }
 })
 ```
 
-`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `users.cancel(...)`, where `users` is the root-scoped handle from `bindQuery(ctx, userQuery)`, so an outgoing refetch's stale response cannot land on top of the optimistic value. If the call fails, `onError` calls `snapshot.rollback()` and the UI reverts. Rollback restores server truth when a fetch succeeded in between; see SPEC §6.4.
+`onMutate` runs an optimistic update *before* the network call and returns a snapshot. It first calls `users.cancel(...)`, where `users` is the root-scoped handle from `bindQuery(ctx, userQuery)`, so an outgoing refetch's stale response cannot land on top of the optimistic value. If the call fails, the mutation rolls the snapshot back after `onError` runs, and the UI reverts. On success it finalizes the snapshot. Rollback restores server truth when a fetch succeeded in between; see SPEC §6.4.
+
+`mutate` receives the variables and a context with the run's `signal` and the controller's `deps`.
 
 Three concurrency modes (`parallel` is default):
 
@@ -328,13 +352,21 @@ Three concurrency modes (`parallel` is default):
 ### 6. Forms
 
 ```ts
-import { defineController, required, minLength, email } from '@kontsedal/olas-core'
+import {
+  createField,
+  createForm,
+  createMutation,
+  defineController,
+  email,
+  minLength,
+  required,
+} from '@kontsedal/olas-core'
 
 export const signupForm = defineController((ctx) => {
   const form = createForm(ctx, {
-    name: createField(ctx, '', [required('Name is required')]),
-    email: createField(ctx, '', [required(), email()]),
-    password: createField(ctx, '', [minLength(8, 'Min 8 characters')]),
+    name: createField(ctx, '', { validators: [required('Name is required')] }),
+    email: createField(ctx, '', { validators: [required(), email()] }),
+    password: createField(ctx, '', { validators: [minLength(8, 'Min 8 characters')] }),
   })
 
   return {
@@ -343,7 +375,7 @@ export const signupForm = defineController((ctx) => {
       mutate: async () => {
         form.markAllTouched()
         if (!(await form.validate())) throw new Error('invalid')
-        const v = form.value.value
+        const v = form.value
         // ...send v.name, v.email, v.password to the server
       },
     }),
@@ -351,12 +383,13 @@ export const signupForm = defineController((ctx) => {
 })
 ```
 
-A `Form` aggregates fields (and nested forms, and `FieldArray`s) into a single typed `value` signal plus `isValid`, `isDirty`, `touched`, `isValidating`. Components subscribe one field at a time with `useField`:
+A `Form` aggregates fields (and nested forms, and `FieldArray`s) and is itself a `ReadSignal` of their typed value, like a `Field`. It adds `isValid`, `isDirty`, `touched` and `isValidating`. `form.submit(handler)` is the shortcut when you need no mutation state: it validates first and resolves a `SubmitResult` you switch on. Components subscribe one field at a time with `useField`:
 
 ```tsx
+import type { Field } from '@kontsedal/olas-core'
 import { useField } from '@kontsedal/olas-react'
 
-function NameInput({ field }: { field: Field<string> }) {
+export function NameInput({ field }: { field: Field<string> }) {
   const f = useField(field)
   return (
     <label>
@@ -370,17 +403,21 @@ function NameInput({ field }: { field: Field<string> }) {
 
 For schema-driven forms, `@kontsedal/olas-zod` walks a `z.object(...)` tree and emits the matching `Form`, `Field` and `FieldArray` structure with validators auto-attached:
 
+<!-- snippet-prelude
+import type { Ctx } from '@kontsedal/olas-core'
+declare const ctx: Ctx
+-->
 ```ts
 import { z } from 'zod'
-import { formFromZod } from '@kontsedal/olas-zod'
+import { createZodForm } from '@kontsedal/olas-zod'
 
 const Schema = z.object({
   name: z.string().min(2),
   age: z.number().min(0),
 })
 
-const form = formFromZod(ctx, Schema)
-// form.value: ReadSignal<{ name: string; age: number }>
+const form = createZodForm(ctx, Schema)
+// form is a ReadSignal<{ name: string; age: number }>
 ```
 
 That's the whole tour. Everything else in Olas is variations on these six pieces.
@@ -397,9 +434,14 @@ The everyday wiring. For composable custom hooks — debounced writes, paginatio
 
 ```ts
 // deps.ts
+import type { Emitter } from '@kontsedal/olas-core'
+
+export type User = { id: string; name: string }
+
 export interface AppDeps {
   api: { getUser(id: string): Promise<User> }
   router: { navigate(path: string): void }
+  activity: Emitter<string>
 }
 
 declare module '@kontsedal/olas-core' {
@@ -408,15 +450,19 @@ declare module '@kontsedal/olas-core' {
 ```
 
 ```ts
+import { createEmitter, createRoot, queryEngine } from '@kontsedal/olas-core'
+import { appController } from './app.controller'
+import { realApiClient, realRouter } from './services'
+
 const root = createRoot(appController, {
-  queries: queryEngine(),
+  // App-wide query policy, declared once. A per-query `defineQuery` field
+  // always overrides it. Built-ins are staleTime: 0, retry: 0.
+  queries: queryEngine({ defaults: { staleTime: 5 * 60_000, retry: 1 } }),
   deps: {
     api: realApiClient,
     router: realRouter,
+    activity: createEmitter<string>(),
   },
-  // App-wide query policy, declared once. A per-query `defineQuery` field
-  // always overrides it. Built-ins are staleTime: 0, retry: 0.
-  defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 },
 })
 ```
 
@@ -427,7 +473,9 @@ In tests, pass in fakes — no mocking framework needed.
 For "controller A fires an event, controller B reacts," use an emitter on `ctx.deps` (or a `defineScope` for shared in-tree state).
 
 ```ts
-const activity = defineController((ctx) => {
+import { defineController, signal } from '@kontsedal/olas-core'
+
+export const activity = defineController((ctx) => {
   const log = signal<string[]>([])
   ctx.on(ctx.deps.activity, (msg) => log.update((l) => [...l, msg]))
   return { log }
@@ -436,52 +484,113 @@ const activity = defineController((ctx) => {
 
 ### Optimistic UI with rollback
 
-Pattern shown above in [§5](#5-writes-with-mutations). The key rule: `onMutate` returns a snapshot; `onError` calls `snapshot.rollback()`. Rollback is automatic *only* on abort (e.g., a `latest-wins` mutation superseded). For normal errors, do it explicitly.
+Pattern shown above in [§5](#5-writes-with-mutations). The key rule: `onMutate` calls `cancel` on the query, then returns the snapshot `setData` gave it. The mutation settles the snapshot: it rolls back on an error or an abort (a superseded `latest-wins` run, a dispose) and finalizes on success. For a patch that is already true, such as a server push, use `write`, which leaves no snapshot to settle.
 
 ### Persisted state
 
+<!-- snippet-prelude
+import type { Ctx } from '@kontsedal/olas-core'
+declare const ctx: Ctx
+-->
 ```ts
 import { signal } from '@kontsedal/olas-core'
-import { usePersisted } from '@kontsedal/olas-persist'
+import { createPersisted } from '@kontsedal/olas-persist'
 
 const theme = signal<'light' | 'dark'>('light')
-usePersisted(ctx, 'theme', theme)
+createPersisted(ctx, 'theme', theme)
 ```
 
-`usePersisted` reads the saved value on construction and writes through on every change. Works for any signal-shaped source (`signal`, `field`, or anything exposing `.value`, `.set` and `.subscribe`). Cross-tab sync via `crossTab: true`.
+`createPersisted` reads the saved value on construction and writes through on every change. Works for any signal-shaped source (`signal`, `field`, or anything exposing `.value`, `.set` and `.subscribe`). Cross-tab sync via `crossTab: true`. `persistQueryCachePlugin` from the same package persists the query cache instead.
 
 ### SSR — `dehydrate` and `hydrate`
 
-```ts
-// server
-const root = createRoot(app, { queries: queryEngine(), deps: serverDeps })
-renderToString(<OlasProvider root={root}><App /></OlasProvider>)
-await root.waitForIdle()
-const state = root.dehydrate()
-// inline `state` into the HTML response
+```tsx
+// server.tsx
+import { createRoot, queryEngine, serializeForScript } from '@kontsedal/olas-core'
+import { OlasProvider } from '@kontsedal/olas-react'
+import { renderToString } from 'react-dom/server'
+import { App } from './App'
+import { appController } from './app.controller'
+import { serverDeps } from './deps.server'
+
+export async function render(): Promise<string> {
+  const root = createRoot(appController, { queries: queryEngine(), deps: serverDeps })
+  await root.waitForIdle() // the controllers' queries started inside createRoot
+  const html = renderToString(
+    <OlasProvider root={root}>
+      <App />
+    </OlasProvider>,
+  )
+  const state = serializeForScript(root.dehydrate())
+  root.dispose()
+  return `<div id="root">${html}</div><script>window.__OLAS_STATE__ = ${state}</script>`
+}
 ```
 
 ```ts
-// client
-const root = createRoot(app, { deps: clientDeps, hydrate: state })
+// client.ts
+import { createRoot, type DehydratedState, queryEngine } from '@kontsedal/olas-core'
+import { appController } from './app.controller'
+import { clientDeps } from './deps.client'
+
+const state = (window as { __OLAS_STATE__?: DehydratedState }).__OLAS_STATE__
+
+const root = createRoot(appController, {
+  queries: queryEngine(), // the engine owns the cache that `hydrate` seeds
+  deps: clientDeps,
+  hydrate: state,
+})
 ```
 
-Only queries with an explicit, stable `queryId` are serialized. Anonymous queries fetch on the client. Hydrated queries respect `staleTime`; fresh entries skip the initial refetch.
+`dehydrate()` serializes every successful entry of every query and infinite query, keyed by the query's `id`. Hydrated queries respect `staleTime`; fresh entries skip the initial refetch. The client root needs `queries: queryEngine()`: a root without an engine has no cache, so it discards the payload, and development builds warn. `serializeForScript` escapes the payload for an inline `<script>`, so data containing `</script>` cannot end the tag. For streaming SSR, `@kontsedal/olas-react` ships `createStreamingHydrator`, which takes a CSP `nonce`.
 
-Use `bindQuery(ctx, query)` inside controllers or `root.bindQuery(query)` outside them for imperative cache operations. The returned handle targets one root and can prefetch before any subscription exists. Unbound query methods throw (or reject their promise) when multiple roots have touched the query. See [the 0.9 migration notes](MIGRATING.md#upgrading-from-08-to-09).
+Use `bindQuery(ctx, query)` inside controllers or `root.bindQuery(query)` outside them for imperative cache operations. The returned handle targets one root and can prefetch before any subscription exists. Unbound query methods throw (or reject their promise) when multiple roots have touched the query. See [the migration notes](MIGRATING.md#upgrading-from-08-to-10).
+
+---
+
+## Tooling
 
 ### Devtools
 
 ```tsx
 import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
+import { OlasProvider } from '@kontsedal/olas-react'
+import { App } from './App'
+import { root } from './root'
 
-<OlasProvider root={root}>
-  <App />
-  <DevtoolsLauncher root={root} />
-</OlasProvider>
+export const tree = (
+  <OlasProvider root={root}>
+    <App />
+    {import.meta.env.DEV && <DevtoolsLauncher root={root} />}
+  </OlasProvider>
+)
 ```
 
-A floating button opens a panel with the controller tree, cache timeline, and mutation log. Gate behind `import.meta.env.DEV` for prod builds.
+A floating button opens a panel over `root.debug`: the controller tree, a timeline of cache and mutation events, the cache, an inspector, the mutation log and the fields. Press `/` to search it. Events a plugin sends through `host.debug` get their own lane on the timeline. Gate the launcher behind `import.meta.env.DEV` so production builds leave it out.
+
+### Lint rules
+
+`@kontsedal/olas-eslint-plugin` checks the conventions the types cannot see. Its six rules catch a React hook inside a controller factory, a `defineQuery` or `defineMutation` built inside a function, and an `async` factory. They also catch an optimistic `setData` with no `cancel` before it, a snapshot `onMutate` does not return, and `fetch` inside a component.
+
+```js
+// eslint.config.js
+import olas from '@kontsedal/olas-eslint-plugin'
+import tseslint from 'typescript-eslint'
+
+export default [...tseslint.configs.recommended, olas.configs.recommended]
+```
+
+`recommended` turns on five rules. `strict` adds `no-network-in-components` and raises `cancel-before-optimistic` from a warning to an error. The rules read syntax only, so they need no type information. The [package README](packages/eslint-plugin) lists each rule.
+
+### Upgrading from 0.8
+
+`@kontsedal/olas-codemod` rewrites the mechanical 0.8 → 1.0 changes and lists the sites that need a person:
+
+```bash
+npx @kontsedal/olas-codemod 1.0
+```
+
+Run it on a clean git tree, with the 0.8 packages still installed. [MIGRATING.md](MIGRATING.md#upgrading-from-08-to-10) covers what it changes and what it leaves to you.
 
 ---
 
@@ -495,6 +604,7 @@ Because controllers are pure TypeScript with no renderer involvement, AI coding 
 Foundation models default to React/Redux idioms — without rules pinning Olas's invariants ("UI doesn't fetch", "controllers stay synchronous", "tests don't render"), output drifts. The repo ships:
 
 - [`.cursorrules`](.cursorrules) — short rules file that Cursor (and other rule-aware assistants) injects per prompt.
+- [`@kontsedal/olas-eslint-plugin`](packages/eslint-plugin) — the same invariants as lint errors, so drift fails the build instead of a review.
 - [`CLAUDE.md`](CLAUDE.md) — long-form operating instructions for AI assistants working *on* the framework itself (wiki schema, BACKLOG protocol, codebase-specific gotchas).
 
 For projects building *with* Olas, copy `.cursorrules` into your repo and trim to your conventions.
@@ -510,6 +620,7 @@ For projects building *with* Olas, copy `.cursorrules` into your repo and trim t
 | **Many roots / tests in parallel** | Each `createRoot(...)` is isolated; query entries live per-root. Tests run in parallel without leaking state. |
 | **User-driven sub-trees** | `ctx.attach(...)` gives you a child controller plus a `dispose()` handle — close the panel, the sub-tree (and its subscriptions) goes with it. |
 | **Cross-tree config** | `defineScope<T>()` + `ctx.provide(scope, value)` / `ctx.inject(scope)` — typed cross-tree data without prop drilling. |
+| **Cross-cutting behavior** | Plugins, from `definePlugin({ name, setup(host) })`, observe every cache write and mutation, wrap fetches and mutations, and provide services through scopes. [PLUGINS.md](PLUGINS.md) is the authoring guide. |
 
 For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 
@@ -519,41 +630,44 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 
 | Package | What it gives you |
 |---|---|
-| [`@kontsedal/olas-core`](packages/core) | Everything: signals, controllers, queries, mutations, forms, scopes, SSR, devtools event bus. |
-| [`@kontsedal/olas-react`](packages/react) | React adapter — `OlasProvider`, `useRoot`, `use`, `useQuery`, `useField`, `SuspendOnUnmount`, `useSuspendOnHidden`. |
-| [`@kontsedal/olas-persist`](packages/persist) | `usePersisted` + `localStorage` adapter. |
-| [`@kontsedal/olas-zod`](packages/zod) | `zodValidator(schema)` + `formFromZod(ctx, schema)`. |
-| [`@kontsedal/olas-devtools`](packages/devtools) | In-app `<DevtoolsPanel>` + floating launcher consuming `root.__debug`. |
-| [`@kontsedal/olas-cross-tab`](packages/cross-tab) | `BroadcastChannel`-backed cross-tab cache sync as a `QueryClientPlugin`. |
-| [`@kontsedal/olas-entities`](packages/entities) | `defineEntity` + auto-walk + reverse-index backprop for normalized entities across queries. |
-| [`@kontsedal/olas-realtime`](packages/realtime) | `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService`. |
-| [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Best-effort, replay-safe mutation queue. Persists `defineMutation({ persist: true })` runs to a `StorageAdapter`; replays pending entries on reload / crash / reconnect (Web-Locks-coordinated cross-tab). |
-| [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` plus `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`. Works with TanStack Router or React Router v6. |
+| [`@kontsedal/olas-core`](packages/core) | Everything: signals, controllers, queries, mutations, forms, scopes, plugins, SSR, devtools event bus. Test helpers on `@kontsedal/olas-core/testing`. |
+| [`@kontsedal/olas-react`](packages/react) | React adapter — `OlasProvider`, `useRoot`, `useValue`, `useQuery`, `useSuspenseQuery`, `useInfiniteQuery`, `useField`, `useMutation`, `SuspendOnUnmount`, `useSuspendOnHidden`, `HydrationBoundary`, streaming SSR. Runs under Preact through `preact/compat`. |
+| [`@kontsedal/olas-vue`](packages/vue) | Vue 3 adapter — `olasPlugin`, `useRoot`, and `useValue`, `useQuery`, `useInfiniteQuery`, `useField` and `useMutation` as refs. |
+| [`@kontsedal/olas-svelte`](packages/svelte) | Svelte adapter — `setRoot` / `getRoot`, plus `queryStore`, `infiniteQueryStore`, `fieldStore` and `mutationStore`. A signal is a Svelte store as it is. |
+| [`@kontsedal/olas-persist`](packages/persist) | `createPersisted` for a signal, `persistQueryCachePlugin` for the query cache, over `localStorageAdapter()` or `indexedDbAdapter()`. |
+| [`@kontsedal/olas-zod`](packages/zod) | `zodValidator(schema)` + `createZodForm(ctx, schema)`. |
+| [`@kontsedal/olas-devtools`](packages/devtools) | In-app `<DevtoolsPanel>` + floating launcher consuming `root.debug`. |
+| [`@kontsedal/olas-cross-tab`](packages/cross-tab) | `BroadcastChannel`-backed cross-tab cache sync as a plugin. A query opts in with `meta: { crossTab: true }`. |
+| [`@kontsedal/olas-entities`](packages/entities) | `defineEntity` + auto-walk + reverse-index backprop for normalized entities across queries. The store is a service: `ctx.inject(Entities)`. |
+| [`@kontsedal/olas-realtime`](packages/realtime) | `createRealtimePatcher`, `createLiveStream` and `createConnectionState` over a consumer-supplied `RealtimeService`. |
+| [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Best-effort, replay-safe mutation queue. Persists runs of a `defineMutation({ meta: { persist: true } })` to a `StorageAdapter`; replays pending entries on reload / crash / reconnect (Web-Locks-coordinated cross-tab). |
+| [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` returns a plugin that provides `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`, and a `Bridge` component that feeds them. Works with TanStack Router or React Router v6. |
+| [`@kontsedal/olas-eslint-plugin`](packages/eslint-plugin) | Six syntax-only lint rules, with `recommended` and `strict` flat configs. |
+| [`@kontsedal/olas-codemod`](packages/codemod) | The 0.8 → 1.0 migration: `npx @kontsedal/olas-codemod 1.0`. |
 
 **Versioning.** Each package versions independently. A release bumps only the packages that changed, so version numbers across the suite will not match and are not meant to. Install whichever packages you use at whatever versions npm resolves. Each declares the range of `@kontsedal/olas-core` it works with as a peer dependency, so an incompatible combination fails at install time rather than at runtime.
-
-Outstanding work — additional storage adapters, Vue/Svelte adapters, browser-extension devtools — is tracked in [`BACKLOG.md`](BACKLOG.md).
 
 ---
 
 ## Examples
 
-Four runnable example apps live in [`examples/`](examples). Each is a real (small) application — not a snippet — with its own dev server and unit tests.
+Five runnable example apps live in [`examples/`](examples). Each is a real (small) application — not a snippet — with its own dev server.
 
 | App | Stack | What it shows |
 |-----|-------|---------------|
-| [`stock-ticker`](examples/stock-ticker) | **Vanilla TS** — no UI framework | Signals, computed, effect, emitter, throttled/debounced, `defineQuery` + `refetchInterval`, `usePersisted` watchlist, SVG sparklines. |
-| [`kanban`](examples/kanban) | React + Devtools | All three mutation concurrency modes, optimistic snapshot rollback, `formFromZod` + `FieldArray`, `defineScope`, error-toast retry, activity feed, mounted `<DevtoolsLauncher>`. |
-| [`reader-ssr`](examples/reader-ssr) | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery`, `useSuspendOnHidden`, `usePersisted` × 3 (bookmarks, theme, reading progress), `onError` root option. |
+| [`stock-ticker`](examples/stock-ticker) | **Vanilla TS** — no UI framework | Signals, computed, effect, emitter, throttled/debounced, `defineQuery` + `refetchInterval`, `createPersisted` watchlist, SVG sparklines. |
+| [`kanban`](examples/kanban) | React + Devtools | All three mutation concurrency modes, optimistic snapshot rollback, `createZodForm` + `FieldArray`, `defineScope`, entities, cross-tab sync, realtime, a tracing plugin, error-toast retry, activity feed, mounted `<DevtoolsLauncher>`. |
+| [`reader-ssr`](examples/reader-ssr) | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery`, `useSuspendOnHidden`, `createPersisted` × 3 (bookmarks, theme, reading progress), `onError` root option. |
 | [`virtualized-table`](examples/virtualized-table) | React | SPEC §11's "rows are data, not controllers" pattern — 50k-row virtualized table backed by `Map<id, Signal<Row>>`, per-row mutation, devtools-friendly. |
+| [`vue-tasks`](examples/vue-tasks) | Vue 3 | One controller with a query, an optimistic toggle, a canonical write and a validated form, read from single-file components. |
 
 ```bash
 pnpm install
-pnpm --filter @kontsedal/olas-example-kanban dev      # or stock-ticker, reader-ssr, virtualized-table
+pnpm --filter @kontsedal/olas-example-kanban dev      # or stock-ticker, reader-ssr, virtualized-table, vue-tasks
 pnpm --filter @kontsedal/olas-example-kanban test
 ```
 
-Every business-logic surface in these examples is covered by a controller test that uses `createTestController`, `fakeField`, and `fakeAsyncState` from `@kontsedal/olas-core/testing` — no rendered components.
+Most of the examples' tests build a root or call `createTestController` from `@kontsedal/olas-core/testing`, and drive the api in Node. A few render a component, where the rendered output is the thing under test.
 
 ---
 
@@ -575,11 +689,12 @@ These are honest, terse sketches. None of them are reasons to leave a tool you'r
 
 - [`API.md`](API.md) — complete API reference: every export, signature, signature-typechecked example, gotchas. The "leave no questions" doc.
 - [`SPEC.md`](SPEC.md) — authoritative design. Read top to bottom or jump by `§N.M` section.
-- [`RECIPES.md`](RECIPES.md) — reusable user composables (`useDebounced`, `usePagination`, `useSubmit`, `useInlineEdit`, `useTail`, `useRealtimePatcher`).
-- [`MIGRATING.md`](MIGRATING.md) — coming from TanStack Query or Redux Toolkit.
+- [`RECIPES.md`](RECIPES.md) — reusable composables built from the primitives: debounced writes, pagination, submit flows, inline edit, realtime patching.
+- [`PLUGINS.md`](PLUGINS.md) — writing a plugin: the host, the hooks, middleware, services and testing.
+- [`MIGRATING.md`](MIGRATING.md) — upgrading from 0.8, and coming from TanStack Query or Redux Toolkit.
 - [`.wiki/index.md`](.wiki/index.md) — codebase wiki: per-module pages, design decisions, recorded pitfalls.
 - [`.wiki/overview.md`](.wiki/overview.md) — one-page architecture.
-- [`BACKLOG.md`](BACKLOG.md) — proposed extensions, post-v1 packages, deferred ideas.
+- [`BACKLOG.md`](BACKLOG.md) — proposed extensions and deferred ideas.
 - [`CLAUDE.md`](CLAUDE.md) — orientation for AI assistants working in this repo.
 - [`.cursorrules`](.cursorrules) — short rules file for AI assistants writing Olas code in *your* projects; copy into your repo.
 
@@ -589,15 +704,16 @@ These are honest, terse sketches. None of them are reasons to leave a tool you'r
 
 ```bash
 pnpm install                                       # link workspace + install
+pnpm build                                         # tsdown per package → dist/{js,d.ts} (ESM only)
 pnpm typecheck                                     # tsc --noEmit per package
 pnpm lint                                          # biome check .
 pnpm test                                          # vitest run (all packages)
-pnpm build                                         # tsdown per package → dist/{mjs,cjs,d.mts,d.cts}
+pnpm check:doc-snippets                            # typecheck the TypeScript blocks in the docs
 
 pnpm wiki:lint                                     # check .wiki/ for broken refs
 ```
 
-CI = `install → typecheck → lint → test → build`. 621 tests across 55 files (including a cross-package `packages/integration` suite), all green.
+CI = `install → build → typecheck → lint → doc snippets → test → examples → publint → attw → smoke:dist → check:public-types → size`. 2,012 tests across 158 files (including a cross-package `packages/integration` suite), all green.
 
 ---
 

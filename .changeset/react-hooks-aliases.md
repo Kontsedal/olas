@@ -22,4 +22,4 @@
 - `selection()` is renamed `createSelection()`, like the rest of the `create*` family.
 - `UseOptions` is renamed `QuerySubscriptionOptions`.
 
-`scripts/codemods/react-hooks.ts` rewrites the `use` and `KeepAlive` imports and their references, and reports each `mutateAsync` site.
+`npx @kontsedal/olas-codemod 1.0` rewrites the `use` and `KeepAlive` imports and their references, `mutateAsync` → `run`, and every awaited `mutate(...)` → `run(...)`.

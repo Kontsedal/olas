@@ -270,7 +270,7 @@ export function createUse<Args extends unknown[], T, U = T>(
           currentEntry = null
         }
         // `keepDataWhileDisabled` snapshots the last data so `data` keeps
-        // reporting it while disabled; otherwise the subscription blanks (§5.7).
+        // reporting it while disabled; otherwise the subscription blanks (§5.2).
         sub.detach(keepDataWhileDisabled)
       })
       return
@@ -326,7 +326,7 @@ export function createUse<Args extends unknown[], T, U = T>(
     const isEnabled = enabledFn ? enabledFn() : true
     if (!isEnabled) {
       // Disabled while suspended: settle into the disabled state now, exactly
-      // as the effect would have on the change (§5.7). The entry was released
+      // as the effect would have on the change (§5.2). The entry was released
       // at suspend.
       sub.setEnabled(false)
       sub.detach(keepDataWhileDisabled)

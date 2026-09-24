@@ -2,29 +2,27 @@
 '@kontsedal/olas-core': major
 ---
 
-**Breaking.** The lifetime-owned primitives take `ctx` as their first argument instead of hanging off it, and the query engine is now explicit on `createRoot`. A controllers-only bundle drops from 19.9 KB gzipped to 8.2 KB for consumers of the published package.
+**Breaking.** The lifetime-owned primitives are free functions that take `ctx` first, and a root that uses queries takes an explicit query engine. A controllers-only bundle built from the published `dist` is 5.9 KB gzipped. In 0.8 it was 19.9 KB.
 
 ```ts
-// before
-const root = createRoot(app, { deps })
+// 0.8
 const app = defineController((ctx) => {
   const email = ctx.field('')
   const user = ctx.use(userQuery, () => [id.value])
-  const save = ctx.mutation({ mutate: (v, signal) => api.save(v, signal) })
 })
+const root = createRoot(app, { deps })
 
-// after
-import { createField, createMutation, createQuery, queryEngine } from '@kontsedal/olas-core'
+// 1.0
+import { createField, createQuery, queryEngine } from '@kontsedal/olas-core'
 
-const root = createRoot(app, { deps, queries: queryEngine() })
 const app = defineController((ctx) => {
   const email = createField(ctx, '')
   const user = createQuery(ctx, userQuery, () => [id.value])
-  const save = createMutation(ctx, { mutate: (v, signal) => api.save(v, signal) })
 })
+const root = createRoot(app, { deps, queries: queryEngine() })
 ```
 
-| Was | Now |
+| 0.8 | 1.0 |
 |---|---|
 | `ctx.field(...)` | `createField(ctx, ...)` |
 | `ctx.form(...)` | `createForm(ctx, ...)` |
@@ -34,22 +32,10 @@ const app = defineController((ctx) => {
 | `ctx.mutation(...)` | `createMutation(ctx, ...)` |
 | `ctx.bindQuery(...)` | `bindQuery(ctx, ...)` |
 
-`ctx` is unchanged for everything that binds to the controller's tree and lifetime: `emitter`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `on`, `provide`, `inject`, `debug`, the lifecycle hooks, and `signal`/`computed`.
+`ctx` keeps the members that bind to the controller's tree and lifetime: `emitter`, `child`, `attach`, `collection`, `lazyChild`, `effect`, `on`, `provide`, `inject`, `debug` and the lifecycle hooks.
 
-**An engine belongs to one root.** Adopting the same `queryEngine()` value twice throws: sharing it would hand two roots the same plugin instances, cross-wiring their caches through one channel. Call `queryEngine()` per root.
+**A root whose controllers call `createQuery`, `createMutation` or `bindQuery` needs `queries: queryEngine()`.** Without an engine, those calls throw an error that names the fix. `createCache` needs no engine, because a controller-local cache is not a client entry. Forms, effects, children and emitters need none either. `createTestController` supplies an engine by default. Pass `queries: null` to test the no-engine path.
 
-**`createRoot` needs `queries: queryEngine()`** for any root whose controllers call `createQuery`, `createMutation` or `bindQuery`. Without it those throw a message naming the fix. `createCache` needs no engine — a controller-local cache is not a client entry. `createTestController` supplies an engine by default; pass `queries: null` to assert the no-engine path.
+**Why.** In 0.8, `Ctx` was one object with every method wired eagerly, in a module that `createRoot` imports. Every consumer shipped the forms subsystem and the query engine, whether or not the app had a field or a query. As named exports, a bundler drops the ones an app does not import. The query client is built in `query/engine.ts`, and nothing else imports it by value.
 
-**Why.** `Ctx` was one object with every method wired eagerly, built in a module that `createRoot` always reaches, so every consumer shipped the forms subsystem and the query engine whether or not a single field or query existed. As named exports they are droppable. `createRoot` likewise constructed a `QueryClient` unconditionally; that construction now lives in `query/engine.ts`, the only module importing the client by value.
-
-The engine is adopted **eagerly**, inside `createRoot`, before the factory runs — plugin `init` fires exactly when it always did. That is load-bearing: `mutationQueuePlugin` replays mutations persisted by a previous session at `init`, and deferring it would strand a user's offline writes.
-
-Measured with `esbuild --bundle --minify`, gzipped, `@preact/signals-core` external.
-
-**Against the published `dist/`** — what a consumer actually gets: controllers only **8.2 KB**, was 19.9. The `QueryClient` exclusion survives the build intact: `class QueryClient` and `makePluginApi` are both absent from that bundle.
-
-**Against `src/`** — the ceiling the source structure allows: signals only 0.3 KB; controllers only 4.8 KB, was 20.1; `+ forms` 9.2 KB; `+ queries` 14.4 KB; everything 22.6 KB, was 21.8.
-
-The gap between 8.2 and 4.8 is the forms subsystem, which `dist` retains even when unused: `tsdown` flattens the package into one shared chunk, and `FormImpl`/`FieldArrayImpl` declare their brands as computed class-field keys (`[FORM_BRAND] = true`), which esbuild will not drop. Tracked in `BACKLOG.md`; closing it takes the consumer number to roughly the src figure.
-
-Full reasoning, including the naming decision and what SPEC's earlier "we rejected splitting ctx" note did and did not cover, is in `.wiki/decisions/ctx-primitives-are-free-functions.md`. Migration steps are in `MIGRATING.md`.
+The numbers come from `esbuild --bundle --minify` over `dist`, gzipped, with `@preact/signals-core` external. `pnpm size` checks per-entry budgets in CI. `.wiki/decisions/ctx-primitives-are-free-functions.md` has the reasoning, including the naming decision. `MIGRATING.md` and `npx @kontsedal/olas-codemod 1.0` cover the migration.

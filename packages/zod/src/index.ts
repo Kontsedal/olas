@@ -254,9 +254,11 @@ export type ZodToLeaf<S> =
  * There is no path that addresses the `FieldArray` itself. An array-level
  * rule — "at least three tags", "no duplicates" — takes a
  * `FieldArrayValidator`, a different signature over the whole item list,
- * and `createZodForm` does not wire those; express it in the Zod schema
- * (`z.array(...).min(3)`), which `zodValidator` already enforces on the
- * parent.
+ * and `createZodForm` does not wire those. An array-level rule in the Zod
+ * schema (`z.array(...).min(3)`) is not enforced either: its issue has a
+ * path, and the root validator keeps only path-less issues. Restate it as a
+ * root `.refine(...)` with no `path`, whose message lands in
+ * `form.topLevelErrors`.
  *
  * Validators run alongside `zodValidator(schema)` — both must pass.
  */

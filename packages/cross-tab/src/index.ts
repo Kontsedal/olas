@@ -7,8 +7,8 @@ declare module '@kontsedal/olas-core' {
   interface QueryMeta {
     /**
      * Mirror this query's writes and invalidations across same-origin tabs
-     * (`@kontsedal/olas-cross-tab`). Regular queries only; infinite queries
-     * do not sync.
+     * (`@kontsedal/olas-cross-tab`). Regular and infinite queries both sync;
+     * an infinite query's pages travel with their page params.
      */
     crossTab?: boolean
   }

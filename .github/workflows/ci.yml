@@ -33,6 +33,11 @@ jobs:
 
       - run: pnpm lint
 
+      # Every TypeScript block in the README, API, RECIPES, PLUGINS, MIGRATING
+      # and package READMEs compiles against the current sources, so a copied
+      # example does not fail for the reader.
+      - run: pnpm check:doc-snippets
+
       # Runs the full suite WITH coverage so the thresholds in vitest.config.ts
       # are enforced (a real coverage regression fails CI). (T7.2)
       - run: pnpm test:coverage

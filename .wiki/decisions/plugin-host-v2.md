@@ -61,7 +61,7 @@ The old plugin was a stateful object with `init(api)` and six hooks, installed b
 - `'write'`
 - `'replace'`
 
-Every write carries an `origin`: the name of the plugin whose host made it, the `origin` given to `bindQuery(ctx, q, { origin })`, or `undefined` for the app. That makes echo prevention generic. Cross-tab mirrors only origin-`undefined` writes by default, so it never re-broadcasts what it applied from a peer, a realtime push every tab receives, or an entity backprop every tab re-derives. The last is the N-payload amplification the review found.
+Every write carries an `origin`: the name of the plugin whose host made it, the `origin` given to `bindQuery(ctx, q, { origin })`, or `undefined` for the app. That makes echo prevention generic. Cross-tab mirrors only origin-`undefined` writes by default, so it never re-broadcasts what it applied from a peer, a realtime push every tab receives, or an entity backprop that a peer's own entities plugin re-derives from the mirrored write. The last is the N-payload amplification the review found. An `entities.update(...)` patch has no write for a peer to re-derive it from, so it stays in its tab unless cross-tab's `origins` names `ENTITIES_PLUGIN_NAME`.
 
 Devtools `cache:set-data` uses the same `source` enum and now carries `queryId`, which fixes (6) for writes.
 

@@ -3,14 +3,16 @@ name: ctx
 description: The tree-and-lifetime handle passed to every controller factory; the primitives that build lifetime-owned things take it as an argument instead.
 type: entity
 covers:
-  - packages/core/src/controller/types.ts:90-166
-  - packages/core/src/controller/instance.ts:390-1130
+  - packages/core/src/controller/types.ts:182-300
+  - packages/core/src/controller/instance.ts:433-1045
+  - packages/core/src/query/bind.ts
+  - packages/core/src/forms/bind.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
   - { type: documented-in, target: ../decisions/ctx-primitives-are-free-functions.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -18,42 +20,49 @@ confidence: medium
 
 The single argument to every controller factory: `(ctx, props) => api`. Everything created through it, or with it, is owned by the controller and disposed when the controller disposes. Spec §3.2.
 
-**`ctx` carries the tree and the lifetime.** Children, effects, scopes, emitters and the lifecycle hooks are methods on it. The primitives that build lifetime-owned *things* — fields, forms, field arrays, queries, local caches, mutations — are standalone functions taking `ctx` first: `createField(ctx, '')`, `createQuery(ctx, userQuery, key)`. They reach the controller through a symbol-keyed internals handle (`controller/internals.ts`).
+**`ctx` carries the tree and the lifetime.** Children, effects, scopes, emitters and the lifecycle hooks are methods on it. The primitives that build lifetime-owned *things* are standalone functions taking `ctx` first:
 
-That split is what lets a bundler drop the forms subsystem and the query engine from a controller that never uses them. A controllers-only bundle is 4.8 KB gzipped rather than 20.1 KB. See [`../decisions/ctx-primitives-are-free-functions.md`](../decisions/ctx-primitives-are-free-functions.md).
+- `createField`, `createForm` and `createFieldArray` in `forms/bind.ts`;
+- `createQuery`, `createCache`, `createMutation` and `bindQuery` in `query/bind.ts`;
+- in the satellites, `createPersisted`, `createZodForm`, `createRealtimePatcher`, `createLiveStream` and `createConnectionState`.
 
-## Surface (Phases 0–12)
+`createField(ctx, '')` and `createQuery(ctx, userQuery, key)` are the shape. They reach the controller through a symbol-keyed internals handle, `ctxInternals(ctx, name)` (`controller/internals.ts`). `signal` and `computed` are plain imports from core, and nothing about them is controller-owned.
 
-```ts
+That split is what lets a bundler drop the forms subsystem and the query engine from a controller that never uses them. When the split landed, a controllers-only bundle measured 4.8 KB gzipped rather than 20.1 KB. See [`../decisions/ctx-primitives-are-free-functions.md`](../decisions/ctx-primitives-are-free-functions.md).
+
+## Surface
+
+```ts nocheck
 type Ctx<TDeps = AmbientDeps> = {
-  // async data
-  cache, use, mutation
-
-  // forms
-  field, form, fieldArray
-
   // composition
-  child, attach, effect, emitter, on
+  child, attach, collection, lazyChild, effect, emitter, on
 
   // devtools (dev-only)
   debug
 
-  // scopes (Phase 10)
+  // scopes
   provide, inject
 
   // lifecycle
   onDispose, onSuspend, onResume
 
   // DI
-  deps: TDeps
+  readonly deps: TDeps
+
+  // internal: the handle the ctx-taking functions use
+  readonly [CTX_INTERNALS]: CtxInternals
 }
 ```
 
-The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:390`). Each method has the same general shape:
+The type is `controller/types.ts:190-300`. `Ctx` has no `ctx.session`, no `ctx.signal` or `ctx.computed`, and none of the primitive factories above as members; each of those left `Ctx` in 1.0.
+
+The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:433-1045`). Each method has the same general shape:
 
 1. Create the primitive.
 2. Push a `LifecycleEntry` onto `self.entries`.
 3. Return the primitive.
+
+The ctx-taking functions follow the same shape through the internals handle: `internals.assertLive(name)`, then `internals.register(entry)` (`instance.ts:451-472`, `query/bind.ts:51-67`).
 
 `ctx.effect`, `ctx.on`, and the lifecycle hooks also wrap user callbacks in a `dispatchError(rootShared.onError, err, {kind, controllerPath})` shield.
 
@@ -65,7 +74,7 @@ Spec §3.4: **any time during the controller's active lifetime, not only the ini
 
 Individual primitives also expose `.dispose()` — idempotent, safe to call early. The owning controller will call it again on its own dispose; both calls are no-ops after the first.
 
-**After dispose, every `ctx.*` factory throws** `[olas] ctx.<name>() called after the controller was disposed`. The guard is `assertLive` in `buildCtx`. A captured `ctx` reused past its owner's lifetime is a programming error. Without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
+**After dispose, every `ctx.*` factory and every ctx-taking function throws** `[olas] <name>() called after the controller was disposed`, where `<name>` is `effect`, `createQuery` and so on. The guard is `assertLive` in `buildCtx` (`instance.ts:441-445`), which the ctx-taking functions call through the internals handle. A captured `ctx` reused past its owner's lifetime is a programming error. Without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
 
 ## `ctx.deps` — DI surface
 
@@ -73,19 +82,11 @@ Read-only getter on `ctx`. Returns the merged deps object (parent's deps + any o
 
 ## `createQuery` overload dispatch
 
-`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on the query's brand:
-
-```ts
-const brand = (query as { [BRAND]?: string })[BRAND]
-if (brand === 'infiniteQuery') return createInfiniteUse(...)
-return createUse(...)
-```
-
-The TS overloads in `Ctx<TDeps>` declare two signatures: one for `Query`, one for `InfiniteQuery`. Consumers see the right return shape.
+`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on the query's brand (`query/bind.ts:51-67`). It reads `query[BRAND]`, calls `createInfiniteUse` for `'infiniteQuery'` and `createUse` otherwise, and registers the resulting handle as a `subscription-cache` lifecycle entry. The TS overloads in `query/bind.ts:36-50` declare three signatures: a `Query` with `select` options, a `Query`, and an `InfiniteQuery`. Consumers see the right return shape.
 
 ## `ctx.attach` vs `ctx.child`
 
-`ctx.child(def, props)` returns only `api` — the child's lifecycle is fully owned by the parent (dispose cascades, no manual control). `ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`: the child is still parent-owned (dispose cascades automatically), but the caller gets explicit handles to tear it down early or freeze/thaw it. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. See `controller-instance.md` for cascade semantics.
+`ctx.child(def, props)` returns only `api` — the child's lifecycle is fully owned by the parent (dispose cascades, no manual control). `ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`: the child is still parent-owned (dispose cascades automatically), but the caller gets explicit handles to tear it down early or freeze/thaw it. `<SuspendOnUnmount controller={...}>` in `@kontsedal/olas-react` consumes `{ suspend, resume }` directly. See `controller-instance.md` for cascade semantics.
 
 ## Dynamic-child surface
 

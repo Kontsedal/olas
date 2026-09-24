@@ -73,15 +73,17 @@ export type StreamingHydratorOptions = {
  * (Node 18+ has Web Streams) and pipe through the transform, or write
  * `flush()` yourself only after the stream has ended.
  *
- * ```ts
+ * ```tsx
  * const { plugin, flush, dispose } = createStreamingHydrator({ nonce })
+ * const root = createRoot(appDef, { deps, queries: queryEngine(), plugins: [plugin] })
  * const stream = await renderToReadableStream(
- *   <HydrationBoundary def={appDef} options={{ deps, plugins: [plugin] }}>
+ *   <OlasProvider root={root}>
  *     <App />
- *   </HydrationBoundary>,
+ *   </OlasProvider>,
  *   { bootstrapScriptContent: OLAS_BOOTSTRAP_SCRIPT, nonce },
  * )
  * return new Response(stream.pipeThrough(createStreamingTransform(flush)))
+ * // Once the response has finished: root.dispose(), then dispose().
  * ```
  */
 export type StreamingHydrator = {
@@ -331,13 +333,16 @@ export class HtmlBoundary {
  * ```tsx
  * const { plugin, flush } = createStreamingHydrator()
  *
- * // Attach the streaming plugin to the SAME root that renders by passing it
- * // through HydrationBoundary's options — do NOT create a separate root, or
- * // the plugin sits on a root nothing renders and no entries are captured.
+ * // One root per request, carrying the plugin, and the SAME root renders.
+ * // A plugin on a root nothing renders captures no entries. The root needs a
+ * // query engine, or there is no cache to capture. On the server, render
+ * // through `OlasProvider`: a `HydrationBoundary` builds its root in render
+ * // and disposes it in an effect, and effects do not run on the server.
+ * const root = createRoot(appDef, { deps, queries: queryEngine(), plugins: [plugin] })
  * const stream = await renderToReadableStream(
- *   <HydrationBoundary def={appDef} options={{ deps, plugins: [plugin] }}>
+ *   <OlasProvider root={root}>
  *     <App />
- *   </HydrationBoundary>,
+ *   </OlasProvider>,
  *   { bootstrapScriptContent: OLAS_BOOTSTRAP_SCRIPT },
  * )
  * const interleaved = stream.pipeThrough(createStreamingTransform(flush))

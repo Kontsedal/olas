@@ -18,7 +18,7 @@ confidence: medium
 
 # A disabled subscription says so
 
-A subscription whose `enabled` returns `false` holds no entry (spec §5.7). Its key may not even be computable yet: `enabled` usually guards the key. Before 1.0 that state was invisible, and two of its consequences were open BACKLOG items.
+A subscription whose `enabled` returns `false` holds no entry (spec §5.2). Its key may not even be computable yet: `enabled` usually guards the key. Before 1.0 that state was invisible, and two of its consequences were open BACKLOG items.
 
 ## The decision
 

@@ -156,7 +156,7 @@ export type {
 // Scopes — typed cross-tree data (§10.3)
 export type { Scope, ScopeOptions } from './scope'
 export { defineScope } from './scope'
-// Selection — multi-select with shift/meta-click semantics (§17.5)
+// Selection — multi-select with shift/meta-click semantics (§16.5)
 export type { Selection } from './selection'
 export { createSelection } from './selection'
 export type { Computed, ReadSignal, Signal } from './signals'

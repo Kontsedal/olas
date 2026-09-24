@@ -13,11 +13,11 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 
 - [modules/signals.md](modules/signals.md) — reactive primitives (`signal`, `computed`, `effect`, `batch`, `untracked`)
 - [modules/controller.md](modules/controller.md) — `defineController`, `createRoot`, `ctx`, lifecycle
-- [modules/query.md](modules/query.md) — local cache, shared queries, infinite queries, mutations, SSR
+- [modules/query.md](modules/query.md) — the query engine: local cache, shared queries, infinite queries, mutations, SSR, and the query half of the plugin host
 - [modules/forms.md](modules/forms.md) — `Field`, `Form`, `FieldArray`, stdlib validators
 - [modules/emitter.md](modules/emitter.md) — standalone + controller-bound emitters
 - [modules/timing.md](modules/timing.md) — `debounced` and `throttled` signal projections
-- [modules/devtools.md](modules/devtools.md) — `DebugEvent` bus
+- [modules/devtools.md](modules/devtools.md) — `DebugEvent` bus behind `root.debug`
 - [modules/errors.md](modules/errors.md) — `ErrorContext`, `dispatchError`
 - [modules/zod.md](modules/zod.md) — `@kontsedal/olas-zod`: `zodValidator`, `createZodForm`
 - [modules/persist.md](modules/persist.md) — `@kontsedal/olas-persist`: `createPersisted`, `persistQueryCachePlugin`
@@ -25,18 +25,18 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/cross-tab.md](modules/cross-tab.md) — `@kontsedal/olas-cross-tab`: `BroadcastChannel`-backed cross-tab in-memory query cache sync
 - [modules/mutation-queue.md](modules/mutation-queue.md) — `@kontsedal/olas-mutation-queue`: best-effort persistent replay queue for `persist:true` mutations (reload + reconnect + cross-tab-coordinated)
 - [modules/router.md](modules/router.md) — `@kontsedal/olas-router`: `createRouterAdapter` bridging TanStack Router and React Router v6 into `RouteParams`/`Search`/`Pathname` scopes
-- [modules/entities.md](modules/entities.md) — `@kontsedal/olas-entities`: `defineEntity` + auto-walk + reverse-index backprop over `QueryClientPlugin`
+- [modules/entities.md](modules/entities.md) — `@kontsedal/olas-entities`: `defineEntity` + auto-walk + reverse-index backprop, a v2 plugin with the store as the `Entities` scope
 - [modules/react.md](modules/react.md) — `@kontsedal/olas-react`: provider + `useSyncExternalStore`-backed hooks; fine-grained `useQuery`, `useInfiniteQuery`, runs under `preact/compat`
 - [modules/vue.md](modules/vue.md) — `@kontsedal/olas-vue`: `olasPlugin` + signals as read-only refs
 - [modules/svelte.md](modules/svelte.md) — `@kontsedal/olas-svelte`: `setRoot`/`getRoot` + store views; a signal is a Svelte store as it is
-- [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
+- [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.debug`
 - [modules/eslint-plugin.md](modules/eslint-plugin.md) — `@kontsedal/olas-eslint-plugin`: six syntax-only rules, the configs, and the example-app lint check
 - [modules/codemod.md](modules/codemod.md) — `@kontsedal/olas-codemod`: the 0.8 → 1.0 migration CLI, its seventeen ordered transforms, the edit engine and the TODO list
 - [modules/examples.md](modules/examples.md) — the five runnable example apps in `examples/`
 
 ## Entities
 
-- [entities/ctx.md](entities/ctx.md) — the lifecycle-bound primitive factory passed to every controller factory
+- [entities/ctx.md](entities/ctx.md) — the tree-and-lifetime handle passed to every controller factory; the primitives take it as their first argument
 - [entities/controller-instance.md](entities/controller-instance.md) — the runtime object; lifecycle entry list
 - [entities/entry.md](entities/entry.md) — `Entry<T>` — race-protected state machine per cache key
 - [entities/query-client.md](entities/query-client.md) — per-root entry registry
@@ -51,6 +51,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [flows/construction-rollback.md](flows/construction-rollback.md) — factory throws → partial state torn down
 - [flows/use-root.md](flows/use-root.md) — `createRoot` → `<OlasProvider>` → `useRoot()` → `useValue(signal)` → DOM
 - [flows/devtools-causal-timeline.md](flows/devtools-causal-timeline.md) — one mutation → one `causeId` → a cause-chain + before/after diff in the panel
+- [flows/plugin-lifecycle.md](flows/plugin-lifecycle.md) — `createRoot` → plugin `setup` in order → `onWrite` with origins, `wrapFetch` and `wrapMutate`, `onMutation` → reverse dispose
 
 ## Decisions
 
@@ -77,6 +78,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`
 - [decisions/plugin-host-v2.md](decisions/plugin-host-v2.md) — plugins as per-root `setup(host)` definitions: the host, the write vocabulary and origins, middleware, services via scopes, and what the old `QueryClientPlugin` got wrong
 - [decisions/prose-rules.md](decisions/prose-rules.md) — the writing rules every `.md` follows, what `pnpm prose:lint` enforces, and what it flags that we leave alone
+- [decisions/typechecked-doc-snippets.md](decisions/typechecked-doc-snippets.md) — why every ts/tsx block in the user-facing docs compiles in CI, one program per doc, and the `snippet-prelude` / `file=` / `nocheck` annotations
 - [decisions/ui-rules.md](decisions/ui-rules.md) — the ten rules every interface follows, the scales they are picked from, what makes a screen read as generated, and which of the ten anything checks
 
 ## Pitfalls
@@ -85,7 +87,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/latest-wins-rollback-order.md](pitfalls/latest-wins-rollback-order.md) — rollback BEFORE new `onMutate`
 - [pitfalls/isstale-needs-timer.md](pitfalls/isstale-needs-timer.md) — `Date.now()` doesn't trigger re-derivation
 - [pitfalls/raceabort-for-misbehaving-mutate.md](pitfalls/raceabort-for-misbehaving-mutate.md) — wrap mutate in `raceAbort`
-- [pitfalls/literal-type-narrowing.md](pitfalls/literal-type-narrowing.md) — `createField(ctx, '')` infers `Field<''>`
+- [pitfalls/literal-type-narrowing.md](pitfalls/literal-type-narrowing.md) — `createField` infers `T` from `initial`: with validators `''` sticks as `Field<''>`, and `null` gives `Field<null>`
 - [pitfalls/preact-signals-overload-return.md](pitfalls/preact-signals-overload-return.md) — `ReturnType<typeof signal<T>>` is wrong
 - [pitfalls/fieldarray-factory-uses-initial.md](pitfalls/fieldarray-factory-uses-initial.md) — `add(x)` only works if factory uses it
 - [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert

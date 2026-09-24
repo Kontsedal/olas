@@ -1,6 +1,6 @@
 # @kontsedal/olas-eslint-plugin
 
-ESLint rules for [Olas](../..) apps. Each rule catches a mistake the types cannot see. The mistakes are a React hook in a controller factory, a definition that loses its identity, an `async` factory, and an optimistic write whose snapshot no code settles.
+ESLint rules for [Olas](../..) apps. Each rule catches a mistake the types cannot see: a React hook in a controller factory, a definition that loses its identity, or an `async` factory. Two rules guard optimistic writes, and an opt-in rule keeps network calls out of components.
 
 ## Install
 
@@ -8,7 +8,7 @@ ESLint rules for [Olas](../..) apps. Each rule catches a mistake the types canno
 pnpm add -D @kontsedal/olas-eslint-plugin eslint
 ```
 
-`eslint >= 9` is a peer dependency, and the plugin uses flat config. The rules read syntax only, so they need no type information. TypeScript files still need a parser, such as the one `typescript-eslint` sets up.
+`eslint >= 9` is a peer dependency, and the plugin uses flat config. The tests run on ESLint 10. The rules read syntax only, so they need no type information. TypeScript files still need a parser, such as the one `typescript-eslint` sets up.
 
 ## Setup
 
@@ -21,6 +21,16 @@ export default [...tseslint.configs.recommended, olas.configs.recommended]
 ```
 
 `olas.configs.strict` adds the opt-in rule and raises `cancel-before-optimistic` to an error.
+
+The configs are typed with ESLint's own `Linter.Config`, so a typed `eslint.config.ts` accepts them as they are, in an array or through `defineConfig`. Each rule is named with the `olas/` prefix, so one rule can be set on its own after a config:
+
+```js
+export default [
+  ...tseslint.configs.recommended,
+  olas.configs.recommended,
+  { rules: { 'olas/no-network-in-components': 'error' } },
+]
+```
 
 ## Rules
 

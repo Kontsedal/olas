@@ -24,7 +24,7 @@ afterEach(() => {
 })
 
 describe('createStreamingHydrator (server side)', () => {
-  test('captures local setData writes to queries with a queryId', async () => {
+  test('captures a fetch result written to a query with an id', async () => {
     const users = defineQuery({
       id: 'streaming-test-users',
       key: () => [],

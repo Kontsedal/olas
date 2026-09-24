@@ -34,7 +34,7 @@ export const MutationQueue: Scope<MutationQueueService> = defineScope<MutationQu
 })
 
 /**
- * Options for `mutationQueuePlugin(...)`. SPEC §13.
+ * Options for `mutationQueuePlugin(...)`. SPEC §13.3.
  *
  * - `storage` — the underlying durable store. `localStorageAdapter()` from
  *   `@kontsedal/olas-persist` is the typical default; `indexedDbAdapter()`
@@ -50,7 +50,8 @@ export const MutationQueue: Scope<MutationQueueService> = defineScope<MutationQu
  *   module hasn't been imported yet. The handler is the integration point
  *   for telemetry / user-facing error toasts on lost mutations.
  * - `onWarn` — soft conditions: malformed entry in storage, serialization
- *   failure (variables not structured-cloneable). Default: `console.warn`.
+ *   failure (variables JSON cannot encode, such as a `BigInt` or a cycle).
+ *   Default: `console.warn`.
  */
 export type MutationQueueOptions = {
   storage: StorageAdapter
@@ -168,10 +169,11 @@ export type MutationQueueOptions = {
  * The queue makes no attempt at exactly-once delivery; it gives at-least-
  * once-until-success.
  *
- * **Variables MUST be JSON-serializable.** Functions / symbols / class
- * instances throw at enqueue time; the throw is reported via `onWarn` and
- * the in-process run continues normally (server may still accept). The
- * entry is just not durable in that case.
+ * **Variables MUST be JSON-serializable.** The entry is stored as JSON. A
+ * `BigInt` or a cycle throws at enqueue; the throw is reported via `onWarn`,
+ * and the in-process run continues without a durable entry. JSON drops a
+ * function or a symbol silently, and a class instance loses its prototype,
+ * so a replay sees plain data.
  */
 export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
   const { storage: adapter, keyPrefix } = options

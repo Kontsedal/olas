@@ -7,7 +7,7 @@
 // (which would churn hundreds of constructions per scroll-second).
 //
 // Selection ranges + bulk updates leverage `@kontsedal/olas-core`'s `createSelection`
-// composable (SPEC §17.5) over the same row signals — no extra plumbing.
+// composable (SPEC §16.5) over the same row signals — no extra plumbing.
 
 import {
   type Ctx,

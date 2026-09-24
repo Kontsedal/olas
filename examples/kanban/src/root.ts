@@ -2,7 +2,7 @@
  * Root construction. The single place that knows about both the *deps* and
  * the *plugins* — keeps every feature controller free of bootstrap shape.
  *
- *  - `entitiesPlugin([UserEntity, LabelEntity])` walks every query write
+ *  - `entitiesPlugin({ entities: [UserEntity, LabelEntity] })` walks every query write
  *    looking for entity-shaped objects.
  *  - `crossTabPlugin({ channelName })` mirrors cache writes across browser
  *    tabs of the same origin.

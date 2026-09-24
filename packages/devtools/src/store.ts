@@ -292,8 +292,8 @@ function freezeDebug(debug: Record<string, unknown>): Record<string, unknown> {
 
 /**
  * Subscribes to a root's `debug` bus and maintains live state for the
- * devtools panel. Exposes signals so the React layer can consume via
- * `@kontsedal/olas-react`'s `use()`.
+ * devtools panel. Exposes signals so the React layer can consume them via
+ * `@kontsedal/olas-react`'s `useValue()`.
  *
  * Pure logic — no DOM, no React. Construct one per root. Applying one event
  * costs O(1) plus O(path depth): nothing here scans the tree or a log.

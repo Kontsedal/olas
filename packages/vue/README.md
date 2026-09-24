@@ -12,7 +12,7 @@ pnpm add @kontsedal/olas-vue @kontsedal/olas-core @preact/signals-core vue
 
 ## Example
 
-```ts
+```ts file=counter.ts
 // counter.ts: the controller knows nothing about Vue
 import { defineController, signal } from '@kontsedal/olas-core'
 

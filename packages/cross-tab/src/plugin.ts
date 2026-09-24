@@ -39,10 +39,12 @@ export type CrossTabOptions = {
   optimistic?: boolean
   /**
    * Writes and invalidations from these origins are mirrored too. By default
-   * only the app's own (origin `undefined`) are: a write another plugin made
-   * is derived — a realtime push every tab receives, an entity backprop every
-   * tab's own entities plugin re-derives — and mirroring it would deliver it
-   * twice.
+   * only the app's own (origin `undefined`) are. A write another plugin made
+   * is usually derived: a realtime push every tab receives, or an entity
+   * backprop that the peer's own entities plugin re-derives from the mirrored
+   * write. Mirroring those would deliver them twice. An `entities.update(...)`
+   * patch is the exception: nothing re-derives it in a peer, so it stays in
+   * its tab unless this list names `ENTITIES_PLUGIN_NAME`.
    */
   origins?: readonly string[]
   /**

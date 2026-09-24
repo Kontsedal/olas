@@ -5,7 +5,7 @@ import type { ReadSignal } from '../signals/types'
 export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
 
 /**
- * The nine reactive signals + four actions a subscriber sees for any async
+ * The ten reactive signals + four actions a subscriber sees for any async
  * resource (`LocalCache<T>` or a `Query` subscription). Spec §20.4.
  *
  * - `data` / `error` / `status` — current outcome.
@@ -15,6 +15,8 @@ export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
  * - `lastUpdatedAt` — epoch ms of last success.
  * - `hasPendingMutations` — at least one mutation has a snapshot on this entry.
  * - `isPaused` — a fetch is parked waiting for network reconnect.
+ * - `isEnabled` — false while a subscription's `enabled` returns false;
+ *   always true for a local cache.
  *
  * Actions:
  * - `refetch()` — force a fetch; resolves with the result.
@@ -100,8 +102,7 @@ export type LocalCache<T> = AsyncState<T> & {
 /** One entry inside a `DehydratedState`. */
 export type DehydratedEntry = {
   /**
-   * Explicit stable query identity (`spec.queryId`). Anonymous queries are
-   * omitted from dehydration. Namespaces the hydration buffer so a subscriber of query
+   * The query's required `id`. Namespaces the hydration buffer so a subscriber of query
    * B can't adopt query A's payload just because their `key()` outputs hash
    * the same (spec §15).
    */
@@ -171,7 +172,7 @@ export type RetryDelay = number | ((attempt: number) => number)
  *   entry, so ten controllers on one key share one interval. That's why
  *   `QuerySubscriptionOptions` has no `refetchInterval`: per-subscriber intervals need a
  *   "whose interval wins" rule and every answer to that surprises somebody.
- *   Same reason it stays out of `DefaultQueryOptions` (§5.9) — a root-wide
+ *   Same reason it stays out of `QueryDefaults` (§5.9) — a root-wide
  *   interval polls the entire app.
  * - `createCache` (`LocalCache`) has no interval of any kind. This is a
  *   `defineQuery` / `defineInfiniteQuery` feature only.
@@ -429,7 +430,7 @@ export type Query<Args extends unknown[], T> = {
 /** Imperative query operations bound to one root, without a subscription. */
 export type QueryActions<Args extends unknown[], T> = Omit<Query<Args, T>, typeof BRAND>
 
-/** What `bindQuery(ctx, query, ...)` returns: the query's `AsyncState<T>`. */
+/** What `createQuery(ctx, query, ...)` returns: the query's `AsyncState<T>`. */
 export type QuerySubscription<T> = AsyncState<T>
 
 /**
@@ -438,7 +439,7 @@ export type QuerySubscription<T> = AsyncState<T>
  * re-evaluating when they change re-keys the subscription.
  *
  * A `select` projection that maps the underlying data shape to a view
- * shape is accepted via a dedicated overload on `Ctx.use` rather than this
+ * shape is accepted via a dedicated overload on `createQuery` rather than this
  * options bag — the overload threads `T → U` types through cleanly.
  */
 export type QuerySubscriptionOptions<Args extends readonly unknown[]> = {
@@ -447,7 +448,7 @@ export type QuerySubscriptionOptions<Args extends readonly unknown[]> = {
   /**
    * When `enabled` flips to `false`, keep reporting the last `data` this
    * subscription held (snapshotted at disable time) instead of blanking to
-   * `undefined`. Default `false` — the spec's disable behaviour (§5.7:
+   * `undefined`. Default `false` — the spec's disable behaviour (§5.2:
    * `status: 'idle'`, `data: undefined`). Turn it on to port react-query's
    * "a disabled observer still reads the cache" behaviour: the entry is still
    * released (refcount / GC unchanged) and `status` stays `'idle'`, but `data`
@@ -472,7 +473,7 @@ export type QuerySelectOptions<
 
 /**
  * Internal shape — what `createUse` accepts. Includes the optional `select`
- * field used by the `select` overload on `Ctx.use`. Not exported on the
+ * field used by the `select` overload on `createQuery`. Not exported on the
  * public surface; consumers use the typed overload.
  */
 export type SubscriptionInternalOptions<

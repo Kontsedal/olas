@@ -13,10 +13,11 @@
 //  - `ctx.emitter` + `ctx.on`                → analytics events
 //  - `onError` root option + `ErrorContext`  → centralized error handling
 //
-// Why not `defineInfiniteQuery`? The current `root.dehydrate()` only serializes
-// entries from regular `defineQuery` caches — infinite-query state is not
-// included. Modeling pagination as "regular query + reactive key" gives us
-// SSR-ready entries (one per cursor) while still demonstrating accumulation.
+// Why not `defineInfiniteQuery`? It would work: `root.dehydrate()` includes
+// infinite queries with their page params. This example models pagination as
+// a regular query with a reactive key instead, so each cursor is its own SSR
+// entry, and the controller shows the accumulation that an infinite query
+// would do for it.
 
 import type { Ctx, DehydratedState, ErrorContext } from '@kontsedal/olas-core'
 import {

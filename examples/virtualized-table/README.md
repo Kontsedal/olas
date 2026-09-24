@@ -18,7 +18,7 @@ allocates zero controllers.
 
 `tableController` owns `Map<id, Signal<Issue>>` and a `signal<readonly string[]>`
 of ordered ids. The view is `@tanstack/react-virtual` over the ordered ids;
-each `<Row id={id} />` calls `api.table.rowSignal(id)` and `use(...)` to
+each `<Row id={id} />` calls `api.table.rowSignal(id)` and `useValue(...)` to
 subscribe to its own row. Status edits go through a `parallel` mutation that
 writes the row signal in `onMutate` and restores it in `onError`. Selection
 is the standard `@kontsedal/olas-core` `selection<string>()` composable; bulk actions
@@ -41,7 +41,7 @@ dispose on commit/cancel. The kanban example demonstrates that with
 - `src/controllers/table.ts` — `tableController`: the `Map<id, Signal<Issue>>`, the ordered-id signal, the title filter, `selection`, and the per-row `parallel` mutation. The whole app's behavior; no DOM imports.
 - `src/api.ts` — fake backend: `generateIssues(n)` plus a per-row update that randomly rejects (to exercise rollback), and the `Issue` and `Status` types.
 - `src/View/Table.tsx` — `@tanstack/react-virtual` over the ordered ids; mounts ~30 rows at a time.
-- `src/View/Row.tsx` — one row. Calls `api.table.rowSignal(id)` + `use(...)` to subscribe to its own signal and nothing else.
+- `src/View/Row.tsx` — one row. Calls `api.table.rowSignal(id)` + `useValue(...)` to subscribe to its own signal and nothing else.
 - `src/View/App.tsx` — toolbar, bulk-action buttons, and the per-row render counters that prove fine-grained reactivity.
 - `src/View/useApi.ts` — typed `useRoot` accessor for the table api.
 - `src/app.ts` — composes the root controller.
