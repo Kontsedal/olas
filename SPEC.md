@@ -1774,14 +1774,16 @@ await ctx.inject(MutationQueue).replayNow()
 **Per run**, through the plugin's `onMutation` and `wrapMutate` hooks:
 - On `'start'` the plugin records the run. Its `wrapMutate` writes the durable entry on the first attempt, before calling `next()`, so the entry is in storage before the request goes out.
 - `'success'` deletes the entry, and also the entries earlier failed runs of the same operation left.
-- `'error'` deletes the entry once `attempts` reaches `maxAttempts` (default 5), and keeps it for the next load otherwise.
+- `'error'` deletes the entry once `attempts` reaches `maxAttempts` (default 5), or when `isRetryable(err, entry)` returns `false`, and keeps it for the next load otherwise. A deleted entry is reported through `onReplayError`. A replay's failure goes through the same test.
 - `'cancel'` keeps the entry. A reload mid-run looks the same as a cancel from here, so the next start replays it.
 
-**Replay.** At setup, and again on reconnect, the plugin lists the keys under `keyPrefix`, checks each entry, and groups the entries by mutation id in `seq` order. It replays each group serially through `host.mutations.run`, so the definition's `retry` applies and `mutate` receives the root's `deps` (§13.1). It replays only a definition whose `meta.persist` is `true`, and it requires each entry's storage key to match its contents (§22). A startup replay that begins online is `track`ed, so `root.waitForIdle()` waits for it; one that begins offline waits for the reconnect instead. A cross-tab lock, through the Web Locks API with a `localStorage` lease as the fallback, keeps two tabs from replaying the same entries at once.
+**Replay.** At setup, and again on reconnect, the plugin lists the keys under `keyPrefix`, checks each entry, and groups the entries by mutation id in `seq` order. Two tabs can mint the same `seq`, so `runId` breaks a tie, and every tab sorts the same entries the same way. It replays each group serially through `host.mutations.run`, so the definition's `retry` applies and `mutate` receives the root's `deps` (§13.1). It replays only a definition whose `meta.persist` is `true`, and it requires each entry's storage key to match its contents (§22). A startup replay that begins online is `track`ed, so `root.waitForIdle()` waits for it; one that begins offline waits for the reconnect instead. A cross-tab lock, through the Web Locks API with a `localStorage` lease as the fallback, keeps two tabs from replaying the same entries at once.
 
 A replay writes server state no live query knows about. `onReplaySettle(entry, result, queries)` receives the root's `QueryHost` to reconcile the cache, typically with `queries.invalidate(id, key)`.
 
 **Delivery is at-least-once until success.** The queue does not deduplicate on the server. Include an idempotency key in the variables and have the server deduplicate by it. `dedupeBy` collapses duplicate enqueues on the client only. Variables must be JSON-serializable. A run whose variables are not still runs, and the plugin reports through `onWarn` that it is not durable.
+
+**Devtools.** In its development build (§23), the plugin publishes each replay attempt, the attempt's result, and each entry a pass skips on its lane through `host.debug` (§14). A payload carries the entry's `mutationId` and `runId`, the attempt number, and the result or skip reason. It carries no variables.
 
 ### 13.4 Persistence
 
@@ -1801,7 +1803,7 @@ const { ready } = createPersisted(ctx, 'draft', draft, {
 })
 ```
 
-`createPersisted` is bound to `ctx`, so it cleans up its subscriptions on dispose. The source is any signal-like value with `value`, `set` and `subscribe`: a `Signal`, a `Field`, or a custom trio. Loading the initial value is synchronous for localStorage. For an async storage the source holds its default until the load settles, and `ready` turns `true` then. A user write that lands **before** an async load settles is not lost. It wins over the stored value, and over a cross-tab change that also raced the load, and it is flushed to storage. A cross-tab change that races the load is buffered and applied once ready. Fallible operations (`get`/`set`, `serialize`/`deserialize`, `migrate`, cross-tab `onChange`) route through the optional `onError(err, op, key)` — without it, errors are swallowed. `version` + `migrate` enable a `{"v":N,"d":…}` on-disk envelope with forward migration; `throttleMs` throttles writes (flushed on dispose).
+`createPersisted` is bound to `ctx`, so it cleans up its subscriptions on dispose. The source is any signal-like value with `value`, `set` and `subscribe`: a `Signal`, a `Field`, or a custom trio. Loading the initial value is synchronous for localStorage. For an async storage the source holds its default until the load settles, and `ready` turns `true` then. A user write that lands **before** an async load settles is not lost. It wins over the stored value, and over a cross-tab change that also raced the load, and it is flushed to storage. A cross-tab change that races the load is buffered and applied once ready. Fallible operations (`get`/`set`, `serialize`/`deserialize`, `migrate`, cross-tab `onChange`) route through the optional `onError(err, op, key)` — without it, errors are swallowed. `version` + `migrate` enable a `{"$olas":1,"v":N,"d":…}` on-disk envelope with forward migration; `throttleMs` throttles writes (flushed on dispose). A reader without `version` unwraps that envelope. Without `version`, a value is written raw, unless a reader could take it for an envelope: then it is wrapped as `{"$olas":1,"d":…}`, so it reads back as itself. The unmarked `{"v":N,"d":…}` of earlier versions is an envelope only to a reader with `version`. The source's `subscribe` handler is skipped for a call made while `subscribe()` runs, which is a signal's delivery of its current value; every later call is a change and is written.
 
 Cross-tab sync is opt-in and only supported by storages that emit change events (localStorage via the `storage` event). The localStorage adapter is SSR-safe: without `localStorage`, every read is `null` and every write a no-op. `clearPersisted(storage, { prefix })` deletes the keys under a prefix, and `{ all: true }` deletes every key the adapter enumerates. With neither, it throws, because the default adapter is the whole origin's `localStorage`.
 
@@ -3906,7 +3908,7 @@ type PersistOptions<T> = {
   serialize?: (value: T) => string
   deserialize?: (raw: string) => T
   crossTab?: boolean // requires storage.onChange
-  version?: number // enable the `{v,d}` envelope; migrate on version mismatch
+  version?: number // enable the `{$olas,v,d}` envelope; migrate on version mismatch
   migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
   throttleMs?: number // at most one write per window; flushed on dispose. Default 0
   onError?: (err: unknown, op: PersistErrorOp, key: string) => void // else swallowed
@@ -4381,7 +4383,7 @@ Recommendation in §5.7: use Immer for any non-trivial nested update.
 
 ### Devtools and production builds
 
-The packages with dev-only code (core, cross-tab, entities, persist, react, vue and zod) each ship two builds from one source, behind export conditions:
+The packages with dev-only code (core, cross-tab, entities, mutation-queue, persist, react, vue and zod) each ship two builds from one source, behind export conditions:
 
 | Condition | File | `__DEV__` |
 |---|---|---|

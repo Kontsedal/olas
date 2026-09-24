@@ -38,12 +38,15 @@ export type PersistOptions<T> = {
   /**
    * Schema version. When the value loaded from storage carries a different
    * `version`, `migrate(raw, fromVersion)` is invoked to bring it forward;
-   * the migrated value is written back atomically. When omitted, no version
-   * gate runs — payloads are read and written raw (current default).
+   * the migrated value is written back. When omitted, no version gate runs:
+   * payloads are written raw, and a versioned payload that a newer build
+   * wrote is unwrapped and read.
    *
-   * The on-disk shape with versioning enabled is `{"v": N, "d": <serialized>}`
-   * — `createPersisted` wraps every write and reads both shapes (legacy raw and
-   * versioned). Versioned writes only happen once `version` is set.
+   * With `version` set, every write is the envelope
+   * `{"$olas":1,"v":N,"d":<serialized>}`. The `$olas` marker keeps a reader
+   * from taking a user value of that shape for an envelope. Reads accept the
+   * marked envelope, the unmarked `{"v":N,"d":…}` that earlier versions
+   * wrote, and a raw payload.
    */
   version?: number
   /**
@@ -279,6 +282,30 @@ function getGlobalBroadcastChannel(): typeof BroadcastChannel | undefined {
 }
 
 /**
+ * The envelope a stored string holds, as `[payload, version, marked]`, or
+ * `undefined` for a raw payload. `marked` is true for the
+ * `{"$olas":1, v?, d}` shape 1.0 writes: the `$olas` key is the marker. An
+ * unmarked `{v, d}` is the shape earlier versions wrote, and a user value can
+ * have it too. The reader and the writer both ask this function, so they
+ * agree on what an envelope is. A string that does not start with `{` or
+ * never names a `"d"` key is not one, which spares most writes a parse.
+ */
+function envelopeOf(raw: string): [string, number | undefined, boolean] | undefined {
+  if (raw[0] === '{' && raw.includes('"d"')) {
+    try {
+      const { d, v, $olas: mark } = JSON.parse(raw)
+      const marked = mark === 1
+      if (typeof d === 'string' && (typeof v === 'number' || (marked && v === undefined))) {
+        return [d, v, marked]
+      }
+    } catch {
+      /* not JSON, so a raw payload */
+    }
+  }
+  return undefined
+}
+
+/**
  * Persist a signal-like source under `key`. Loads the stored value on
  * construction (sync for localStorage, async for any storage that returns a
  * promise). Subsequent writes to the source are mirrored to storage.
@@ -321,22 +348,35 @@ export function createPersisted<T>(
   let pendingRemoteRaw: string | null = null
 
   /**
-   * On-disk envelope when `version` is set: `{"v": N, "d": "<serializedT>"}`.
-   * Without `version`, we read/write raw (legacy shape). Migration takes the
-   * raw inner string + the parsed `v` (or `undefined` for legacy) so the
-   * consumer's migrator can replay arbitrary historical formats.
+   * With `version` set, every write is the marked envelope
+   * `{"$olas":1,"v":N,"d":"<serialized>"}`. Without it, a write is the raw
+   * serialized string, unless a reader could take that string for an
+   * envelope: then it is wrapped as `{"$olas":1,"d":"<serialized>"}`, so it
+   * reads back as itself. Migration takes the inner string and the version it
+   * was written under (`undefined` for a raw payload), so the consumer's
+   * migrator can replay arbitrary historical formats.
    */
-  type Envelope = { v: number; d: string }
-  const isEnvelope = (raw: unknown): raw is Envelope =>
-    typeof raw === 'object' &&
-    raw !== null &&
-    typeof (raw as { v?: unknown }).v === 'number' &&
-    typeof (raw as { d?: unknown }).d === 'string'
-
   const encodeForStorage = (value: T): string => {
     const inner = serialize(value)
-    if (version === undefined) return inner
-    return JSON.stringify({ v: version, d: inner })
+    // `JSON.stringify` drops `v` when `version` is undefined.
+    return version === undefined && envelopeOf(inner) === undefined
+      ? inner
+      : JSON.stringify({ $olas: 1, v: version, d: inner })
+  }
+
+  /**
+   * The serialized payload in a stored string, and the version it was
+   * written under. A marked envelope is unwrapped for every reader, so a tab
+   * without `version` reads a value a newer build wrote with one. An unmarked
+   * `{v, d}` is an envelope only to a reader with `version`: to one without,
+   * it is a value stored before 1.0 that happens to have that shape, and it
+   * stays whole.
+   */
+  const decode = (raw: string): [payload: string, from: number | undefined] => {
+    const env = envelopeOf(raw)
+    return env !== undefined && (env[2] || version !== undefined)
+      ? [env[0], env[1]]
+      : [raw, undefined]
   }
 
   // Apply a cross-tab raw value to the source (a null → `undefined` delete;
@@ -353,19 +393,11 @@ export function createPersisted<T>(
       return
     }
     try {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(rawValue)
-      } catch {
-        parsed = undefined
-      }
-      let value: T
-      if (version !== undefined && isEnvelope(parsed)) {
-        if (parsed.v !== version) return // peer on a different schema; ignore.
-        value = deserialize(parsed.d) as T
-      } else {
-        value = deserialize(rawValue) as T
-      }
+      const [payload, from] = decode(rawValue)
+      // A peer on a different schema; ignore. Without `version`, every
+      // payload is read.
+      if (version !== undefined && from !== undefined && from !== version) return
+      const value = deserialize(payload) as T
       writingFromLoad = true
       try {
         source.set(value)
@@ -411,41 +443,18 @@ export function createPersisted<T>(
     let value: T | undefined
     let needsRewrite = false
     try {
-      // Try the envelope shape first (for version-aware reads). If it isn't
-      // an envelope, treat the raw string as a legacy v=undefined payload.
-      let parsedEnvelope: unknown
-      try {
-        parsedEnvelope = JSON.parse(raw)
-      } catch {
-        parsedEnvelope = undefined
-      }
-      if (version !== undefined && isEnvelope(parsedEnvelope)) {
-        if (parsedEnvelope.v === version) {
-          value = deserialize(parsedEnvelope.d) as T
-        } else if (migrate !== undefined) {
-          try {
-            const migrated = await migrate(parsedEnvelope.d, parsedEnvelope.v)
-            if (migrated === undefined) {
-              settleReady()
-              return
-            }
-            value = migrated
-            needsRewrite = true
-          } catch (err) {
-            reportError(err, 'migrate')
-            settleReady()
-            return
-          }
-        } else {
-          // Version mismatch with no migrator — discard.
-          settleReady()
-          return
-        }
-      } else if (version !== undefined && migrate !== undefined) {
-        // Legacy raw payload but we now require versioning — invoke migrator
-        // with `fromVersion: undefined`.
+      const [payload, from] = decode(raw)
+      if (
+        version === undefined ||
+        from === version ||
+        (from === undefined && migrate === undefined)
+      ) {
+        value = deserialize(payload) as T
+      } else if (migrate !== undefined) {
+        // An older envelope, or a raw payload now that we require versioning
+        // (`fromVersion: undefined`).
         try {
-          const migrated = await migrate(raw, undefined)
+          const migrated = await migrate(payload, from)
           if (migrated === undefined) {
             settleReady()
             return
@@ -458,7 +467,9 @@ export function createPersisted<T>(
           return
         }
       } else {
-        value = deserialize(raw) as T
+        // Version mismatch with no migrator — discard.
+        settleReady()
+        return
       }
     } catch (err) {
       reportError(err, 'deserialize')
@@ -559,16 +570,15 @@ export function createPersisted<T>(
     }
   }
 
-  // Persist on every CHANGE. The signal's subscribe fires immediately with
-  // the current value — skip that initial call so we don't write back what
-  // we just loaded (or the source's default before load).
-  let skipFirstDelivery = true
+  // Persist on every CHANGE. A signal's `subscribe` calls the handler at once,
+  // inside `subscribe()`, with the current value. That call is not a change:
+  // writing it would store what we just loaded, or the source's default
+  // before an async load. Only a call made while `subscribe()` runs is
+  // skipped, so a source that does not call back on subscribe keeps its
+  // first real change.
+  let subscribing = true
   const unsub = source.subscribe((value) => {
-    if (skipFirstDelivery) {
-      skipFirstDelivery = false
-      return
-    }
-    if (writingFromLoad) return
+    if (subscribing || writingFromLoad) return
     if (!ready$.peek()) {
       // A real user write before the initial load settled — remember it so
       // `settleReady` flushes it and `applyLoaded` doesn't clobber the source.
@@ -580,6 +590,7 @@ export function createPersisted<T>(
     }
     scheduleWrite(value)
   })
+  subscribing = false
 
   // Cross-tab sync.
   let unsubChange: (() => void) | null = null

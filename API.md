@@ -2350,14 +2350,14 @@ type PersistOptions<T> = {
   serialize?: (value: T) => string
   deserialize?: (raw: string) => T
   crossTab?: boolean              // default: false — wire the adapter's onChange
-  version?: number                // enable the {v,d} envelope + forward migration
+  version?: number                // enable the versioned envelope + forward migration
   migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
   throttleMs?: number             // at most one write per window (flushed on dispose). Default 0
   onError?: (err: unknown, op: PersistErrorOp, key: string) => void // else swallowed
 }
 ```
 
-`version` and `migrate` wrap writes in a `{"v":N,"d":<serialized>}` envelope and forward-migrate a stale or legacy payload on load. Every fallible op routes through `onError`: storage `get` and `set`, encode and decode, migrate throws, and cross-tab corruption. Without it, errors are swallowed. A user write that lands before an async load settles wins over the stored value (and is flushed); a racing cross-tab change is buffered until ready.
+`version` and `migrate` wrap writes in a `{"$olas":1,"v":N,"d":<serialized>}` envelope and forward-migrate a stale or legacy payload on load. A reader without `version` unwraps that envelope, and the `$olas` marker keeps it from unwrapping a value of the same shape. The unmarked `{"v":N,"d":…}` that earlier versions wrote still reads. Every fallible op routes through `onError`: storage `get` and `set`, encode and decode, migrate throws, and cross-tab corruption. Without it, errors are swallowed. A user write that lands before an async load settles wins over the stored value (and is flushed); a racing cross-tab change is buffered until ready.
 
 ### Type: `PersistableSource<T>`
 
@@ -2369,7 +2369,7 @@ type PersistableSource<T> = {
 }
 ```
 
-Structural — anything matching this shape works (a `Signal<T>`, a `Field<T>`, your own object).
+Structural — anything matching this shape works (a `Signal<T>`, a `Field<T>`, your own object). `createPersisted` skips a handler call made while `subscribe()` runs, which is how a signal delivers its current value, and writes every later call.
 
 ### Type: `Persisted`
 
@@ -2739,13 +2739,14 @@ type MutationQueueOptions = {
   storage: StorageAdapter          // durable store (MUST implement keys())
   keyPrefix: string                // required namespace, e.g. '<app>/mutations/v1'
   maxAttempts?: number             // total replay attempts across loads. Default 5
+  isRetryable?: (err: unknown, entry: QueueEntry) => boolean // false drops the entry at once. Default: always true
   ttlMs?: number                   // drop entries older than this. Default Infinity
   backoffMs?: number               // exponential cross-load backoff base. Default 0
   maxBackoffMs?: number            // backoff cap. Default 60_000
   maxEntryBytes?: number           // soft per-entry size warning. Default 64 * 1024
   dedupeBy?: (mutationId: string, variables: unknown) => string | undefined
   migrate?: (raw: unknown, fromVersion: number) => QueueEntry | null
-  onReplayError?: (err: unknown, entry: QueueEntry) => void       // gave up (exhausted / TTL / unknown id)
+  onReplayError?: (err: unknown, entry: QueueEntry) => void       // gave up (exhausted / not retryable / TTL / unknown id)
   onReplayAttempt?: (err: unknown, entry: QueueEntry) => void     // non-terminal failure (will retry)
   onReplaySettle?: (entry: QueueEntry, result: unknown, queries: QueryHost) => void // reconcile cache
   onWarn?: (message: string, cause?: unknown) => void
@@ -2757,6 +2758,7 @@ type MutationQueueService = { replayNow(): Promise<void> }   // ctx.inject(Mutat
 - Nothing persists by default. Only a `defineMutation` definition with `meta: { persist: true }` is queued, because a replay needs the registered definition.
 - The plugin writes each entry to storage before the request goes out, and deletes it on success.
 - Replays run on setup, on the `online` event at reconnect, and on `replayNow()`. They go through the core runner, so the definition's `retry` applies, `mutate` gets the root's `deps`, and the run counts toward `waitForIdle()`.
+- A failure `isRetryable` rejects drops the entry on its first attempt, live or replayed, and reports it through `onReplayError`. `mutate` is the app's function, so a status code reaches `isRetryable` only on the error `mutate` throws.
 - The Web Locks API coordinates replay across tabs so two of them don't double-POST, with a best-effort `localStorage`-lease fallback.
 - A stored entry replays only when its key matches its contents and the registered definition has `meta.persist`, so storage cannot pick a mutation that did not opt in.
 - `onReplaySettle` fires after a successful replay. Invalidate the affected queries there, through `queries.invalidate(id, key)`; without it, subscribers stay stale.

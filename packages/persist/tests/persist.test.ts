@@ -286,7 +286,9 @@ describe('createPersisted — version + migrate', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     root.api.s.set('hello')
-    expect(store.store.get('k')).toBe(JSON.stringify({ v: 2, d: JSON.stringify('hello') }))
+    expect(store.store.get('k')).toBe(
+      JSON.stringify({ $olas: 1, v: 2, d: JSON.stringify('hello') }),
+    )
     root.dispose()
 
     // A fresh root reads the envelope back.
@@ -323,7 +325,7 @@ describe('createPersisted — version + migrate', () => {
     expect(seen).toEqual([[JSON.stringify('v0-value'), undefined]])
     // Rewritten as a v2 envelope.
     expect(store.store.get('k')).toBe(
-      JSON.stringify({ v: 2, d: JSON.stringify('migrated:v0-value') }),
+      JSON.stringify({ $olas: 1, v: 2, d: JSON.stringify('migrated:v0-value') }),
     )
     root.dispose()
   })

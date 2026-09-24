@@ -3,15 +3,16 @@ name: persisted-state-breaks-hydration
 description: createPersisted reads localStorage during controller construction, so a returning visitor's first client render disagrees with the server HTML. Gate the values, not the controller.
 type: pitfall
 covers:
-  - packages/persist/src/index.ts:286-300
-  - packages/persist/src/index.ts:436-450
+  - packages/persist/src/storage.ts:23-27
+  - packages/persist/src/index.ts:430-431
+  - packages/persist/src/index.ts:516-526
   - examples/reader-ssr/src/App.tsx
   - examples/reader-ssr/src/controller.ts:110-130
 edges:
   - { type: uses, target: ../modules/persist.md }
   - { type: uses, target: ../flows/ssr.md }
   - { type: tested-by, target: ../../packages/react/tests/ssr-hydration.test.tsx }
-last_verified: 2026-09-21
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -19,7 +20,7 @@ confidence: medium
 
 ## The trap
 
-`createPersisted(ctx, key, source)` loads the stored value while the controller is being constructed (`persist/src/index.ts:436-437`, `const loaded = storage.get(key)`). For `localStorageAdapter` that read is synchronous (`index.ts:286-300`). The client builds its root before `hydrateRoot`, so by the time React hydrates, the signal already holds the visitor's stored value.
+`createPersisted(ctx, key, source)` loads the stored value while the controller is being constructed (`persist/src/index.ts:430-431`, `const loaded = storage.get(key)`, applied at once on the sync branch at `index.ts:516-526`). For `localStorageAdapter` that read is synchronous (`persist/src/storage.ts:23-27`). The client builds its root before `hydrateRoot`, so by the time React hydrates, the signal already holds the visitor's stored value.
 
 The server had no localStorage. It rendered the default.
 

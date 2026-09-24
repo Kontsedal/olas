@@ -87,6 +87,7 @@ type MutationQueueOptions = {
   storage: StorageAdapter
   keyPrefix: string
   maxAttempts?: number          // default 5
+  isRetryable?: (err: unknown, entry: QueueEntry) => boolean   // default: every failure retries
   ttlMs?: number                // default Infinity
   backoffMs?: number            // default 0
   maxBackoffMs?: number         // default 60_000
@@ -116,12 +117,13 @@ type QueueEntry = {
 | `storage` | The durable store. `localStorageAdapter()` is the typical default; switch to `indexedDbAdapter()` when payloads are large or `localStorage`'s 5–10 MB quota is uncomfortably close. The adapter must implement `keys()` — both shipped adapters do. Custom adapters without `keys()` log a warning and skip replay. |
 | `keyPrefix` | Required namespace prefix in storage. Use `'<app>/mutations/v<n>'`. Bump `v<n>` when you ship a schema change that can't be `migrate`-d. |
 | `maxAttempts` | Maximum total replay attempts per entry across page loads (in-process retries inside one load are governed by the definition's `retry`). After exhaustion the entry is dropped and `onReplayError` fires. |
+| `isRetryable` | Whether a failure is worth another attempt on a later load. Return `false` and the queue drops the entry at once and reports it through `onReplayError`, instead of spending every `maxAttempts` on it. The queue asks it about a live run's failure and a replay's. A throw is reported through `onWarn`, and the entry stays. See [Failures a retry cannot fix](#failures-a-retry-cannot-fix). |
 | `ttlMs` | Drop entries older than `Date.now() - ttlMs` before any replay attempt. Useful for "if this hasn't gone through in a week, give up." Default is no TTL. |
 | `backoffMs` / `maxBackoffMs` | Exponential backoff on cross-reload retries — `delay = min(backoffMs * 2^(attempts-1), maxBackoffMs)`. Default is no backoff (first retry runs immediately). |
 | `maxEntryBytes` | Soft byte budget per JSON-serialized entry. Exceeding it calls `onWarn` and the write proceeds anyway. Default 64 KB. Set to `Infinity` to disable. |
 | `dedupeBy` | Return a stable idempotency key from `(mutationId, variables)`. Two enqueues sharing the same key collapse — the second consumer promise still resolves but no second durable entry is written, and the collapsed run settles the entry it collapsed onto. The key also defines "the same logical operation" for the supersede rule, in place of the variables. Client-side cost reduction; the server must still dedupe authoritatively. |
 | `migrate` | Translate entries written under a prior `PROTOCOL_VERSION` into the current shape. Return `null` to drop. Without a migrator, version mismatches silently discard the entry. |
-| `onReplayError` | Fires when replay gives up on an entry: `maxAttempts` exhausted, TTL expired, no module registered the `id`, or the definition is not `meta: { persist: true }`. The integration point for telemetry / "we couldn't deliver your action" UX. |
+| `onReplayError` | Fires when the queue gives up on an entry: `maxAttempts` exhausted, a failure `isRetryable` rejects, TTL expired, no module registered the `id`, or the definition is not `meta: { persist: true }`. The integration point for telemetry / "we couldn't deliver your action" UX. |
 | `onReplayAttempt` | Fires on every non-terminal replay failure — surfaces "we'll retry later" indicators. |
 | `onReplaySettle` | Fires after a queued mutation **replays successfully**, with `(entry, result, queries)`. `queries` is the root's `QueryHost`. A replay writes server truth outside any live query's knowledge, so invalidate the affected queries here. `queries.invalidate(id, key)` takes the query's `id` and the tuple its `key(...)` returns (`['user', id]`), not the call arguments. **Without it, UIs stay stale after a replay** until their own `staleTime` lapses. A throw is reported through `onWarn`. |
 | `onWarn` | Soft conditions: variables not JSON-serializable, malformed entry on disk, adapter missing `keys()`. Default: `console.warn`. |
@@ -141,6 +143,49 @@ const queue = mutationQueuePlugin({
 })
 ```
 
+### Failures a retry cannot fix
+
+By default the queue treats every failure as transient. A 422 fails the same way on every load, so it burns all `maxAttempts` before `onReplayError` fires, and with `backoffMs` set that takes several page loads. `isRetryable(err, entry)` tells the queue which failures to give up on at once.
+
+`mutate` is your function, and it returns or throws whatever it likes, so the queue cannot read a status code on its own. Throw an error that carries the status, and read it in `isRetryable`:
+
+<!-- snippet-prelude
+declare function reportLostWrite(err: unknown, mutationId: string): void
+-->
+```ts
+import { defineMutation } from '@kontsedal/olas-core'
+import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
+import { localStorageAdapter } from '@kontsedal/olas-persist'
+
+class HttpError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`)
+  }
+}
+
+export const createOrder = defineMutation({
+  id: 'order/create',
+  mutate: async (vars: { sku: string; idempotencyKey: string }, { signal }) => {
+    const res = await fetch('/api/orders', { method: 'POST', body: JSON.stringify(vars), signal })
+    if (!res.ok) throw new HttpError(res.status)
+    return (await res.json()) as { id: string }
+  },
+  meta: { persist: true },
+})
+
+const queue = mutationQueuePlugin({
+  storage: localStorageAdapter(),
+  keyPrefix: 'my-app/mutations/v1',
+  // A network error, a 5xx, a 408 or a 429 can pass on a later try.
+  // Any other 4xx fails the same way on every load.
+  isRetryable: (err) =>
+    !(err instanceof HttpError) || err.status >= 500 || err.status === 408 || err.status === 429,
+  onReplayError: (err, entry) => reportLostWrite(err, entry.mutationId),
+})
+```
+
+A `false` drops the entry and calls `onReplayError(err, entry)` with the error `mutate` threw. The queue asks on the first failure of a live run too, so a 422 on the first request leaves nothing on disk for the next load. The last allowed attempt is final whatever `isRetryable` returns, and the queue does not ask about it. The definition's `retry` still governs retries inside one load. `isRetryable` decides only whether the entry waits for another load or reconnect.
+
 ## How it works
 
 ```
@@ -159,7 +204,7 @@ createMutation(ctx, def).run(vars)  →  onMutation 'start': record the entry
        plugin: delete entry                plugin: keep entry (replay next load)
 ```
 
-When the root starts, the plugin lists every entry under `keyPrefix` and checks each one (see [Stored entries](#stored-entries)). It groups them by `id`, sorts each group by the monotonic `seq` with a fallback to `enqueuedAt`, waits until the tab is online, then replays serially per group. Different `id` buckets run in parallel. A replay pass also runs on every reconnect, so an in-session failure retries on reconnect and not only on reload. `ctx.inject(MutationQueue).replayNow()` starts one by hand. All three paths funnel through one guarded runner, which prevents overlapping replays, wrapped in the cross-tab lock described below. After each successful replay, `onReplaySettle` fires so the app can invalidate affected queries.
+When the root starts, the plugin lists every entry under `keyPrefix` and checks each one (see [Stored entries](#stored-entries)). It groups them by `id`, sorts each group by the monotonic `seq` with a fallback to `enqueuedAt`, waits until the tab is online, then replays serially per group. Two tabs that open in the same millisecond can give unrelated entries the same `seq`, and `runId` breaks that tie. So every tab replays the same entries in the same order, whatever order its storage lists them in. Different `id` buckets run in parallel. A replay pass also runs on every reconnect, so an in-session failure retries on reconnect and not only on reload. `ctx.inject(MutationQueue).replayNow()` starts one by hand. All three paths funnel through one guarded runner, which prevents overlapping replays, wrapped in the cross-tab lock described below. After each successful replay, `onReplaySettle` fires so the app can invalidate affected queries.
 
 Replays run through the engine's own mutation runner (`host.mutations.run`). The definition's `retry` and `concurrency` apply, `mutate` receives the root's `deps`, and the run appears in devtools. The startup pass counts toward `root.waitForIdle()` when the tab starts online. An offline start parks the pass until reconnect, and `waitForIdle` does not wait for that.
 
@@ -201,6 +246,18 @@ Replay blocks until the tab reports online (`navigator.onLine`) before any `muta
 ### Cross-tab replay coordination
 
 Two tabs replaying the same entries on parallel reloads would double-POST. The queue serializes replay across tabs with the **Web Locks API**, through `navigator.locks`. A tab that cannot get the lock skips the pass, and the holding tab replays every entry under the shared prefix, because they share storage. Where Web Locks is unavailable, as on older Safari, it falls back to a **best-effort, TTL'd `localStorage` lease**. In Node and SSR there is a single context, so it runs. This reduces — but, with the lease fallback, doesn't fully eliminate — duplicate replays, which is why server-side `idempotencyKey` dedupe remains the authoritative gate.
+
+### The devtools lane
+
+The queue publishes its replays through `host.debug`, onto its own lane in `@kontsedal/olas-devtools`. Like core, the package ships a development build behind the `development` export condition, and only that build has the lane code (SPEC §23). Each payload names its entry by `mutationId` and `runId`:
+
+| `kind` | When | Other fields |
+|---|---|---|
+| `replay:attempt` | An attempt starts, after its bumped count is on disk | `attempt` |
+| `replay:result` | The attempt settles | `attempt`, `result`, and `error` on a failure |
+| `replay:skipped` | A pass leaves an entry without an attempt | `reason` |
+
+`result` is `success`, `retry-later`, `max-attempts`, `not-retryable` or `aborted`. `reason` is `in-flight`, `not-registered`, `not-persisted`, `max-attempts` or `ttl-expired`. A payload carries ids and counts, and no variables. Its shape serves the panel, and a minor release can change it.
 
 ## Combining with `@kontsedal/olas-persist`
 

@@ -20,6 +20,7 @@ export type MutationQueueOptions = {
     storage: StorageAdapter;
     keyPrefix: string;
     maxAttempts?: number;
+    isRetryable?: (err: unknown, entry: QueueEntry) => boolean;
     onReplayError?: (err: unknown, entry: QueueEntry) => void;
     onReplayAttempt?: (err: unknown, entry: QueueEntry) => void;
     dedupeBy?: (mutationId: string, variables: unknown) => string | undefined;

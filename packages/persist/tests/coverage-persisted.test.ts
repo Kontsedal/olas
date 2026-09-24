@@ -39,7 +39,11 @@ const flush = async () => {
   for (let i = 0; i < 10; i++) await Promise.resolve()
 }
 
+/** The envelope versions before 1.0 wrote, which every version still reads. */
 const envelope = (v: number, value: unknown) => JSON.stringify({ v, d: JSON.stringify(value) })
+/** The marked envelope 1.0 writes. */
+const marked = (v: number, value: unknown) =>
+  JSON.stringify({ $olas: 1, v, d: JSON.stringify(value) })
 
 describe('createPersisted — cross-tab payloads under a version', () => {
   const mount = (storage: StorageAdapter) => {
@@ -146,7 +150,7 @@ describe('createPersisted — migrating a legacy payload', () => {
     await flush()
     expect(root.api.ready.value).toBe(true)
     expect(root.api.s.value).toBe('typed-by-user')
-    expect(storage.store.get('k')).toBe(envelope(2, 'typed-by-user'))
+    expect(storage.store.get('k')).toBe(marked(2, 'typed-by-user'))
     root.dispose()
   })
 })

@@ -21,6 +21,7 @@ export type QueueEntry = {
    * user-set-back time, suspend resume) can't reorder pending mutations.
    * Optional for backward compatibility — entries written before v0.0.8 do
    * not carry `seq`; they fall back to `enqueuedAt` ordering during replay.
+   * Two tabs can mint the same `seq`; `runId` breaks the tie.
    */
   readonly seq?: number
   /**

@@ -41,7 +41,7 @@ function createPersisted<T>(
     serialize?: (value: T) => string
     deserialize?: (raw: string) => T
     crossTab?: boolean              // wire the adapter's onChange
-    version?: number                // enable the {v,d} envelope + migration
+    version?: number                // enable the versioned envelope + migration
     migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
     throttleMs?: number             // trailing write at most once per window (flushed on dispose). Default 0
     onError?: (err: unknown, op: PersistErrorOp, key: string) => void
@@ -53,7 +53,11 @@ type PersistErrorOp = 'load' | 'deserialize' | 'serialize' | 'write' | 'migrate'
 
 Defaults: `JSON.stringify` and `JSON.parse`. Override `serialize` and `deserialize` for custom shapes (Dates, Maps, etc.). Cleanup is registered via `ctx.onDispose`. A `storage` of `undefined` falls back to `localStorageAdapter()`, so a controller can forward an optional `ctx.deps.storage` slot as it is.
 
-**Schema versioning.** Set `version: N` to wrap writes in a `{"v":N,"d":<serialized>}` envelope. On load, a payload with a different `version` is handed to `migrate(raw, fromVersion)`, and so is a legacy un-versioned one, which arrives as `fromVersion: undefined`. The migrator returns the upgraded value, re-persisted as an envelope, or `undefined` to drop the entry.
+**Custom sources.** A source's `subscribe` may call the handler at once with the current value, as a signal does, or only on a change, as an event emitter does. `createPersisted` skips a call made while `subscribe()` runs, because it is the current value and not a change. It writes every later call, so a source that does not call back on subscribe keeps its first change.
+
+**Schema versioning.** Set `version: N` to wrap writes in the envelope `{"$olas":1,"v":N,"d":<serialized>}`. On load, a payload with a different `version` is handed to `migrate(raw, fromVersion)`, and so is a legacy un-versioned one, which arrives as `fromVersion: undefined`. The migrator returns the upgraded value, re-persisted as an envelope, or `undefined` to drop the entry.
+
+**Builds that disagree on `version`.** A tab left open across a deploy runs the old build next to the new one, on the same key. A reader without `version` unwraps an envelope a newer build wrote, and deserializes the value inside it. The `$olas` marker keeps that safe: a value of yours with the same shape reads back as itself. Without `version`, `createPersisted` writes a value raw, and wraps it only when a reader could take it for an envelope. Data that versions before 1.0 stored reads as it did. Their envelope, `{"v":N,"d":…}`, has no marker, so a reader with `version` unwraps it, and a reader without one takes it as the value.
 
 **Error routing.** Every fallible op routes through `onError(err, op, key)` — storage `get`/`set` (quota, closed db, aborted IDB commit), `serialize`/`deserialize`, `migrate` throws, and cross-tab payload corruption. A stored value the source refuses (its `set` throws) is a `'deserialize'` error, and `ready` still settles, so later writes persist. Without `onError`, errors are swallowed. The IndexedDB adapter resolves writes on the transaction's **commit** (not the request's `onsuccess`), so a quota failure surfaces here rather than silently vanishing.
 

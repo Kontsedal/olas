@@ -45,10 +45,11 @@ export const MutationQueue: Scope<MutationQueueService> = defineScope<MutationQu
  * - `maxAttempts` — bound on replay attempts per entry. After exhaustion
  *   the entry is dropped from storage and `onReplayError` fires with the
  *   final error. Defaults to `5`.
- * - `onReplayError` — called when a replayed mutation throws (after
- *   `maxAttempts`) OR when a queue entry references a mutation `id` whose
- *   module hasn't been imported yet. The handler is the integration point
- *   for telemetry / user-facing error toasts on lost mutations.
+ * - `onReplayError` — called when the queue gives up on an entry: a failure
+ *   after `maxAttempts`, a failure `isRetryable` rejects, a TTL expiry, or an
+ *   entry whose mutation `id` no imported module registered. The handler is
+ *   the integration point for telemetry / user-facing error toasts on lost
+ *   mutations.
  * - `onWarn` — soft conditions: malformed entry in storage, serialization
  *   failure (variables JSON cannot encode, such as a `BigInt` or a cycle).
  *   Default: `console.warn`.
@@ -57,6 +58,18 @@ export type MutationQueueOptions = {
   storage: StorageAdapter
   keyPrefix: string
   maxAttempts?: number
+  /**
+   * Whether a failed run is worth another attempt on a later load or
+   * reconnect. Return `false` for a failure that will never succeed, such as
+   * a 400, 409 or 422: the queue drops the entry at once and reports it
+   * through `onReplayError`, instead of spending every `maxAttempts` on it.
+   * It is asked for a live run's failure and for a replay's. `mutate` is the
+   * app's own function, so the queue cannot read a status code itself: throw
+   * an error that carries one, and read it here. A throw from this function
+   * is reported through `onWarn`, and the entry is kept. Defaults to
+   * `() => true`: every failure is retried until `maxAttempts`.
+   */
+  isRetryable?: (err: unknown, entry: QueueEntry) => boolean
   onReplayError?: (err: unknown, entry: QueueEntry) => void
   /**
    * Fires on every non-final replay attempt failure (i.e. when the entry
@@ -139,9 +152,10 @@ export type MutationQueueOptions = {
  * Lifecycle per run (the plugin's `onMutation` hook):
  *  1. `'start'` → write a `QueueEntry` to storage.
  *  2. `'success'` → delete the entry. The server accepted; no replay needed.
- *  3. `'error'` → delete the entry IF `attempts >= maxAttempts`, else leave
- *     it and let the next page load trigger another attempt. (Within a single
- *     page load, in-process retries are the definition's `retry` policy.)
+ *  3. `'error'` → delete the entry IF `attempts >= maxAttempts` or
+ *     `isRetryable` says the failure is final, else leave it and let the next
+ *     page load trigger another attempt. (Within a single page load,
+ *     in-process retries are the definition's `retry` policy.)
  *  4. `'cancel'` → leave the entry in place. A page reload mid-run looks
  *     indistinguishable from an explicit cancel at the plugin layer; the next
  *     startup replays.
@@ -178,6 +192,7 @@ export type MutationQueueOptions = {
 export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
   const { storage: adapter, keyPrefix } = options
   const maxAttempts = options.maxAttempts ?? 5
+  const isRetryable = options.isRetryable
   const onReplayError = options.onReplayError ?? defaultReplayError
   const onReplayAttempt = options.onReplayAttempt
   const onReplaySettle = options.onReplaySettle
@@ -212,9 +227,10 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
        * after every pre-restart entry WITHOUT waiting to read the disk — the old
        * design primed this from disk inside `replayAll` (async), so an enqueue
        * that raced init got `seq` 1 and jumped ahead of prior-session entries
-       * (T6.2). The `replayAll` priming below is now just a belt-and-suspenders
-       * bump for the rare same-millisecond cross-tab case; it can only raise the
-       * counter, never lower it.
+       * (T6.2). The `replayAll` priming below raises the counter past every
+       * `seq` on disk; it can only raise it, never lower it. Two tabs that
+       * start in the same millisecond still mint equal values, and
+       * `compareEntries` breaks those ties by `runId`.
        */
       let seqCounter = Date.now()
 
@@ -318,6 +334,20 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
 
       const entryKey = (mutationId: string, runId: string): string =>
         `${keyPrefix}/${mutationId}/${runId}`
+
+      /**
+       * Whether a failure leaves the entry for another attempt. A throwing
+       * `isRetryable` keeps it, the behavior without the option.
+       */
+      const retryable = (err: unknown, entry: QueueEntry): boolean => {
+        if (isRetryable === undefined) return true
+        try {
+          return isRetryable(err, entry)
+        } catch (cause) {
+          onWarn('[olas/mutation-queue] isRetryable threw; keeping the entry for a retry', cause)
+          return true
+        }
+      }
 
       /** Drop the dedupe key mapped to `runId` (we don't index runId→key). */
       const clearActiveKey = (runId: string): void => {
@@ -519,18 +549,35 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
        */
       const replayEntry = async (entry: QueueEntry): Promise<void> => {
         if (disposed) return
-        if (isEntryInFlight(entry.runId)) {
+        const { mutationId, runId } = entry
+        if (isEntryInFlight(runId)) {
           // The run backing this entry is executing in this tab right now. Its
           // own settle will drop the entry; replaying it here would issue the
           // same request a second time. Reached when an `online` event or a
           // `replayNow()` lands inside the enqueue→settle window.
+          if (__DEV__) {
+            host.debug({
+              kind: 'replay:skipped',
+              mutationId,
+              runId,
+              reason: 'in-flight',
+            } satisfies LaneEvent)
+          }
           return
         }
-        const definition = mutations.get(entry.mutationId)
+        const definition = mutations.get(mutationId)
         if (definition === undefined) {
           // Module hasn't been imported — leave entry in place and surface so
           // the user knows it's stuck. They can either import the module to
           // unstick it or delete the entry from storage.
+          if (__DEV__) {
+            host.debug({
+              kind: 'replay:skipped',
+              mutationId,
+              runId,
+              reason: 'not-registered',
+            } satisfies LaneEvent)
+          }
           onReplayError(
             new Error(
               `[olas/mutation-queue] no registered mutation for "${entry.mutationId}"; ` +
@@ -544,7 +591,15 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           // Stored data named a mutation that never opted in to the queue. The
           // queue writes entries only for `meta.persist` runs, so this one came
           // from somewhere else: drop it rather than let storage pick what runs.
-          await deleteEntry(entry.mutationId, entry.runId)
+          if (__DEV__) {
+            host.debug({
+              kind: 'replay:skipped',
+              mutationId,
+              runId,
+              reason: 'not-persisted',
+            } satisfies LaneEvent)
+          }
+          await deleteEntry(mutationId, runId)
           onReplayError(
             new Error(
               `[olas/mutation-queue] "${entry.mutationId}" is not a persisted mutation (meta.persist is not true); ` +
@@ -556,10 +611,18 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         }
         if (entry.attempts >= maxAttempts) {
           // Already exhausted on a previous load; drop and surface.
-          await deleteEntry(entry.mutationId, entry.runId)
+          if (__DEV__) {
+            host.debug({
+              kind: 'replay:skipped',
+              mutationId,
+              runId,
+              reason: 'max-attempts',
+            } satisfies LaneEvent)
+          }
+          await deleteEntry(mutationId, runId)
           onReplayError(
             new Error(
-              `[olas/mutation-queue] giving up on "${entry.mutationId}/${entry.runId}" after ${entry.attempts} attempts.`,
+              `[olas/mutation-queue] giving up on "${mutationId}/${runId}" after ${entry.attempts} attempts.`,
             ),
             entry,
           )
@@ -568,15 +631,28 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         // Bump the attempts counter durably BEFORE running so a hard crash
         // during the mutate doesn't loop forever on the same entry.
         const next: QueueEntry = { ...entry, attempts: entry.attempts + 1 }
+        const attempt = next.attempts
         await writeEntry(next)
+        if (__DEV__) {
+          host.debug({ kind: 'replay:attempt', mutationId, runId, attempt } satisfies LaneEvent)
+        }
         try {
           // Through the engine's runner: the definition's `retry` applies, `mutate`
           // gets the root's `deps`, the run counts toward `waitForIdle()`, and its
           // `onMutation` events carry this plugin's name — so `onMutation` below
           // does not persist its own replay a second time.
-          const result = await mutations.run(entry.mutationId, entry.variables)
+          const result = await mutations.run(mutationId, entry.variables)
           // Success — drop the entry.
-          await deleteEntry(entry.mutationId, entry.runId)
+          await deleteEntry(mutationId, runId)
+          if (__DEV__) {
+            host.debug({
+              kind: 'replay:result',
+              mutationId,
+              runId,
+              attempt,
+              result: 'success',
+            } satisfies LaneEvent)
+          }
           // Let the app reconcile its cache (a replay wrote server truth outside
           // any live query's knowledge). Swallow handler throws (T6.2).
           if (onReplaySettle !== undefined) {
@@ -589,14 +665,37 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         } catch (err) {
           // The root disposing mid-run cancels it; that is not a failed attempt.
           // The bumped counter is already on disk, and the next load replays.
-          if (disposed || isAbortError(err)) return
+          if (disposed || isAbortError(err)) {
+            if (__DEV__) {
+              host.debug({
+                kind: 'replay:result',
+                mutationId,
+                runId,
+                attempt,
+                result: 'aborted',
+              } satisfies LaneEvent)
+            }
+            return
+          }
           // Single replay attempt failed. If this was the last allowed
-          // attempt, drop and surface; otherwise leave the entry in place
-          // (with the bumped attempts counter) so the next page load tries
-          // again. Fire `onReplayAttempt` either way so consumers can show
-          // "retrying" indicators.
-          if (next.attempts >= maxAttempts) {
-            await deleteEntry(entry.mutationId, entry.runId)
+          // attempt, or the failure is one no retry can fix, drop and
+          // surface; otherwise leave the entry in place (with the bumped
+          // attempts counter) so the next page load tries again, and fire
+          // `onReplayAttempt` so consumers can show "retrying" indicators.
+          const final = attempt >= maxAttempts
+          const retry = !final && retryable(err, next)
+          if (__DEV__) {
+            host.debug({
+              kind: 'replay:result',
+              mutationId,
+              runId,
+              attempt,
+              result: retry ? 'retry-later' : final ? 'max-attempts' : 'not-retryable',
+              error: err,
+            } satisfies LaneEvent)
+          }
+          if (!retry) {
+            await deleteEntry(mutationId, runId)
             onReplayError(err, next)
           } else if (onReplayAttempt !== undefined) {
             try {
@@ -713,6 +812,14 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           const now = Date.now()
           for (const e of entries) {
             if (now - e.enqueuedAt > ttlMs) {
+              if (__DEV__) {
+                host.debug({
+                  kind: 'replay:skipped',
+                  mutationId: e.mutationId,
+                  runId: e.runId,
+                  reason: 'ttl-expired',
+                } satisfies LaneEvent)
+              }
               await deleteEntry(e.mutationId, e.runId)
               onReplayError(
                 Object.assign(new Error(`[olas/mutation-queue] dropping ttl-expired entry`), {
@@ -744,14 +851,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         }
         const tasks: Promise<void>[] = []
         for (const bucket of byMutation.values()) {
-          // Prefer monotonic `seq` (assigned at enqueue time, immune to clock
-          // drift). Fall back to `enqueuedAt` for legacy entries without a
-          // `seq` stamp.
-          bucket.sort((a, b) => {
-            const aS = typeof a.seq === 'number' ? a.seq : a.enqueuedAt
-            const bS = typeof b.seq === 'number' ? b.seq : b.enqueuedAt
-            return aS - bS
-          })
+          bucket.sort(compareEntries)
           tasks.push(
             (async () => {
               for (const entry of bucket) {
@@ -878,24 +978,26 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             // In-process retries are exhausted by the time the runner reports
             // `error` — but cross-reload replays still get up to maxAttempts.
             // Leave the entry (and its key) in place unless we've already
-            // replayed it maxAttempts times.
+            // replayed it maxAttempts times, or `isRetryable` says no later
+            // attempt can succeed.
             const known = knownRuns.get(ownerRunId)
             const attempts = known?.attempts ?? 1
-            if (attempts >= maxAttempts) {
+            const entry: QueueEntry = known ?? {
+              v: PROTOCOL_VERSION,
+              mutationId,
+              runId: ownerRunId,
+              variables: event.variables,
+              attempts,
+              enqueuedAt: Date.now(),
+            }
+            if (attempts >= maxAttempts || !retryable(event.error, entry)) {
               clearActiveKey(ownerRunId)
               retainedFailures.delete(ownerRunId)
               void deleteEntry(mutationId, ownerRunId)
               onReplayError(
                 event.error ??
                   new Error(`[olas/mutation-queue] gave up on "${mutationId}/${ownerRunId}"`),
-                known ?? {
-                  v: PROTOCOL_VERSION,
-                  mutationId,
-                  runId: ownerRunId,
-                  variables: event.variables,
-                  attempts,
-                  enqueuedAt: Date.now(),
-                },
+                entry,
               )
             } else if (identity !== undefined) {
               // The entry survives for a cross-load replay. Remember which
@@ -961,6 +1063,46 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
     },
   }
 }
+
+/**
+ * Replay order within one mutation id. Monotonic `seq` first (assigned at
+ * enqueue time, immune to clock drift), with `enqueuedAt` standing in for an
+ * entry written before `seq` existed. Two tabs that start in the same
+ * millisecond seed the same counter, so two unrelated entries can share a
+ * `seq`: `runId` breaks the tie. It is random per run, stored in every entry
+ * of every version, and unique within a mutation id (the storage key holds
+ * it), so every tab sorts the same entries into the same order whatever order
+ * its storage lists them in. Compared by code unit, not `localeCompare`, so
+ * two tabs with different locales agree as well.
+ */
+function compareEntries(a: QueueEntry, b: QueueEntry): number {
+  const bySeq = (a.seq ?? a.enqueuedAt) - (b.seq ?? b.enqueuedAt)
+  if (bySeq !== 0) return bySeq
+  return a.runId < b.runId ? -1 : a.runId > b.runId ? 1 : 0
+}
+
+/**
+ * What the queue publishes on its devtools lane, through `host.debug`, in
+ * development builds only: each replay attempt, its result, and each entry a
+ * pass skipped without an attempt. Ids and counts only, never the variables,
+ * so an event costs one small object.
+ */
+type LaneEvent =
+  | { kind: 'replay:attempt'; mutationId: string; runId: string; attempt: number }
+  | {
+      kind: 'replay:result'
+      mutationId: string
+      runId: string
+      attempt: number
+      result: 'success' | 'retry-later' | 'max-attempts' | 'not-retryable' | 'aborted'
+      error?: unknown
+    }
+  | {
+      kind: 'replay:skipped'
+      mutationId: string
+      runId: string
+      reason: 'in-flight' | 'not-registered' | 'not-persisted' | 'max-attempts' | 'ttl-expired'
+    }
 
 function defaultWarn(message: string, cause?: unknown): void {
   if (cause !== undefined) {
