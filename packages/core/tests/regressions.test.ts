@@ -2561,3 +2561,100 @@ describe('W9 mutation-testing regressions: infinite queries', () => {
     root.dispose()
   })
 })
+
+describe('W13 regression: an async validator abandoned by a failing sync one settles quietly', () => {
+  // A sync failure ends the pass before the async results are awaited. The
+  // async promises were already started, and the next pass or dispose aborts
+  // them: unobserved, each rejection was unhandled.
+  type NodeEvents = {
+    on(event: string, handler: (reason: unknown) => void): void
+    off(event: string, handler: (reason: unknown) => void): void
+  }
+  const collectUnhandled = () => {
+    const seen: unknown[] = []
+    const onUnhandled = (reason: unknown) => {
+      seen.push(reason)
+    }
+    // Core's tsconfig has no Node types; the tests run on Node, so reach `process` untyped.
+    const proc = (globalThis as unknown as { process: NodeEvents }).process
+    proc.on('unhandledRejection', onUnhandled)
+    return {
+      seen,
+      stop: () => proc.off('unhandledRejection', onUnhandled),
+    }
+  }
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  test('a field', async () => {
+    const { debouncedValidator } = await import('../src/forms/field')
+    const { required } = await import('../src/forms/validators')
+    const probe = collectUnhandled()
+    try {
+      const root = createRoot(
+        defineController((ctx) => ({
+          f: createField<string>(ctx, 'ok', {
+            validators: [required('Required'), debouncedValidator(async () => null, 50)],
+          }),
+        })),
+        { deps: emptyDeps },
+      )
+      root.api.f.set('') // `required` fails while the debounced check is pending
+      expect(root.api.f.errors.value).toEqual(['Required'])
+      root.dispose()
+      await tick()
+      expect(probe.seen).toEqual([])
+    } finally {
+      probe.stop()
+    }
+  })
+
+  test('a form', async () => {
+    const probe = collectUnhandled()
+    try {
+      const pending = (_v: unknown, signal: AbortSignal) =>
+        new Promise<null>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('x', 'AbortError')))
+        })
+      const root = createRoot(
+        defineController((ctx) => ({
+          form: createForm(
+            ctx,
+            { a: createField<string>(ctx, '') },
+            { validators: [pending, () => [{ path: [], message: 'bad' }]] },
+          ),
+        })),
+        { deps: emptyDeps },
+      )
+      root.api.form.fields.a.set('x')
+      root.dispose()
+      await tick()
+      expect(probe.seen).toEqual([])
+    } finally {
+      probe.stop()
+    }
+  })
+
+  test('a field array', async () => {
+    const probe = collectUnhandled()
+    try {
+      const pending = (_v: unknown, signal: AbortSignal) =>
+        new Promise<null>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('x', 'AbortError')))
+        })
+      const root = createRoot(
+        defineController((ctx) => ({
+          list: createFieldArray(ctx, (initial?: string) => createField(ctx, initial ?? ''), {
+            validators: [pending, () => 'bad'],
+          }),
+        })),
+        { deps: emptyDeps },
+      )
+      root.api.list.add('x')
+      root.dispose()
+      await tick()
+      expect(probe.seen).toEqual([])
+    } finally {
+      probe.stop()
+    }
+  })
+})

@@ -1,7 +1,7 @@
 import type { Field } from '../controller/types'
 import { batch, computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
-import { isAbortError } from '../utils'
+import { abandonAsyncResults, isAbortError } from '../utils'
 import {
   bindFieldDevtoolsOwner,
   bindFieldValidatorErrorReporter,
@@ -631,6 +631,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     }
 
     if (syncIssues.length > 0) {
+      abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
           this,
@@ -1099,6 +1100,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     }
 
     if (syncIssues.length > 0) {
+      abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
           this,

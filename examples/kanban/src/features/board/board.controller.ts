@@ -186,11 +186,14 @@ export const boardController = defineController(
     const moveCard = createMutation<MoveVars, void>(ctx, {
       id: 'moveCard',
       concurrency: 'parallel',
-      onMutate: (vars) =>
-        boardQueryActions.setData(activeBoardId.peek(), (prev) => {
+      onMutate: (vars) => {
+        // Cancel first: a board fetch in flight would land over the guess.
+        boardQueryActions.cancel(activeBoardId.peek())
+        return boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('moveCard before board loaded')
           return applyMove(prev, vars)
-        }),
+        })
+      },
       mutate: (vars, { signal }) =>
         ctx.deps.api.moveCard(
           activeBoardId.peek(),
@@ -309,8 +312,10 @@ export const boardController = defineController(
     const reorderColumn = createMutation<{ columnId: string; cardIds: string[] }, void>(ctx, {
       id: 'reorderColumn',
       concurrency: 'serial',
-      onMutate: (vars) =>
-        boardQueryActions.setData(activeBoardId.peek(), (prev) => {
+      onMutate: (vars) => {
+        // Cancel first: a board fetch in flight would land over the guess.
+        boardQueryActions.cancel(activeBoardId.peek())
+        return boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('reorderColumn before board loaded')
           return {
             ...prev,
@@ -318,7 +323,8 @@ export const boardController = defineController(
               c.id === vars.columnId ? { ...c, cardIds: vars.cardIds.slice() } : c,
             ),
           }
-        }),
+        })
+      },
       mutate: (vars, { signal }) =>
         ctx.deps.api.reorderColumn(activeBoardId.peek(), vars.columnId, vars.cardIds, signal),
       onSuccess: (_r, vars) => activity.emit(makeActivity('move', `Reordered ${vars.columnId}`)),
@@ -340,11 +346,14 @@ export const boardController = defineController(
     const archiveCard = createMutation<{ cardId: string }, void>(ctx, {
       id: 'archiveCard',
       concurrency: 'serial',
-      onMutate: (vars) =>
-        boardQueryActions.setData(activeBoardId.peek(), (prev) => {
+      onMutate: (vars) => {
+        // Cancel first: a board fetch in flight would land over the guess.
+        boardQueryActions.cancel(activeBoardId.peek())
+        return boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('archiveCard before board loaded')
           return removeCard(prev, vars.cardId)
-        }),
+        })
+      },
       mutate: (vars, { signal }) =>
         ctx.deps.api.archiveCard(activeBoardId.peek(), vars.cardId, signal),
       onSuccess: (_r, vars) => {

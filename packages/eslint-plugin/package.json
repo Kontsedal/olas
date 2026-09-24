@@ -1,0 +1,57 @@
+{
+  "name": "@kontsedal/olas-eslint-plugin",
+  "version": "0.0.0",
+  "description": "ESLint rules for Olas apps: no React hooks in controllers, definitions at module scope, synchronous factories, and the optimistic-write recipe.",
+  "keywords": [
+    "olas",
+    "eslint",
+    "eslintplugin",
+    "eslint-plugin",
+    "lint"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/eslint-plugin#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/eslint-plugin"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "eslint": ">=9"
+  },
+  "dependencies": {
+    "@typescript-eslint/utils": "^8.70.1"
+  },
+  "devDependencies": {
+    "@typescript-eslint/parser": "^8.70.1",
+    "@typescript-eslint/rule-tester": "^8.70.1",
+    "eslint": "^10.11.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

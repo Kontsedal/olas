@@ -9,7 +9,7 @@ import {
   type Signal,
   signal,
 } from '../signals'
-import { isAbortError } from '../utils'
+import { abandonAsyncResults, isAbortError } from '../utils'
 import type { Validator, ValidatorResult } from './types'
 
 /**
@@ -463,6 +463,7 @@ class FieldImpl<T> implements Field<T> {
     }
 
     if (syncErrors.length > 0) {
+      abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.validatorErrors$.set(syncErrors)
         this.validating$.set(false)

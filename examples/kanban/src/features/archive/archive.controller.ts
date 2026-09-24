@@ -60,19 +60,15 @@ export const archiveController = defineController(
           vars.columnId,
           signal,
         )
-        // Surgically drop the restored card from the archive pages cache.
-        // Infinite queries have no canonical `write` yet (see BACKLOG), so this
-        // settles its own snapshot with `.finalize()` — the server already
-        // accepted the restore, so committing is correct and leaves nothing
-        // pending. Without the settle this leaks a live snapshot per restore.
-        archiveQueryActions
-          .setData(activeBoardId.peek(), (prev) =>
-            (prev ?? []).map((page) => ({
-              ...page,
-              items: page.items.filter((c) => c.id !== vars.cardId),
-            })),
-          )
-          .finalize()
+        // Surgically drop the restored card from the archive pages cache. The
+        // server already accepted the restore, so this is a canonical `write`:
+        // there is no guess to roll back, and no snapshot is left pending.
+        archiveQueryActions.write(activeBoardId.peek(), (prev) =>
+          (prev ?? []).map((page) => ({
+            ...page,
+            items: page.items.filter((c) => c.id !== vars.cardId),
+          })),
+        )
         // Patch the live board cache so the card reappears in the chosen column.
         boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev

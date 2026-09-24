@@ -11,6 +11,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: documented-in, target: ../../SPEC.md }
+  - { type: related, target: ../modules/eslint-plugin.md }
 last_verified: 2026-09-20
 confidence: high
 ---
@@ -73,3 +74,7 @@ The trap above is unchanged for `setData`, and deliberately so. The asymmetry is
 ## Where it's documented
 
 `SPEC.md` §5.5 ("*'Nothing invalidates this query' does not mean 'no fetch is in flight'*") and §6.4, plus the TSDoc on `Query.setData` and `Query.cancel` (`query/types.ts`). All three were written *after* the downstream regression — before that, the spec mentioned only the invalidation-driven case, which is what made the false optimisation reachable.
+
+## What catches it now
+
+`olas/cancel-before-optimistic` in `@kontsedal/olas-eslint-plugin` reports an `onMutate` whose `setData` has no `cancel` on the same query before it (`modules/eslint-plugin.md`). Its first run over the example apps found three such sites in kanban's board controller, all fixed. The regression test "a board fetch in flight when a move starts cannot land over the move" in `examples/kanban/tests/board.test.ts` shows what the missing cancel did: a refetch that read the server before the move reached it landed over the move.

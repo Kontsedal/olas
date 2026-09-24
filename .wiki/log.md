@@ -1872,3 +1872,29 @@ Wiki: `entities/mutation.md`, `flows/mutation-concurrency.md`, `entities/entry.m
 **BACKLOG.** Removed as landed: the Preact verification, the cross-adapter parity test, the Vue adapter, the Svelte adapter, `useQuery` re-rendering on `isFetching`, and the missing `useInfiniteQuery`. New ideas: a dev warning for a Vue hook called outside an effect scope; `svelte-check` for the `.svelte` fixtures.
 
 For the W6 docs pass: README (adapters list), API.md (the React section gains `useInfiniteQuery` and the fine-grained rule), SPEC §16 and §20.10 (three adapters; `useQuery`'s tracked re-render), the React package README (`useInfiniteQuery`, Preact setup), and CLAUDE.md's package roster.
+
+## [2026-09-24 22:40] ingest | 1.0 W13: `@kontsedal/olas-eslint-plugin`, and what it found in the examples
+
+**New package** (`packages/eslint-plugin/`): six syntax-only rules, `recommended` and `strict` flat configs, a docs page per rule in `docs/`, and a README. New `modules/eslint-plugin.md` covers what each rule matches on and why.
+
+**Fixes to the draft.**
+- ESLint 10 sets `Program.parent` to `null`, not `undefined`, so every walk up the tree crashed at the root. `utils.ts` and two rules now stop at `!= null`.
+- The public type is `OlasEslintPlugin`, built on ESLint's `ESLint.Plugin` and `Linter.Config`. Typed with `@typescript-eslint/utils`' `FlatConfig`, the configs did not fit `Linter.Config[]` or `defineConfig`; `tests/config.test-d.ts` pins the fit.
+- `no-network-in-components` also matches `window.fetch`, `globalThis.fetch` and `self.fetch`.
+
+**Scoped after linting the examples.** `tests/examples.test.ts` runs `recommended` over every example app's source and expects no findings. It found two false positives and four real bugs.
+- `define-at-module-scope` flagged `defineController` inside `createAppRoot`. It now checks queries, mutations and scopes only. `definePlugin` was dropped too, because a plugin factory that takes options is the documented pattern.
+- `optimistic-returns-snapshot` flagged any `setData` outside `onMutate`. It now flags a discarded snapshot only, since `setData(…).finalize()` is the only canonical patch a `LocalCache` has.
+- **kanban:** `moveCard`, `reorderColumn` and `archiveCard` wrote optimistically without cancelling the board query first. A refetch in flight landed over the move. New regression test in `examples/kanban/tests/board.test.ts`, confirmed to fail on the old controller.
+- **reader-ssr:** the composer patched `comments` with `setData` after the server accepted a comment and never settled it, so `hasPendingMutations` stayed true after every post. Fixed with `.finalize()`. New regression test in `examples/reader-ssr/tests/controller.test.ts`, confirmed to fail on the old composer.
+- **kanban archive:** `setData(…).finalize()` became `write`. Its comment said infinite queries had no canonical `write`, which stopped being true in W4c.
+
+**core: one engine bug, found by the reader-ssr regression test.** The test left two unhandled `AbortError` rejections. When a sync validator failed, a field's, form's or field array's validation pass returned before its async validators settled. The abort from the next pass or from dispose then rejected them with no handler attached. The new `abandonAsyncResults` in `utils.ts` aborts them and observes the rejections, at all three sites. Three regression tests in `packages/core/tests/regressions.test.ts` failed on the old code. `modules/forms.md` describes the rule, and the changeset is `abandoned-async-validators.md`.
+
+**Tests.** `tests/rules.test.ts` has 62 RuleTester cases. Coverage is 99.2% lines and 95.6% branches, under the satellite gate added in `vitest.config.ts`.
+
+**Wiki.** New `modules/eslint-plugin.md`. `pitfalls/no-invalidator-still-refetches.md` gains a "What catches it now" section. CLAUDE.md's roster lists the package.
+
+**BACKLOG.** The eslint-plugin idea is replaced by the two rules that did not make the first cut: a fetcher or `mutate` that ignores its `signal`, and `/testing` imported outside tests. New idea: `LocalCache` has no canonical `write`.
+
+For the W6 docs pass: README (tooling section), RECIPES (the optimistic recipe can point at the rules), and the `.cursorrules` file.

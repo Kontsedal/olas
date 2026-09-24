@@ -60,3 +60,17 @@ function abortReason(signal: AbortSignal): unknown {
   if (reason !== undefined) return reason
   return new DOMException('Aborted', 'AbortError')
 }
+
+/**
+ * Walk away from async validator results a pass no longer needs. A sync
+ * failure ends the pass before its async validators settle; aborting stops
+ * their work, and the no-op handlers observe the rejections the abort causes,
+ * which would otherwise surface as unhandled.
+ */
+export function abandonAsyncResults(
+  pending: ReadonlyArray<Promise<unknown>>,
+  abort: AbortController,
+): void {
+  for (const p of pending) p.catch(() => {})
+  abort.abort()
+}

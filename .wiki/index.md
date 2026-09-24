@@ -30,6 +30,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/vue.md](modules/vue.md) — `@kontsedal/olas-vue`: `olasPlugin` + signals as read-only refs
 - [modules/svelte.md](modules/svelte.md) — `@kontsedal/olas-svelte`: `setRoot`/`getRoot` + store views; a signal is a Svelte store as it is
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
+- [modules/eslint-plugin.md](modules/eslint-plugin.md) — `@kontsedal/olas-eslint-plugin`: six syntax-only rules, the configs, and the example-app lint check
 - [modules/examples.md](modules/examples.md) — the five runnable example apps in `examples/`
 
 ## Entities

@@ -3,6 +3,7 @@
 import { createTestController } from '@kontsedal/olas-core/testing'
 import { describe, expect, test, vi } from 'vitest'
 import { createFakeApi } from '../src/api'
+import { composerController } from '../src/composer-controller'
 import { readerController } from '../src/controller'
 
 const flush = async () => {
@@ -121,6 +122,27 @@ describe('readerController — pagination', () => {
     expect(track.mock.calls[0]![0]).toMatchObject({ articleId: 'a3' })
     expect(root.api.progress.value.lastArticleId).toBe('a3')
 
+    root.dispose()
+  })
+})
+
+describe('composerController — posting a comment', () => {
+  test('the posted comment lands in the cache, and no snapshot is left pending', async () => {
+    const api = createFakeApi()
+    const root = createTestController(composerController, {
+      props: { articleId: 'a1' },
+      deps: { api },
+    })
+    const { comments, author, body, submit } = root.api
+    await comments.firstValue()
+    author.set('Ada')
+    body.set('A thoughtful comment about signals.')
+    // The body's debounced server check has to pass before submit validates.
+    await vi.waitFor(() => expect(body.isValid.value).toBe(true), { timeout: 2_000 })
+    const posted = await submit.run()
+    expect(comments.data.value?.[0]).toEqual(posted)
+    // A canonical patch: the server accepted the comment, so nothing waits to roll back.
+    expect(comments.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 })

@@ -64,7 +64,10 @@ export const composerController = defineController(
           signal,
         )
         // Patch the comments cache so the new comment appears immediately.
-        comments.setData((prev) => [posted, ...(prev ?? [])])
+        // The server already accepted it, so the snapshot settles at once: a
+        // local cache has no `write`, and an unsettled snapshot would leave
+        // `hasPendingMutations` true after every post.
+        comments.setData((prev) => [posted, ...(prev ?? [])]).finalize()
         body.reset()
         return posted
       },

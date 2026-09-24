@@ -38,6 +38,32 @@ describe('boardController — mutations', () => {
     }
   })
 
+  test('a board fetch in flight when a move starts cannot land over the move', async () => {
+    const { root, dispose } = createKanbanRoot()
+    try {
+      await root.api.board.board.firstValue()
+      const board0 = root.api.board.board.data.peek()!
+      const todo = board0.columns.find((c) => c.id === 'b1_todo')!
+      const cardId = todo.cardIds[0]!
+      // The refetch reads the server before the move reaches it, so its answer
+      // is stale. onMutate cancels it; without the cancel it overwrote the move.
+      const refetch = root.api.board.board.refetch().catch(() => null)
+      await root.api.board.moveCard.run({
+        cardId,
+        fromColumnId: todo.id,
+        toColumnId: 'b1_done',
+        toIndex: 0,
+      })
+      await refetch
+      await flush()
+      const after = root.api.board.board.data.peek()!
+      expect(after.columns.find((c) => c.id === 'b1_done')!.cardIds[0]).toBe(cardId)
+      expect(after.columns.find((c) => c.id === todo.id)!.cardIds).not.toContain(cardId)
+    } finally {
+      dispose()
+    }
+  })
+
   test('reorderColumn (serial) processes runs in order, even when fired in parallel', async () => {
     const { root, dispose } = createKanbanRoot()
     try {

@@ -90,6 +90,8 @@ The whole body runs inside an `effect`, so any signal read inside any validator 
 
 `debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` rather than the widened `Validator<T>`, so a direct caller storing the result in a `string | null` signal type-checks. It stays assignable wherever a `Validator<T>` is expected (`field.ts:545-548`).
 
+**A sync failure abandons the pass's async validators (1.0).** A pass runs every validator, sync and async together. When a sync one fails, the pass settles on its errors at once and does not wait for the async ones. `abandonAsyncResults` in `utils.ts` then aborts them and attaches a no-op handler to each promise. Without it, the rejection that the next pass or dispose caused was unhandled: clearing a field with `required` and a `debouncedValidator` logged an `AbortError`. The field, form and field-array runners share the helper. Pinned by `regressions.test.ts`, "an async validator abandoned by a failing sync one settles quietly".
+
 ## Form-level validators that target fields (T5.2)
 
 A validator on `FormOptions.validators` or on `FieldArrayOptions.validators` may return a `FormIssue[]` instead of a `string`. `FormImpl.runTopLevelValidators` and `FieldArrayImpl.runTopLevelValidators` collect all results, sync and async, via `appendIssues`. They hand them to `routeFormIssues(this, issues, topLevelErrors$, lastTargets)` in `form.ts`:

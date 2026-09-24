@@ -50,14 +50,12 @@ The one piece worth salvaging from the dropped vanilla adapter. 156 lines coveri
 
 Would live in `@kontsedal/olas-core` or alongside the React adapter, taking a real `Element` and returning a disposer. Reference implementation and its tests are recoverable from this session's history if picked up.
 
-### [idea] `@kontsedal/olas-eslint-plugin` — lint rules that catch correctness issues we can't enforce at the type level
+### [idea] Two more rules for `@kontsedal/olas-eslint-plugin`
 
-Examples:
+The plugin shipped in 1.0 with six rules (`.wiki/modules/eslint-plugin.md`). Two ideas from the original list did not make it:
 
-- fetcher and `mutate` body must use the `signal` parameter.
-- Controller factory must not be `async`.
-- Do not import `@kontsedal/olas-core/testing` outside test files.
-
+- **A fetcher or `mutate` that ignores its `signal`.** Without it, a superseded request runs to completion and `raceAbort` only hides the result. Syntax can see whether the `{ signal }` parameter is destructured and used; it cannot see whether a helper the body calls forwards it, so the rule would need an escape hatch.
+- **`@kontsedal/olas-core/testing` imported outside test files.** The sub-path exists so the import is greppable. The rule needs a file-glob option for what counts as a test.
 ### [idea] `@kontsedal/olas-vite-plugin` — HMR automation
 
 [from SPEC §16.5] Today's recommended HMR shape is "full root rebuild on hot update" (`root.dispose()` then `createRoot(...)` again, ~10 lines of Vite plugin glue). A first-party plugin would automate this.
@@ -133,6 +131,10 @@ Each of the four could be a separate change; they share one question, which is w
 [from the 1.0 coverage pass] `field.reset()` or `setAsInitial()` with an unchanged value clears an error a form-level validator routed onto the field, and the form does not re-run, because nothing it tracks changed. `form.isValid` can then read true while a form-level rule still fails, until the next edit. `submit()` is safe, since it re-validates first. A fix would re-route the form's last issues after a reset, or re-run the form validators when a routed target is cleared.
 
 ## Queries / data layer
+
+### [idea] `LocalCache` has no canonical `write`
+
+[from W13] `Query` has `setData` for an optimistic guess and `write` / `replace` for a canonical patch (`.wiki/decisions/canonical-vs-optimistic-writes.md`). `LocalCache` has only `setData`, so a canonical patch to a local cache is `setData(…).finalize()`. reader-ssr's composer forgot the `.finalize()`, and every post left `hasPendingMutations` true. `write` and `replace` on `LocalCache`, mirroring `Query`, would make the right call the obvious one.
 
 ### [idea] A `retry` or `retryDelay` callback that throws wedges `isFetching`
 
