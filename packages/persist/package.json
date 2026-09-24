@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-persist",
   "version": "0.8.0",
-  "description": "Olas persistence composables — usePersisted with localStorage and IndexedDB (indexedDbAdapter) storage adapters.",
+  "description": "Olas persistence — createPersisted and persistQueryCachePlugin over localStorage and IndexedDB (indexedDbAdapter) storage adapters.",
   "keywords": [
     "olas",
     "controller-tree",

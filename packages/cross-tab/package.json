@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-cross-tab",
   "version": "0.8.0",
-  "description": "Olas cross-tab cache sync — BroadcastChannel-backed QueryClientPlugin keeping every browser tab in lockstep.",
+  "description": "Olas cross-tab cache sync — a BroadcastChannel-backed plugin that keeps every browser tab's query cache in step.",
   "keywords": [
     "olas",
     "controller-tree",
