@@ -76,7 +76,7 @@ export const userQuery = defineQuery({
 
 - **`id`** is required, and `defineQuery` throws without it. It names the query in SSR payloads, plugin events, devtools and error contexts. Write it by hand: a name derived from `fetcher.name` changes under minification, and the server and client bundles must agree on it (§5.2).
 - **`key(...args)`** turns the arguments into the cache key. The client hashes its output, and the same hash means the same entry.
-- **`fetcher(ctx, ...args)`** receives the fetch context `{ signal, deps }` first, then the original arguments. Pass `signal` to your I/O so an aborted fetch stops the request.
+- **`fetcher(ctx, ...args)`** receives the fetch context `{ signal, deps }` first, then the original arguments. Pass `signal` to your I/O so an aborted fetch stops the request. [`olas/honor-abort-signal`](https://github.com/Kontsedal/olas/blob/main/packages/eslint-plugin/docs/honor-abort-signal.md), in the lint plugin's `strict` config, reports a fetcher that does not.
 
 The fetcher gets the arguments you passed, not the output of `key`. Here it receives `'u1'`, while the hash is built from `['user', 'u1']`. The [callArgs vs keyArgs pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/callargs-vs-keyargs.md) records the bug that confusion caused once.
 

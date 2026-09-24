@@ -2784,7 +2784,7 @@ On the **server**, seed with `createRouterAdapter(initial)`. The Bridge only pus
 
 # @kontsedal/olas-eslint-plugin
 
-Six syntax-only lint rules for the mistakes the types cannot see, such as a React hook in a controller factory or an optimistic write whose snapshot no code settles. The default export is the plugin, with `rules` and two flat configs, `recommended` and `strict`.
+Eight syntax-only lint rules for the mistakes the types cannot see, such as a React hook in a controller factory or an optimistic write whose snapshot no code settles. The default export is the plugin, with `rules` and two flat configs, `recommended` and `strict`.
 
 ```js
 // eslint.config.js

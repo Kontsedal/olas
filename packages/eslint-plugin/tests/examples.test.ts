@@ -1,8 +1,9 @@
 /**
- * The `recommended` config over the example apps' source, as a check against
- * false positives: the examples are idiomatic Olas, so an error there is a
- * rule bug until shown otherwise. Warnings are listed in the assertion, so a
- * new one shows up in review.
+ * Both configs over the example apps' source and tests, as a check against
+ * false positives: the examples are idiomatic Olas, so a finding there is a
+ * rule bug until shown otherwise. `strict` is run too, so the opt-in rules
+ * get the same check. The tests are linted because `no-testing-outside-tests`
+ * must pass the test files that import `@kontsedal/olas-core/testing`.
  */
 import { resolve } from 'node:path'
 import tsParser from '@typescript-eslint/parser'
@@ -12,8 +13,8 @@ import plugin from '../src'
 
 const repo = resolve(__dirname, '../../..')
 
-describe('recommended config on the example apps', () => {
-  test('reports no errors, and only the warnings listed here', async () => {
+describe('the configs on the example apps', () => {
+  test.each(['recommended', 'strict'] as const)('%s reports nothing', async (name) => {
     const eslint = new ESLint({
       cwd: repo,
       overrideConfigFile: true,
@@ -25,10 +26,13 @@ describe('recommended config on the example apps', () => {
             parserOptions: { ecmaFeatures: { jsx: true } },
           },
         },
-        plugin.configs.recommended,
+        plugin.configs[name],
       ],
     })
-    const results = await eslint.lintFiles(['examples/*/src/**/*.{ts,tsx}'])
+    const results = await eslint.lintFiles([
+      'examples/*/src/**/*.{ts,tsx}',
+      'examples/*/tests/**/*.{ts,tsx}',
+    ])
     expect(results.length).toBeGreaterThan(50)
     const findings = results.flatMap((r) =>
       r.messages.map((m) => ({

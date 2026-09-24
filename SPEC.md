@@ -2441,7 +2441,7 @@ Fourteen packages are published. `packages/integration` is private and holds the
 | `@kontsedal/olas-entities` | Plugin that walks query data via per-entity `idOf`, normalizes into a reactive per-id signal store, and backpropagates `entities.update(Post, id, patch)` to every query holding the entity. §18.1. |
 | `@kontsedal/olas-realtime` | Composables over a consumer-supplied `RealtimeService` — `createRealtimePatcher` (WebSocket / SSE → cache patch), `createLiveStream` (tail-buffer with capacity + coalesced flush) and `createConnectionState`. §16.5. |
 | `@kontsedal/olas-router` | `createRouterAdapter`: a plugin providing route params, search and pathname scopes, plus a `Bridge` for TanStack Router or React Router v6. §16.5. |
-| `@kontsedal/olas-eslint-plugin` | Six syntax-only lint rules, with `recommended` and `strict` flat configs. |
+| `@kontsedal/olas-eslint-plugin` | Eight syntax-only lint rules, with `recommended` and `strict` flat configs. |
 | `@kontsedal/olas-codemod` | The 0.8 → 1.0 migration CLI on ts-morph: `npx @kontsedal/olas-codemod 1.0`. |
 
 A vanilla binding needs no package: every signal exposes `subscribe()` and `peek()` (§16).

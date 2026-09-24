@@ -74,7 +74,7 @@ Fourteen packages publish to npm. `packages/integration` is a private cross-pack
 | `@kontsedal/olas-realtime` | `createRealtimePatcher` + `createLiveStream` + `createConnectionState` over a consumer-supplied `RealtimeService` |
 | `@kontsedal/olas-mutation-queue` | `mutationQueuePlugin({ storage })` — durable persist and reload-safe replay for mutations with `meta: { persist: true }`, controlled through the `MutationQueue` scope |
 | `@kontsedal/olas-router` | `createRouterAdapter()` returns `{ plugin, Bridge }`; the plugin provides the `RouteParamsScope`/`RouteSearchScope`/`RoutePathnameScope` scopes — TanStack Router / React Router v6 |
-| `@kontsedal/olas-eslint-plugin` | Six syntax-only lint rules, with `recommended` and `strict` flat configs (`modules/eslint-plugin.md`) |
+| `@kontsedal/olas-eslint-plugin` | Eight syntax-only lint rules, with `recommended` and `strict` flat configs (`modules/eslint-plugin.md`) |
 | `@kontsedal/olas-codemod` | `npx @kontsedal/olas-codemod 1.0`: the 0.8 → 1.0 migration on ts-morph (`modules/codemod.md`) |
 
 Docs and examples: a README for every published package, `MIGRATING.md`, `RECIPES.md`, `PLUGINS.md` (the plugin authoring guide), and TSDoc. Five runnable example apps: kanban as the flagship, plus stock-ticker, reader-ssr, virtualized-table and vue-tasks. The integration suite includes an adapter-parity run of one set of scenarios through React, `preact/compat`, Vue and Svelte (`decisions/framework-adapters.md`).

@@ -2,17 +2,21 @@ import type { TSESLint } from '@typescript-eslint/utils'
 import type { ESLint, Linter } from 'eslint'
 import { cancelBeforeOptimistic } from './rules/cancel-before-optimistic'
 import { defineAtModuleScope } from './rules/define-at-module-scope'
+import { honorAbortSignal } from './rules/honor-abort-signal'
 import { noAsyncControllerFactory } from './rules/no-async-controller-factory'
 import { noNetworkInComponents } from './rules/no-network-in-components'
 import { noReactHooksInControllers } from './rules/no-react-hooks-in-controllers'
+import { noTestingOutsideTests } from './rules/no-testing-outside-tests'
 import { optimisticReturnsSnapshot } from './rules/optimistic-returns-snapshot'
 
 export const rules = {
   'cancel-before-optimistic': cancelBeforeOptimistic,
   'define-at-module-scope': defineAtModuleScope,
+  'honor-abort-signal': honorAbortSignal,
   'no-async-controller-factory': noAsyncControllerFactory,
   'no-network-in-components': noNetworkInComponents,
   'no-react-hooks-in-controllers': noReactHooksInControllers,
+  'no-testing-outside-tests': noTestingOutsideTests,
   'optimistic-returns-snapshot': optimisticReturnsSnapshot,
 } satisfies Record<string, TSESLint.RuleModule<string, unknown[]>>
 
@@ -33,8 +37,9 @@ const plugin: OlasEslintPlugin = {
 }
 
 /**
- * `recommended` turns on every rule except the opt-in `no-network-in-components`.
- * `strict` adds it, and raises `cancel-before-optimistic` to an error.
+ * `recommended` turns on every rule except the two opt-in ones,
+ * `no-network-in-components` and `honor-abort-signal`. `strict` adds both,
+ * and raises `cancel-before-optimistic` to an error.
  *
  * ```js
  * // eslint.config.js
@@ -50,6 +55,7 @@ plugin.configs.recommended = {
     'olas/define-at-module-scope': 'error',
     'olas/no-async-controller-factory': 'error',
     'olas/no-react-hooks-in-controllers': 'error',
+    'olas/no-testing-outside-tests': 'error',
     'olas/optimistic-returns-snapshot': 'error',
   },
 }
@@ -59,6 +65,7 @@ plugin.configs.strict = {
   rules: {
     ...plugin.configs.recommended.rules,
     'olas/cancel-before-optimistic': 'error',
+    'olas/honor-abort-signal': 'error',
     'olas/no-network-in-components': 'error',
   },
 }

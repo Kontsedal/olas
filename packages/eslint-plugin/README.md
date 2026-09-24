@@ -1,6 +1,6 @@
 # @kontsedal/olas-eslint-plugin
 
-ESLint rules for [Olas](../..) apps. Each rule catches a mistake the types cannot see: a React hook in a controller factory, a definition that loses its identity, or an `async` factory. Two rules guard optimistic writes, and an opt-in rule keeps network calls out of components.
+ESLint rules for [Olas](../..) apps. Each rule catches a mistake the types cannot see, such as a React hook in a controller factory, a definition that loses its identity or an `async` factory. Another keeps test helpers out of app code, and two rules guard optimistic writes. Two opt-in rules keep network calls out of components and make each request take its abort signal.
 
 ## Install
 
@@ -20,7 +20,7 @@ import tseslint from 'typescript-eslint'
 export default [...tseslint.configs.recommended, olas.configs.recommended]
 ```
 
-`olas.configs.strict` adds the opt-in rule and raises `cancel-before-optimistic` to an error.
+`olas.configs.strict` adds the two opt-in rules and raises `cancel-before-optimistic` to an error.
 
 The configs are typed with ESLint's own `Linter.Config`, so a typed `eslint.config.ts` accepts them as they are, in an array or through `defineConfig`. Each rule is named with the `olas/` prefix, so one rule can be set on its own after a config:
 
@@ -41,9 +41,13 @@ export default [
 | [`no-async-controller-factory`](docs/no-async-controller-factory.md) | error | error | An `async` factory, which makes the controller's api a promise. |
 | [`optimistic-returns-snapshot`](docs/optimistic-returns-snapshot.md) | error | error | A `setData` snapshot that `onMutate` does not return, or that other code discards. |
 | [`cancel-before-optimistic`](docs/cancel-before-optimistic.md) | warn | error | An optimistic `setData` in `onMutate` with no `cancel` on the same query before it. |
+| [`no-testing-outside-tests`](docs/no-testing-outside-tests.md) | error | error | `@kontsedal/olas-core/testing` imported from a file that is not a test. |
 | [`no-network-in-components`](docs/no-network-in-components.md) | off | error | `fetch` or `axios` inside a React component. |
+| [`honor-abort-signal`](docs/honor-abort-signal.md) | off | error | A `fetcher` or `mutate` that does not read its `signal`, so a cancelled request runs to the end. |
+
+Two rules take options. `no-testing-outside-tests` takes `testFiles`, the globs that count as tests. `honor-abort-signal` takes `ignorePattern`, for a context whose name marks work with nothing to abort, such as `_ctx`.
 
 ## How it is checked
 
 - `tests/rules.test.ts` runs every rule through `@typescript-eslint/rule-tester`, with valid and invalid cases.
-- `tests/examples.test.ts` runs `recommended` over the source of every example app in this repo and expects no findings. The first run found four real mistakes in the examples: three optimistic writes with no `cancel` first, and one leaked snapshot. It also found two false positives in `define-at-module-scope`. All six are fixed.
+- `tests/examples.test.ts` runs `recommended` and `strict` over the source and tests of every example app in this repo, and expects no findings. The first run found four real mistakes in the examples: three optimistic writes with no `cancel` first, and one leaked snapshot. It also found two false positives in `define-at-module-scope`. All six are fixed.

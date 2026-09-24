@@ -1,6 +1,7 @@
 import { RuleTester } from '@typescript-eslint/rule-tester'
-import { afterAll, describe, it } from 'vitest'
+import { afterAll, describe, expect, it } from 'vitest'
 import plugin, { rules } from '../src'
+import { globToRegExp } from '../src/rules/no-testing-outside-tests'
 
 RuleTester.afterAll = afterAll
 RuleTester.describe = describe
@@ -195,16 +196,247 @@ tester.run('no-network-in-components', rules['no-network-in-components'], {
   ],
 })
 
+const Q = "id: 'u', key: () => []"
+
+tester.run('honor-abort-signal', rules['honor-abort-signal'], {
+  valid: [
+    `defineQuery({ ${Q}, fetcher: ({ signal }) => fetch('/u', { signal }) })`,
+    `defineInfiniteQuery({ ${Q}, fetcher: ({ pageParam, signal, deps }) => deps.api.page(pageParam, signal) })`,
+    // A renamed binding, a default value, and a quoted or computed-literal key.
+    "defineMutation({ id: 'm', mutate: (vars, { signal: abort }) => api.save(vars, abort) })",
+    'createCache(ctx, ({ signal } = fallback) => api.get(signal))',
+    `defineQuery({ ${Q}, 'fetcher': ({ ['signal']: s }) => load(s) })`,
+    // The context read through its name.
+    'createCache(ctx, (c) => api.get(c.signal))',
+    "createCache(ctx, (c) => api.get(c['signal']))",
+    'createCache(ctx, (c) => { const { signal } = c; return api.get(signal) })',
+    `defineQuery({ ${Q}, fetcher(ctx) { const { deps, ...rest } = ctx; return deps.get(rest) } })`,
+    // The whole context passed on counts: syntax cannot see into the helper.
+    `defineQuery({ ${Q}, fetcher: (ctx, id) => getUser(ctx, id) })`,
+    'createCache(ctx, (c) => { c.deps.log(); return load({ ...c }) })',
+    'createCache(ctx, (c) => { const copy = c; return load(copy) })',
+    'createCache(ctx, (c) => api.get(c[key]))',
+    'createCache(ctx, ({ [key]: value }) => load(value))',
+    'createCache(ctx, ({ deps, ...rest }) => deps.load(rest))',
+    'createMutation(ctx, { mutate: (...args) => save(...args) })',
+    "defineMutation({ id: 'm', mutate: (vars, ...rest) => save(vars, ...rest) })",
+    `defineQuery({ ${Q}, fetcher: function () { return load.apply(null, arguments) } })`,
+    // A nested pattern reads the signal; an array pattern is not a context shape.
+    'createCache(ctx, ({ signal: { aborted } }) => (aborted ? null : load()))',
+    'createCache(ctx, ([first]) => load(first))',
+    'createCache(ctx, (...[first]) => load(first))',
+    // An underscore marks work with nothing to abort.
+    `defineQuery({ ${Q}, fetcher: (_ctx) => Promise.resolve(1) })`,
+    "defineMutation({ id: 'm', mutate: (v, { signal: _signal }) => local(v) })",
+    'createMutation(ctx, { mutate: (v, ..._rest) => local(v) })',
+    'createCache(ctx, (c) => { const { signal: _s } = c; return local() })',
+    { code: 'createCache(ctx, (unusedCtx) => local())', options: [{ ignorePattern: '^unused' }] },
+    // A function passed by name is not followed.
+    `defineQuery({ ${Q}, fetcher })`,
+    "defineMutation({ id: 'm', mutate: saveTodo })",
+    'createCache(ctx, loadTrades)',
+    'createMutation(ctx, saveTodo, { onSuccess })',
+    'defineQuery(spec)',
+    // The last `fetcher` wins, as at runtime.
+    `defineQuery({ ${Q}, fetcher: () => 1, fetcher: ({ signal }) => load(signal) })`,
+    // Not a definer, or not the function the engine hands a signal.
+    "other({ fetcher: () => fetch('/x') })",
+    'createMutation(ctx, { mutate: (v, { signal }) => save(v, signal), onMutate: () => q.setData((p) => p) })',
+    '(() => ({ mutate: () => 1 }))()',
+  ],
+  invalid: [
+    {
+      code: `defineQuery({ ${Q}, fetcher: () => fetch('/u') })`,
+      // The report marks the head, `() => `, not the body.
+      errors: [{ messageId: 'missing', data: { name: 'fetcher' }, column: 48, endColumn: 54 }],
+    },
+    {
+      code: "defineMutation({ id: 'm', mutate: async (vars) => api.save(vars) })",
+      errors: [{ messageId: 'missing', data: { name: 'mutate' } }],
+    },
+    {
+      code: `olas.defineQuery({ ${Q}, fetcher: function () { return load() } })`,
+      errors: [{ messageId: 'missing' }],
+    },
+    {
+      code: `defineInfiniteQuery({ ${Q}, fetcher: ({ pageParam, deps }) => deps.api.page(pageParam) })`,
+      errors: [{ messageId: 'notTaken', data: { name: 'fetcher' } }],
+    },
+    {
+      code: 'createMutation(ctx, { mutate: async (vars, { signal }) => { await api.save(vars) } })',
+      errors: [{ messageId: 'unused', data: { name: 'mutate' } }],
+    },
+    {
+      code: 'createCache(ctx, (c) => c.deps.api.load())',
+      errors: [{ messageId: 'notTaken' }],
+    },
+    {
+      code: 'createCache(ctx, function (c) { return load() })',
+      errors: [{ messageId: 'notTaken' }],
+    },
+    {
+      code: 'createCache(ctx, (c = fallback) => load())',
+      errors: [{ messageId: 'notTaken' }],
+    },
+    {
+      code: 'createCache(ctx, (c) => { const { signal } = c; return load() })',
+      errors: [{ messageId: 'unused' }],
+    },
+    {
+      code: 'createCache(ctx, (c) => { const { deps } = c; return deps.load() })',
+      errors: [{ messageId: 'notTaken' }],
+    },
+    {
+      code: 'createMutation(ctx, { mutate: (vars, ...rest) => save(vars) })',
+      errors: [{ messageId: 'notTaken' }],
+    },
+    {
+      code: 'createCache(ctx, ({ deps, ...rest }) => deps.load())',
+      errors: [{ messageId: 'notTaken' }],
+    },
+    {
+      code: 'createCache(ctx, (_ctx) => load())',
+      options: [{ ignorePattern: '^unused' }],
+      errors: [{ messageId: 'notTaken' }],
+    },
+    {
+      code: `defineQuery({ ${Q}, fetcher: ({ signal }) => load(signal), fetcher: () => load() })`,
+      errors: [{ messageId: 'missing' }],
+    },
+  ],
+})
+
+const TESTING_IMPORT = "import { createTestController } from '@kontsedal/olas-core/testing'"
+
+tester.run('no-testing-outside-tests', rules['no-testing-outside-tests'], {
+  valid: [
+    { code: TESTING_IMPORT, filename: 'src/app.test.ts' },
+    { code: TESTING_IMPORT, filename: 'src/app.spec.tsx' },
+    { code: TESTING_IMPORT, filename: 'tests/types.test-d.ts' },
+    { code: TESTING_IMPORT, filename: 'packages/app/tests/helpers.ts' },
+    { code: TESTING_IMPORT, filename: 'test/helpers.ts' },
+    { code: TESTING_IMPORT, filename: 'src/__tests__/app.ts' },
+    // An `import type` is erased at build time.
+    {
+      code: "import type { PluginRecorder } from '@kontsedal/olas-core/testing'",
+      filename: 'src/a.ts',
+    },
+    {
+      code: "export type { PluginRecorder } from '@kontsedal/olas-core/testing'",
+      filename: 'src/a.ts',
+    },
+    { code: "export type * from '@kontsedal/olas-core/testing'", filename: 'src/a.ts' },
+    // Other modules, and imports the rule cannot resolve.
+    { code: "import { createRoot } from '@kontsedal/olas-core'", filename: 'src/a.ts' },
+    { code: 'export const x = 1; const t = require(name); import(name)', filename: 'src/a.ts' },
+    {
+      code: "load('@kontsedal/olas-core/testing'); obj.require('@kontsedal/olas-core/testing')",
+      filename: 'src/a.ts',
+    },
+    {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: the code under test is a template literal
+      code: 'import(`@kontsedal/olas-core/${sub}`)',
+      filename: 'src/a.ts',
+    },
+    // `testFiles` names what counts as a test.
+    {
+      code: TESTING_IMPORT,
+      filename: 'src/test-utils.ts',
+      options: [{ testFiles: ['src/test-utils.ts'] }],
+    },
+    {
+      code: TESTING_IMPORT,
+      filename: 'src/Button.stories.tsx',
+      options: [{ testFiles: ['**/*.{stories,fixture}.tsx'] }],
+    },
+    { code: TESTING_IMPORT, filename: 'e2e/a/b.ts', options: [{ testFiles: ['e2e/**'] }] },
+  ],
+  invalid: [
+    { code: TESTING_IMPORT, filename: 'src/app.ts', errors: [{ messageId: 'outside' }] },
+    {
+      // An inline `type` specifier keeps the import at runtime.
+      code: "import { type PluginRecorder, mockFetchPlugin } from '@kontsedal/olas-core/testing'",
+      filename: 'src/app.ts',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      code: "export * from '@kontsedal/olas-core/testing'",
+      filename: 'src/index.ts',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      code: "export { mockFetchPlugin } from '@kontsedal/olas-core/testing'",
+      filename: 'src/index.ts',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      code: "const t = import('@kontsedal/olas-core/testing')",
+      filename: 'src/app.ts',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      code: 'const t = import(`@kontsedal/olas-core/testing`)',
+      filename: 'src/app.ts',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      code: "const t = require('@kontsedal/olas-core/testing')",
+      filename: 'src/app.ts',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      // A directory is matched by whole segment: `contests` is not `tests`.
+      code: TESTING_IMPORT,
+      filename: 'src/contests/a.ts',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      // `testFiles` replaces the defaults.
+      code: TESTING_IMPORT,
+      filename: 'src/app.test.ts',
+      options: [{ testFiles: ['e2e/**'] }],
+      errors: [{ messageId: 'outside' }],
+    },
+  ],
+})
+
+describe('globToRegExp', () => {
+  it('matches whole path segments, braces and literal characters', () => {
+    const cases: Array<[string, string, boolean]> = [
+      ['**/tests/**', 'tests/a.ts', true],
+      ['**/tests/**', 'a/b/tests/c/d.ts', true],
+      ['**/tests/**', 'a/contests/d.ts', false],
+      ['**/*.test.*', 'src/a.test.ts', true],
+      ['**/*.test.*', 'src/a.test.dir/b.ts', false],
+      ['src/**', 'src/a/b.ts', true],
+      ['src/**.ts', 'src/a/b.ts', true],
+      ['src/*.ts', 'src/a/b.ts', false],
+      ['src/t?st.ts', 'src/test.ts', true],
+      ['src/t?st.ts', 'src/t/st.ts', false],
+      ['**/*.{stories,fixture}.tsx', 'a/B.fixture.tsx', true],
+      // Outside braces, `,` and `}` are literal, like `[`, `(` and `+`.
+      ['a,b}.ts', 'a,b}.ts', true],
+      ['src/[id]/(group)/+page.ts', 'src/[id]/(group)/+page.ts', true],
+      ['src/[id].ts', 'src/i.ts', false],
+    ]
+    for (const [glob, path, expected] of cases) {
+      expect([glob, path, globToRegExp(glob).test(path)]).toEqual([glob, path, expected])
+    }
+  })
+})
+
 describe('configs', () => {
-  it('recommended enables every rule except the opt-in one; strict adds it', () => {
+  // Rules `recommended` leaves off, because they report correct code often
+  // enough to need a decision per project. Each rule's doc says why.
+  const optIn = ['olas/no-network-in-components', 'olas/honor-abort-signal']
+
+  it('recommended enables every rule except the opt-in ones; strict adds them', () => {
     const recommended = Object.keys(plugin.configs.recommended.rules ?? {})
     const strict = Object.keys(plugin.configs.strict.rules ?? {})
     const all = Object.keys(rules).map((r) => `olas/${r}`)
-    if (recommended.includes('olas/no-network-in-components')) throw new Error('opt-in leaked')
-    for (const r of all) {
-      if (r !== 'olas/no-network-in-components' && !recommended.includes(r))
-        throw new Error(`${r} missing`)
-      if (!strict.includes(r)) throw new Error(`${r} missing from strict`)
-    }
+    expect(all).toHaveLength(8)
+    expect(recommended.filter((r) => optIn.includes(r))).toEqual([])
+    expect(all.filter((r) => !optIn.includes(r) && !recommended.includes(r))).toEqual([])
+    expect(all.filter((r) => !strict.includes(r))).toEqual([])
   })
 })

@@ -114,8 +114,12 @@ fix a finding rather than disabling the rule:
   and no code discards one.
 - `cancel-before-optimistic` — `cancel` on the same query before an
   optimistic `setData` (a warning in `recommended`, an error in `strict`).
+- `no-testing-outside-tests` — `@kontsedal/olas-core/testing` imported
+  only from test files; the `testFiles` option names them.
 - `no-network-in-components` — no `fetch` or `axios` inside a React
   component (on in `strict` only).
+- `honor-abort-signal` — a `fetcher` or `mutate` reads `signal` from its
+  context and passes it on (on in `strict` only).
 
 ## Common gotchas
 

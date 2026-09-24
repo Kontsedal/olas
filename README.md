@@ -570,7 +570,7 @@ A floating button opens a panel over `root.debug`: the controller tree, a timeli
 
 ### Lint rules
 
-`@kontsedal/olas-eslint-plugin` checks the conventions the types cannot see. Its six rules catch a React hook inside a controller factory, a `defineQuery` or `defineMutation` built inside a function, and an `async` factory. They also catch an optimistic `setData` with no `cancel` before it, a snapshot `onMutate` does not return, and `fetch` inside a component.
+`@kontsedal/olas-eslint-plugin` checks the conventions the types cannot see. Its eight rules catch a React hook inside a controller factory, a `defineQuery` or `defineMutation` built inside a function, and an `async` factory. They also catch an optimistic `setData` with no `cancel` before it, a snapshot `onMutate` does not return, and `@kontsedal/olas-core/testing` imported outside a test. Two opt-in rules catch `fetch` inside a component, and a fetcher or `mutate` that does not pass its `signal` on.
 
 ```js
 // eslint.config.js
@@ -580,7 +580,7 @@ import tseslint from 'typescript-eslint'
 export default [...tseslint.configs.recommended, olas.configs.recommended]
 ```
 
-`recommended` turns on five rules. `strict` adds `no-network-in-components` and raises `cancel-before-optimistic` from a warning to an error. The rules read syntax only, so they need no type information. The [package README](packages/eslint-plugin) lists each rule.
+`recommended` turns on six rules. `strict` adds `no-network-in-components` and `honor-abort-signal`, and raises `cancel-before-optimistic` from a warning to an error. The rules read syntax only, so they need no type information. The [package README](packages/eslint-plugin) lists each rule.
 
 ### Upgrading from 0.8
 
@@ -642,7 +642,7 @@ For more depth, every concept above maps to a section in [`SPEC.md`](SPEC.md).
 | [`@kontsedal/olas-realtime`](packages/realtime) | `createRealtimePatcher`, `createLiveStream` and `createConnectionState` over a consumer-supplied `RealtimeService`. |
 | [`@kontsedal/olas-mutation-queue`](packages/mutation-queue) | Best-effort, replay-safe mutation queue. Persists runs of a `defineMutation({ meta: { persist: true } })` to a `StorageAdapter`; replays pending entries on reload / crash / reconnect (Web-Locks-coordinated cross-tab). |
 | [`@kontsedal/olas-router`](packages/router) | Generic router bridge — `createRouterAdapter()` returns a plugin that provides `RouteParamsScope` / `RouteSearchScope` / `RoutePathnameScope`, and a `Bridge` component that feeds them. Works with TanStack Router or React Router v6. |
-| [`@kontsedal/olas-eslint-plugin`](packages/eslint-plugin) | Six syntax-only lint rules, with `recommended` and `strict` flat configs. |
+| [`@kontsedal/olas-eslint-plugin`](packages/eslint-plugin) | Eight syntax-only lint rules, with `recommended` and `strict` flat configs. |
 | [`@kontsedal/olas-codemod`](packages/codemod) | The 0.8 → 1.0 migration: `npx @kontsedal/olas-codemod 1.0`. |
 
 **Versioning.** Each package versions independently. A release bumps only the packages that changed, so version numbers across the suite will not match and are not meant to. Install whichever packages you use at whatever versions npm resolves. Each declares the range of `@kontsedal/olas-core` it works with as a peer dependency, so an incompatible combination fails at install time rather than at runtime.

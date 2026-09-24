@@ -231,7 +231,7 @@ await toggle.run('t1').catch((err) => {
 Two edge cases complete the picture:
 
 - **A run that already finished is finalized, not rolled back.** When `mutate` resolves and a dispose or `reset()` lands before the run continues, the work has happened. The runner finalizes the snapshot instead of rolling it back, plugins hear `'success'`, and the caller's promise still rejects with an `AbortError`. `onSuccess` does not run on that path, so its invalidation does not fire.
-- **A `mutate` that ignores its signal still lets the caller go.** The runner races the `mutate` promise against the signal, so an aborted run settles at once for the caller. The [raceAbort pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/raceabort-for-misbehaving-mutate.md) records why. The request itself runs on unless `mutate` passes `signal` to its I/O.
+- **A `mutate` that ignores its signal still lets the caller go.** The runner races the `mutate` promise against the signal, so an aborted run settles at once for the caller. The [raceAbort pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/raceabort-for-misbehaving-mutate.md) records why. The request itself runs on unless `mutate` passes `signal` to its I/O. [`olas/honor-abort-signal`](https://github.com/Kontsedal/olas/blob/main/packages/eslint-plugin/docs/honor-abort-signal.md), in the lint plugin's `strict` config, reports a `mutate` that does not.
 
 ## Detached runs
 

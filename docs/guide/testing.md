@@ -14,7 +14,7 @@ This page covers the helpers in `@kontsedal/olas-core/testing` and the patterns 
 | `fakeField(initial, overrides?)` | Stand in for a `Field` in a component test. |
 | `fakeAsyncState(overrides?)` | Stand in for a query's `AsyncState` in a component test. |
 
-The helpers sit on their own sub-path, `@kontsedal/olas-core/testing`, rather than the main entry. That keeps them out of an app's production imports, and an import of them in production code is one grep away. The package's `exports` map publishes the sub-path beside the main entry.
+The helpers sit on their own sub-path, `@kontsedal/olas-core/testing`, rather than the main entry. That keeps them out of an app's production imports, and an import of them in production code is one grep away. [`olas/no-testing-outside-tests`](https://github.com/Kontsedal/olas/blob/main/packages/eslint-plugin/docs/no-testing-outside-tests.md), in the lint plugin's `recommended` config, reports one. The package's `exports` map publishes the sub-path beside the main entry.
 
 ## The controller under test
 

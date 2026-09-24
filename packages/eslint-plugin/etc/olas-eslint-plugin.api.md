@@ -28,6 +28,11 @@ export const rules: {
     'define-at-module-scope': TSESLint.RuleModule<"nested", [], unknown, TSESLint.RuleListener> & {
         name: string;
     };
+    'honor-abort-signal': TSESLint.RuleModule<"missing" | "notTaken" | "unused", [{
+        ignorePattern: string;
+    }], unknown, TSESLint.RuleListener> & {
+        name: string;
+    };
     'no-async-controller-factory': TSESLint.RuleModule<"async", [], unknown, TSESLint.RuleListener> & {
         name: string;
     };
@@ -37,7 +42,12 @@ export const rules: {
     'no-react-hooks-in-controllers': TSESLint.RuleModule<"hook", [], unknown, TSESLint.RuleListener> & {
         name: string;
     };
-    'optimistic-returns-snapshot': TSESLint.RuleModule<"dropped" | "outside", [], unknown, TSESLint.RuleListener> & {
+    'no-testing-outside-tests': TSESLint.RuleModule<"outside", [{
+        testFiles: string[];
+    }], unknown, TSESLint.RuleListener> & {
+        name: string;
+    };
+    'optimistic-returns-snapshot': TSESLint.RuleModule<"outside" | "dropped", [], unknown, TSESLint.RuleListener> & {
         name: string;
     };
 };
