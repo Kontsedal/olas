@@ -31,9 +31,6 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
       devtools,
       deps: options.deps as Record<string, unknown>,
       hydrate: options.hydrate,
-      refetchOnWindowFocus: options.refetchOnWindowFocus,
-      refetchOnReconnect: options.refetchOnReconnect,
-      defaultQueryOptions: options.defaultQueryOptions,
       plugins: options.plugins,
     }) ?? null
   if (__DEV__ && options.queries === undefined) {
@@ -57,8 +54,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     devtools,
     onError: options.onError,
     queryClient,
-    queryDefaults:
-      options.queries?.__options.defaultQueryOptions ?? options.defaultQueryOptions ?? {},
+    queryDefaults: options.queries?.__options.defaults ?? {},
     scopesVersion: { value: 0 },
   }
 

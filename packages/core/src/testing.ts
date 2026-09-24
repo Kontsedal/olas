@@ -18,16 +18,11 @@ export type TestControllerOptions<Props, TDeps> = {
   deps: TDeps
   onError?: RootOptions<TDeps>['onError']
   /**
-   * Root-wide query defaults, same shape as `createRoot`'s. Exposed here so
-   * a controller whose behavior depends on them (staleTime-driven refetch,
-   * retry counts) can be tested without hand-rolling a root wrapper.
-   */
-  defaultQueryOptions?: RootOptions<TDeps>['defaultQueryOptions']
-  /**
    * The query engine. Unlike `createRoot`, this defaults to a live one:
    * a test controller exists to exercise a controller's behavior, and
-   * making every test opt in to the cache would be noise. Pass `null` to
-   * assert the no-engine path.
+   * making every test opt in to the cache would be noise. Pass
+   * `queryEngine({ defaults })` to test against root-wide defaults, or
+   * `null` to assert the no-engine path.
    */
   queries?: QueryEngine | null
   plugins?: RootOptions<TDeps>['plugins']
@@ -52,7 +47,6 @@ export function createTestController<
   return createRootWithProps<Props, Api, TDeps>(def, options.props as Props, {
     deps: options.deps,
     onError: options.onError,
-    defaultQueryOptions: options.defaultQueryOptions,
     queries: options.queries === null ? undefined : (options.queries ?? queryEngine()),
     plugins: options.plugins,
     scopes: options.scopes,

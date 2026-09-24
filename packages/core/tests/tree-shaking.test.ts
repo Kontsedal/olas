@@ -129,7 +129,7 @@ describe('a root without a query engine', () => {
 
     const client = createRoot(
       defineController(() => ({})),
-      { ...noDeps, queries: queryEngine({ hydrate: state }) },
+      { ...noDeps, queries: queryEngine(), hydrate: state },
     )
     expect(client.debug.queryEntries()).toEqual([])
     client.dispose()
@@ -165,13 +165,13 @@ describe('a root with a query engine behaves as before', () => {
     root.dispose()
   })
 
-  test('defaultQueryOptions on the engine reach createCache too', async () => {
+  test('engine defaults reach createCache too', async () => {
     // The client and controller-local caches resolve defaults from different
     // places, so this is the seam where the two drift apart.
     const def = defineController((ctx) => ({ local: createCache(ctx, async () => 1) }))
     const root = createRoot(def, {
       ...noDeps,
-      queries: queryEngine({ defaultQueryOptions: { staleTime: 300_000 } }),
+      queries: queryEngine({ defaults: { staleTime: 300_000 } }),
     })
     await root.api.local.invalidate()
     expect(root.api.local.isStale.value).toBe(false)
@@ -183,24 +183,6 @@ describe('ctx internals are not a public contract', () => {
   test('a hand-rolled ctx gets a named error rather than a property crash', () => {
     const fake = { deps: {} } as never
     expect(() => createField(fake, '')).toThrow(/not a controller ctx/)
-  })
-})
-
-describe('an engine belongs to exactly one root', () => {
-  test('reusing one across roots throws rather than cross-wiring plugins', () => {
-    const engine = queryEngine()
-    const def = defineController(() => ({}))
-    const first = createRoot(def, { ...noDeps, queries: engine })
-    expect(() => createRoot(def, { ...noDeps, queries: engine })).toThrow(/already adopted/)
-    first.dispose()
-  })
-
-  test('a fresh engine per root is fine', () => {
-    const def = defineController(() => ({}))
-    const a = createRoot(def, { ...noDeps, queries: queryEngine() })
-    const b = createRoot(def, { ...noDeps, queries: queryEngine() })
-    a.dispose()
-    b.dispose()
   })
 })
 

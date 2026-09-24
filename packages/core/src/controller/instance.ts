@@ -3,7 +3,7 @@ import { createEmitter, type Emitter } from '../emitter'
 import { dispatchError, type ErrorHandler } from '../errors'
 import type { QueryClient } from '../query/client'
 import { missingQueryEngine } from '../query/missing-engine'
-import type { DefaultQueryOptions } from '../query/types'
+import type { QueryDefaults } from '../query/types'
 import type { Scope } from '../scope'
 import { computed, signal, effect as standaloneEffect, untracked } from '../signals'
 import { readOnly } from '../signals/readonly'
@@ -34,7 +34,7 @@ export type RootShared = {
    * and it must not drag the whole query engine into the bundle to read two
    * fields.
    */
-  readonly queryDefaults: DefaultQueryOptions
+  readonly queryDefaults: QueryDefaults
   /**
    * Monotonic counter bumped by every `ctx.provide(...)` call inside this
    * root's tree. `ctx.inject(...)` caches its scope-walk result alongside

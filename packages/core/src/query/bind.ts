@@ -76,7 +76,7 @@ export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
  *
  * Unlike `createQuery` this needs **no** query engine: a local cache is not a
  * cache-client entry. It still honours the root's
- * `defaultQueryOptions`, which live on the root rather than on the client so
+ * `queryEngine({ defaults })`, which the root reads without the client so
  * that reading them cannot pull the engine into the bundle.
  */
 export function createCache<T>(

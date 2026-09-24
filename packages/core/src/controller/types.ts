@@ -326,7 +326,7 @@ export type Ctx<TDeps = AmbientDeps> = {
 }
 
 import type { DebugBus } from '../devtools'
-import type { DefaultQueryOptions, DehydratedState } from '../query/types'
+import type { DehydratedState } from '../query/types'
 
 /**
  * Configuration passed to `createRoot(def, options)`. `deps` is required and
@@ -339,32 +339,6 @@ export type RootOptions<TDeps> = {
   onError?: (err: unknown, context: ErrorContext) => void
   hydrate?: DehydratedState
   /**
-   * Default for queries that don't set `refetchOnWindowFocus` on their spec
-   * (§5.9). Shorthand for `defaultQueryOptions.refetchOnWindowFocus`, which
-   * wins if both are set.
-   */
-  refetchOnWindowFocus?: boolean
-  /**
-   * Default for queries that don't set `refetchOnReconnect` on their spec
-   * (§5.9). Shorthand for `defaultQueryOptions.refetchOnReconnect`, which
-   * wins if both are set.
-   */
-  refetchOnReconnect?: boolean
-  /**
-   * Root-wide defaults for every query, infinite query, and `createCache` under
-   * this root. A per-query spec field always overrides its default here.
-   * Resolution: `spec.X ?? defaultQueryOptions.X ?? <built-in default>`.
-   *
-   * Without this, quiet built-in defaults (`staleTime: 0`, `retry: 0`) have to
-   * be restated on every `defineQuery`, which is easy to forget and presents
-   * as "why is everything refetching?" rather than as an error. Spec §5.9.
-   *
-   * ```ts
-   * createRoot(app, { deps, defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 } })
-   * ```
-   */
-  defaultQueryOptions?: DefaultQueryOptions
-  /**
    * The query engine. Omit it and this root has no cache: `createQuery`,
    * `createMutation` and `bindQuery` throw a message naming the fix, and
    * `query/client.ts` — the largest module in the package — never enters the
@@ -374,8 +348,9 @@ export type RootOptions<TDeps> = {
    * createRoot(app, { deps, queries: queryEngine() })
    * ```
    *
-   * Adopted eagerly inside `createRoot`, before the factory runs, so plugin
-   * `init` timing is unchanged.
+   * Query defaults (`staleTime`, `retry`, focus and reconnect refetch, …)
+   * are configured on the engine: `queryEngine({ defaults })`. The client is
+   * created eagerly inside `createRoot`, before the factory runs.
    */
   queries?: QueryEngine
   /**

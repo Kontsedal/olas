@@ -116,7 +116,6 @@ export { lookupRegisteredMutation, lookupRegisteredQuery } from './query/plugin'
 export type {
   AsyncState,
   AsyncStatus,
-  DefaultQueryOptions,
   DehydratedEntry,
   DehydratedState,
   FetchCtx,
@@ -124,6 +123,7 @@ export type {
   NetworkMode,
   Query,
   QueryActions,
+  QueryDefaults,
   QueryMeta,
   QuerySpec,
   QuerySubscription,

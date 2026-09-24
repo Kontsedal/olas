@@ -1540,3 +1540,18 @@ Seven tests that pinned removed behaviour were deleted:
 The SSR registration-order test now always uses ids.
 
 The global query registry still exists and still warns on a duplicate id. W2 replaces it with per-root lookup.
+
+## [2026-09-24 17:20] ingest | 1.0 W1d: engine-owned defaults, a reusable engine
+
+`queryEngine({ defaults })` is now the only place for root-wide query defaults. The following are gone:
+- `RootOptions.defaultQueryOptions`
+- the flat `RootOptions.refetchOnWindowFocus` / `refetchOnReconnect`
+- `QueryEngineOptions.plugins` and `QueryEngineOptions.hydrate`
+
+The precedence was contradictory. The engine docstring said engine values win, but `client.ts` resolved `defaults.X ?? opts.X`, so a root-level `defaultQueryOptions.refetchOnWindowFocus` beat the engine's shorthand. With one location, there is no precedence left to get wrong. `DefaultQueryOptions` is renamed `QueryDefaults`. `QueryClient` takes `defaults` directly.
+
+**The engine's "adopted once" guard is removed.** It existed because the engine used to own plugin instances. It made `HydrationBoundary` throw under StrictMode: the remount effect rebuilds the root from the same options object, and therefore from the same engine. This was blocker A1 of the 1.0 review. `hydration-boundary.test.tsx` "(b2)" pins StrictMode + engine + hydrate, and `query-isolation.test.ts` pins that one engine shared by two roots gives two independent caches.
+
+Stateful plugin instances passed twice are still shared between the two roots. Plugin host v2 (W2) moves per-root state into `setup`, which closes that.
+
+`scripts/codemods/engine-defaults.ts` moved 34 option sites. The tests "defaultQueryOptions wins over the flat shorthand" and "an engine belongs to exactly one root" are deleted; the rules they pinned no longer exist.

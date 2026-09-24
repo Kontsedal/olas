@@ -15,7 +15,7 @@ const flush = async () => {
   await Promise.resolve()
 }
 
-describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
+describe('queryEngine({ defaults }) — staleTime (§5.9)', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
@@ -29,7 +29,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
     const root = createTestController(def, {
       deps: emptyDeps,
       props: undefined,
-      defaultQueryOptions: { staleTime: 60_000 },
+      queries: queryEngine({ defaults: { staleTime: 60_000 } }),
     })
 
     await vi.advanceTimersByTimeAsync(0)
@@ -53,9 +53,8 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { staleTime: 60_000 } }),
       deps: emptyDeps,
-      defaultQueryOptions: { staleTime: 60_000 },
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
@@ -84,7 +83,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
     const root = createTestController(def, {
       deps: emptyDeps,
       props: undefined,
-      defaultQueryOptions: { staleTime: 60_000 },
+      queries: queryEngine({ defaults: { staleTime: 60_000 } }),
     })
 
     await vi.advanceTimersByTimeAsync(0)
@@ -93,7 +92,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
     root.dispose()
   })
 
-  test('no defaultQueryOptions keeps the built-in staleTime: 0', async () => {
+  test('no engine defaults keeps the built-in staleTime: 0', async () => {
     const q = defineQuery({
       id: 'query-default-options/91',
       key: () => ['s-builtin'],
@@ -107,7 +106,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
   })
 })
 
-describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
+describe('queryEngine({ defaults }) — retry (§5.9)', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
@@ -123,9 +122,8 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
     })
     const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { retry: 2, retryDelay: 10 } }),
       deps: emptyDeps,
-      defaultQueryOptions: { retry: 2, retryDelay: 10 },
     })
 
     await vi.advanceTimersByTimeAsync(0)
@@ -150,9 +148,8 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
     })
     const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { retry: 5, retryDelay: 10 } }),
       deps: emptyDeps,
-      defaultQueryOptions: { retry: 5, retryDelay: 10 },
     })
 
     await vi.advanceTimersByTimeAsync(0)
@@ -163,7 +160,7 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
   })
 })
 
-describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => {
+describe('queryEngine({ defaults }) — gcTime + keepPreviousData', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
@@ -194,10 +191,8 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
       fetcher: async () => ++fetchCount,
     })
     const root = createRoot(openCloseRoot(q), {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { gcTime: 100, staleTime: 60_000 } }),
       deps: emptyDeps,
-      // Long staleTime so a refetch can only be explained by a dropped entry.
-      defaultQueryOptions: { gcTime: 100, staleTime: 60_000 },
     })
 
     root.api.open()
@@ -220,9 +215,8 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
       fetcher: async () => ++fetchCount,
     })
     const root = createRoot(openCloseRoot(q), {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { gcTime: 60_000, staleTime: 60_000 } }),
       deps: emptyDeps,
-      defaultQueryOptions: { gcTime: 60_000, staleTime: 60_000 },
     })
 
     root.api.open()
@@ -250,7 +244,7 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
     const root = createTestController(def, {
       deps: emptyDeps,
       props: { id },
-      defaultQueryOptions: { keepPreviousData: true },
+      queries: queryEngine({ defaults: { keepPreviousData: true } }),
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(root.api.x.data.value).toBe('data-a')
@@ -264,11 +258,11 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
   })
 })
 
-describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () => {
+describe('queryEngine({ defaults }) — refetch flags and precedence', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
-  test('refetchOnWindowFocus via defaultQueryOptions applies', async () => {
+  test('refetchOnWindowFocus via engine defaults applies', async () => {
     let count = 0
     const q = defineQuery({
       id: 'query-default-options/252',
@@ -277,9 +271,8 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { refetchOnWindowFocus: true } }),
       deps: emptyDeps,
-      defaultQueryOptions: { refetchOnWindowFocus: true },
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
@@ -290,30 +283,7 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
     root.dispose()
   })
 
-  test('defaultQueryOptions wins over the flat refetchOnWindowFocus shorthand', async () => {
-    let count = 0
-    const q = defineQuery({
-      id: 'query-default-options/270',
-      key: () => ['rf-precedence'],
-      fetcher: async () => ++count,
-    })
-    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
-    const root = createRoot(def, {
-      queries: queryEngine(),
-      deps: emptyDeps,
-      refetchOnWindowFocus: true,
-      defaultQueryOptions: { refetchOnWindowFocus: false },
-    })
-    await vi.advanceTimersByTimeAsync(0)
-    expect(count).toBe(1)
-
-    window.dispatchEvent(new Event('focus'))
-    await vi.advanceTimersByTimeAsync(0)
-    expect(count).toBe(1) // stayed off
-    root.dispose()
-  })
-
-  test('a per-query spec flag still overrides both', async () => {
+  test('a per-query spec flag overrides the engine default', async () => {
     let count = 0
     const q = defineQuery({
       id: 'query-default-options/289',
@@ -323,9 +293,8 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { refetchOnWindowFocus: false } }),
       deps: emptyDeps,
-      defaultQueryOptions: { refetchOnWindowFocus: false },
     })
     await vi.advanceTimersByTimeAsync(0)
     window.dispatchEvent(new Event('focus'))
@@ -335,7 +304,7 @@ describe('RootOptions.defaultQueryOptions — refetch flags and precedence', () 
   })
 })
 
-describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
+describe('queryEngine({ defaults }) — ctx.cache', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
@@ -344,9 +313,8 @@ describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
       user: createCache(ctx, async () => 'u1'),
     }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { staleTime: 60_000 } }),
       deps: emptyDeps,
-      defaultQueryOptions: { staleTime: 60_000 },
     })
     await flush()
     expect(root.api.user.status.value).toBe('success')
@@ -359,9 +327,8 @@ describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
       user: createCache(ctx, async () => 'u1', { staleTime: 0 }),
     }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { staleTime: 60_000 } }),
       deps: emptyDeps,
-      defaultQueryOptions: { staleTime: 60_000 },
     })
     await flush()
     expect(root.api.user.isStale.value).toBe(true)
@@ -369,7 +336,7 @@ describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
   })
 })
 
-describe('RootOptions.defaultQueryOptions — infinite queries', () => {
+describe('queryEngine({ defaults }) — infinite queries', () => {
   beforeEach(() => vi.useFakeTimers())
   afterEach(() => vi.useRealTimers())
 
@@ -387,9 +354,8 @@ describe('RootOptions.defaultQueryOptions — infinite queries', () => {
     })
     const def = defineController((ctx) => ({ f: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { retry: 1, retryDelay: 10 } }),
       deps: emptyDeps,
-      defaultQueryOptions: { retry: 1, retryDelay: 10 },
     })
 
     await vi.advanceTimersByTimeAsync(0)
@@ -411,7 +377,7 @@ describe('RootOptions.defaultQueryOptions — infinite queries', () => {
     const root = createTestController(def, {
       deps: emptyDeps,
       props: undefined,
-      defaultQueryOptions: { staleTime: 60_000 },
+      queries: queryEngine({ defaults: { staleTime: 60_000 } }),
     })
 
     await vi.advanceTimersByTimeAsync(0)

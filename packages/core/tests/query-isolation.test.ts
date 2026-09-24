@@ -14,6 +14,31 @@ const keep = <T extends { dispose(): void }>(root: T): T => {
   return root
 }
 
+describe('one engine value, many roots', () => {
+  test('each adopting root gets its own client and cache', async () => {
+    // The engine is a definition. Hoisting it to module scope and passing it
+    // to several roots must not share a cache between them.
+    const engine = queryEngine({ defaults: { staleTime: Infinity } })
+    const q = defineQuery({
+      id: 'query-isolation/shared-engine',
+      key: () => [],
+      fetcher: async ({ deps }) => deps.user as string,
+    })
+    const def = defineController((ctx) => ({
+      sub: createQuery(ctx, q),
+      actions: bindQuery(ctx, q),
+    }))
+    const alice = keep(createRoot(def, { queries: engine, deps: { user: 'Alice' } }))
+    const bob = keep(createRoot(def, { queries: engine, deps: { user: 'Bob' } }))
+    await Promise.all([alice.waitForIdle(), bob.waitForIdle()])
+    expect(alice.api.sub.data.value).toBe('Alice')
+    expect(bob.api.sub.data.value).toBe('Bob')
+    bob.api.actions.write((prev) => `${prev}!`)
+    expect(bob.api.sub.data.value).toBe('Bob!')
+    expect(alice.api.sub.data.value).toBe('Alice')
+  })
+})
+
 describe('query operations are scoped to one root', () => {
   test('bound reads, writes and optimistic rollback cannot cross request boundaries', async () => {
     const q = defineQuery({

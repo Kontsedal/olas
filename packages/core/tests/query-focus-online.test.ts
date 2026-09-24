@@ -203,9 +203,8 @@ describe('root-wide defaults', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { refetchOnWindowFocus: true } }),
       deps: emptyDeps,
-      refetchOnWindowFocus: true,
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
@@ -226,9 +225,8 @@ describe('root-wide defaults', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { refetchOnReconnect: true } }),
       deps: emptyDeps,
-      refetchOnReconnect: true,
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
@@ -250,9 +248,8 @@ describe('root-wide defaults', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, {
-      queries: queryEngine(),
+      queries: queryEngine({ defaults: { refetchOnWindowFocus: true } }),
       deps: emptyDeps,
-      refetchOnWindowFocus: true,
     })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)

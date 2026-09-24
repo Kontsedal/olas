@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { defineController } from '@kontsedal/olas-core'
+import { createQuery, defineController, defineQuery, queryEngine } from '@kontsedal/olas-core'
 import { act, cleanup, render } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
@@ -51,6 +51,39 @@ describe('HydrationBoundary lifecycle (R4.1)', () => {
     // Exactly one live root remains and it's wired to the Provider.
     expect(constructs.mock.calls.length - disposes.mock.calls.length).toBe(1)
     expect(getByTestId('l').textContent).toBe('ok')
+  })
+
+  test('(b2) StrictMode with a query engine and a hydrate payload', async () => {
+    // The remount rebuilds the root from the same options object, and with it
+    // the same `queryEngine()` value. An engine that could be adopted only once
+    // made this throw in every StrictMode app that hydrated.
+    const fetcher = vi.fn(async () => 'fetched')
+    const greeting = defineQuery({
+      id: 'hydration-boundary/greeting',
+      key: () => [],
+      fetcher,
+      staleTime: 60_000,
+    })
+    const def = defineController((ctx) => ({ greeting: createQuery(ctx, greeting) }))
+    function Show() {
+      const api = useRoot<{ greeting: { data: { value: string | undefined } } }>()
+      return <span data-testid="g">{api.greeting.data.value}</span>
+    }
+    const hydrate = {
+      version: 1 as const,
+      entries: [
+        { id: 'hydration-boundary/greeting', key: [], data: 'hydrated', lastUpdatedAt: Date.now() },
+      ],
+    }
+    const { getByTestId } = render(
+      <StrictMode>
+        <HydrationBoundary def={def} options={{ deps: {}, queries: queryEngine(), hydrate }}>
+          <Show />
+        </HydrationBoundary>
+      </StrictMode>,
+    )
+    expect(getByTestId('g').textContent).toBe('hydrated')
+    expect(fetcher).not.toHaveBeenCalled()
   })
 
   test('(c) parent re-render with inline options does not recreate the root', () => {

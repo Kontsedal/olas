@@ -264,11 +264,10 @@ export type QuerySpec<Args extends unknown[], T> = {
 }
 
 /**
- * Root-wide defaults for query behavior, passed as
- * `createRoot(def, { defaultQueryOptions })`. Every field mirrors the
- * same-named field on `QuerySpec` — resolution is
- * `spec.X ?? defaultQueryOptions.X ?? <built-in default>`, so a per-query
- * spec always wins. Spec §5.9.
+ * Defaults for every query, infinite query and `createCache` under a root,
+ * passed as `queryEngine({ defaults })`. Every field mirrors the same-named
+ * field on `QuerySpec`, and a per-query spec always wins:
+ * `spec.X ?? defaults.X ?? <built-in default>`. Spec §5.9.
  *
  * Derived via `Pick` rather than re-declared so the types can't drift from
  * `QuerySpec`. None of the picked fields reference `Args`/`T`, which is why
@@ -284,7 +283,7 @@ export type QuerySpec<Args extends unknown[], T> = {
  * only — infinite queries have no focus/reconnect subscription (see
  * `InfiniteClientEntry`), so setting them here is a no-op for those.
  */
-export type DefaultQueryOptions = Pick<
+export type QueryDefaults = Pick<
   QuerySpec<never[], unknown>,
   | 'staleTime'
   | 'gcTime'

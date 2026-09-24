@@ -24,10 +24,10 @@ import {
   type SetDataEvent,
 } from './plugin'
 import type {
-  DefaultQueryOptions,
   DehydratedState,
   Query,
   QueryActions,
+  QueryDefaults,
   QuerySpec,
   RefetchInterval,
   RetryDelay,
@@ -420,7 +420,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     this.keyArgs = keyArgs
     // `refetchOnWindowFocus` / `refetchOnReconnect` are intentionally absent:
     // infinite entries install no focus/online subscription, so honoring a
-    // root default here would be dead config. See `DefaultQueryOptions`.
+    // root default here would be dead config. See `QueryDefaults`.
     const defaults = client.defaults
     this.gcTime = spec.gcTime ?? defaults.gcTime ?? DEFAULT_GC_TIME
     const interval = spec.refetchInterval
@@ -583,12 +583,12 @@ export class QueryClient {
   readonly refetchOnReconnect: boolean
 
   /**
-   * Root-wide query defaults from `RootOptions.defaultQueryOptions`. Read by
+   * Root-wide query defaults from `queryEngine({ defaults })`. Read by
    * `ClientEntry` / `InfiniteClientEntry` / `createUse` / `createCache` when a
    * spec omits the field. Always an object (never `undefined`) so call sites
    * are a plain `spec.X ?? this.defaults.X ?? <built-in>`. Spec §5.9.
    */
-  readonly defaults: DefaultQueryOptions
+  readonly defaults: QueryDefaults
 
   /**
    * Installed plugins. Fired on every `setData` / `invalidate` / `gc` so
@@ -608,20 +608,15 @@ export class QueryClient {
     hydrate?: DehydratedState
     devtools?: DevtoolsEmitter
     deps?: Record<string, unknown>
-    refetchOnWindowFocus?: boolean
-    refetchOnReconnect?: boolean
-    defaultQueryOptions?: DefaultQueryOptions
+    defaults?: QueryDefaults
     plugins?: QueryClientPlugin[]
   }) {
     this.onError = opts?.onError
     this.devtools = opts?.devtools
     this.deps = opts?.deps ?? {}
-    this.defaults = opts?.defaultQueryOptions ?? {}
-    // The flat `refetchOn*` options are the older spelling; the dedicated
-    // `defaultQueryOptions` slot wins when both are set.
-    this.refetchOnWindowFocus =
-      this.defaults.refetchOnWindowFocus ?? opts?.refetchOnWindowFocus ?? false
-    this.refetchOnReconnect = this.defaults.refetchOnReconnect ?? opts?.refetchOnReconnect ?? false
+    this.defaults = opts?.defaults ?? {}
+    this.refetchOnWindowFocus = this.defaults.refetchOnWindowFocus ?? false
+    this.refetchOnReconnect = this.defaults.refetchOnReconnect ?? false
     this.plugins = opts?.plugins ?? []
     if (opts?.hydrate) this.hydrate(opts.hydrate)
     const api = this.makePluginApi()
