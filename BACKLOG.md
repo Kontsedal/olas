@@ -26,7 +26,7 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 ### [planned] A superseded catch-up refetch is discarded, not re-run
 
-`query.write(...)` supersedes an in-flight fetch (SPEC §6.4). Sometimes that fetch is a **catch-up**: a reconnect's `invalidateAll()`, whose whole purpose is to reconcile whatever was missed while disconnected. Discarding it loses the reconciliation, and the write that superseded it carries only its own delta. Nothing re-runs it: `forcedStale` is cleared only by `applySuccess`, `refetchOnWindowFocus` defaults to `false`, and an already-subscribed reader never re-acquires. Worse, `await invalidateAll()` **resolves** (`invalidateEntry` swallows the AbortError), so a caller that treats resolution as "synced" cannot detect it.
+`query.replace(...)` supersedes an in-flight fetch (SPEC §5.5, §6.4). `write` has not done so since 0.7.2. Sometimes that fetch is a **catch-up**: a reconnect's `invalidateAll()`, whose whole purpose is to reconcile whatever was missed while disconnected. Discarding it loses the reconciliation, and the write that superseded it carries only its own delta. Nothing re-runs it: `forcedStale` is cleared only by `applySuccess`, `refetchOnWindowFocus` defaults to `false`, and an already-subscribed reader never re-acquires. Worse, `await invalidateAll()` **resolves** (`invalidateEntry` swallows the AbortError), so a caller that treats resolution as "synced" cannot detect it.
 
 Reachable by composing two of this library's own documented recipes: the realtime package's reconnect resync and §6.4's fold-a-buffered-event write.
 
@@ -212,6 +212,14 @@ Each of the four could be a separate change; they share one question, which is w
 ### [idea] `useQuery({ suspense: true })` on a disabled query suspends forever
 
 A disabled query, meaning `enabled: () => false`, is `status: 'idle'` with no data. A suspense hook therefore throws `subscription.promise()` and stays suspended indefinitely, and the fallback never resolves. T4.7 tried throwing a descriptive error instead, but an idle-with-no-data subscription is **indistinguishable from one torn down during `root.dispose()`** (both detach → idle), so the hard throw fired during teardown (false positives) and — thrown in render — React 19 re-reports it to node's `uncaughtException`, failing the vitest run. A clean fix needs a way to tell "intentionally disabled" from "transiently idle": e.g. surface an `enabled`/`disabled` flag on the subscription, or a dedicated `status: 'disabled'`. Until then, don't combine `suspense` with a disabled query; gate the whole subtree instead (`{condition && <SuspenseView/>}`).
+
+### [idea] `InfiniteEntry` has `Entry`'s fetcher-originated-`AbortError` wedge
+
+`Entry.runWithRetry` now separates the two abort cases. A superseded fetch writes nothing, while an `AbortError` raised by the fetcher itself settles the entry as a failure, because nothing else is coming to clear `isFetching`. A fetcher raises one through its own `AbortSignal.timeout` or an axios cancel token.
+
+`InfiniteEntry` still fuses the two into one check, in both of its loops: `runRefetchAll` at `infinite.ts:311` and `runFetch` at `infinite.ts:486`. Each has a `finally` that half-covers it. Both repair a wedged `'pending'` status (T3.3), and `runFetch` clears `isFetchingNextPage` and `isFetchingPreviousPage`. Neither clears `isFetching`, and the status repair is itself gated on `!isFetching`, so it does not fire either. A self-aborting fetcher therefore leaves an infinite entry mid-fetch, with `root.waitForIdle()` hanging on it exactly as a regular entry used to. Reproduced against `InfiniteEntry` directly.
+
+The fix is the `Entry` one applied twice, plus the direction flags. It is filed rather than done for two reasons. The infinite loops settle state inline, with no `applySuccess` and `applyFailure` pair to route through, and its three directions each want a different settled shape. Same defect, different state machine.
 
 ### [idea] `peek` / `write` for infinite queries
 

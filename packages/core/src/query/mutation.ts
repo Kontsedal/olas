@@ -297,6 +297,15 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   private inflight = new Set<RunHandle>()
   private serialQueue: Array<SerialEntry<V, R>> = []
   private serialActive = false
+  /**
+   * Which queue the `serial` continuations belong to. `reset()` abandons the
+   * active run and unlocks the queue, so the next `run(...)` opens a NEW queue
+   * — and the abandoned run's continuation still fires when its abort lands.
+   * Bumping this on `reset()` lets that continuation recognize itself as stale
+   * and neither start a queued run nor release the lock; both would let the
+   * newer queue run two mutations at once (spec §6.3).
+   */
+  private serialGeneration = 0
   private disposed = false
 
   constructor(
@@ -385,10 +394,17 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       })
     }
     this.serialActive = true
-    return this.executeRun(vars).finally(() => this.advanceSerialQueue())
+    const generation = this.serialGeneration
+    return this.executeRun(vars).finally(() => this.advanceSerialQueue(generation))
   }
 
-  private advanceSerialQueue(): void {
+  private advanceSerialQueue(generation: number): void {
+    // A `reset()` while this run was in flight abandoned its queue and opened a
+    // new one. This continuation speaks for the old queue: starting the next
+    // entry would run it alongside the new queue's active run, and clearing
+    // `serialActive` would let the next `run(...)` do the same. Neither is ours
+    // to do — the newer queue's own continuations will.
+    if (generation !== this.serialGeneration) return
     const next = this.serialQueue.shift()
     if (!next) {
       this.serialActive = false
@@ -397,11 +413,11 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     this.executeRun(next.vars).then(
       (result) => {
         next.resolve(result)
-        this.advanceSerialQueue()
+        this.advanceSerialQueue(generation)
       },
       (err) => {
         next.reject(err)
-        this.advanceSerialQueue()
+        this.advanceSerialQueue(generation)
       },
     )
   }
@@ -620,6 +636,9 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       this.serialQueue = []
       for (const queued of queue) queued.reject(aborted)
     }
+    // Retire the queue the aborted run belonged to before unlocking, so its
+    // continuation can't advance or unlock the queue the next `run(...)` opens.
+    this.serialGeneration += 1
     this.serialActive = false
     batch(() => {
       this.data.set(undefined)

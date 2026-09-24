@@ -1393,22 +1393,20 @@ export class QueryClient {
     updater: (prev: T | undefined) => T,
   ): void {
     const entry = this.bindEntry(query, args)
-    // A canonical write SUPERSEDES a fetch that is already in flight (§6.4). It is newer by
-    // definition: the caller is folding in something the server has already said, while the
-    // outstanding request was issued before that happened and will answer with the state from
-    // before it. Without this the response lands last and silently undoes the write.
+    // A PATCH, and so it leaves a fetch that is already in flight alone (§5.5, §6.4). That is
+    // deliberate: an updater reading `prev` describes the fields it touches and says nothing
+    // about the others, so a response already on its way may well be carrying newer values for
+    // them. Discarding it on the strength of a one-field patch loses those. `replaceData` is the
+    // write that supersedes, and it takes a whole value precisely so the caller cannot make that
+    // claim by accident. A caller who has decided this patch should win calls `cancel(...)`
+    // first. 0.7.0 and 0.7.1 had `write` supersede and were rolled back over exactly this.
     //
-    // `setData` deliberately does NOT do this — an optimistic patch is a guess, and a server
-    // response is entitled to overrule a guess. That asymmetry is the whole reason the two
-    // methods are separate (`.wiki/decisions/canonical-vs-optimistic-writes.md`), and it is
-    // where this diverges from react-query, which has one door for both and therefore cannot
-    // treat them differently.
-    //
-    // A PATCH. It does not supersede an in-flight fetch, and that is deliberate: an updater
-    // reading `prev` describes the fields it touches and says nothing about the others, so a
-    // response already on its way may well be carrying newer values for them. Discarding it on
-    // the strength of a one-field patch loses those. `replaceData` is the write that supersedes,
-    // and it takes a whole value precisely so the caller cannot make this claim by accident.
+    // `setData` differs again, one step further down: an optimistic patch is a guess, and a
+    // server response is entitled to overrule a guess, so it does not even rebase live snapshots
+    // onto itself the way this does. Those two asymmetries are the whole reason the three methods
+    // are separate (`.wiki/decisions/canonical-vs-optimistic-writes.md`), and they are where this
+    // diverges from react-query, which has one door for all three and therefore cannot treat them
+    // differently.
     entry.entry.setData(updater, { track: false })
     this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
     // Explicit `'set'`, not the ambient-cause default: a canonical write inside

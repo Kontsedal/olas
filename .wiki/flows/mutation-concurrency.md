@@ -7,10 +7,11 @@ covers:
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/regressions.test.ts }
   - { type: uses, target: ../entities/mutation.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-05-21
+last_verified: 2026-09-22
 confidence: high
 ---
 
@@ -62,12 +63,32 @@ enqueueSerial(vars):
     return new Promise((resolve, reject) =>
       serialQueue.push({ vars, resolve, reject }))
   active = true
-  return executeRun(vars).finally(() => advanceSerialQueue())
+  generation = serialGeneration            # the queue this chain speaks for
+  return executeRun(vars).finally(() => advanceSerialQueue(generation))
 ```
 
-`advanceSerialQueue()` shifts the next entry, calls `executeRun`, resolves/rejects the stored promise, recurses. When the queue is empty, `active = false`.
+`advanceSerialQueue(generation)` shifts the next entry, calls `executeRun`, resolves/rejects the stored promise, recurses with the same `generation`. When the queue is empty, `active = false`.
 
 `dispose()` aborts the current inflight AND rejects every queued entry with `AbortError`. `reset()` is similar but doesn't dispose.
+
+### `serialGeneration` — why the continuations are tagged
+
+`reset()` abandons the active run (aborts it) and clears `active`, so the very next `run(...)` opens a **new** queue. The abandoned run's continuation still fires one microtask later, when its abort lands, and `advanceSerialQueue` is reachable from it. Untagged, that continuation advanced whatever queue it found:
+
+```
+run(A) → active, A in flight
+reset()            → A aborted, queue unlocked
+run(B) → active, B in flight
+run(C) → queued behind B
+…A's abort lands → advanceSerialQueue() → shift C → C runs ALONGSIDE B
+…B settles       → advanceSerialQueue() → queue empty → active = false, with C still running
+```
+
+So `reset()` on a `serial` mutation broke both halves of the guarantee: two runs at once, and an unlocked queue while one was still in flight.
+
+`reset()` now bumps `serialGeneration`, and `enqueueSerial` captures the value it starts under. `advanceSerialQueue` returns immediately when the two disagree, touching neither the queue nor the lock, because the newer queue's own continuations own both. Pinned by `regressions.test.ts` under "a stale serial continuation cannot advance a newer queue".
+
+`dispose()` needs no bump. A non-detached dispose makes every later `run(...)` reject with `MutationDisposedError`, so no newer queue can exist. A `detached` dispose deliberately leaves the queue draining under its own generation (SPEC §6.5).
 
 ## `executeRun` — shared by all modes
 
@@ -111,3 +132,8 @@ If the user's `mutate` ignores its `AbortSignal`, the supersede path can still r
 - `onMutate snapshot is rolled back on supersede` — latest-wins ordering.
 - `queued runs execute one at a time in order` — serial.
 - `stacked optimistic updates: later mutation rollback lands on earlier intermediate state` — §6.4.
+
+`packages/core/tests/regressions.test.ts`:
+- `after reset(), a queued run waits for the new active run` — the generation tag, headline case.
+- `the abandoned run does not unlock a queue that is still busy` — the same tag, lock half.
+- `reset() still rejects queued runs, and a later queue drains normally` — what the tag must not break.

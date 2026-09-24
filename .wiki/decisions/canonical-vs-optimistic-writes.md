@@ -3,17 +3,17 @@ name: canonical-vs-optimistic-writes
 description: Why the Query handle has two write methods — setData (optimistic, returns a Snapshot) and write (canonical, none) — instead of one with an options bag.
 type: decision
 covers:
-  - packages/core/src/query/types.ts:297-380
-  - packages/core/src/query/client.ts:1305-1360
-  - packages/core/src/query/define.ts:103-140
-  - packages/core/src/query/entry.ts:486-520
+  - packages/core/src/query/types.ts:330-382
+  - packages/core/src/query/client.ts:1370-1445
+  - packages/core/src/query/actions.ts:36-52
+  - packages/core/src/query/entry.ts:487-525
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: ../pitfalls/no-invalidator-still-refetches.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-08-19
+last_verified: 2026-09-22
 confidence: high
 ---
 
@@ -26,7 +26,7 @@ setData(...keyArgs, updater): Snapshot   // optimistic
 write(...keyArgs, updater): void         // canonical
 ```
 
-They differ in exactly one respect — whether a snapshot record is pushed (`Entry.setData`'s `{ track }`, `entry.ts:486-496`) — and that difference is load-bearing.
+They differ in exactly one respect — whether a snapshot record is pushed (`Entry.setData`'s `{ track }`, `entry.ts:501-511`) — and that difference is load-bearing.
 
 ## Why `setData` alone was not enough
 
@@ -42,7 +42,7 @@ Downstream evidence: one app accumulated eight such sites, being server-push fol
 
 ## Why not `setData(..., { track: false })`
 
-The handle's signature is variadic, `setData(...args: [...Args, updater])`, so a trailing options bag is not cleanly expressible. With `Args` ending in an object type, TypeScript cannot tell the options from a key argument, and the runtime already recovers the updater positionally at `define.ts:104` with `rest[rest.length - 1]`. A second named method costs one line of surface and stays unambiguous at both the type level and the call site.
+The handle's signature is variadic, `setData(...args: [...Args, updater])`, so a trailing options bag is not cleanly expressible. With `Args` ending in an object type, TypeScript cannot tell the options from a key argument, and the runtime already recovers the updater positionally at `actions.ts:38` with `rest[rest.length - 1]`. A second named method costs one line of surface and stays unambiguous at both the type level and the call site.
 
 It also reads better where it matters. `write` says *this is true* and `setData` says *this might have to be undone* — the distinction a reader needs, at the call site, without knowing what `track: false` means.
 
@@ -86,5 +86,5 @@ question — "is this write the whole record", which nothing inside the entry ca
 
 - `write` emits the same `SetDataEvent` with `source: 'set'` as any local write, so cross-tab and entity plugins treat it identically (matching `setEntryData`'s documented behaviour, spec §13.2).
 - Its devtools event is explicitly `'set'`, never `'mutate'`, even when called inside a mutation's `onMutate` — it inherits the ambient `causeId` but its *kind* is a plain set.
-- The supersede rule belongs to `writeData` alone. `setEntryData` and `applyRemoteSetData`, the plugin and cross-tab paths in `client.ts`, still write straight through. They have their own ordering contracts, and cross-tab in particular relays another tab's write rather than this tab's server truth.
+- The supersede rule belongs to `replaceData` alone (`client.ts:1435-1441`, the one `entry.cancel()` call among the write methods). `writeData` does not supersede. Its comment said both for a month: `e8933dd` (0.7.2) rolled the behaviour back and added the patch paragraph, but left `314aa28`'s "a canonical write SUPERSEDES" above it. The code was never ambiguous — the reconciled comment now says what it does. `setEntryData` and `applyRemoteSetData`, the plugin and cross-tab paths in `client.ts`, also write straight through. They have their own ordering contracts, and cross-tab in particular relays another tab's write rather than this tab's server truth.
 - `hasPendingMutations` is purely observational (nothing in core gates on it), so this was never a correctness bug in the engine — it was a wrong-state report plus unbounded retention. Both are gone for callers who use the right method.

@@ -1424,3 +1424,59 @@ knowledge of its own plugins; `useQuery`'s missing `select`, the absent `useInfi
 four smaller React defects, and the two exports with no consumers; three gaps in realtime;
 five in entities; two in zod; kanban's decorative `isPaused`; and the three biome rules.
 
+
+## [2026-09-22 09:30] ingest | three query-engine defects: serial-after-reset, fetcher-originated abort, own `__proto__`
+
+Three suspected defects in `@kontsedal/olas-core` were handed over as hypotheses. All three
+reproduced, and each now has a failing-first regression test in
+`packages/core/tests/regressions.test.ts` (seven tests) and
+`packages/core/tests/structural-share.test.ts` (seven tests).
+
+**A `serial` mutation ran two writes at once, one `reset()` away.** `reset()` aborts the active
+run and clears `serialActive`, so the next `run(...)` opens a new queue — and the abandoned run's
+continuation still fires when its abort lands. It called `advanceSerialQueue()` on whatever queue
+it found: A, `reset()`, B, queue C meant A's abort started C alongside the pending B, and B's own
+completion then cleared the lock while C was still running. Both halves of the serial guarantee
+broke at once, in a mode whose entire purpose is ordering. Continuations now carry the generation
+they were scheduled under, `reset()` bumps it, and a stale continuation returns without touching
+the queue. `dispose()` needs no bump — a non-detached dispose makes every later `run(...)` reject,
+and a detached one deliberately drains under its own generation. Written up in
+`flows/mutation-concurrency.md`.
+
+**An `AbortError` from the fetcher read as a supersede, and wedged the entry.** Every engine-side
+cancellation bumps `currentFetchId` or sets `disposed` before aborting the controller, so "is this
+still the current fetch" is the test that separates the two cases — and the old single check fused
+them, rethrowing any `AbortError` with no state written. A fetcher aborting itself (an
+`AbortSignal.timeout`, an axios cancel token) therefore left `isFetching: true` with nothing coming
+to clear it: `root.waitForIdle()` never resolving during SSR, `firstValue()` never settling under
+Suspense. The current fetch's abort now settles as a failure, which is also what §5.6 implies by
+dropping errors from *outdated* fetches only. `entities/entry.md` carries the distinction and the
+order of the checks.
+
+`InfiniteEntry` has the same defect in both of its loops, verified by reproduction — the status
+repair in its `finally` is gated on `!isFetching`, which nothing clears, so it does not fire.
+Filed to `BACKLOG.md` rather than fixed: the infinite loops settle state inline with no
+`applySuccess` / `applyFailure` to route through, and its three directions each want a different
+settled shape.
+
+**`out[key] = value` is wrong for one key.** An own `__proto__` — which `JSON.parse` produces from
+any API echoing user-controlled keys — hits `Object.prototype`'s accessor on assignment: the
+rebuilt object's prototype was replaced, the property was never created, and the payload's own data
+became readable through the prototype chain of a cached value handed to every subscriber. The
+comparison side had it twice over: `prev[key]` returned the prototype object, and `key in prev` is
+true for `__proto__` on every plain object, so "prev lacks this key" answered false exactly where
+it mattered. New pitfall page `pitfalls/proto-key-assignment.md`, which also records that the
+rebuild now keeps the prototype both sides shared — a `Object.create(null)` payload used to come
+back wearing `Object.prototype`.
+
+**`writeData`'s comment said both things.** `314aa28` (0.7.0) made `write` supersede an in-flight
+fetch; `e8933dd` (0.7.2) rolled that back into `replace` and added a paragraph saying so, directly
+below the paragraph saying the opposite. The code never superseded, `SPEC.md` §5.5 never said it
+did, and the reconciled comment now says what runs. Two neighbours repeated the stale rule and are
+corrected: `Query.invalidate`'s docstring, the rebase comment in `Entry.setData`, the
+`canonical-vs-optimistic-writes` decision page's last bullet, and the premise sentence of the
+`[planned]` catch-up-refetch backlog item.
+
+Verified: `pnpm test` (951 tests in 65 files, 14 of them new), `pnpm test:coverage` against its
+thresholds, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm publint`, `pnpm attw`,
+`pnpm smoke:dist`, `pnpm wiki:lint` (0 errors), `pnpm prose:lint`.

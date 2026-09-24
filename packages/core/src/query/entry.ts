@@ -256,8 +256,22 @@ export class Entry<T> {
         }
         return this.applySuccess(result)
       } catch (err) {
-        if (myId !== this.currentFetchId || this.disposed || isAbortError(err)) {
-          throw err
+        // Superseded or disposed: a newer fetch (or `cancel` / `applyHydration`
+        // / `dispose`) owns the entry's state now and has already set it, so
+        // this one must write nothing — §5.6, "errors from outdated fetches are
+        // also dropped".
+        if (myId !== this.currentFetchId || this.disposed) throw err
+        if (isAbortError(err)) {
+          // Still the latest fetch, yet the request aborted. Nothing in the
+          // engine did it — every engine-side abort bumps `currentFetchId` or
+          // sets `disposed` first, both caught above — so it came from the
+          // fetcher itself: its own timeout signal, an axios cancel token, a
+          // rethrown stale abort. No newer request is coming to settle the
+          // entry, and leaving `isFetching` true wedges the spinner forever and
+          // hangs `waitForIdle()` (SSR) and `firstValue()` (Suspense) with it.
+          // So it settles like any other failure — the retry policy stays out
+          // of it, as it is for every abort.
+          return this.applyFailure(err)
         }
         // offlineFirst: a network-shaped failure while offline parks the entry
         // (wait for reconnect, then retry) instead of surfacing the error. A
@@ -498,9 +512,9 @@ export class Entry<T> {
     // A CANONICAL write rebases live optimistic snapshots onto itself, exactly as a
     // successful fetch does (`applySuccess`) and for the same stated reason (spec §6.4):
     // a later rollback must restore server truth, not a baseline captured before that
-    // truth arrived. Without this, a `write` landing mid-mutation is silently undone by
-    // the mutation's own rollback — and undone to a value OLDER than the one the write
-    // superseded, since the write also aborts the fetch that used to do the rebasing.
+    // truth arrived. Without this, a canonical write landing mid-mutation is silently undone
+    // by the mutation's own rollback — and undone to a value older still when the caller was
+    // `replace`, which supersedes the in-flight fetch that would otherwise have rebased.
     // Tracked writes are excluded: an optimistic layer is a guess, and rebasing onto a
     // guess is what the baseline exists to protect against.
     if (!track && this.snapshots.length > 0) {

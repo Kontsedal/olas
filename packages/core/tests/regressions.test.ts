@@ -23,6 +23,7 @@ import { Entry } from '../src/query/entry'
 import { InfiniteEntry } from '../src/query/infinite'
 import type { QueryClientPlugin, QueryClientPluginApi } from '../src/query/plugin'
 import { signal } from '../src/signals'
+import { isAbortError } from '../src/utils'
 
 const emptyDeps = {}
 /**
@@ -1926,6 +1927,201 @@ describe('regression: cross-field validation targets fields (R-F5.2)', () => {
     expect(root.arr.at(1)?.errors.value).toContain('item 1 empty')
     // The array itself is invalid because a routed item is invalid.
     expect(root.arr.isValid.value).toBe(false)
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A `serial` mutation's queue must stay serial across a `reset()`. `reset()`
+// abandons the active run (aborting it) and unlocks the queue, so the next
+// `run(...)` starts a NEW queue. The abandoned run's continuation still fires
+// when its abort lands, and it used to advance — and unlock — whatever queue it
+// found, starting a queued run on top of a pending one.
+// ---------------------------------------------------------------------------
+describe('regression: a stale serial continuation cannot advance a newer queue', () => {
+  const serialRoot = () => {
+    const started: number[] = []
+    const ds = new Map<number, ReturnType<typeof deferred<number>>>()
+    const def = defineController((ctx) => ({
+      save: createMutation(ctx, {
+        concurrency: 'serial',
+        mutate: (v: number, signal: AbortSignal) => {
+          started.push(v)
+          const d = deferred<number>()
+          ds.set(v, d)
+          signal.addEventListener('abort', () => d.reject(new DOMException('a', 'AbortError')))
+          return d.promise
+        },
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    return { root, started, ds }
+  }
+
+  test('after reset(), a queued run waits for the new active run', async () => {
+    const { root, started, ds } = serialRoot()
+
+    const a = root.save.run(1).catch((e) => e)
+    expect(started).toEqual([1])
+
+    // Walk away from A: it is aborted, and the queue is unlocked.
+    root.save.reset()
+    // A fresh queue: B runs, C waits behind it.
+    const b = root.save.run(2).catch((e) => e)
+    const c = root.save.run(3).catch((e) => e)
+    expect(started).toEqual([1, 2])
+
+    // A's abort lands here. Its continuation belongs to the queue that reset()
+    // threw away, so it must not start C on top of the pending B.
+    expect(isAbortError(await a)).toBe(true)
+    await flush()
+    expect(started).toEqual([1, 2])
+
+    // B settles, then C runs — one at a time, each resolving its own caller.
+    ds.get(2)?.resolve(2)
+    expect(await b).toBe(2)
+    await flush()
+    expect(started).toEqual([1, 2, 3])
+    ds.get(3)?.resolve(3)
+    expect(await c).toBe(3)
+    root.dispose()
+  })
+
+  test('the abandoned run does not unlock a queue that is still busy', async () => {
+    const { root, started, ds } = serialRoot()
+
+    const a = root.save.run(1).catch((e) => e)
+    root.save.reset()
+    const b = root.save.run(2).catch((e) => e)
+    expect(isAbortError(await a)).toBe(true)
+    await flush()
+
+    // The stale continuation found an empty queue. If it cleared the lock, this
+    // run would start immediately instead of queueing behind B.
+    const c = root.save.run(3).catch((e) => e)
+    await flush()
+    expect(started).toEqual([1, 2])
+
+    ds.get(2)?.resolve(2)
+    expect(await b).toBe(2)
+    await flush()
+    expect(started).toEqual([1, 2, 3])
+    ds.get(3)?.resolve(3)
+    expect(await c).toBe(3)
+    root.dispose()
+  })
+
+  test('reset() still rejects queued runs, and a later queue drains normally', async () => {
+    const { root, started, ds } = serialRoot()
+
+    const a = root.save.run(1).catch((e) => e)
+    const queued = root.save.run(2).catch((e) => e)
+    root.save.reset()
+    expect(isAbortError(await a)).toBe(true)
+    expect(isAbortError(await queued)).toBe(true)
+    await flush()
+    // The rejected queue entry never ran, and never runs later.
+    expect(started).toEqual([1])
+
+    const c = root.save.run(3).catch((e) => e)
+    await flush()
+    expect(started).toEqual([1, 3])
+    ds.get(3)?.resolve(3)
+    expect(await c).toBe(3)
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A fetcher that rejects with an `AbortError` nobody in the engine asked for —
+// its own timeout signal, an axios cancel token, a rethrown stale abort — was
+// treated as a supersede: rethrown with no state written. Nothing else was
+// coming to write it, so `isFetching` stayed true, the spinner never stopped,
+// and `root.waitForIdle()` (SSR) never resolved. §5.6 drops errors from
+// OUTDATED fetches; this one is the latest.
+// ---------------------------------------------------------------------------
+describe('regression: a fetcher-originated AbortError settles the entry', () => {
+  test('initial fetch: the in-flight flags clear and the error surfaces', async () => {
+    const entry = new Entry<number>({
+      fetcher: () => () => Promise.reject(new DOMException('timeout', 'AbortError')),
+    })
+    const err = await entry.startFetch().then(
+      () => undefined,
+      (e) => e,
+    )
+    expect(isAbortError(err)).toBe(true)
+    expect(entry.isFetching.peek()).toBe(false)
+    expect(entry.isLoading.peek()).toBe(false)
+    expect(entry.status.peek()).toBe('error')
+    expect(entry.error.peek()).toBe(err)
+    entry.dispose()
+  })
+
+  test('refetch with existing data: data is kept and the flags clear', async () => {
+    let fail = false
+    const entry = new Entry<number>({
+      fetcher: () => () =>
+        fail ? Promise.reject(new DOMException('timeout', 'AbortError')) : Promise.resolve(7),
+    })
+    expect(await entry.startFetch()).toBe(7)
+    fail = true
+    const err = await entry.refetch().then(
+      () => undefined,
+      (e) => e,
+    )
+    expect(isAbortError(err)).toBe(true)
+    expect(entry.isFetching.peek()).toBe(false)
+    expect(entry.isLoading.peek()).toBe(false)
+    expect(entry.data.peek()).toBe(7)
+    expect(entry.status.peek()).toBe('error')
+    expect(entry.error.peek()).toBe(err)
+    entry.dispose()
+  })
+
+  test('a superseded fetch aborting late never clears the newer fetch state', async () => {
+    const calls: Array<ReturnType<typeof deferred<number>>> = []
+    const entry = new Entry<number>({
+      fetcher: () => () => {
+        const d = deferred<number>()
+        calls.push(d)
+        return d.promise // deliberately ignores the signal
+      },
+    })
+    const first = entry.startFetch().catch((e) => e)
+    const second = entry.startFetch().catch((e) => e)
+    expect(calls.length).toBe(2)
+
+    // The superseded fetcher answers late, with an abort of its own.
+    calls[0]?.reject(new DOMException('its own timeout', 'AbortError'))
+    expect(isAbortError(await first)).toBe(true)
+    await flush()
+    // The newer fetch still owns the entry.
+    expect(entry.isFetching.peek()).toBe(true)
+    expect(entry.status.peek()).toBe('pending')
+    expect(entry.error.peek()).toBeUndefined()
+
+    calls[1]?.resolve(9)
+    expect(await second).toBe(9)
+    expect(entry.status.peek()).toBe('success')
+    expect(entry.isFetching.peek()).toBe(false)
+    entry.dispose()
+  })
+
+  test('root.waitForIdle() resolves after a self-aborting fetcher', async () => {
+    const q = defineQuery({
+      key: () => ['self-abort'],
+      fetcher: () => Promise.reject(new DOMException('timeout', 'AbortError')),
+    })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.x.status.value).toBe('error'))
+    const outcome = await Promise.race([
+      root.waitForIdle().then(() => 'idle'),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve('still fetching'), 100)
+      }),
+    ])
+    expect(outcome).toBe('idle')
     root.dispose()
   })
 })

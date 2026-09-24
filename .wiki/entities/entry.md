@@ -10,9 +10,10 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/cache.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/regressions.test.ts }
   - { type: uses, target: ../modules/signals.md }
   - { type: related, target: ../pitfalls/isstale-needs-timer.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-22
 confidence: high
 ---
 
@@ -46,11 +47,18 @@ loop:
   if superseded: throw AbortError
   apply success; return
 catch err:
-  if signal.aborted or AbortError: throw          # supersede path
+  if superseded or disposed: throw                # the newer fetch owns the state
+  if AbortError: apply failure; throw             # the FETCHER aborted itself
   if not shouldRetry(retry, attempt, err): apply failure; throw
   await abortableSleep(computeDelay(retryDelay, attempt), abort.signal)
   attempt++
 ```
+
+**The two abort cases are not the same, and the order of those checks is the whole distinction** (`entry.ts` `runWithRetry`). Four engine paths abort the controller: `startFetch`, `cancel`, `applyHydration`, `dispose`. Each bumps `currentFetchId` or sets `disposed` first, and each writes the entry's state itself or hands it to the superseding fetch. Such a fetch must write nothing: §5.6, "errors from outdated fetches are also dropped".
+
+An `AbortError` that arrives while this fetch is still `currentFetchId` therefore did **not** come from the engine. It came from the fetcher: its own `AbortSignal.timeout`, an axios cancel token, a rethrown stale abort. Nothing is coming to settle the entry after it, so it settles like any other failure: `status: 'error'`, `error` set, `isFetching` and `isLoading` cleared, `data` untouched.
+
+Rethrowing it, which the single fused check did, left `isFetching` true with nothing to clear it. The spinner then runs until the entry is disposed, `root.waitForIdle()` does not resolve during SSR, and `firstValue()` does not settle under Suspense. The retry policy stays out of it, as it does for every abort. Pinned by `regressions.test.ts` under "a fetcher-originated AbortError settles the entry", which also pins the converse: a superseded fetch aborting late must not clear the newer fetch's `pending`.
 
 `retry`: `number | (attempt, err) => boolean`. `retryDelay`: `number | (attempt) => number`. Defaults: `retry: 0`, `retryDelay: 1000`.
 

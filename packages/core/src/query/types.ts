@@ -303,7 +303,7 @@ export type Query<Args extends unknown[], T> = {
   /**
    * Mark a specific keyed entry stale + trigger refetch if any subscribers. The
    * returned promise resolves when the triggered refetch settles **or is discarded**
-   * (a supersede — a newer refetch, a key change, or a canonical `write`, §6.4 —
+   * (a supersede — a newer refetch, a key change, or a canonical `replace`, §6.4 —
    * resolves it rather than rejecting, so a caller cannot tell the two apart from
    * the promise alone) — immediately if
    * the entry is subscriber-less (marked stale only). Fetch errors are reported
