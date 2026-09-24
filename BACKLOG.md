@@ -35,10 +35,6 @@ Shape to aim at: after discarding a response *because a canonical write supersed
 Deferred out of the change that introduced it because it needs a scheduling policy, not a guard.
 
 
-### [idea] `SetDataEvent.source === 'remote'` is redundant with `isRemote === true`
-
-After §13.2 grew the `source: 'set' | 'fetch' | 'remote'` field, `source === 'remote'` carries the same information as `isRemote === true`. Both are kept for back-compat. The existing cross-tab plugin gates on `isRemote`, and newer plugins such as entities can gate on `source`. Pick one in v2 and drop the other. Migration: keep `isRemote` (shorter, predates `source`) and reserve `source` strictly for `'set' | 'fetch'`.
-
 ### [idea] `@kontsedal/olas-offline` — offline-first reconnection layer atop the mutation queue
 
 `@kontsedal/olas-mutation-queue` (shipped 0.0.5) covers durable enqueue + reload-replay for `defineMutation({ persist: true })`. The remaining offline layer would add navigator-online detection, a connection-state signal, conflict-resolution helpers, an exponential-backoff schedule for inter-attempt waits, and an opinionated mid-session retry policy. Today the queue only retries across page loads. Likely a thin package layered on top of `mutation-queue` + `@kontsedal/olas-persist`.
@@ -106,18 +102,6 @@ Also retained unconditionally in every bundle: the top-level `globalRegistry(Sym
 
 Worth doing before 1.0, because the published numbers are the ones consumers will quote back.
 
-### [idea] The plugin contract knows the names of its own plugins
-
-[from the 0.9 review] `QueryClientPlugin` is presented as an open extension point, and core does not treat it as one:
-
-- `packages/core/src/query/plugin.ts:206-209` hardcodes a `crossTab` flag, and a `persist` flag sits beside it. Both name specific satellite packages.
-- Every first-party plugin casts into `__spec` to read what it needs.
-- Hooks are synchronous, which is why the durable enqueue in `@kontsedal/olas-mutation-queue` is fire-and-forget and carries a documented loss window.
-- No first-party plugin sets `name`, so `ErrorContext.pluginName` is always `undefined` — the field exists for Sentry and OTel adapters and never carries a value.
-- `subscribedKeys` has no consumers at all.
-
-Closing this means deciding what a third-party plugin is entitled to, which is a design question rather than a set of fixes. Setting `name` on the six shipped plugins is the one piece that stands alone.
-
 ### [idea] `useQuery` re-renders on every `isFetching` flip
 
 [from the 0.9 review] `useQuery` snapshots all eight signals on an `AsyncState`, so a component that reads only `data` still re-renders when a background refetch starts and again when it ends. TanStack answers this with `select` (derive and compare) and `notifyOnChangeProps` (subscribe to a subset). Two related findings in the same hook: the `isEqual` short-circuit is gated on selector identity (`packages/react/src/hooks.ts:90`), so an inline selector — the common case — never reaches it; and `useSuspenseQuery` throws a fresh promise per suspended render (`hooks.ts:208` with `packages/core/src/query/use.ts:123-130`), with the `!cur` path throwing an already-rejected one.
@@ -143,15 +127,17 @@ Closing this means deciding what a third-party plugin is entitled to, which is a
 
 [from the 0.9 review] `channel` is a plain string, not a signal, so a controller cannot express a per-route room without tearing down and rebuilding the subscription. `onReconnect` opens a second transport subscription rather than reusing the first. And `rafFlush`, `onDrop` and the capacity `RangeError` have no tests.
 
-### [idea] Five known costs and silent no-ops in `@kontsedal/olas-entities`
+### [idea] Three known costs and silent no-ops in `@kontsedal/olas-entities`
 
 [from the 0.9 review]
 
-- The shared-reference re-walk is exponential in a pathological diamond, while the cost comment at `packages/entities/src/index.ts:521-523` claims it is linear in reachable nodes.
-- `update()` with `api === null` skips backprop without saying so (`index.ts:770`).
-- `setAtPath` no-ops on a stale path (`index.ts:631-648`), so a patch aimed at a moved node vanishes.
-- Entities combined with cross-tab amplifies writes: one field patch broadcasts N full payloads.
-- `packages/entities/tests/entities.test.ts:465` is vacuous, and its title contradicts the contract it claims to pin.
+- The shared-reference re-walk is exponential in a pathological diamond, while the cost comment on `walk` in `packages/entities/src/index.ts` claims it is linear in reachable nodes.
+- `setAtPath` no-ops on a stale path, so a patch aimed at a moved node vanishes.
+- One test in `packages/entities/tests/entities.test.ts` ("reverse index drops bindings…") is vacuous, and its title contradicts the contract it claims to pin.
+
+### [planned] The mutation queue can persist before `mutate` runs
+
+The durable enqueue happens in the synchronous `onMutation` `'start'` hook, so the storage write is fire-and-forget, and a reload between `start` and the write landing loses the run. Plugin host v2 gives the queue a way out: `wrapMutate` runs around each attempt and may await before calling `next()`. Persisting there on attempt 0 means `mutate` runs only after the entry is durable. The cost is one storage write of latency before the first request, which is negligible for localStorage and a few ms for IndexedDB. Needs a test that a failed persist still lets the run proceed, as today.
 
 ### [idea] Two costs in `@kontsedal/olas-zod`
 

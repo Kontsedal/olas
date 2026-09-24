@@ -1,7 +1,6 @@
 import { createInfiniteQueryActions, createQueryActions, singleClient } from './actions'
 import type { QueryClient } from './client'
 import type { InfiniteQuery, InfiniteQuerySpec } from './infinite'
-import { type RegisteredQuery, registerQueryById } from './plugin'
 import type { Query, QuerySpec } from './types'
 
 /**
@@ -36,7 +35,6 @@ export function defineQuery<Args extends unknown[], T>(spec: QuerySpec<Args, T>)
     query,
     createQueryActions(query, () => singleClient(clients)),
   )
-  registerQueryById(spec.id, query as unknown as RegisteredQuery)
   return query
 }
 
@@ -60,6 +58,5 @@ export function defineInfiniteQuery<Args extends unknown[], PageParam, TPage, TI
     query,
     createInfiniteQueryActions(query, () => singleClient(clients)),
   )
-  registerQueryById(spec.id, query as unknown as RegisteredQuery)
   return query
 }

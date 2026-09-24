@@ -30,6 +30,7 @@ import {
   signal,
   throttled,
 } from '@kontsedal/olas-core'
+import { Entities } from '@kontsedal/olas-entities'
 import { useRealtimePatcher } from '@kontsedal/olas-realtime'
 import type { Board, Card, Column, Priority, RealtimeEvent, SearchResults } from '../../api'
 import { REALTIME_CHANNEL } from '../../api'
@@ -443,7 +444,7 @@ export const boardController = defineController(
         if (e.by === ctx.deps.tabId) return
         // Propagate the rename through the entities store so every card
         // showing this user updates without a refetch.
-        ctx.deps.entities.upsert(UserEntity, e.user)
+        ctx.inject(Entities).upsert(UserEntity, e.user)
       },
     })
 

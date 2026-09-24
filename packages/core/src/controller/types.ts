@@ -1,8 +1,9 @@
 import type { Emitter } from '../emitter'
 import type { ErrorContext } from '../errors'
+import type { OlasPlugin } from '../plugin/types'
+import type { BindQueryOptions } from '../query/client'
 import type { QueryEngine } from '../query/engine'
 import type { InfiniteQuery, InfiniteQueryActions } from '../query/infinite'
-import type { QueryClientPlugin } from '../query/plugin'
 import type { Query, QueryActions } from '../query/types'
 import type { Scope } from '../scope'
 import type { Computed, ReadSignal, Signal } from '../signals/types'
@@ -354,20 +355,22 @@ export type RootOptions<TDeps> = {
    */
   queries?: QueryEngine
   /**
-   * `QueryClientPlugin`s — cross-tab sync, server-push patches, etc.
-   * Installed when the root's `QueryClient` is constructed; disposed when
-   * the root disposes. SPEC §13.2.
+   * Plugins, set up in this order before the root controller's factory runs
+   * and disposed in reverse when the root disposes. A plugin's query and
+   * mutation hooks need `queries`; without it, `host.queries` is `null`.
+   * Spec §13.
    */
-  plugins?: QueryClientPlugin[]
+  plugins?: readonly OlasPlugin[]
   /**
    * Pre-seed scopes on the root controller before its factory runs. Useful
-   * for cross-cutting values an adapter wants to provide once (route
-   * params from a router bridge, theme tokens, etc.) without forcing the
-   * user's root controller to call `ctx.provide(...)`.
+   * for cross-cutting values an adapter wants to provide once (theme tokens,
+   * a fake of a plugin's service in a test) without forcing the user's root
+   * controller to call `ctx.provide(...)`.
    *
-   * Bindings are flat `[scope, value]` tuples; later bindings for the
-   * same scope override earlier ones. `ctx.inject` from any descendant
-   * resolves these via the normal scope chain walk. SPEC §10.3.
+   * Bindings are flat `[scope, value]` tuples; later bindings for the same
+   * scope override earlier ones, and all of them override a value a plugin
+   * `provide`d. `ctx.inject` from any descendant resolves these via the normal
+   * scope chain walk. SPEC §10.3.
    */
   scopes?: ReadonlyArray<readonly [Scope<unknown>, unknown]>
 }
@@ -383,10 +386,17 @@ export type RootOptions<TDeps> = {
 export type Root<Api> = {
   /** What the root controller's factory returned. */
   readonly api: Api
-  /** Bind imperative query operations to this root without subscribing or fetching. */
-  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
+  /**
+   * Bind imperative query operations to this root without subscribing or
+   * fetching. `options.origin` tags the handle's writes for plugins.
+   */
+  bindQuery<Args extends unknown[], T>(
+    query: Query<Args, T>,
+    options?: BindQueryOptions,
+  ): QueryActions<Args, T>
   bindQuery<Args extends unknown[], TPage, TItem>(
     query: InfiniteQuery<Args, TPage, TItem>,
+    options?: BindQueryOptions,
   ): InfiniteQueryActions<Args, TPage, TItem>
   /**
    * Resolve a scope as the root controller would through `ctx.inject(...)`:
@@ -414,7 +424,10 @@ export type Root<Api> = {
    * the live client root, and by warm starts from storage. Idempotent.
    */
   hydrate(state: DehydratedState): void
-  /** Resolves when no fetch and no mutation is in flight. Spec §15. */
+  /**
+   * Resolves when no fetch, no mutation and no work a plugin `track`ed is in
+   * flight. Spec §15.
+   */
   waitForIdle(): Promise<void>
   /** The devtools event bus. Dev-only events; see spec §14. */
   readonly debug: DebugBus

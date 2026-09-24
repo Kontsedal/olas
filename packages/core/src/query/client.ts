@@ -1,6 +1,8 @@
 import { __currentCauseId, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { scheduleExpiry } from '../expiry-timer'
+import type { PluginEngine, PluginSet } from '../plugin/host'
+import type { FetchContext, MutationHost, QueryHost, QueryRef, WriteSource } from '../plugin/types'
 import { type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
 import { createInfiniteQueryActions, createQueryActions } from './actions'
@@ -14,15 +16,12 @@ import {
 } from './infinite'
 import { stableHash } from './keys'
 import {
-  type GcEvent,
-  type InvalidateEvent,
-  lookupRegisteredQuery,
-  type MutationEnqueueEvent,
-  type MutationSettleEvent,
-  type QueryClientPlugin,
-  type QueryClientPluginApi,
-  type SetDataEvent,
-} from './plugin'
+  createMutation as createMutationImpl,
+  type Mutation,
+  type MutationLifecycleHooks,
+  type MutationSpec,
+} from './mutation'
+import { lookupRegisteredMutation } from './mutation-registry'
 import type {
   DehydratedState,
   Query,
@@ -112,6 +111,17 @@ type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
  */
 const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
 
+/** Options for `bindQuery(ctx, query, options?)` and `root.bindQuery(query, options?)`. */
+export type BindQueryOptions = {
+  /**
+   * Stamped as `origin` on every write and invalidation made through this
+   * handle, so plugins can tell them apart from the app's own. A realtime
+   * patcher tags its writes this way, and cross-tab then leaves them alone:
+   * every tab receives the same server push itself.
+   */
+  origin?: string
+}
+
 export class ClientEntry<T> {
   readonly entry: Entry<T>
   /** The result of `spec.key(...args)` — used for hashing/identity. */
@@ -150,14 +160,11 @@ export class ClientEntry<T> {
     spec: QuerySpec<any, T>,
     hydrated: { data: T; lastUpdatedAt: number } | undefined,
     /**
-     * Prepared by `QueryClient.bindEntry` (which is the only construction
-     * site). The closure calls back into
-     * `QueryClient.emitSetData` with `source: 'fetch'` after every
-     * successful fetch. We accept it pre-built rather than reach into the
-     * client from here because `emitSetData` is `private` on `QueryClient`
-     * — restricting the access path is the whole point.
+     * Prepared by `QueryClient.bindEntry` (the only construction site): reports
+     * a successful fetch to the plugins as a `'fetch'` write. Handed in
+     * pre-built so the client's emitters stay private.
      */
-    onFetchSuccess: ((data: T) => void) | undefined,
+    onFetched: (data: T) => void,
   ) {
     this.client = client
     this.query = query
@@ -176,8 +183,12 @@ export class ClientEntry<T> {
     const deps = client.deps as import('../controller/types').AmbientDeps
     const devtools = client.devtools
     const queryKey = this.keyArgs
+    const ref = client.refOf(query)
     this.entry = new Entry<T>({
-      fetcher: () => (signal) => fetcherFn({ signal, deps }, ...(callArgs as never[])),
+      fetcher: () => (signal, attempt) =>
+        client.runFetch({ query: ref, key: keyArgs, args: callArgs, signal, attempt }, () =>
+          fetcherFn({ signal, deps }, ...(callArgs as never[])),
+        ) as Promise<T>,
       staleTime: spec.staleTime ?? defaults.staleTime,
       retry: (spec.retry ?? defaults.retry) as RetryPolicy | undefined,
       retryDelay: (spec.retryDelay ?? defaults.retryDelay) as RetryDelay | undefined,
@@ -227,7 +238,7 @@ export class ClientEntry<T> {
                 devtools.emit({ type: 'snapshot:finalize', queryKey, causeId: __currentCauseId() }),
             }
           : undefined,
-      onSuccessData: onFetchSuccess,
+      onSuccessData: onFetched,
     })
   }
 
@@ -238,6 +249,7 @@ export class ClientEntry<T> {
       this.gcTimer = null
     }
     if (this.subscriberCount === 1) {
+      this.client.emitActivity(this.query, this.keyArgs, true)
       if (this.nextIntervalMs !== undefined) this.startIntervalTimer()
       if (this.refetchOnWindowFocus) {
         this.unsubFocus = subscribeWindowFocus(() => this.triggerEventRefetch())
@@ -251,6 +263,7 @@ export class ClientEntry<T> {
   release(): void {
     this.subscriberCount -= 1
     if (this.subscriberCount <= 0) {
+      if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
       this.stopEventSubscriptions()
       if (this.gcTime === 0) {
@@ -406,13 +419,8 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     callArgs: readonly unknown[],
     keyArgs: readonly unknown[],
     spec: InfiniteQuerySpec<any, PageParam, TPage, TItem>,
-    /**
-     * Prepared by `QueryClient.bindInfiniteEntry`. The closure calls back
-     * into `QueryClient.emitSetData`
-     * with `kind: 'infinite', source: 'fetch'` after every successful page
-     * write (initial, next, prev). Mirrors `ClientEntry.onFetchSuccess`.
-     */
-    onFetchSuccess: ((pages: TPage[]) => void) | undefined,
+    /** Reports every successful page batch as a `'fetch'` write. See `ClientEntry`. */
+    onFetched: (pages: TPage[]) => void,
   ) {
     this.client = client
     this.query = query
@@ -430,9 +438,13 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
         : () => resolveRefetchInterval(interval, () => this.entry.data.peek())
     const fetcherFn = spec.fetcher
     const deps = client.deps as import('../controller/types').AmbientDeps
+    const ref = client.refOf(query)
     this.entry = new InfiniteEntry<TPage, TItem, PageParam>({
-      fetcher: ({ pageParam, signal }) =>
-        fetcherFn({ pageParam, signal, deps }, ...(callArgs as never[])),
+      fetcher: ({ pageParam, signal, attempt }) =>
+        client.runFetch(
+          { query: ref, key: keyArgs, args: callArgs, pageParam, signal, attempt },
+          () => fetcherFn({ pageParam, signal, deps }, ...(callArgs as never[])),
+        ) as Promise<TPage>,
       initialPageParam: spec.initialPageParam,
       getNextPageParam: spec.getNextPageParam,
       getPreviousPageParam: spec.getPreviousPageParam,
@@ -442,11 +454,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       retryDelay: (spec.retryDelay ?? defaults.retryDelay) as RetryDelay | undefined,
       networkMode: spec.networkMode ?? defaults.networkMode,
       structuralShare: spec.structuralShare ?? defaults.structuralShare,
-      // Fire SetDataEvent { kind: 'infinite', source: 'fetch' } whenever a
-      // fetch settles successfully. Plugins (e.g. entity normalization) use
-      // this to walk the pages and update their normalized stores. Mirrors
-      // the regular `ClientEntry`'s `onFetchSuccess` closure plumbing.
-      onSuccessData: onFetchSuccess,
+      onSuccessData: onFetched,
     })
   }
 
@@ -456,8 +464,9 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       this.gcTimer()
       this.gcTimer = null
     }
-    if (this.subscriberCount === 1 && this.nextIntervalMs !== undefined) {
-      this.startIntervalTimer()
+    if (this.subscriberCount === 1) {
+      this.client.emitActivity(this.query, this.keyArgs, true)
+      if (this.nextIntervalMs !== undefined) this.startIntervalTimer()
     }
   }
 
@@ -468,6 +477,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   release(): void {
     this.subscriberCount -= 1
     if (this.subscriberCount <= 0) {
+      if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
       if (this.gcTime === 0) {
         this.client.dropInfiniteEntry(
@@ -559,7 +569,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
  * GC timers, refetch-interval timers. Subscribers are routed in/out via
  * `acquire` / `release`.
  */
-export class QueryClient {
+export class QueryClient implements PluginEngine {
   private readonly maps = new Map<AnyQuery, Map<string, ClientEntry<unknown>>>()
   private readonly infiniteMaps = new Map<
     AnyInfiniteQuery,
@@ -567,7 +577,20 @@ export class QueryClient {
   >()
   private readonly touchedQueries = new Set<AnyQuery>()
   private readonly touchedInfiniteQueries = new Set<AnyInfiniteQuery>()
-  private readonly hydratedData = new Map<string, { data: unknown; lastUpdatedAt: number }>()
+  private readonly hydratedData = new Map<
+    string,
+    { data: unknown; lastUpdatedAt: number; origin: string | undefined }
+  >()
+  /**
+   * The queries this root has used, by `id`. Plugins address queries by id,
+   * and only a query this root has bound can have entries to address. Kept
+   * per root, so a duplicate id is a collision within one app, not across the
+   * process.
+   */
+  private readonly byId = new Map<string, AnyQuery | AnyInfiniteQuery>()
+  private readonly refs = new Map<AnyQuery | AnyInfiniteQuery, QueryRef>()
+  /** Mutations plugins started through `host.mutations.run`, per plugin and id. */
+  private readonly pluginMutations = new Map<string, Mutation<unknown, unknown>>()
   /** Mutations inflight across the whole root — used by `waitForIdle`. */
   readonly mutationsInflight$: Signal<number> = signal(0)
   private onError: ErrorHandler | undefined
@@ -590,18 +613,8 @@ export class QueryClient {
    */
   readonly defaults: QueryDefaults
 
-  /**
-   * Installed plugins. Fired on every `setData` / `invalidate` / `gc` so
-   * cross-tab / persistence-like layers can observe and react. SPEC §13.2.
-   */
-  private readonly plugins: QueryClientPlugin[]
-  /**
-   * Flipped to `true` while a remote-originated write (via
-   * `applyRemoteSetData` / `applyRemoteInvalidate`) is being applied. The
-   * resulting plugin events carry `isRemote: true` so plugins know to skip
-   * rebroadcast.
-   */
-  private applyingRemote = false
+  /** The root's plugins, or `null` when none are installed. */
+  private readonly plugins: PluginSet | null
 
   constructor(opts?: {
     onError?: ErrorHandler
@@ -609,7 +622,7 @@ export class QueryClient {
     devtools?: DevtoolsEmitter
     deps?: Record<string, unknown>
     defaults?: QueryDefaults
-    plugins?: QueryClientPlugin[]
+    plugins?: PluginSet | null
   }) {
     this.onError = opts?.onError
     this.devtools = opts?.devtools
@@ -617,236 +630,283 @@ export class QueryClient {
     this.defaults = opts?.defaults ?? {}
     this.refetchOnWindowFocus = this.defaults.refetchOnWindowFocus ?? false
     this.refetchOnReconnect = this.defaults.refetchOnReconnect ?? false
-    this.plugins = opts?.plugins ?? []
+    this.plugins = opts?.plugins ?? null
     if (opts?.hydrate) this.hydrate(opts.hydrate)
-    const api = this.makePluginApi()
-    for (const plugin of this.plugins) {
-      this.callPlugin(plugin, () => plugin.init?.(api))
-    }
   }
 
-  /**
-   * Build the `QueryClientPluginApi` view that plugins receive at `init`
-   * time. Closes over `this`; safe to hand out — plugins call back through
-   * these methods to push remote-originated writes into the local cache.
-   */
-  private makePluginApi(): QueryClientPluginApi {
-    const self = this
-    return {
-      get deps() {
-        return self.deps
-      },
-      invalidate(query, args) {
-        return self.bindQuery(query).invalidate(...args)
-      },
-      applyRemoteSetData(queryId, keyArgs, data) {
-        self.applyRemoteSetData(queryId, keyArgs, data)
-      },
-      applyRemoteInvalidate(queryId, keyArgs) {
-        self.applyRemoteInvalidate(queryId, keyArgs)
-      },
-      setEntryData(queryId, keyArgs, updater) {
-        self.setEntryData(queryId, keyArgs, updater)
-      },
-      subscribedKeys(queryId) {
-        return self.subscribedKeysFor(queryId)
-      },
-    }
-  }
-
-  /** Invoke a plugin callback; route exceptions through `onError`. */
-  private callPlugin(plugin: QueryClientPlugin, fn: () => void): void {
-    try {
-      fn()
-    } catch (err) {
-      dispatchError(this.onError, err, {
-        kind: 'plugin',
-        controllerPath: [],
-        pluginName: plugin.name,
-      })
-    }
-  }
-
-  /**
-   * Emit a `SetDataEvent` to every installed plugin. The `source` field
-   * tells layered plugins where the write originated:
-   * - `'set'`: explicit `client.setData`, including mutations and plugin-
-   *   initiated `setEntryData` calls (e.g. entity backpropagation).
-   * - `'fetch'`: a query fetcher resolved successfully (`Entry.applySuccess`
-   *   reaches this through `onSuccessData`), or hydrated data was first
-   *   bound (a per-tab arrival of pre-fetched data; cross-tab skips
-   *   `'fetch'` so this stays a per-tab concern).
-   * - `'remote'`: `applyRemoteSetData` — cross-tab / server-push. Mirrors
-   *   `isRemote === true`.
-   *
-   * Private — fetcher-success emission goes through the `onFetchSuccess`
-   * closure that `bindEntry` builds and hands to each new `ClientEntry`.
-   * Hydrated emission goes through this method directly from `bindEntry`.
-   * Mutation / remote paths call it from within QueryClient methods.
-   */
-  private emitSetData(
-    query: AnyQuery | AnyInfiniteQuery,
-    keyArgs: readonly unknown[],
-    data: unknown,
-    kind: 'data' | 'infinite',
-    source: 'set' | 'fetch' | 'remote',
-  ): void {
-    if (this.plugins.length === 0) return
-    const queryId = query.__spec.id
-    const event: SetDataEvent = {
-      queryId,
-      keyArgs,
-      data,
-      kind,
-      isRemote: this.applyingRemote,
-      source,
-    }
-    for (const plugin of this.plugins) {
-      if (plugin.onSetData) {
-        const cb = plugin.onSetData
-        this.callPlugin(plugin, () => cb.call(plugin, event))
+  /** What plugins see of a query. One object per query, reused by every event. */
+  refOf(query: AnyQuery | AnyInfiniteQuery): QueryRef {
+    let ref = this.refs.get(query)
+    if (ref === undefined) {
+      ref = {
+        id: query.__id,
+        kind: query.__olas === 'infiniteQuery' ? 'infinite' : 'query',
+        meta: query.__spec.meta ?? {},
       }
+      this.refs.set(query, ref)
     }
+    return ref
+  }
+
+  /** Record `query` under its id, so plugins can address it. */
+  private index(query: AnyQuery | AnyInfiniteQuery): void {
+    const existing = this.byId.get(query.__id)
+    if (existing === query) return
+    if (__DEV__ && existing !== undefined) {
+      console.warn(
+        `[olas] two different queries share the id '${query.__id}' in one root. Plugins, ` +
+          'SSR payloads and devtools address queries by id, so the later one wins. Expected ' +
+          'after a hot reload re-evaluates the module that defines it; a naming collision ' +
+          'otherwise.',
+      )
+    }
+    this.byId.set(query.__id, query)
+  }
+
+  private emitWrite(
+    query: AnyQuery | AnyInfiniteQuery,
+    key: readonly unknown[],
+    data: unknown,
+    updatedAt: number | undefined,
+    source: WriteSource,
+    origin: string | undefined,
+  ): void {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.listens('onWrite')) return
+    plugins.emit('onWrite', {
+      query: this.refOf(query),
+      key,
+      data,
+      updatedAt: updatedAt ?? Date.now(),
+      source,
+      origin,
+    })
+  }
+
+  private emitInvalidated(
+    query: AnyQuery | AnyInfiniteQuery,
+    key: readonly unknown[],
+    origin: string | undefined,
+  ): void {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.listens('onInvalidate')) return
+    plugins.emit('onInvalidate', { query: this.refOf(query), key, origin })
+  }
+
+  private emitRemoved(query: AnyQuery | AnyInfiniteQuery, key: readonly unknown[]): void {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.listens('onRemove')) return
+    plugins.emit('onRemove', { query: this.refOf(query), key, reason: 'gc' })
+  }
+
+  /** An entry's subscriber count crossed zero. Called by the entries. */
+  emitActivity(query: AnyQuery | AnyInfiniteQuery, key: readonly unknown[], active: boolean): void {
+    const plugins = this.plugins
+    const hook = active ? 'onActivate' : 'onDeactivate'
+    if (plugins === null || !plugins.listens(hook)) return
+    plugins.emit(hook, { query: this.refOf(query), key })
+  }
+
+  /** Run one fetch attempt through the plugins' `wrapFetch` middleware. */
+  runFetch(context: FetchContext, base: () => Promise<unknown>): Promise<unknown> {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.hasFetchWrappers) return base()
+    return plugins.wrapFetch(context, base)
   }
 
   /**
-   * Emit a devtools `cache:set-data` event for a cache write. Independent of
-   * the plugin `emitSetData` fan-out above. When `source`
-   * is omitted it's derived from the ambient cause: a write inside a
-   * mutation's `onMutate`/rollback (an active `__runWithCause` frame) is
-   * `'mutate'` and inherits the run's `causeId`; a bare write is `'set'`.
-   * Fetch / remote callers pass `source` explicitly. Call sites guard with
-   * `if (__DEV__)` so production strips them.
+   * How a mutation reports to the plugins, or `undefined` when none observe
+   * mutations — the runner then skips building events entirely.
+   */
+  mutationLifecycle(origin?: string): MutationLifecycleHooks | undefined {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.observesMutations) return undefined
+    return {
+      emit: (event) => plugins.emit('onMutation', event),
+      ...(plugins.hasMutateWrappers
+        ? { wrap: (context, next) => plugins.wrapMutate(context, next) }
+        : {}),
+      ...(origin !== undefined ? { origin } : {}),
+    }
+  }
+
+  /** The cache as plugin `origin` sees it (`PluginHost.queries`). */
+  queryHost(origin: string): QueryHost {
+    return {
+      get: (id) => {
+        const query = this.byId.get(id)
+        return query === undefined ? undefined : this.refOf(query)
+      },
+      keys: (id) => {
+        const query = this.byId.get(id)
+        if (query === undefined) return []
+        const map =
+          query.__olas === 'infiniteQuery'
+            ? this.infiniteMaps.get(query as AnyInfiniteQuery)
+            : this.maps.get(query as AnyQuery)
+        return map === undefined ? [] : [...map.values()].map((e) => e.keyArgs)
+      },
+      peek: (id, key) => {
+        const found = this.entryByKey(id, key)
+        if (found === undefined) return undefined
+        return found.kind === 'query'
+          ? found.entry.entry.data.peek()
+          : found.entry.entry.pages.peek()
+      },
+      write: (id, key, updater) => this.writeByKey(id, key, updater, 'write', origin),
+      replace: (id, key, value) => this.writeByKey(id, key, () => value, 'replace', origin),
+      invalidate: (id, key) => {
+        const found = this.entryByKey(id, key)
+        if (found === undefined) return Promise.resolve()
+        const settled = this.invalidateEntry(found.entry)
+        this.emitInvalidated(found.entry.query, found.entry.keyArgs, origin)
+        return settled
+      },
+      hydrate: (state) => {
+        if (!this.acceptsState(state)) return
+        for (const e of state.entries) {
+          this.applyDehydratedEntry(e.id, e.key, e.data, e.lastUpdatedAt, origin)
+        }
+      },
+      dehydrate: () => this.dehydrate(),
+      hashKey: (key) => stableHash(key),
+    }
+  }
+
+  /** Registered mutations, runnable by plugin `origin` (`PluginHost.mutations`). */
+  mutationHost(origin: string): MutationHost {
+    return {
+      has: (id) => lookupRegisteredMutation(id) !== undefined,
+      run: (id, variables) => this.runRegistered(id, variables, origin),
+    }
+  }
+
+  private runRegistered(id: string, variables: unknown, origin: string): Promise<unknown> {
+    if (this.disposed) {
+      return Promise.reject(new Error('[olas] host.mutations.run() after the root was disposed'))
+    }
+    const registered = lookupRegisteredMutation(id)
+    if (registered === undefined) {
+      return Promise.reject(
+        new Error(
+          `[olas] host.mutations.run('${id}'): no mutation is registered under that id. Import ` +
+            `the module that calls defineMutation({ id: '${id}' }) before running it.`,
+        ),
+      )
+    }
+    // One runner per plugin and id, so a definition's `serial` / `latest-wins`
+    // concurrency holds across that plugin's runs of it.
+    const slot = `${origin}\u0000${id}`
+    let mutation = this.pluginMutations.get(slot)
+    if (mutation === undefined) {
+      mutation = createMutationImpl<unknown, unknown>(
+        registered.definition as unknown as MutationSpec<unknown, unknown>,
+        this.onError,
+        ['plugin', origin],
+        this.mutationsInflight$,
+        this.devtools,
+        this.mutationLifecycle(origin),
+        this.deps as import('../controller/types').AmbientDeps,
+      )
+      this.pluginMutations.set(slot, mutation)
+    }
+    return (mutation.run as (v: unknown) => Promise<unknown>)(variables)
+  }
+
+  private entryByKey(
+    id: string,
+    key: readonly unknown[],
+  ):
+    | { kind: 'query'; entry: ClientEntry<unknown> }
+    | { kind: 'infinite'; entry: InfiniteClientEntry<unknown, unknown, unknown> }
+    | undefined {
+    const query = this.byId.get(id)
+    if (query === undefined) return undefined
+    const hash = stableHash(key)
+    if (query.__olas === 'infiniteQuery') {
+      const entry = this.infiniteMaps.get(query as AnyInfiniteQuery)?.get(hash)
+      return entry === undefined ? undefined : { kind: 'infinite', entry }
+    }
+    const entry = this.maps.get(query as AnyQuery)?.get(hash)
+    return entry === undefined ? undefined : { kind: 'query', entry }
+  }
+
+  /** A plugin's canonical write to an existing entry (`write` / `replace`). */
+  private writeByKey(
+    id: string,
+    key: readonly unknown[],
+    updater: (prev: unknown) => unknown,
+    source: 'write' | 'replace',
+    origin: string,
+  ): void {
+    const found = this.entryByKey(id, key)
+    if (found === undefined) return
+    if (found.kind === 'query') {
+      const { entry } = found
+      entry.entry.setData(updater as (prev: unknown) => never, { track: false })
+      const data = entry.entry.data.peek()
+      if (source === 'replace' && data !== undefined) entry.entry.cancel()
+      this.emitWrite(
+        entry.query,
+        entry.keyArgs,
+        data,
+        entry.entry.lastUpdatedAt.peek(),
+        source,
+        origin,
+      )
+      if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, source)
+      return
+    }
+    const { entry } = found
+    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], { track: false })
+    const pages = entry.entry.pages.peek()
+    if (source === 'replace') entry.entry.cancel()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      pages,
+      entry.entry.lastUpdatedAt.peek(),
+      source,
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, source)
+  }
+
+  private acceptsState(state: DehydratedState): boolean {
+    if (state.version === 1) return true
+    // A silent drop would hide a schema-bumped payload. Warn so a future
+    // format bump is detectable from the client side.
+    if (__DEV__) {
+      console.warn(
+        '[olas] hydrate(): unsupported state.version =',
+        state.version,
+        '— expected 1. Dropping payload; cache will fetch fresh.',
+      )
+    }
+    return false
+  }
+
+  /**
+   * Emit a devtools `cache:set-data` event for a cache write. Same `source`
+   * vocabulary as the plugins' `WriteEvent`. A write inside a mutation's
+   * `onMutate` or rollback inherits the run's `causeId` from the ambient
+   * cause. Call sites guard with `if (__DEV__)` so production strips them.
    */
   private emitDevtoolsSetData(
+    query: AnyQuery | AnyInfiniteQuery,
     queryKey: readonly unknown[],
     data: unknown,
-    source?: 'set' | 'fetch' | 'mutate' | 'remote',
+    source: WriteSource,
   ): void {
     if (this.devtools === undefined) return
-    const causeId = __currentCauseId()
-    // `source` derives from the ambient cause when not passed: a write inside a
-    // mutation's onMutate/rollback is `'mutate'`, a bare write is `'set'`. A
-    // `causeId: undefined` is dropped by `DevtoolsEmitter.stamp`, so callers
-    // needn't branch.
-    const resolved = source ?? (causeId !== undefined ? 'mutate' : 'set')
-    this.devtools.emit({ type: 'cache:set-data', queryKey, source: resolved, data, causeId })
-  }
-
-  private emitInvalidate(
-    query: AnyQuery | AnyInfiniteQuery,
-    keyArgs: readonly unknown[],
-    kind: 'data' | 'infinite',
-  ): void {
-    if (this.plugins.length === 0) return
-    const queryId = query.__spec.id
-    const event: InvalidateEvent = {
-      queryId,
-      keyArgs,
-      kind,
-      isRemote: this.applyingRemote,
-    }
-    for (const plugin of this.plugins) {
-      if (plugin.onInvalidate) {
-        const cb = plugin.onInvalidate
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  private emitGc(
-    query: AnyQuery | AnyInfiniteQuery,
-    keyArgs: readonly unknown[],
-    kind: 'data' | 'infinite',
-  ): void {
-    if (this.plugins.length === 0) return
-    const queryId = query.__spec.id
-    const event: GcEvent = { queryId, keyArgs, kind }
-    for (const plugin of this.plugins) {
-      if (plugin.onGc) {
-        const cb = plugin.onGc
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  /**
-   * Fan out a `MutationEnqueueEvent` to every installed plugin. Called from
-   * `MutationImpl.executeRun` for every run of a mutation with an `id`. A queue
-   * plugin writes the run to durable storage when its `meta` asks for it.
-   */
-  emitMutationEnqueue(event: MutationEnqueueEvent): void {
-    if (this.plugins.length === 0) return
-    for (const plugin of this.plugins) {
-      if (plugin.onMutationEnqueue) {
-        const cb = plugin.onMutationEnqueue
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  /** Fan out a `MutationSettleEvent` to every installed plugin. */
-  emitMutationSettle(event: MutationSettleEvent): void {
-    if (this.plugins.length === 0) return
-    for (const plugin of this.plugins) {
-      if (plugin.onMutationSettle) {
-        const cb = plugin.onMutationSettle
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  /** Resolve `queryId → live entry-map keys`. Empty array when unknown. */
-  private subscribedKeysFor(queryId: string): readonly (readonly unknown[])[] {
-    // Defer the registry lookup to avoid an eager circular import — `define.ts`
-    // imports `QueryClient` as a type, and we import the registry helper here
-    // for runtime use only.
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return []
-    const out: (readonly unknown[])[] = []
-    if (query.__olas === 'query') {
-      const map = this.maps.get(query as unknown as AnyQuery)
-      if (map) for (const ce of map.values()) out.push(ce.keyArgs)
-    } else {
-      const map = this.infiniteMaps.get(query as unknown as AnyInfiniteQuery)
-      if (map) for (const ce of map.values()) out.push(ce.keyArgs)
-    }
-    return out
-  }
-
-  /**
-   * Apply a remote-originated `setData` for the query identified by
-   * `queryId`, scoped to the entry already keyed by `keyArgs` in this
-   * client. Goes through the underlying `Entry.setData` so subscribers see
-   * the write; plugin `onSetData` fires with `isRemote: true`.
-   *
-   * Drops silently when:
-   * - No query with that id is registered (the receiving tab hasn't
-   *   imported the module that defined it).
-   * - The registered query is an infinite query (cross-tab infinite sync
-   *   is deferred — see `plugin.ts` `SetDataEvent.kind`).
-   * - No local entry exists for that key (the receiving tab isn't
-   *   subscribed; nothing useful to write to without callArgs for a
-   *   future refetch).
-   */
-  applyRemoteSetData(queryId: string, keyArgs: readonly unknown[], data: unknown): void {
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return
-    if (query.__olas !== 'query') return // infinite — deferred for v1
-    const internal = query as unknown as AnyQuery
-    const map = this.maps.get(internal)
-    if (!map) return
-    const hash = stableHash(keyArgs)
-    const entry = map.get(hash)
-    if (!entry) return
-    this.applyingRemote = true
-    try {
-      entry.entry.setData(() => data as never, { track: false })
-      this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
-      if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, data, 'remote')
-    } finally {
-      this.applyingRemote = false
-    }
+    this.devtools.emit({
+      type: 'cache:set-data',
+      queryId: query.__id,
+      queryKey,
+      source,
+      data,
+      causeId: __currentCauseId(),
+    })
   }
 
   /**
@@ -856,7 +916,7 @@ export class QueryClient {
    * - If the matching `ClientEntry` already exists (a subscriber has
    *   bound this key), `Entry.applyHydration(data, lastUpdatedAt)` writes
    *   through with the server's timestamp + supersedes any inflight
-   *   fetch. Plugins see a `SetDataEvent` with `source: 'remote'`.
+   *   fetch. Plugins see one `WriteEvent` with `source: 'hydrate'`.
    * - If no `ClientEntry` exists yet (the subscribing component hasn't
    *   mounted), the entry is buffered in `hydratedData` so the next
    *   `bindEntry` for that hash picks it up — same path the constructor
@@ -871,22 +931,16 @@ export class QueryClient {
     keyArgs: readonly unknown[],
     data: unknown,
     lastUpdatedAt: number,
+    origin?: string,
   ): void {
-    const query = lookupRegisteredQuery(queryId)
     const hash = stableHash(keyArgs)
-    if (query && query.__olas === 'query') {
-      const internal = query as unknown as AnyQuery
-      const map = this.maps.get(internal)
-      const entry = map?.get(hash)
+    const query = this.byId.get(queryId)
+    if (query !== undefined && query.__olas === 'query') {
+      const entry = this.maps.get(query as AnyQuery)?.get(hash)
       if (entry !== undefined) {
-        this.applyingRemote = true
-        try {
-          entry.entry.applyHydration(data, lastUpdatedAt)
-          this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
-          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, data, 'remote')
-        } finally {
-          this.applyingRemote = false
-        }
+        entry.entry.applyHydration(data, lastUpdatedAt)
+        this.emitWrite(entry.query, entry.keyArgs, data, lastUpdatedAt, 'hydrate', origin)
+        if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'hydrate')
         return
       }
     }
@@ -894,107 +948,18 @@ export class QueryClient {
     // The next bindEntry for this query + key will adopt the buffered payload
     // and clear the slot. Namespaced by queryId so a colliding-key query can't
     // steal it (spec §15, T1.2).
-    this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt })
+    this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt, origin })
   }
 
-  /**
-   * Local-originated `setData` keyed by `queryId + keyArgs`. Plugin-facing
-   * (exposed via `QueryClientPluginApi.setEntryData`); used by the
-   * `@kontsedal/olas-entities` plugin to backpropagate entity patches into
-   * every query holding the entity, without forcing the plugin to recover
-   * the original `callArgs`.
-   *
-   * Drops silently in the same cases as `applyRemoteSetData` (unknown
-   * queryId / infinite query / no local entry). Emits `SetDataEvent` with
-   * `isRemote: false`, `source: 'set'` — cross-tab WILL rebroadcast.
-   */
-  setEntryData(
-    queryId: string,
-    keyArgs: readonly unknown[],
-    updater: (prev: unknown) => unknown,
-  ): void {
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return
-    const hash = stableHash(keyArgs)
-    if (query.__olas === 'query') {
-      const internal = query as unknown as AnyQuery
-      const map = this.maps.get(internal)
-      if (!map) return
-      const entry = map.get(hash)
-      if (!entry) return
-      entry.entry.setData(updater as (prev: unknown) => never, { track: false })
-      this.emitSetData(internal, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-      // A canonical (track:false) backprop write — always `'set'`, even when a
-      // mutation's ambient cause is active (it inherits the `causeId`, but its
-      // KIND is a plain set, not an optimistic mutate).
-      if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
-      return
-    }
-    // Infinite query. The plugin's `SetDataEvent.data` for `kind: 'infinite'`
-    // is `TPage[]` (the pages array), so the same path-based walk + write
-    // mechanics apply — we just route through `InfiniteEntry.setData` and
-    // re-emit with `kind: 'infinite'`.
-    const internal = query as unknown as AnyInfiniteQuery
-    const map = this.infiniteMaps.get(internal)
-    if (!map) return
-    const entry = map.get(hash)
-    if (!entry) return
-    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], { track: false })
-    this.emitSetData(internal, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
-    // Canonical backprop write — always `'set'` (see the regular-query branch).
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.pages.peek(), 'set')
-  }
-
-  applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void {
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return
-    if (query.__olas !== 'query') return // infinite — deferred for v1
-    const internal = query as unknown as AnyQuery
-    const map = this.maps.get(internal)
-    if (!map) return
-    const hash = stableHash(keyArgs)
-    const entry = map.get(hash)
-    if (!entry) return
-    this.applyingRemote = true
-    try {
-      // Emit AFTER kicking off invalidate so plugins reading entry state see
-      // post-invalidation values, mirroring setData's emit-after-write order.
-      entry.entry.invalidate().catch((err) => {
-        // Two rapid invalidates on the same key supersede each other, which
-        // raises AbortError. That's not a cache error — swallow.
-        if (isAbortError(err)) return
-        dispatchError(this.onError, err, {
-          kind: 'cache',
-          controllerPath: [],
-          queryId,
-          key: entry.keyArgs,
-        })
-      })
-      this.emitInvalidate(internal, entry.keyArgs, 'data')
-    } finally {
-      this.applyingRemote = false
-    }
-  }
-
+  /** Buffer a payload for entries not bound yet (`RootOptions.hydrate`). */
   hydrate(state: DehydratedState): void {
-    if (state.version !== 1) {
-      // Silent drop hid schema-bumped payloads. Warn so a future spec bump is
-      // detectable from the client side without code archaeology.
-      if (__DEV__) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          '[olas] hydrate(): unsupported state.version =',
-          state.version,
-          '— expected 1. Dropping payload; cache will fetch fresh.',
-        )
-      }
-      return
-    }
+    if (!this.acceptsState(state)) return
     for (const entry of state.entries) {
       const hash = stableHash(entry.key)
       this.hydratedData.set(hydrationKey(entry.id, hash), {
         data: entry.data,
         lastUpdatedAt: entry.lastUpdatedAt,
+        origin: undefined,
       })
     }
   }
@@ -1112,12 +1077,17 @@ export class QueryClient {
     throw err
   }
 
-  bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
+  bindQuery<Args extends unknown[], T>(
+    query: Query<Args, T>,
+    options?: BindQueryOptions,
+  ): QueryActions<Args, T>
   bindQuery<Args extends unknown[], TPage, TItem>(
     query: InfiniteQuery<Args, TPage, TItem>,
+    options?: BindQueryOptions,
   ): InfiniteQueryActions<Args, TPage, TItem>
   bindQuery(
     source: Query<any, any> | InfiniteQuery<any, any, any>,
+    options?: BindQueryOptions,
   ): QueryActions<any, any> | InfiniteQueryActions<any, any, any> {
     const query = source as AnyQuery | AnyInfiniteQuery
     const getClient = () => {
@@ -1126,12 +1096,14 @@ export class QueryClient {
     }
     getClient()
     query.__clients.add(this)
+    this.index(query)
+    const origin = options?.origin
     if (query.__olas === 'infiniteQuery') {
       this.touchedInfiniteQueries.add(query)
-      return createInfiniteQueryActions(query, getClient)
+      return createInfiniteQueryActions(query, getClient, origin)
     }
     this.touchedQueries.add(query)
-    return createQueryActions(query, getClient)
+    return createQueryActions(query, getClient, origin)
   }
 
   bindEntry<Args extends unknown[], T>(query: Query<Args, T>, args: Args): ClientEntry<T> {
@@ -1142,45 +1114,57 @@ export class QueryClient {
       this.maps.set(internal, map)
       this.touchedQueries.add(internal)
       internal.__clients.add(this)
+      this.index(internal)
     }
     const keyArgs = internal.__spec.key(...args)
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as ClientEntry<T> | undefined
     if (!entry) {
       const hkey = hydrationKey(internal.__id, hash)
-      const hydrated = this.hydratedData.get(hkey) as { data: T; lastUpdatedAt: number } | undefined
+      const hydrated = this.hydratedData.get(hkey) as
+        | { data: T; lastUpdatedAt: number; origin: string | undefined }
+        | undefined
       if (hydrated) this.hydratedData.delete(hkey)
-      // Build the fetcher-success emitter here so `emitSetData` can stay
-      // `private` — `ClientEntry` doesn't reach back into the client to call
-      // it; the closure captures (query, keyArgs, this) in this scope and
-      // is consumed by `Entry.onSuccessData` from inside `applySuccess`.
-      const onFetchSuccess = (data: T): void =>
-        this.emitSetData(internal, keyArgs, data, 'data', 'fetch')
-      entry = new ClientEntry<T>(
+      // The entry reports its own successful fetches through this closure, so
+      // the emitters can stay private to the client.
+      const onFetched = (data: T): void =>
+        this.emitWrite(
+          internal,
+          keyArgs,
+          data,
+          created.entry.lastUpdatedAt.peek(),
+          'fetch',
+          undefined,
+        )
+      const created: ClientEntry<T> = new ClientEntry<T>(
         this,
         internal,
         args,
         keyArgs,
         internal.__spec,
         hydrated,
-        onFetchSuccess,
+        onFetched,
       )
+      entry = created
       map.set(hash, entry as ClientEntry<unknown>)
       // The entry is created without an immediate subscriber (callers like
       // `prefetch`/`setData`/`invalidate` reach `bindEntry` first; subscribing
       // callers then call `acquire()` right after, which clears the gc timer).
       entry.scheduleGcIfOrphan()
-      // Hydrated data lands in `initialData` on the new Entry — `applySuccess`
-      // is never called, so plugins observing fetch results (entities, ...)
-      // would otherwise miss every hydrated row. Emit a SetDataEvent with
-      // `source: 'fetch'` here once the entry is registered (and the plugin
-      // is already init'd, since the QueryClient constructor runs hydrate →
-      // plugin init before any subscriber can reach bindEntry). The fetch
-      // source is correct for layered consumers: each tab hydrates
-      // independently, so cross-tab's "skip 'fetch'" gate continues to do
-      // the right thing.
+      // Buffered hydrated data lands in `initialData` on the new Entry, so no
+      // fetch ever reports it. Report it here, once, as the `'hydrate'` write
+      // it is — plugins observing every write (entities) would otherwise miss
+      // every hydrated row.
       if (hydrated !== undefined) {
-        this.emitSetData(internal, keyArgs, hydrated.data, 'data', 'fetch')
+        this.emitWrite(
+          internal,
+          keyArgs,
+          hydrated.data,
+          hydrated.lastUpdatedAt,
+          'hydrate',
+          hydrated.origin,
+        )
+        if (__DEV__) this.emitDevtoolsSetData(internal, keyArgs, hydrated.data, 'hydrate')
       }
     } else if (__DEV__) {
       // The fetcher closure is captured on first `bindEntry`. If a later
@@ -1220,9 +1204,9 @@ export class QueryClient {
       this.maps.delete(entry.query)
     }
     if (__DEV__) {
-      this.devtools?.emit({ type: 'cache:gc', queryKey: entry.keyArgs })
+      this.devtools?.emit({ type: 'cache:gc', queryId: entry.query.__id, queryKey: entry.keyArgs })
     }
-    this.emitGc(entry.query, entry.keyArgs, 'data')
+    this.emitRemoved(entry.query, entry.keyArgs)
   }
 
   /**
@@ -1261,7 +1245,11 @@ export class QueryClient {
     return Promise.resolve()
   }
 
-  invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): Promise<void> {
+  invalidate<Args extends unknown[]>(
+    query: Query<Args, any>,
+    args: Args,
+    origin?: string,
+  ): Promise<void> {
     const internal = query as AnyQuery
     const map = this.maps.get(internal)
     if (!map) return Promise.resolve()
@@ -1270,25 +1258,28 @@ export class QueryClient {
     const entry = map.get(hash)
     if (!entry) return Promise.resolve()
     if (__DEV__) {
-      this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
+      this.devtools?.emit({ type: 'cache:invalidated', queryId: internal.__id, queryKey: keyArgs })
     }
     const settled = this.invalidateEntry(entry)
-    this.emitInvalidate(internal, keyArgs, 'data')
+    this.emitInvalidated(internal, keyArgs, origin)
     return settled
   }
 
-  invalidateAll(query: Query<any, any>): Promise<void> {
+  invalidateAll(query: Query<any, any>, origin?: string): Promise<void> {
     const internal = query as AnyQuery
     const map = this.maps.get(internal)
     if (!map) return Promise.resolve()
     const settled: Promise<void>[] = []
-    for (const [hash, entry] of map) {
-      void hash
+    for (const entry of map.values()) {
       if (__DEV__) {
-        this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
+        this.devtools?.emit({
+          type: 'cache:invalidated',
+          queryId: internal.__id,
+          queryKey: entry.keyArgs,
+        })
       }
       settled.push(this.invalidateEntry(entry))
-      this.emitInvalidate(internal, entry.keyArgs, 'data')
+      this.emitInvalidated(internal, entry.keyArgs, origin)
     }
     return Promise.all(settled).then(() => {})
   }
@@ -1335,10 +1326,10 @@ export class QueryClient {
    * A **canonical** write to one keyed entry: patches data, pushes no
    * optimistic snapshot, never flips `hasPendingMutations` (spec §6.4).
    *
-   * The userland counterpart to the plugin-facing `setEntryData` — same
-   * `{ track: false }` path through `Entry.setData`, same `source: 'set'`
+   * The userland counterpart to the plugin-facing `host.queries.write` — same
+   * `{ track: false }` path through `Entry.setData`, same `source: 'write'`
    * event, so cross-tab and entity plugins see it exactly as they see any
-   * other local write. What it is NOT is an optimistic patch: there is no
+   * other canonical write. What it is NOT is an optimistic patch: there is no
    * `Snapshot` to roll back, which is the whole point. `setData`'s snapshot
    * exists to be settled by the mutation that created it, and a fire-and-forget
    * patcher (a server-push handler, a realtime event fold) has no mutation to
@@ -1346,7 +1337,7 @@ export class QueryClient {
    * the entry forever: `hasPendingMutations` wedged at `true` and an array that
    * grows without bound on a long-lived entry.
    *
-   * Unlike `setEntryData` this DOES bind (create) the entry when absent, for
+   * Unlike `host.queries.write` this DOES bind (create) the entry when absent, for
    * one reason: symmetry with `setData`, whose behaviour it otherwise matches
    * exactly. Guard with `peekData` when writing into a possibly-absent key is
    * wrong for your data shape (a merge over `undefined` usually is).
@@ -1355,6 +1346,7 @@ export class QueryClient {
     query: Query<Args, T>,
     args: Args,
     updater: (prev: T | undefined) => T,
+    origin?: string,
   ): void {
     const entry = this.bindEntry(query, args)
     // A PATCH, and so it leaves a fetch that is already in flight alone (§5.5, §6.4). That is
@@ -1372,11 +1364,16 @@ export class QueryClient {
     // diverges from react-query, which has one door for all three and therefore cannot treat them
     // differently.
     entry.entry.setData(updater, { track: false })
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-    // Explicit `'set'`, not the ambient-cause default: a canonical write inside
-    // a mutation's `onMutate` inherits the `causeId` but its KIND is still a
-    // plain set, never `'mutate'` (the `setEntryData` precedent).
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
+    const data = entry.entry.data.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      data,
+      entry.entry.lastUpdatedAt.peek(),
+      'write',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'write')
   }
 
   /**
@@ -1396,38 +1393,65 @@ export class QueryClient {
    * AND cancelling would strand the entry at `success` over no data, with nothing to refetch it
    * until `staleTime` lapses. `Entry.cancel` is a no-op when nothing is fetching.
    */
-  replaceData<Args extends unknown[], T>(query: Query<Args, T>, args: Args, value: T): void {
+  replaceData<Args extends unknown[], T>(
+    query: Query<Args, T>,
+    args: Args,
+    value: T,
+    origin?: string,
+  ): void {
     const entry = this.bindEntry(query, args)
     entry.entry.setData(() => value, { track: false })
     if (value !== undefined) entry.entry.cancel()
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
+    const data = entry.entry.data.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      data,
+      entry.entry.lastUpdatedAt.peek(),
+      'replace',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'replace')
   }
 
   setData<Args extends unknown[], T>(
     query: Query<Args, T>,
     args: Args,
     updater: (prev: T | undefined) => T,
+    origin?: string,
   ): Snapshot {
     const entry = this.bindEntry(query, args)
     const snapshot = entry.entry.setData(updater)
-    // Read the post-update value to broadcast — plugins want the new state,
-    // not the updater function (which would be uncloneable across
-    // BroadcastChannel).
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek())
-    // Re-broadcast on rollback so cross-tab / entity plugins drop the failed
-    // optimistic value instead of keeping it (T3.6). Guard on an actual data
-    // change: a non-top chain-splice rollback (§6.4) leaves current data
-    // untouched, so there is nothing new to broadcast.
+    // Report the post-update value — plugins want the new state, not the
+    // updater function (which would be uncloneable across BroadcastChannel).
+    const data = entry.entry.data.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      data,
+      entry.entry.lastUpdatedAt.peek(),
+      'optimistic',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'optimistic')
+    // Report the rollback too, so plugins that mirrored the optimistic value
+    // (cross-tab, entities) drop it (T3.6). Only when data actually changed:
+    // a non-top chain-splice rollback (§6.4) leaves current data untouched.
     return {
       rollback: () => {
         const before = entry.entry.data.peek()
         snapshot.rollback()
         const after = entry.entry.data.peek()
         if (!Object.is(before, after)) {
-          this.emitSetData(entry.query, entry.keyArgs, after, 'data', 'set')
-          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, after)
+          this.emitWrite(
+            entry.query,
+            entry.keyArgs,
+            after,
+            entry.entry.lastUpdatedAt.peek(),
+            'rollback',
+            origin,
+          )
+          if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, after, 'rollback')
         }
       },
       finalize: () => snapshot.finalize(),
@@ -1445,26 +1469,29 @@ export class QueryClient {
       this.infiniteMaps.set(internal, map)
       this.touchedInfiniteQueries.add(internal)
       internal.__clients.add(this)
+      this.index(internal)
     }
     const keyArgs = internal.__spec.key(...args)
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as InfiniteClientEntry<TPage, TItem, unknown> | undefined
     if (!entry) {
-      // Mirror the regular-query plumbing in `bindEntry`: build the
-      // SetDataEvent emitter here so `emitSetData` stays private. The
-      // closure captures (query, keyArgs, this) and is consumed by
-      // `InfiniteEntry.onSuccessData` from inside each successful page
-      // batch (initial, next, prev).
-      const onFetchSuccess = (pages: TPage[]): void =>
-        this.emitSetData(internal, keyArgs, pages, 'infinite', 'fetch')
-      entry = new InfiniteClientEntry<TPage, TItem, unknown>(
-        this,
-        internal,
-        args,
-        keyArgs,
-        internal.__spec,
-        onFetchSuccess,
-      )
+      // Every successful page batch (initial, next, prev) reports through this
+      // closure, as in `bindEntry`.
+      const onFetched = (pages: TPage[]): void =>
+        this.emitWrite(
+          internal,
+          keyArgs,
+          pages,
+          created.entry.lastUpdatedAt.peek(),
+          'fetch',
+          undefined,
+        )
+      const created: InfiniteClientEntry<TPage, TItem, unknown> = new InfiniteClientEntry<
+        TPage,
+        TItem,
+        unknown
+      >(this, internal, args, keyArgs, internal.__spec, onFetched)
+      entry = created
       map.set(hash, entry as InfiniteClientEntry<unknown, unknown, unknown>)
       entry.scheduleGcIfOrphan()
     }
@@ -1481,12 +1508,16 @@ export class QueryClient {
     if (map.size === 0) {
       this.infiniteMaps.delete(entry.query)
     }
-    this.emitGc(entry.query, entry.keyArgs, 'infinite')
+    if (__DEV__) {
+      this.devtools?.emit({ type: 'cache:gc', queryId: entry.query.__id, queryKey: entry.keyArgs })
+    }
+    this.emitRemoved(entry.query, entry.keyArgs)
   }
 
   invalidateInfinite<Args extends unknown[]>(
     query: InfiniteQuery<Args, any, any>,
     args: Args,
+    origin?: string,
   ): Promise<void> {
     const internal = query as AnyInfiniteQuery
     const map = this.infiniteMaps.get(internal)
@@ -1495,19 +1526,29 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     const entry = map.get(hash)
     if (!entry) return Promise.resolve()
+    if (__DEV__) {
+      this.devtools?.emit({ type: 'cache:invalidated', queryId: internal.__id, queryKey: keyArgs })
+    }
     const settled = this.invalidateEntry(entry)
-    this.emitInvalidate(internal, keyArgs, 'infinite')
+    this.emitInvalidated(internal, keyArgs, origin)
     return settled
   }
 
-  invalidateAllInfinite(query: InfiniteQuery<any, any, any>): Promise<void> {
+  invalidateAllInfinite(query: InfiniteQuery<any, any, any>, origin?: string): Promise<void> {
     const internal = query as AnyInfiniteQuery
     const map = this.infiniteMaps.get(internal)
     if (!map) return Promise.resolve()
     const settled: Promise<void>[] = []
     for (const entry of map.values()) {
+      if (__DEV__) {
+        this.devtools?.emit({
+          type: 'cache:invalidated',
+          queryId: internal.__id,
+          queryKey: entry.keyArgs,
+        })
+      }
       settled.push(this.invalidateEntry(entry))
-      this.emitInvalidate(internal, entry.keyArgs, 'infinite')
+      this.emitInvalidated(internal, entry.keyArgs, origin)
     }
     return Promise.all(settled).then(() => {})
   }
@@ -1530,21 +1571,37 @@ export class QueryClient {
     query: InfiniteQuery<Args, TPage, any>,
     args: Args,
     updater: (prev: TPage[] | undefined) => TPage[],
+    origin?: string,
   ): Snapshot {
     const entry = this.bindInfiniteEntry(query, args)
     const snapshot = entry.entry.setData(updater)
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.pages.peek())
-    // Re-broadcast on rollback so peers drop the failed optimistic pages
-    // (T3.6); guard on an actual change (non-top chain-splice is a no-op).
+    const pages = entry.entry.pages.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      pages,
+      entry.entry.lastUpdatedAt.peek(),
+      'optimistic',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, 'optimistic')
+    // Report the rollback so plugins mirroring the optimistic pages drop them
+    // (T3.6); only on an actual change (a non-top chain-splice is a no-op).
     return {
       rollback: () => {
         const before = entry.entry.pages.peek()
         snapshot.rollback()
         const after = entry.entry.pages.peek()
         if (!Object.is(before, after)) {
-          this.emitSetData(entry.query, entry.keyArgs, after, 'infinite', 'set')
-          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, after)
+          this.emitWrite(
+            entry.query,
+            entry.keyArgs,
+            after,
+            entry.entry.lastUpdatedAt.peek(),
+            'rollback',
+            origin,
+          )
+          if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, after, 'rollback')
         }
       },
       finalize: () => snapshot.finalize(),
@@ -1627,12 +1684,10 @@ export class QueryClient {
     }
     this.touchedInfiniteQueries.clear()
     this.hydratedData.clear()
-    for (const plugin of this.plugins) {
-      if (plugin.dispose) {
-        const cb = plugin.dispose
-        this.callPlugin(plugin, () => cb.call(plugin))
-      }
-    }
+    for (const mutation of this.pluginMutations.values()) mutation.dispose()
+    this.pluginMutations.clear()
+    this.byId.clear()
+    this.refs.clear()
   }
 }
 

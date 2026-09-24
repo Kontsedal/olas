@@ -1,7 +1,7 @@
 import type { DevtoolsEmitter } from '../devtools'
 import type { ErrorHandler } from '../errors'
+import type { PluginSet } from '../plugin/host'
 import { QueryClient } from './client'
-import type { QueryClientPlugin } from './plugin'
 import type { DehydratedState, QueryDefaults } from './types'
 
 /** Options for `queryEngine(...)`. */
@@ -24,7 +24,7 @@ export type QueryEngineHost = {
   devtools: DevtoolsEmitter
   deps: Record<string, unknown>
   hydrate: DehydratedState | undefined
-  plugins: QueryClientPlugin[] | undefined
+  plugins: PluginSet | null
 }
 
 /**

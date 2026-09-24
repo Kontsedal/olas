@@ -7,7 +7,7 @@ import { computed, type ReadSignal, type Signal, signal } from './signals'
 // Test-only registry teardown — lives on the `@kontsedal/olas-core/testing`
 // sub-path, NOT the public entry (T3.9). Lets tests reusing a `mutationId`
 // across cases avoid registry bleed.
-export { _unregisterMutationById } from './query/plugin'
+export { _unregisterMutationById } from './query/mutation-registry'
 
 /**
  * Options for `createTestController`. Mirrors `RootOptions`, with two test

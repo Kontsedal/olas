@@ -8,7 +8,7 @@ import {
   queryEngine,
 } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
-import { defineEntity, entitiesPlugin } from '../src'
+import { defineEntity, Entities, entitiesPlugin } from '../src'
 
 /**
  * End-to-end coverage for `@kontsedal/olas-entities`. Each test mounts a
@@ -59,7 +59,7 @@ describe('defineEntity', () => {
 describe('entitiesPlugin', () => {
   test('throws on duplicate entity names', () => {
     const Dup = defineEntity<Post>({ name: 'Post', idOf: () => null })
-    expect(() => entitiesPlugin([Post, Dup])).toThrow(/duplicate entity name "Post"/)
+    expect(() => entitiesPlugin({ entities: [Post, Dup] })).toThrow(/duplicate entity name "Post"/)
   })
 
   test('auto-walks fetch results and populates the store', async () => {
@@ -75,14 +75,15 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post, User])
+    const plugin = entitiesPlugin({ entities: [Post, User] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     await settle()
 
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
-    expect(plugin.get(Post, 'p3')).toEqual({ id: 'p3', title: 'Pinned', likes: 5 })
+    expect(entities.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(entities.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
+    expect(entities.get(Post, 'p3')).toEqual({ id: 'p3', title: 'Pinned', likes: 5 })
 
     root.dispose()
   })
@@ -94,11 +95,12 @@ describe('entitiesPlugin', () => {
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
 
-    const sig = plugin.signal(Post, 'p1')
+    const sig = entities.signal(Post, 'p1')
     expect(sig.peek()).toBeUndefined()
 
     const seen: Array<Post | undefined> = []
@@ -117,18 +119,19 @@ describe('entitiesPlugin', () => {
   })
 
   test('explicit upsert populates the store for non-query sources', () => {
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
 
-    expect(plugin.get(Post, 'p1')).toBeUndefined()
-    plugin.upsert(Post, { id: 'p1', title: 'Direct', likes: 0 })
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'Direct', likes: 0 })
+    expect(entities.get(Post, 'p1')).toBeUndefined()
+    entities.upsert(Post, { id: 'p1', title: 'Direct', likes: 0 })
+    expect(entities.get(Post, 'p1')).toEqual({ id: 'p1', title: 'Direct', likes: 0 })
 
     // upsert with a non-entity value (idOf returns null) is a silent no-op
     // — we can't store something without an id.
-    plugin.upsert(Post, { wrong: 'shape' } as unknown as Post)
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'Direct', likes: 0 })
+    entities.upsert(Post, { wrong: 'shape' } as unknown as Post)
+    expect(entities.get(Post, 'p1')).toEqual({ id: 'p1', title: 'Direct', likes: 0 })
 
     root.dispose()
   })
@@ -140,18 +143,19 @@ describe('entitiesPlugin', () => {
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
-    plugin.update(Post, 'p1', { likes: 1 })
+    entities.update(Post, 'p1', { likes: 1 })
 
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 1 })
+    expect(entities.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 1 })
     expect(root.api.feed.data.peek()).toEqual({ posts: [{ id: 'p1', title: 'A', likes: 1 }] })
 
     root.dispose()
@@ -179,7 +183,7 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post, User])
+    const plugin = entitiesPlugin({ entities: [Post, User] })
     const def = defineController((ctx) => ({
       feed: createQuery(ctx, feedQuery, () => []),
       profile: createQuery(ctx, profileQuery, () => []),
@@ -189,9 +193,10 @@ describe('entitiesPlugin', () => {
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
-    plugin.update(Post, 'p1', { title: 'A!', likes: 42 })
+    entities.update(Post, 'p1', { title: 'A!', likes: 42 })
 
     // Both queries see the same patch on the shared entity.
     expect(root.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A!', likes: 42 })
@@ -223,16 +228,17 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
-    plugin.update(Post, 'p1', { likes: 99 })
+    entities.update(Post, 'p1', { likes: 99 })
 
     const after = root.api.feed.data.peek()
     expect(after?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 99 })
@@ -245,12 +251,13 @@ describe('entitiesPlugin', () => {
   })
 
   test('update is a no-op when the entity is not in the store', () => {
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
 
-    plugin.update(Post, 'never-seen', { likes: 999 })
-    expect(plugin.get(Post, 'never-seen')).toBeUndefined()
+    entities.update(Post, 'never-seen', { likes: 999 })
+    expect(entities.get(Post, 'never-seen')).toBeUndefined()
 
     root.dispose()
   })
@@ -268,18 +275,19 @@ describe('entitiesPlugin', () => {
           : null,
       maxSlots: 2,
     })
-    const plugin = entitiesPlugin([SmallEntity])
+    const plugin = entitiesPlugin({ entities: [SmallEntity] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
 
-    plugin.upsert(SmallEntity, { id: 'a', n: 1 })
-    plugin.upsert(SmallEntity, { id: 'b', n: 2 })
+    entities.upsert(SmallEntity, { id: 'a', n: 1 })
+    entities.upsert(SmallEntity, { id: 'b', n: 2 })
     // The no-op update on a never-seen id must not push an empty slot — if
     // it did, the partition would hit cap=2 and evict `a` to make room.
-    plugin.update(SmallEntity, 'never-seen', { n: 99 })
-    expect(plugin.get(SmallEntity, 'a')).toEqual({ id: 'a', n: 1 })
-    expect(plugin.get(SmallEntity, 'b')).toEqual({ id: 'b', n: 2 })
-    expect(plugin.get(SmallEntity, 'never-seen')).toBeUndefined()
+    entities.update(SmallEntity, 'never-seen', { n: 99 })
+    expect(entities.get(SmallEntity, 'a')).toEqual({ id: 'a', n: 1 })
+    expect(entities.get(SmallEntity, 'b')).toEqual({ id: 'b', n: 2 })
+    expect(entities.get(SmallEntity, 'never-seen')).toBeUndefined()
 
     root.dispose()
   })
@@ -297,7 +305,7 @@ describe('entitiesPlugin', () => {
       fetcher: async () => ({ recent: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({
       feed: createQuery(ctx, feedQuery, () => []),
       sidebar: createQuery(ctx, sidebarQuery, () => []),
@@ -307,11 +315,12 @@ describe('entitiesPlugin', () => {
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
     const feedFires = vi.fn()
     const sidebarFires = vi.fn()
-    const sig = plugin.signal(Post, 'p1')
+    const sig = entities.signal(Post, 'p1')
     const sigFires = vi.fn()
     // subscribe fires synchronously with the current value (`once`),
     // so reset the call counts after attaching.
@@ -322,7 +331,7 @@ describe('entitiesPlugin', () => {
     sidebarFires.mockClear()
     sigFires.mockClear()
 
-    plugin.update(Post, 'p1', { likes: 7 })
+    entities.update(Post, 'p1', { likes: 7 })
 
     expect(feedFires).toHaveBeenCalledTimes(1)
     expect(sidebarFires).toHaveBeenCalledTimes(1)
@@ -331,29 +340,17 @@ describe('entitiesPlugin', () => {
     root.dispose()
   })
 
-  test('plugin instance reused across two roots surfaces an onError', () => {
-    const plugin = entitiesPlugin([Post])
+  test('one plugin value gives each root its own store', () => {
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
-    const onError1 = vi.fn()
-    const root1 = createRoot(def, {
-      queries: queryEngine(),
-      deps: {},
-      plugins: [plugin],
-      onError: onError1,
-    })
-    expect(onError1).not.toHaveBeenCalled()
-
-    const onError2 = vi.fn()
-    const root2 = createRoot(def, {
-      queries: queryEngine(),
-      deps: {},
-      plugins: [plugin],
-      onError: onError2,
-    })
-    const pluginErr = onError2.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'plugin')
-    expect(pluginErr).toBeTruthy()
-    expect((pluginErr?.[0] as Error).message).toMatch(/reused across multiple roots/)
-
+    const root1 = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const root2 = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const a = root1.inject(Entities)
+    const b = root2.inject(Entities)
+    expect(a).not.toBe(b)
+    a.upsert(Post, { id: 'p1', title: 'only in root1', likes: 0 })
+    expect(a.get(Post, 'p1')?.title).toBe('only in root1')
+    expect(b.get(Post, 'p1')).toBeUndefined()
     root1.dispose()
     root2.dispose()
   })
@@ -371,13 +368,14 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
     // Now drop p1 from the feed.
@@ -387,25 +385,26 @@ describe('entitiesPlugin', () => {
     // Update p1 — there should be NO query to patch (p1 no longer lives
     // anywhere in feed). The store still holds the old value, but the
     // backprop should not raise an error and should not touch the feed.
-    plugin.update(Post, 'p1', { likes: 999 })
+    entities.update(Post, 'p1', { likes: 999 })
 
     expect(root.api.feed.data.peek()?.posts).toEqual([{ id: 'p2', title: 'B', likes: 0 }])
     // Store keeps the patched value (we updated it directly).
-    expect(plugin.get(Post, 'p1')?.likes).toBe(999)
+    expect(entities.get(Post, 'p1')?.likes).toBe(999)
 
     root.dispose()
   })
 
   test('signal handle is stable across calls (same id → same signal)', () => {
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
 
-    const s1 = plugin.signal(Post, 'p1')
-    const s2 = plugin.signal(Post, 'p1')
+    const s1 = entities.signal(Post, 'p1')
+    const s2 = entities.signal(Post, 'p1')
     expect(s1).toBe(s2)
 
-    const s3 = plugin.signal(Post, 'p2')
+    const s3 = entities.signal(Post, 'p2')
     expect(s3).not.toBe(s1)
 
     root.dispose()
@@ -418,18 +417,19 @@ describe('entitiesPlugin', () => {
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
-    expect(plugin.get(Post, 'p1')).toBeDefined()
-    plugin.invalidate(Post, 'p1')
-    expect(plugin.get(Post, 'p1')).toBeUndefined()
+    expect(entities.get(Post, 'p1')).toBeDefined()
+    entities.remove(Post, 'p1')
+    expect(entities.get(Post, 'p1')).toBeUndefined()
     // Query data untouched — invalidate is store-only.
     expect(root.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
 
@@ -440,12 +440,13 @@ describe('entitiesPlugin', () => {
     // Sanity check that infinite-query SetDataEvents don't crash the walker.
     // We don't assert positively because v1 doesn't populate from infinite
     // — this just pins the "no exception, no surprising store entry" contract.
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
 
     // Construct + dispose with no infinite query bound — nothing to walk.
-    expect(plugin.get(Post, 'p1')).toBeUndefined()
+    expect(entities.get(Post, 'p1')).toBeUndefined()
 
     root.dispose()
   })
@@ -462,12 +463,13 @@ describe('entitiesPlugin', () => {
       },
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ q: createQuery(ctx, cyclicQuery, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     await settle()
 
-    expect(plugin.get(Post, 'p1')).toMatchObject({ id: 'p1', title: 'A', likes: 0 })
+    expect(entities.get(Post, 'p1')).toMatchObject({ id: 'p1', title: 'A', likes: 0 })
     root.dispose()
   })
 
@@ -480,13 +482,14 @@ describe('entitiesPlugin', () => {
       fetcher: async () => ({ stuff: [{ id: 'x1', someField: 1 }] }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post, User])
+    const plugin = entitiesPlugin({ entities: [Post, User] })
     const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     await settle()
 
-    expect(plugin.get(Post, 'x1')).toBeUndefined()
-    expect(plugin.get(User, 'x1')).toBeUndefined()
+    expect(entities.get(Post, 'x1')).toBeUndefined()
+    expect(entities.get(User, 'x1')).toBeUndefined()
     root.dispose()
   })
 
@@ -506,23 +509,24 @@ describe('entitiesPlugin', () => {
       },
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, sharedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
     // Backprop must reach BOTH paths.
-    plugin.update(Post, 'p1', { likes: 42 })
+    entities.update(Post, 'p1', { likes: 42 })
     const after = root.api.feed.data.peek()
     expect(after?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 42 })
     expect(after?.pinned).toEqual({ id: 'p1', title: 'A', likes: 42 })
 
     // Devtools introspection confirms both paths in the reverse index.
-    const bindings = plugin.bindings(Post, 'p1')
+    const bindings = entities.bindings(Post, 'p1')
     expect(bindings).toHaveLength(1)
     const paths = bindings[0]?.paths.map((p) => p.join('.'))
     expect(paths).toEqual(expect.arrayContaining(['posts.0', 'pinned']))
@@ -542,14 +546,15 @@ describe('entitiesPlugin', () => {
       },
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ q: createQuery(ctx, cyclicQuery, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     await settle()
 
     // The cycle short-circuits at the second `.self` re-entry. We still
     // recorded the entity itself (one binding, root path `[]`).
-    const bindings = plugin.bindings(Post, 'p1')
+    const bindings = entities.bindings(Post, 'p1')
     expect(bindings).toHaveLength(1)
     expect(bindings[0]?.paths).toEqual([[]])
     root.dispose()
@@ -560,43 +565,45 @@ describe('entitiesPlugin', () => {
       name: 'Unrelated',
       idOf: (v) => (v as { id?: string }).id ?? null,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
 
     const expectErr = /entity "Unrelated" was not registered/
-    expect(() => plugin.signal(Unrelated, 'x')).toThrow(expectErr)
-    expect(() => plugin.get(Unrelated, 'x')).toThrow(expectErr)
-    expect(() => plugin.upsert(Unrelated, { id: 'x', foo: 'y' })).toThrow(expectErr)
-    expect(() => plugin.update(Unrelated, 'x', { foo: 'y' })).toThrow(expectErr)
-    expect(() => plugin.invalidate(Unrelated, 'x')).toThrow(expectErr)
-    expect(() => plugin.entries(Unrelated)).toThrow(expectErr)
-    expect(() => plugin.bindings(Unrelated, 'x')).toThrow(expectErr)
+    expect(() => entities.signal(Unrelated, 'x')).toThrow(expectErr)
+    expect(() => entities.get(Unrelated, 'x')).toThrow(expectErr)
+    expect(() => entities.upsert(Unrelated, { id: 'x', foo: 'y' })).toThrow(expectErr)
+    expect(() => entities.update(Unrelated, 'x', { foo: 'y' })).toThrow(expectErr)
+    expect(() => entities.remove(Unrelated, 'x')).toThrow(expectErr)
+    expect(() => entities.entries(Unrelated)).toThrow(expectErr)
+    expect(() => entities.bindings(Unrelated, 'x')).toThrow(expectErr)
 
     root.dispose()
   })
 
-  test('calling into the plugin after dispose says it was disposed, not unregistered', () => {
+  test('calling into the store after dispose says it was disposed, not unregistered', () => {
     // `dispose()` clears the same `store` that the registration check
     // probes, so a post-dispose call used to report "was not registered"
-    // and send the reader hunting for a missing entitiesPlugin([...]) entry
+    // and send the reader hunting for a missing entitiesPlugin({ entities: [...] }) entry
     // that was there all along.
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
-    plugin.upsert(Post, { id: 'p1', title: 'Live', likes: 0 })
+    const entities = root.inject(Entities)
+    entities.upsert(Post, { id: 'p1', title: 'Live', likes: 0 })
     root.dispose()
 
-    const expectErr = /the plugin was disposed with its owning root/
-    expect(() => plugin.signal(Post, 'p1')).toThrow(expectErr)
-    expect(() => plugin.get(Post, 'p1')).toThrow(expectErr)
-    expect(() => plugin.upsert(Post, { id: 'p2', title: 'Late', likes: 0 })).toThrow(expectErr)
-    expect(() => plugin.update(Post, 'p1', { title: 'Late' })).toThrow(expectErr)
-    expect(() => plugin.invalidate(Post, 'p1')).toThrow(expectErr)
-    expect(() => plugin.entries(Post)).toThrow(expectErr)
-    expect(() => plugin.bindings(Post, 'p1')).toThrow(expectErr)
+    const expectErr = /the store was disposed with its owning root/
+    expect(() => entities.signal(Post, 'p1')).toThrow(expectErr)
+    expect(() => entities.get(Post, 'p1')).toThrow(expectErr)
+    expect(() => entities.upsert(Post, { id: 'p2', title: 'Late', likes: 0 })).toThrow(expectErr)
+    expect(() => entities.update(Post, 'p1', { title: 'Late' })).toThrow(expectErr)
+    expect(() => entities.remove(Post, 'p1')).toThrow(expectErr)
+    expect(() => entities.entries(Post)).toThrow(expectErr)
+    expect(() => entities.bindings(Post, 'p1')).toThrow(expectErr)
     // And it does NOT claim the entity was never registered.
-    expect(() => plugin.get(Post, 'p1')).not.toThrow(/was not registered/)
+    expect(() => entities.get(Post, 'p1')).not.toThrow(/was not registered/)
   })
 
   test('keyArgs containing a Date is handled correctly (uses stableHash)', async () => {
@@ -615,16 +622,17 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ daily: createQuery(ctx, dailyQuery, () => [t]) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
-    plugin.update(Post, 'p1', { likes: 9 })
+    entities.update(Post, 'p1', { likes: 9 })
     expect(root.api.daily.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 9 })
 
     root.dispose()
@@ -637,34 +645,36 @@ describe('entitiesPlugin', () => {
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
-    plugin.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 5 }))
-    expect(plugin.get(Post, 'p1')?.likes).toBe(5)
+    entities.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 5 }))
+    expect(entities.get(Post, 'p1')?.likes).toBe(5)
     expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(5)
 
-    plugin.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 10 }))
-    expect(plugin.get(Post, 'p1')?.likes).toBe(15)
+    entities.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 10 }))
+    expect(entities.get(Post, 'p1')?.likes).toBe(15)
     expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(15)
 
     root.dispose()
   })
 
   test('update on a missing entity warns in dev and is a no-op', () => {
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController(() => ({}))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    plugin.update(Post, 'never-seen', { likes: 999 })
-    expect(plugin.get(Post, 'never-seen')).toBeUndefined()
+    entities.update(Post, 'never-seen', { likes: 999 })
+    expect(entities.get(Post, 'never-seen')).toBeUndefined()
     expect(warn).toHaveBeenCalledTimes(1)
     expect(warn.mock.calls[0]?.[0]).toMatch(/entities\.update.*never-seen.*no-op/s)
 
@@ -684,22 +694,23 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     await settle()
 
-    const snap = plugin.entries(Post)
+    const snap = entities.entries(Post)
     expect(snap.size).toBe(2)
     expect(snap.get('p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
     expect(snap.get('p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
 
     // Mutating the returned Map MUST NOT affect the live store.
     ;(snap as Map<string, Post>).delete('p1')
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(entities.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
 
     // A second call returns a fresh snapshot.
-    const snap2 = plugin.entries(Post)
+    const snap2 = entities.entries(Post)
     expect(snap2).not.toBe(snap)
     expect(snap2.size).toBe(2)
 
@@ -741,7 +752,7 @@ describe('entitiesPlugin', () => {
       ],
     }
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
@@ -749,14 +760,15 @@ describe('entitiesPlugin', () => {
       plugins: [plugin],
       hydrate: hydrated,
     })
+    const entities = root.inject(Entities)
 
     // First paint: hydrated data is already there and the entity store sees it.
     expect(root.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
+    expect(entities.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(entities.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
 
     // Backprop works: entities.update reaches the hydrated query immediately.
-    plugin.update(Post, 'p1', { likes: 7 })
+    entities.update(Post, 'p1', { likes: 7 })
     expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(7)
     expect(root.api.feed.data.peek()?.pinned?.likes).toBe(7)
 
@@ -770,24 +782,25 @@ describe('entitiesPlugin', () => {
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     await settle()
 
-    const snap = plugin.entries(Post)
+    const snap = entities.entries(Post)
     const p1 = snap.get('p1') as Post
 
     // Snapshot is NOT === to the live store value (it's a shallow clone).
-    expect(p1).not.toBe(plugin.get(Post, 'p1'))
-    expect(p1).toEqual(plugin.get(Post, 'p1'))
+    expect(p1).not.toBe(entities.get(Post, 'p1'))
+    expect(p1).toEqual(entities.get(Post, 'p1'))
 
     // And it's frozen — strict-mode throw, non-strict silent-no-op. Either
     // way, the live store value is not corrupted.
     expect(() => {
       ;(p1 as { likes: number }).likes = 999
     }).toThrow()
-    expect(plugin.get(Post, 'p1')?.likes).toBe(0)
+    expect(entities.get(Post, 'p1')?.likes).toBe(0)
 
     root.dispose()
   })
@@ -804,12 +817,13 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
     await settle()
 
-    const bindings = plugin.bindings(Post, 'p1')
+    const bindings = entities.bindings(Post, 'p1')
     expect(bindings).toHaveLength(1)
     expect(bindings[0]?.queryId).toBe('ent-test/bindings')
     expect(bindings[0]?.keyArgs).toEqual([])
@@ -836,7 +850,7 @@ describe('entitiesPlugin', () => {
     expect(() => {
       ;(bindings[0] as unknown as MutableBinding).keyArgs.push('garbage')
     }).toThrow()
-    const bindings2 = plugin.bindings(Post, 'p1')
+    const bindings2 = entities.bindings(Post, 'p1')
     expect(bindings2[0]?.paths).toEqual([
       ['posts', 0],
       ['posts', 1],
@@ -844,7 +858,7 @@ describe('entitiesPlugin', () => {
     expect(bindings2[0]?.queryId).toBe('ent-test/bindings')
 
     // Unknown ids return an empty array (not undefined).
-    expect(plugin.bindings(Post, 'never-seen')).toEqual([])
+    expect(entities.bindings(Post, 'never-seen')).toEqual([])
 
     root.dispose()
   })
@@ -880,25 +894,26 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([NestedPost])
+    const plugin = entitiesPlugin({ entities: [NestedPost] })
     const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
 
     // Patch only `author.profile.verified` — the rest of `author.profile`
     // and `author.name` should survive.
-    plugin.update(
+    entities.update(
       NestedPost,
       'p1',
       { author: { profile: { verified: true } } } as Partial<NestedPost>,
       { merge: 'deep' },
     )
 
-    const next = plugin.get(NestedPost, 'p1')
+    const next = entities.get(NestedPost, 'p1')
     expect(next).toEqual({
       id: 'p1',
       title: 'A',
@@ -928,19 +943,18 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([WithTags])
+    const plugin = entitiesPlugin({ entities: [WithTags] })
     const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as {
-      dispose(): void
-    }
+    })
+    const entities = root.inject(Entities)
     await settle()
 
-    plugin.update(WithTags, 'p1', { tags: ['only'] }, { merge: 'deep' })
-    expect(plugin.get(WithTags, 'p1')?.tags).toEqual(['only'])
+    entities.update(WithTags, 'p1', { tags: ['only'] }, { merge: 'deep' })
+    expect(entities.get(WithTags, 'p1')?.tags).toEqual(['only'])
 
     root.dispose()
   })
@@ -955,25 +969,24 @@ describe('entitiesPlugin', () => {
           : null,
       maxSlots: 2,
     })
-    const plugin = entitiesPlugin([Item])
+    const plugin = entitiesPlugin({ entities: [Item] })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as {
-      dispose(): void
-    }
+    })
+    const entities = root.inject(Entities)
 
     // Three orphan upserts (no query holds them). With maxSlots: 2, the
     // first should be evicted on the third insert.
-    plugin.upsert(Item, { id: 'i1', title: 'A' })
-    plugin.upsert(Item, { id: 'i2', title: 'B' })
-    plugin.upsert(Item, { id: 'i3', title: 'C' })
+    entities.upsert(Item, { id: 'i1', title: 'A' })
+    entities.upsert(Item, { id: 'i2', title: 'B' })
+    entities.upsert(Item, { id: 'i3', title: 'C' })
 
-    expect(plugin.get(Item, 'i1')).toBeUndefined()
-    expect(plugin.get(Item, 'i2')).toEqual({ id: 'i2', title: 'B' })
-    expect(plugin.get(Item, 'i3')).toEqual({ id: 'i3', title: 'C' })
+    expect(entities.get(Item, 'i1')).toBeUndefined()
+    expect(entities.get(Item, 'i2')).toEqual({ id: 'i2', title: 'B' })
+    expect(entities.get(Item, 'i3')).toEqual({ id: 'i3', title: 'C' })
 
     root.dispose()
   })
@@ -999,28 +1012,27 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Item])
+    const plugin = entitiesPlugin({ entities: [Item] })
     const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as {
-      dispose(): void
-    }
+    })
+    const entities = root.inject(Entities)
     await settle()
 
     // Both bound — neither can be evicted, cap is exceeded silently.
-    expect(plugin.get(Item, 'b1')).toEqual({ id: 'b1', title: 'A' })
-    expect(plugin.get(Item, 'b2')).toEqual({ id: 'b2', title: 'B' })
+    expect(entities.get(Item, 'b1')).toEqual({ id: 'b1', title: 'A' })
+    expect(entities.get(Item, 'b2')).toEqual({ id: 'b2', title: 'B' })
 
     // Adding a third (orphan) upsert: the orphan is evictable, but it's
     // the *newest*. There are no orphans to evict among older slots, so
     // the cap is exceeded silently.
-    plugin.upsert(Item, { id: 'b3', title: 'C' })
-    expect(plugin.get(Item, 'b1')).toEqual({ id: 'b1', title: 'A' })
-    expect(plugin.get(Item, 'b2')).toEqual({ id: 'b2', title: 'B' })
-    expect(plugin.get(Item, 'b3')).toEqual({ id: 'b3', title: 'C' })
+    entities.upsert(Item, { id: 'b3', title: 'C' })
+    expect(entities.get(Item, 'b1')).toEqual({ id: 'b1', title: 'A' })
+    expect(entities.get(Item, 'b2')).toEqual({ id: 'b2', title: 'B' })
+    expect(entities.get(Item, 'b3')).toEqual({ id: 'b3', title: 'C' })
 
     root.dispose()
   })
@@ -1035,27 +1047,26 @@ describe('entitiesPlugin', () => {
           : null,
       maxSlots: 2,
     })
-    const plugin = entitiesPlugin([Item])
+    const plugin = entitiesPlugin({ entities: [Item] })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as {
-      dispose(): void
-    }
+    })
+    const entities = root.inject(Entities)
 
-    plugin.upsert(Item, { id: 'a', title: 'A' })
-    plugin.upsert(Item, { id: 'b', title: 'B' })
+    entities.upsert(Item, { id: 'a', title: 'A' })
+    entities.upsert(Item, { id: 'b', title: 'B' })
     // Touch `a` via `signal(...)` (which IS an LRU touch — `get` is a
     // pure peek and intentionally side-effect-free).
-    void plugin.signal(Item, 'a')
+    void entities.signal(Item, 'a')
     // Insert a third — `b` is now LRU and should be evicted.
-    plugin.upsert(Item, { id: 'c', title: 'C' })
+    entities.upsert(Item, { id: 'c', title: 'C' })
 
-    expect(plugin.get(Item, 'a')).toEqual({ id: 'a', title: 'A' })
-    expect(plugin.get(Item, 'b')).toBeUndefined()
-    expect(plugin.get(Item, 'c')).toEqual({ id: 'c', title: 'C' })
+    expect(entities.get(Item, 'a')).toEqual({ id: 'a', title: 'A' })
+    expect(entities.get(Item, 'b')).toBeUndefined()
+    expect(entities.get(Item, 'c')).toEqual({ id: 'c', title: 'C' })
 
     root.dispose()
   })
@@ -1091,30 +1102,31 @@ describe('entitiesPlugin', () => {
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([FeedItem])
+    const plugin = entitiesPlugin({ entities: [FeedItem] })
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feed, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
     })
+    const entities = root.inject(Entities)
     await settle()
     // Load the second page so the walker has multiple pages to traverse.
     await root.api.feed.fetchNextPage()
     await settle()
 
     // Entities from both pages should be normalized into the store.
-    expect(plugin.get(FeedItem, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 0 })
+    expect(entities.get(FeedItem, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(entities.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 0 })
 
     // Bindings point at the right (pageIdx, inPagePath) coordinates.
-    const bindings = plugin.bindings(FeedItem, 'p3')
+    const bindings = entities.bindings(FeedItem, 'p3')
     expect(bindings.length).toBe(1)
     expect(bindings[0]?.paths).toEqual([[1, 0]])
 
     // Backprop through update — reaches the page-internal slot.
-    plugin.update(FeedItem, 'p3', { likes: 7 })
-    expect(plugin.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 7 })
+    entities.update(FeedItem, 'p3', { likes: 7 })
+    expect(entities.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 7 })
     expect(root.api.feed.pages.peek()[1]?.[0]).toEqual({ id: 'p3', title: 'C', likes: 7 })
 
     root.dispose()
@@ -1137,20 +1149,19 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin([Nested])
+    const plugin = entitiesPlugin({ entities: [Nested] })
     const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as {
-      dispose(): void
-    }
+    })
+    const entities = root.inject(Entities)
     await settle()
 
     // No options → shallow: meta is replaced wholesale.
-    plugin.update(Nested, 'n1', { meta: { a: 9 } } as Partial<Nested>)
-    expect(plugin.get(Nested, 'n1')?.meta).toEqual({ a: 9 })
+    entities.update(Nested, 'n1', { meta: { a: 9 } } as Partial<Nested>)
+    expect(entities.get(Nested, 'n1')?.meta).toEqual({ a: 9 })
 
     root.dispose()
   })

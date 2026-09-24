@@ -1555,3 +1555,43 @@ The precedence was contradictory. The engine docstring said engine values win, b
 Stateful plugin instances passed twice are still shared between the two roots. Plugin host v2 (W2) moves per-root state into `setup`, which closes that.
 
 `scripts/codemods/engine-defaults.ts` moved 34 option sites. The tests "defaultQueryOptions wins over the flat shorthand" and "an engine belongs to exactly one root" are deleted; the rules they pinned no longer exist.
+
+## [2026-09-24 19:30] ingest | 1.0 W2: plugin host v2, and the four plugins ported
+
+**New modules:**
+- `packages/core/src/plugin/types.ts`: the public contract.
+- `packages/core/src/plugin/host.ts`: `PluginSet`, which does setup, delivery, isolation, middleware composition, `track` and disposal, plus `definePlugin`.
+- `packages/core/src/query/mutation-registry.ts`: the global `defineMutation` registry, moved out of the deleted `query/plugin.ts`.
+
+The reasoning, and the list of what the old `QueryClientPlugin` got wrong, are in `decisions/plugin-host-v2.md`.
+
+**Where things moved:**
+- **`createRoot` runs plugin setup, before the factory.** The order is: client created, plugins set up, plugin-provided scopes seeded, `RootOptions.scopes` seeded (so they win), then construct. A setup throw disposes earlier plugins in reverse, then the client.
+- **`root.dispose()` order:** close delivery, dispose the instance, dispose plugins in reverse, dispose the client.
+- **`root.waitForIdle()`** alternates between the client's idle wait and `PluginSet.pendingWork()` until neither moves.
+- **`QueryClient`** lost `makePluginApi`, `callPlugin`, the three emitters, `applyRemoteSetData`, `applyRemoteInvalidate`, `setEntryData`, `subscribedKeysFor` and the `applyingRemote` flag. It gained:
+  - `byId` and `refOf`;
+  - `emitWrite` / `emitInvalidated` / `emitRemoved` / `emitActivity`;
+  - `runFetch`;
+  - `mutationLifecycle`;
+  - `queryHost(origin)` / `mutationHost(origin)`.
+
+  It also takes an `origin` parameter on every write and invalidate. `applyDehydratedEntry` and the hydration buffer carry `origin` too.
+- **Entries.** The entries' fetchers take `(signal, attempt)`, and `InfiniteEntry` passes `attempt` in the page context, both for `wrapFetch`. `Entry.applyHydration` no longer calls `onSuccessData`; that call was the double hydration event.
+- **`MutationImpl`.** It reports `start`/`success`/`error`/`cancel` through `MutationLifecycleHooks.emit` for every run, and threads `runId` into `runWithRetry` so `wrapMutate` sees it.
+
+**Ports:**
+- **cross-tab:** per-root state lives in setup. There is an `origins` / `optimistic` policy. Receiving uses `host.queries.write`/`invalidate`, so a remote invalidate refetches only when an entry is subscribed.
+- **entities:** `createEntityStore` runs per root. `Entities` is a scope. Backprop goes through `host.queries.write`, with the plugin's origin so it skips its own writes. `invalidate` is renamed `remove`.
+- **mutation-queue:** setup-scoped. It uses `onMutation`, `host.mutations.run`/`has`, `host.network` and a `MutationQueue` scope. `adapter` is renamed `storage`.
+- **react streaming hydrator:** `onWrite` over committed sources.
+
+**Also fixed on the way.** `query/focus-online.ts` removed its shared listeners from whatever `window` existed at uninstall time, and left its installed state stuck when there was none, which stranded the listener. It now remembers the target it installed on.
+
+**Tests.** `tests/plugin.test.ts` is replaced by `tests/plugin-host.test.ts` (28 contract tests). The R-Q1.1 and R-Q3.6 regressions are rewritten onto `host.queries` and `WriteEvent`. Satellite tests are ported. The mutation-queue unit tests drive `onMutation` through a `directHooks` fake host, and replay tests wait with `root.waitForIdle()` (the startup replay is tracked). The kanban example now reads the store with `ctx.inject(Entities)` instead of threading the plugin through `deps`.
+
+BACKLOG: the `isRemote` redundancy and "the plugin contract knows its plugins" items are removed. Two bullets of the entities item are resolved. New `[planned]`: persist inside `wrapMutate`, to close the queue's loss window.
+
+968 tests. CI chain green.
+
+Wiki pages whose `covers:` changed and still describe `QueryClientPlugin` get rewritten in the W6 docs pass: `modules/cross-tab.md`, `modules/entities.md`, `modules/mutation-queue.md`, `entities/query-client.md` and `flows/ssr.md`. A `flows/plugin-lifecycle.md` page follows there too.

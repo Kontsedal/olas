@@ -18,7 +18,7 @@ import {
 } from '../src/api'
 import type { NotifyRef } from '../src/api/schema'
 import { appController } from '../src/app.controller'
-import { createEntitiesPlugin } from '../src/entities'
+import { kanbanEntities } from '../src/entities'
 
 /** In-memory `Map`-backed `StorageAdapter` for tests. */
 export function memoryStorage(): StorageAdapter {
@@ -97,7 +97,6 @@ export function createKanbanRoot(opts?: {
   const broadcaster =
     opts?.broadcaster ??
     createBroadcaster({ channelFactory: opts?.channelFactory, tabId: opts?.tabId })
-  const entities = createEntitiesPlugin()
   const notifyRef: NotifyRef = { current: () => {} }
   const root = createRoot(appController, {
     queries: queryEngine(),
@@ -106,12 +105,11 @@ export function createKanbanRoot(opts?: {
       broadcaster,
       realtime: broadcaster.realtime,
       tabId: broadcaster.tabId,
-      entities,
       notifyRef,
       storage: opts?.storage,
     },
     plugins: [
-      entities,
+      kanbanEntities,
       crossTabPlugin({
         channelName: 'olas-kanban-cache',
         channelFactory: opts?.channelFactory,

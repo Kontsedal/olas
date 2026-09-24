@@ -269,9 +269,9 @@ describe('runtime devtools events', () => {
     expect(kindsForCause).toContain('snapshot:rollback')
     expect(kindsForCause).toContain('mutation:rollback')
     expect(kindsForCause).toContain('mutation:error')
-    // The first set-data under this cause is the optimistic write (source 'mutate').
+    // The first set-data under this cause is the optimistic write.
     const optimistic = events.find((e) => e.type === 'cache:set-data' && e.causeId === cause)
-    expect(optimistic).toMatchObject({ source: 'mutate', data: 'optimistic' })
+    expect(optimistic).toMatchObject({ source: 'optimistic', data: 'optimistic' })
     root.dispose()
   })
 
@@ -305,7 +305,7 @@ describe('runtime devtools events', () => {
     root.dispose()
   })
 
-  test('a bare query.setData is source:set with no causeId', async () => {
+  test('a bare query.setData is source:optimistic with no causeId', async () => {
     const events: DebugEvent[] = []
     const q = defineQuery({
       id: 'devtools-events/299',
@@ -320,7 +320,11 @@ describe('runtime devtools events', () => {
     q.setData('1', () => 'manual')
 
     const write = events.find((e) => e.type === 'cache:set-data')
-    expect(write).toMatchObject({ source: 'set', data: 'manual' })
+    expect(write).toMatchObject({
+      source: 'optimistic',
+      data: 'manual',
+      queryId: 'devtools-events/299',
+    })
     expect(write?.causeId).toBeUndefined()
     root.dispose()
   })

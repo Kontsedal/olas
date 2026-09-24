@@ -162,6 +162,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private readonly fetcher: (pageCtx: {
     pageParam: PageParam
     signal: AbortSignal
+    attempt: number
   }) => Promise<TPage>
   private readonly initialPageParam: PageParam
   private readonly getNextPageParam: (lastPage: TPage, allPages: TPage[]) => PageParam | null
@@ -181,15 +182,18 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }> = []
   private readonly itemsOf?: (page: TPage) => TItem[]
   /**
-   * Mirrors `Entry.onSuccessData`. Fires from `applyFetchSuccess`-equivalent
-   * branches AFTER `pages.set(...)` settles. Used by `InfiniteClientEntry`
-   * to emit `SetDataEvent { kind: 'infinite', source: 'fetch' }` for
-   * `QueryClientPlugin`s (e.g. entity normalization).
+   * Mirrors `Entry.onSuccessData`. Fires from every successful page batch
+   * AFTER `pages.set(...)` settles, so `InfiniteClientEntry` can report a
+   * `'fetch'` write to plugins (entity normalization walks the pages).
    */
   private readonly onSuccessData?: (pages: TPage[]) => void
 
   constructor(opts: {
-    fetcher: (pageCtx: { pageParam: PageParam; signal: AbortSignal }) => Promise<TPage>
+    fetcher: (pageCtx: {
+      pageParam: PageParam
+      signal: AbortSignal
+      attempt: number
+    }) => Promise<TPage>
     initialPageParam: PageParam
     getNextPageParam: (lastPage: TPage, allPages: TPage[]) => PageParam | null
     getPreviousPageParam?: (firstPage: TPage, allPages: TPage[]) => PageParam | null
@@ -296,7 +300,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             throw new DOMException('Superseded', 'AbortError')
           }
           try {
-            const page = await this.fetcher({ pageParam, signal })
+            const page = await this.fetcher({ pageParam, signal, attempt })
             if (myId !== this.currentFetchId || this.disposed) {
               throw new DOMException('Superseded', 'AbortError')
             }
@@ -478,7 +482,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           throw new DOMException('Superseded', 'AbortError')
         }
         try {
-          const page = await this.fetcher({ pageParam, signal })
+          const page = await this.fetcher({ pageParam, signal, attempt })
           if (myId !== this.currentFetchId || this.disposed) {
             throw new DOMException('Superseded', 'AbortError')
           }

@@ -87,7 +87,7 @@ describe('integration: offline → online sync', () => {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
     })
 
     await expect(root1.api.create.run({ sku: 'A-1', qty: 2 })).rejects.toThrow(/offline/)
@@ -112,7 +112,7 @@ describe('integration: offline → online sync', () => {
     const root2 = createRoot(def2, {
       queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
     })
     await settle()
 
@@ -159,7 +159,9 @@ describe('integration: offline → online sync', () => {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 })],
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 }),
+      ],
     })
 
     // Three offline writes — each persists.
@@ -182,10 +184,13 @@ describe('integration: offline → online sync', () => {
       {
         queries: queryEngine(),
         deps: {},
-        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 })],
+        plugins: [
+          mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 }),
+        ],
       },
     )
-    await settle()
+    // The startup replay is tracked, so this waits for all three.
+    await root2.waitForIdle()
 
     // All three replayed in enqueue order; storage drained.
     expect(adapter.store.size).toBe(0)
@@ -239,7 +244,7 @@ describe('integration: offline → online sync', () => {
           deps: {},
           plugins: [
             mutationQueuePlugin({
-              adapter,
+              storage: adapter,
               keyPrefix: 'int/mq/retry',
               maxAttempts: 10,
             }),

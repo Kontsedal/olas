@@ -9,5 +9,11 @@ declare module '@kontsedal/olas-core' {
   }
 }
 
-export { type MutationQueueOptions, mutationQueuePlugin } from './plugin'
+export {
+  MUTATION_QUEUE_PLUGIN_NAME,
+  MutationQueue,
+  type MutationQueueOptions,
+  type MutationQueueService,
+  mutationQueuePlugin,
+} from './plugin'
 export { PROTOCOL_VERSION, type QueueEntry } from './protocol'

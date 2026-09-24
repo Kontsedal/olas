@@ -17,6 +17,7 @@
  */
 
 import { type CtrlApi, type Ctx, createQuery, defineController } from '@kontsedal/olas-core'
+import { Entities } from '@kontsedal/olas-entities'
 import { activityController } from './features/activity/activity.controller'
 import { archiveController } from './features/archive/archive.controller'
 import { boardController } from './features/board/board.controller'
@@ -93,9 +94,9 @@ export const appController = defineController(
       archive,
       users,
       labels,
-      // Pass-through to the entities plugin so React components can
-      // synchronously look up a cached entity by id.
-      entities: ctx.deps.entities,
+      // The entities store, so React components can subscribe to one entity
+      // by id (`use(app.entities.signal(UserEntity, id))`).
+      entities: ctx.inject(Entities),
     }
   },
   { name: 'app' },

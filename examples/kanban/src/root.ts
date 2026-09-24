@@ -15,12 +15,11 @@ import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 import { type Api, type Broadcaster, createBroadcaster, createFakeApi } from './api'
 import type { NotifyRef } from './api/schema'
 import { appController } from './app.controller'
-import { createEntitiesPlugin } from './entities'
+import { kanbanEntities } from './entities'
 
 export function createAppRoot(opts?: { api?: Api; broadcaster?: Broadcaster }) {
   const api = opts?.api ?? createFakeApi()
   const broadcaster = opts?.broadcaster ?? createBroadcaster()
-  const entities = createEntitiesPlugin()
   const notifyRef: NotifyRef = { current: () => {} }
 
   const root = createRoot(appController, {
@@ -30,10 +29,9 @@ export function createAppRoot(opts?: { api?: Api; broadcaster?: Broadcaster }) {
       broadcaster,
       realtime: broadcaster.realtime,
       tabId: broadcaster.tabId,
-      entities,
       notifyRef,
     },
-    plugins: [entities, crossTabPlugin({ channelName: 'olas-kanban-cache' })],
+    plugins: [kanbanEntities, crossTabPlugin({ channelName: 'olas-kanban-cache' })],
     onError: (err, context) => {
       const message = err instanceof Error ? err.message : String(err)
       notifyRef.current({

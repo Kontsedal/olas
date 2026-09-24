@@ -25,7 +25,7 @@ import {
   queryEngine,
   type Snapshot,
 } from '@kontsedal/olas-core'
-import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
+import { defineEntity, Entities, entitiesPlugin } from '@kontsedal/olas-entities'
 import { describe, expect, test, vi } from 'vitest'
 import { deferred, settle } from './_helpers'
 
@@ -65,8 +65,9 @@ describe('integration: optimistic CRUD + entities', () => {
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => {
+      const entities = ctx.inject(Entities)
       const feed = createQuery(ctx, feedQuery, () => [])
       const sidebar = createQuery(ctx, sidebarQuery, () => [])
       const likePost = createMutation<string, { id: string; likes: number }>(ctx, {
@@ -75,12 +76,12 @@ describe('integration: optimistic CRUD + entities', () => {
           return { id, likes: 1 }
         },
         onMutate: (id) => {
-          const before = plugin.get(Post, id)
+          const before = entities.get(Post, id)
           if (!before) return
-          plugin.update(Post, id, { likes: before.likes + 1 })
+          entities.update(Post, id, { likes: before.likes + 1 })
         },
         onSuccess: (server) => {
-          plugin.update(Post, server.id, { likes: server.likes })
+          entities.update(Post, server.id, { likes: server.likes })
         },
       })
       return { feed, sidebar, likePost }
@@ -121,7 +122,7 @@ describe('integration: optimistic CRUD + entities', () => {
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => {
       const feed = createQuery(ctx, feedQuery, () => [])
       const sidebar = createQuery(ctx, sidebarQuery, () => [])
@@ -201,11 +202,12 @@ describe('integration: optimistic CRUD + entities', () => {
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const slots = [deferred<number>(), deferred<number>()]
     let i = 0
 
     const def = defineController((ctx) => {
+      const entities = ctx.inject(Entities)
       const feed = createQuery(ctx, feedQuery, () => [])
       const sidebar = createQuery(ctx, sidebarQuery, () => [])
       const setLikes = createMutation<number, number>(ctx, {
@@ -220,7 +222,7 @@ describe('integration: optimistic CRUD + entities', () => {
         onMutate: (target) => {
           // Optimistically push `target` likes via the entities plugin —
           // patches both queries in one shot.
-          plugin.update(Post, 'p1', { likes: target })
+          entities.update(Post, 'p1', { likes: target })
         },
         concurrency: 'latest-wins',
       })
@@ -263,7 +265,7 @@ describe('integration: optimistic CRUD + entities', () => {
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const hold = deferred<void>()
 
     const def = defineController((ctx) => {

@@ -21,6 +21,7 @@ import {
   defineQuery,
   signal,
 } from '@kontsedal/olas-core'
+import { Entities } from '@kontsedal/olas-entities'
 import { useLiveStream } from '@kontsedal/olas-realtime'
 import { type Comment, REALTIME_CHANNEL, type RealtimeEvent } from '../../api'
 import { UserEntity } from '../../entities'
@@ -101,7 +102,7 @@ export const commentsController = defineController(
         if (id === null) throw new Error('No card open')
         // Stand-in for "the current user" — first registered user. A real app
         // would read `session.user.id` from a session dep.
-        const firstUser = ctx.deps.entities.entries(UserEntity).keys().next().value
+        const firstUser = ctx.inject(Entities).entries(UserEntity).keys().next().value
         const authorId = firstUser ?? 'u_ada'
         const comment = await ctx.deps.api.addComment(id, authorId, vars.body, signal)
         // Canonical: the comment exists on the server. `write` leaves no snapshot.

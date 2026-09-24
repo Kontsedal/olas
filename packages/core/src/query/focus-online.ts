@@ -51,41 +51,44 @@ function onVisibilityChange(): void {
   if (document.visibilityState === 'visible') scheduleFocus()
 }
 
-let focusInstalled = false
-let onlineInstalled = false
+type Target = Pick<Window, 'addEventListener' | 'removeEventListener'>
+type DocTarget = Pick<Document, 'addEventListener' | 'removeEventListener'>
+
+// The objects the shared listeners were installed ON. Uninstalling removes
+// from these, not from whatever `window` exists at uninstall time — so a
+// global swapped in between (tests stubbing `window`, a teardown after the
+// environment went away) cannot strand a listener or leave the "installed"
+// state stuck and block the next install.
+let focusTarget: { win: Target; doc: DocTarget | undefined } | null = null
+let onlineTarget: Target | null = null
 
 function installFocus(): void {
-  if (focusInstalled) return
+  if (focusTarget !== null) return
   if (typeof window === 'undefined') return
+  const doc = typeof document !== 'undefined' ? document : undefined
   window.addEventListener('focus', scheduleFocus)
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', onVisibilityChange)
-  }
-  focusInstalled = true
+  doc?.addEventListener('visibilitychange', onVisibilityChange)
+  focusTarget = { win: window, doc }
 }
 
 function uninstallFocus(): void {
-  if (!focusInstalled) return
-  if (typeof window === 'undefined') return
-  window.removeEventListener('focus', scheduleFocus)
-  if (typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', onVisibilityChange)
-  }
-  focusInstalled = false
+  if (focusTarget === null) return
+  focusTarget.win.removeEventListener('focus', scheduleFocus)
+  focusTarget.doc?.removeEventListener('visibilitychange', onVisibilityChange)
+  focusTarget = null
 }
 
 function installOnline(): void {
-  if (onlineInstalled) return
+  if (onlineTarget !== null) return
   if (typeof window === 'undefined') return
   window.addEventListener('online', fireOnline)
-  onlineInstalled = true
+  onlineTarget = window
 }
 
 function uninstallOnline(): void {
-  if (!onlineInstalled) return
-  if (typeof window === 'undefined') return
-  window.removeEventListener('online', fireOnline)
-  onlineInstalled = false
+  if (onlineTarget === null) return
+  onlineTarget.removeEventListener('online', fireOnline)
+  onlineTarget = null
 }
 
 export function subscribeWindowFocus(fn: Sub): () => void {

@@ -17,11 +17,12 @@ import {
 import { createRoot, defineController } from '../src/controller'
 import type { FormIssue, StandardSchemaV1 } from '../src/forms'
 import { validator } from '../src/forms'
+import { definePlugin } from '../src/plugin/host'
+import type { PluginHost, WriteEvent } from '../src/plugin/types'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { queryEngine } from '../src/query/engine'
 import { Entry } from '../src/query/entry'
 import { InfiniteEntry } from '../src/query/infinite'
-import type { QueryClientPlugin, QueryClientPluginApi } from '../src/query/plugin'
 import { signal } from '../src/signals'
 import { isAbortError } from '../src/utils'
 
@@ -680,58 +681,59 @@ describe('gap: dehydrate while a mutation is in flight', () => {
 })
 
 // ---------------------------------------------------------------------------
-// R-Q1.1 (T1.1) — plugin/remote setData must NOT push an optimistic snapshot.
-// applyRemoteSetData / setEntryData are canonical cache writes (cross-tab
+// R-Q1.1 (T1.1) — a plugin's cache write must NOT push an optimistic snapshot.
+// `host.queries.write` / `replace` are canonical cache writes (cross-tab
 // receive, entities backprop, realtime patches). Before the fix they routed
 // through the *tracked* `Entry.setData`, discarded the returned Snapshot, and
 // so leaked a live record — wedging `hasPendingMutations` at `true` forever.
 // ---------------------------------------------------------------------------
-describe('regression: plugin/remote setData does not wedge hasPendingMutations (R-Q1.1)', () => {
-  test('applyRemoteSetData leaves hasPendingMutations false', async () => {
-    let api: QueryClientPluginApi | undefined
+describe('regression: plugin writes do not wedge hasPendingMutations (R-Q1.1)', () => {
+  const capturing = () => {
+    const box: { host?: PluginHost } = {}
+    const plugin = definePlugin({
+      name: 'capture',
+      setup(host) {
+        box.host = host
+      },
+    })
+    return { box, plugin }
+  }
+
+  test('host.queries.replace leaves hasPendingMutations false', async () => {
+    const { box, plugin } = capturing()
     const q = defineQuery({
       id: 'r-q1a-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
-    const capture: QueryClientPlugin = {
-      name: 'capture',
-      init: (a) => {
-        api = a
-      },
-    }
     const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1'] as const) }))
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [capture] })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [plugin] })
     await vi.waitFor(() => expect(root.api.user.data.value).toEqual({ id: '1', name: 'initial' }))
     expect(root.api.user.hasPendingMutations.value).toBe(false)
 
-    const [keyArgs] = api!.subscribedKeys('r-q1a-user')
-    api!.applyRemoteSetData('r-q1a-user', keyArgs!, { id: '1', name: 'remote' })
+    const queries = box.host?.queries
+    const [key] = queries?.keys('r-q1a-user') ?? []
+    queries?.replace('r-q1a-user', key!, { id: '1', name: 'remote' })
 
     expect(root.api.user.data.value).toEqual({ id: '1', name: 'remote' })
     expect(root.api.user.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
-  test('setEntryData leaves hasPendingMutations false', async () => {
-    let api: QueryClientPluginApi | undefined
+  test('host.queries.write leaves hasPendingMutations false', async () => {
+    const { box, plugin } = capturing()
     const q = defineQuery({
       id: 'r-q1b-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
-    const capture: QueryClientPlugin = {
-      name: 'capture',
-      init: (a) => {
-        api = a
-      },
-    }
     const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1'] as const) }))
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [capture] })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [plugin] })
     await vi.waitFor(() => expect(root.api.user.data.value).toEqual({ id: '1', name: 'initial' }))
 
-    const [keyArgs] = api!.subscribedKeys('r-q1b-user')
-    api!.setEntryData('r-q1b-user', keyArgs!, (prev) => ({
+    const queries = box.host?.queries
+    const [key] = queries?.keys('r-q1b-user') ?? []
+    queries?.write('r-q1b-user', key!, (prev) => ({
       ...(prev as { id: string; name: string }),
       name: 'patched',
     }))
@@ -741,8 +743,8 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
     root.dispose()
   })
 
-  test('setEntryData on an infinite query leaves hasPendingMutations false', async () => {
-    let api: QueryClientPluginApi | undefined
+  test('host.queries.write on an infinite query leaves hasPendingMutations false', async () => {
+    const { box, plugin } = capturing()
     type Page = { items: string[]; next: number | null }
     const q = defineInfiniteQuery<[], number, Page>({
       id: 'r-q1c-feed',
@@ -751,22 +753,18 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
       initialPageParam: 0,
       getNextPageParam: (page) => page.next,
     })
-    const capture: QueryClientPlugin = {
-      name: 'capture',
-      init: (a) => {
-        api = a
-      },
-    }
     const def = defineController((ctx) => ({ feed: createQuery(ctx, q) }))
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [capture] })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [plugin] })
     await vi.waitFor(() => expect(root.api.feed.pages.value.length).toBe(1))
 
-    const [keyArgs] = api!.subscribedKeys('r-q1c-feed')
-    api!.setEntryData('r-q1c-feed', keyArgs!, (prev) => {
+    const queries = box.host?.queries
+    const [key] = queries?.keys('r-q1c-feed') ?? []
+    queries?.write('r-q1c-feed', key!, (prev) => {
       const pages = prev as Page[]
       return [{ items: [...pages[0]!.items, 'patched'], next: null }]
     })
 
+    expect(root.api.feed.pages.value[0]?.items).toEqual(['p0', 'patched'])
     expect(root.api.feed.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
@@ -1482,45 +1480,42 @@ describe('regression: query cancellation + snapshot rebase (R-Q3.4)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// R-Q3.6 (T3.6) — an optimistic rollback must re-emit a SetDataEvent so
+// R-Q3.6 (T3.6) — an optimistic rollback must be reported to plugins, so
 // cross-tab / entity plugins drop the failed optimistic value. Before the fix,
-// client.setData emitted on the optimistic write, but snapshot.rollback() wrote
-// data directly (an Entry closure) with no emit — peer tabs kept the failed
-// optimistic state forever.
+// the optimistic write was reported but `snapshot.rollback()` wrote data
+// directly (an Entry closure) with nothing reported — peer tabs kept the
+// failed optimistic state forever.
 // ---------------------------------------------------------------------------
-describe('regression: optimistic rollback re-emits a SetDataEvent (R-Q3.6)', () => {
-  test('rollback broadcasts the restored value with source:set, isRemote:false', async () => {
+describe('regression: an optimistic rollback is reported to plugins (R-Q3.6)', () => {
+  test('the optimistic write and its rollback each emit one onWrite', async () => {
     type User = { id: string; name: string }
-    const events: Array<{ source: string; data: unknown; isRemote: boolean; kind: string }> = []
+    const events: WriteEvent[] = []
     const q = defineQuery({
       id: 'r-q36-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string): Promise<User> => ({ id, name: 'server' }),
     })
-    const capture: QueryClientPlugin = {
+    const capture = definePlugin({
       name: 'capture',
-      onSetData: (e) => {
-        events.push({ source: e.source, data: e.data, isRemote: e.isRemote, kind: e.kind })
-      },
-    }
+      setup: () => ({ onWrite: (e) => events.push(e) }),
+    })
     const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1'] as const) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [capture] })
     await vi.waitFor(() => expect(root.api.user.data.value).toEqual({ id: '1', name: 'server' }))
 
-    // Optimistic write → broadcasts source:'set'.
     events.length = 0
     const snap = q.setData('1', (prev) => ({ ...(prev as User), name: 'optimistic' }))
     expect(root.api.user.data.value).toEqual({ id: '1', name: 'optimistic' })
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ source: 'set', isRemote: false, kind: 'data' })
+    expect(events[0]).toMatchObject({ source: 'optimistic', origin: undefined })
     expect((events[0]!.data as User).name).toBe('optimistic')
 
-    // Rollback → must broadcast the RESTORED value so peers drop the failed state.
+    // Rollback → reports the RESTORED value so peers drop the failed state.
     events.length = 0
     snap.rollback()
     expect(root.api.user.data.value).toEqual({ id: '1', name: 'server' })
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ source: 'set', isRemote: false, kind: 'data' })
+    expect(events[0]).toMatchObject({ source: 'rollback', origin: undefined })
     expect((events[0]!.data as User).name).toBe('server')
 
     root.dispose()
@@ -1701,14 +1696,23 @@ describe('regression: query minor batch (R-Q3.9)', () => {
     root.dispose()
   })
 
-  test('a different query overwriting a queryId dev-warns', () => {
+  test('a different query reusing an id warns when one root binds both', () => {
+    // The collision is per root now: defining two queries with one id is only
+    // a problem once a root uses both, and two roots never interfere.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    defineQuery({ id: 'r-q39-dup', key: () => ['a'], fetcher: async () => 1 })
-    expect(warn).not.toHaveBeenCalled()
-    // Re-register the SAME id with a DIFFERENT query object → collision warning.
-    defineQuery({ id: 'r-q39-dup', key: () => ['b'], fetcher: async () => 2 })
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('duplicate queryId'))
-    warn.mockRestore()
+    try {
+      const a = defineQuery({ id: 'r-q39-dup', key: () => ['a'], fetcher: async () => 1 })
+      const b = defineQuery({ id: 'r-q39-dup', key: () => ['b'], fetcher: async () => 2 })
+      expect(warn).not.toHaveBeenCalled()
+      const root = createRoot(
+        defineController((ctx) => ({ a: createQuery(ctx, a), b: createQuery(ctx, b) })),
+        { queries: queryEngine(), deps: emptyDeps },
+      )
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("share the id 'r-q39-dup'"))
+      root.dispose()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 

@@ -1,40 +1,40 @@
 import {
-  lookupRegisteredMutation,
-  type MutationEnqueueEvent,
-  type MutationSettleEvent,
-  type Query,
-  type QueryClientPlugin,
-  type QueryClientPluginApi,
+  defineScope,
+  isAbortError,
+  type MutationEvent,
+  type OlasPlugin,
+  type QueryHost,
+  type Scope,
 } from '@kontsedal/olas-core'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { PROTOCOL_VERSION, type QueueEntry } from './protocol'
 
-/**
- * Handle passed to `onReplaySettle` so an app can reconcile its cache after a
- * queued mutation replays successfully (a reload / reconnect replay writes
- * server truth, but no local query knows to refetch). Without calling this,
- * UIs stay stale until their own `staleTime` lapses.
- */
-export type ReplaySettleApi = {
+/** The plugin's name — and the `origin` its replays carry. */
+export const MUTATION_QUEUE_PLUGIN_NAME = 'olas-mutation-queue'
+
+/** The service `mutationQueuePlugin` provides, under the `MutationQueue` scope. */
+export type MutationQueueService = {
   /**
-   * Invalidate a query so its subscribers refetch. Targets only the plugin's
-   * owning root; works with or without a `queryId`.
-   *
-   * `callArgs` are the arguments you'd pass to the query itself — the ones
-   * `spec.key(...)` is called WITH — not the key tuple it returns. For
-   * `key: (id) => ['user', id]` that is `[id]`, not `['user', id]`. The
-   * distinction is the `callArgs` / `keyArgs` split documented in
-   * `.wiki/pitfalls/callargs-vs-keyargs.md`; passing the key tuple here
-   * hashes `key('user', 1)` and silently invalidates nothing.
+   * Replay every pending entry now, instead of waiting for the next reload
+   * or reconnect. Resolves when the pass finishes. A no-op while another pass
+   * (in this tab, or holding the cross-tab replay lock) is running.
    */
-  invalidate(query: Query<any, any>, callArgs?: readonly unknown[]): void
+  replayNow(): Promise<void>
 }
 
 /**
- * Options for `mutationQueuePlugin(...)`. SPEC §13.3.
+ * The scope the queue's service lives under: `ctx.inject(MutationQueue)` in
+ * a controller, `root.inject(MutationQueue)` outside one.
+ */
+export const MutationQueue: Scope<MutationQueueService> = defineScope<MutationQueueService>({
+  name: 'olas-mutation-queue',
+})
+
+/**
+ * Options for `mutationQueuePlugin(...)`. SPEC §13.
  *
- * - `adapter` — the underlying durable store. `localStorageAdapter` from
- *   `@kontsedal/olas-persist` is the typical default; `indexedDbAdapter`
+ * - `storage` — the underlying durable store. `localStorageAdapter()` from
+ *   `@kontsedal/olas-persist` is the typical default; `indexedDbAdapter()`
  *   when payloads are large or async write is preferred.
  * - `keyPrefix` — namespace prefix in storage. Required to keep multiple
  *   apps on the same origin from colliding. Recommended shape:
@@ -43,14 +43,14 @@ export type ReplaySettleApi = {
  *   the entry is dropped from storage and `onReplayError` fires with the
  *   final error. Defaults to `5`.
  * - `onReplayError` — called when a replayed mutation throws (after
- *   `maxAttempts`) OR when a queue entry references a `mutationId` whose
+ *   `maxAttempts`) OR when a queue entry references a mutation `id` whose
  *   module hasn't been imported yet. The handler is the integration point
  *   for telemetry / user-facing error toasts on lost mutations.
  * - `onWarn` — soft conditions: malformed entry in storage, serialization
  *   failure (variables not structured-cloneable). Default: `console.warn`.
  */
 export type MutationQueueOptions = {
-  adapter: StorageAdapter
+  storage: StorageAdapter
   keyPrefix: string
   maxAttempts?: number
   onReplayError?: (err: unknown, entry: QueueEntry) => void
@@ -108,33 +108,39 @@ export type MutationQueueOptions = {
    */
   maxEntryBytes?: number
   /**
-   * Called after a queued mutation **replays successfully** on init /
-   * reconnect, with the entry, the mutate's return value, and a
-   * {@link ReplaySettleApi} for cache reconciliation. A replay writes server
-   * truth outside any live query's knowledge — without invalidating the
-   * affected queries here, subscribers keep showing stale data until their
-   * own `staleTime` lapses. Errors thrown by the handler are swallowed
-   * (routed to `onWarn`) so a buggy reconciler can't break replay.
+   * Called after a queued mutation **replays successfully** on startup /
+   * reconnect, with the entry, the mutate's return value, and the root's
+   * `QueryHost` for cache reconciliation. A replay writes server truth
+   * outside any live query's knowledge — without invalidating the affected
+   * entries here, subscribers keep showing stale data until their own
+   * `staleTime` lapses:
+   *
+   * ```ts
+   * onReplaySettle: (entry, result, queries) => {
+   *   void queries.invalidate('orders/list', [])   // `key(...)` output, not call args
+   * }
+   * ```
+   *
+   * Errors thrown by the handler are swallowed (routed to `onWarn`) so a
+   * buggy reconciler can't break replay.
    */
-  onReplaySettle?: (entry: QueueEntry, result: unknown, api: ReplaySettleApi) => void
+  onReplaySettle?: (entry: QueueEntry, result: unknown, queries: QueryHost) => void
   onWarn?: (message: string, cause?: unknown) => void
 }
 
 /**
- * `QueryClientPlugin` that persists `defineMutation({ persist: true })` runs
- * to a `StorageAdapter` and replays pending entries on `init`.
+ * Plugin that persists every run of a `defineMutation({ meta: { persist: true } })`
+ * mutation to a `StorageAdapter` and replays pending entries at startup.
  *
- * Lifecycle per run:
- *  1. `onMutationEnqueue` → write `QueueEntry` to storage.
- *  2. `onMutationSettle({ outcome: 'success' })` → delete entry. The
- *     server accepted, no replay needed.
- *  3. `onMutationSettle({ outcome: 'error' })` → delete entry IF
- *     `attempts >= maxAttempts`, else leave it and let the next page load
- *     trigger another attempt. (Within a single page load, in-process
- *     retries are handled by core's `spec.retry` policy.)
- *  4. `onMutationSettle({ outcome: 'cancelled' })` → leave entry in place.
- *     A page reload mid-run looks indistinguishable from explicit cancel
- *     at the plugin layer; the next `init` replays.
+ * Lifecycle per run (the plugin's `onMutation` hook):
+ *  1. `'start'` → write a `QueueEntry` to storage.
+ *  2. `'success'` → delete the entry. The server accepted; no replay needed.
+ *  3. `'error'` → delete the entry IF `attempts >= maxAttempts`, else leave
+ *     it and let the next page load trigger another attempt. (Within a single
+ *     page load, in-process retries are the definition's `retry` policy.)
+ *  4. `'cancel'` → leave the entry in place. A page reload mid-run looks
+ *     indistinguishable from an explicit cancel at the plugin layer; the next
+ *     startup replays.
  *
  * Two rules keep one logical operation to one durable entry:
  *  - A run that SUCCEEDS also drops the entries left by earlier runs of the
@@ -145,13 +151,14 @@ export type MutationQueueOptions = {
  *    now, so an `online` event inside the enqueue→settle window can't fire
  *    a live request a second time.
  *
- * On `init`:
+ * At startup (plugin setup):
  *  - List all keys under `keyPrefix`, parse each as a `QueueEntry`.
- *  - Group by `mutationId`; within each group sort by `enqueuedAt`.
- *  - For each entry, look up the registered mutation. If absent (module
- *    not imported yet), call `onReplayError({ kind: 'unknown-mutation' })`
- *    and leave in storage. If present, run `mutate(variables, signal)`
- *    serially per mutationId.
+ *  - Group by `mutationId`; within each group sort by `seq`.
+ *  - For each entry, check a definition is registered. If absent (module
+ *    not imported yet), call `onReplayError(err, entry)` and leave it in
+ *    storage. If present, run it through `host.mutations.run` — the engine's
+ *    runner, so the definition's `retry` applies and `mutate` gets the root's
+ *    `deps` — serially per mutation id.
  *
  * **Idempotency** is the consumer's responsibility — include an
  * `idempotencyKey` in your variables and have the server dedupe by it.
@@ -163,10 +170,8 @@ export type MutationQueueOptions = {
  * the in-process run continues normally (server may still accept). The
  * entry is just not durable in that case.
  */
-export function mutationQueuePlugin(
-  options: MutationQueueOptions,
-): QueryClientPlugin & { replayNow(): Promise<void> } {
-  const { adapter, keyPrefix } = options
+export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
+  const { storage: adapter, keyPrefix } = options
   const maxAttempts = options.maxAttempts ?? 5
   const onReplayError = options.onReplayError ?? defaultReplayError
   const onReplayAttempt = options.onReplayAttempt
@@ -183,752 +188,715 @@ export function mutationQueuePlugin(
     throw new Error('[olas/mutation-queue] keyPrefix is required.')
   }
 
-  /**
-   * Monotonic per-tab sequence counter. Persisted entries take this as their
-   * `seq` so replay ordering survives wall-clock drift. **Seeded from
-   * `Date.now()` at construction** so a post-restart enqueue always sorts
-   * after every pre-restart entry WITHOUT waiting to read the disk — the old
-   * design primed this from disk inside `replayAll` (async), so an enqueue
-   * that raced init got `seq` 1 and jumped ahead of prior-session entries
-   * (T6.2). The `replayAll` priming below is now just a belt-and-suspenders
-   * bump for the rare same-millisecond cross-tab case; it can only raise the
-   * counter, never lower it.
-   */
-  let seqCounter = Date.now()
-
-  /**
-   * Map of active `idempotencyKey` → `runId`. When `dedupeBy` returns a
-   * key that matches an in-flight entry, the second enqueue collapses
-   * onto the first (no new write). Cleared on settle (success/error after
-   * exhaustion, NOT cancelled).
-   */
-  const activeKeys = new Map<string, string>()
-
-  /**
-   * Collapsed `runId` → the `runId` of the durable entry it collapsed onto.
-   * A `dedupeBy` collapse writes no entry of its own, so its settle has to
-   * act on the OWNER's entry — deleting `event.runId` would target a key
-   * that was never written and leave the owner on disk to replay after the
-   * collapsed run already succeeded.
-   */
-  const runAlias = new Map<string, string>()
-
-  /**
-   * Durable entries left on disk by a run that settled in error below
-   * `maxAttempts` — `runId` → the logical operation it belongs to. A later
-   * run of the SAME logical operation that succeeds drops them: that run
-   * is the manual retry, and the server has now accepted the write.
-   * Without this the stale entry replays on the next load and writes twice.
-   */
-  const retainedFailures = new Map<string, { mutationId: string; identity: string }>()
-
-  /**
-   * Identity of every run between its enqueue and its settle.
-   * `MutationSettleEvent` carries no variables, so the identity has to be
-   * computed at enqueue time and parked here.
-   */
-  const runIdentity = new Map<string, string | undefined>()
-
-  /**
-   * Runs executing in THIS tab right now — `runId` → the `runId` of the
-   * durable entry backing it (its own, or the owner it collapsed onto).
-   * A replay pass skips these: an `online` event or a `replayNow()` inside
-   * the enqueue→settle window would otherwise fire the same request twice.
-   * Cross-tab overlap is a separate problem, handled by `withReplayLock`.
-   */
-  const inFlightRuns = new Map<string, string>()
-
-  const isEntryInFlight = (runId: string): boolean => {
-    for (const owner of inFlightRuns.values()) {
-      if (owner === runId) return true
-    }
-    return false
-  }
-
-  /**
-   * Stable name for "the same logical operation", used to recognise a manual
-   * retry of a run that already failed. `dedupeBy` is authoritative when the
-   * consumer supplies it; otherwise the variables themselves stand in, since
-   * a retry re-submits them unchanged while a genuinely new operation of the
-   * same `mutationId` carries different ones. Unserializable variables have
-   * no identity — those runs were never durable either (`writeEntry` warns).
-   */
-  const identityOf = (
-    mutationId: string,
-    variables: unknown,
-    dedupeKey: string | undefined,
-  ): string | undefined => {
-    if (dedupeKey !== undefined) return `${mutationId}:key:${dedupeKey}`
-    try {
-      return `${mutationId}:vars:${JSON.stringify(variables ?? null)}`
-    } catch {
-      return undefined
-    }
-  }
-
-  // Per-runId attempt counter so a replay that itself enqueues bumps the
-  // attempts counter rather than allocating a fresh slot.
-  const knownRuns = new Map<string, QueueEntry>()
-  // Per-mutationId serial replay queue — kicks off on `init` and drains
-  // before yielding back to the runtime. We don't block init waiting for
-  // replays; they run in the background and call `onReplayError` if any
-  // settle in failure.
-  let disposed = false
-  // Guards concurrent replay runs (init / `online` / `replayNow` all funnel
-  // through `runReplay`) so a set of entries isn't replayed twice at once.
-  let replaying = false
-  // The `online` reconnect listener — in-session failures retry when the
-  // network comes back, not only on reload (T6.2). Removed on dispose.
-  let onlineHandler: (() => void) | null = null
-  // Outstanding replay AbortControllers — `dispose()` aborts each so a tab
-  // close mid-replay doesn't leak the request. The controller is added to
-  // the set just before `mutate(...)` runs and removed in `finally`.
-  const inFlightReplays = new Set<AbortController>()
-  // Outstanding backoff sleepers — `dispose()` triggers each so the
-  // per-mutationId driver short-circuits the wait.
-  const backoffSleepers = new Set<() => void>()
-  // Outstanding `waitForOnline` waiters — `dispose()` triggers each so a
-  // pass that parked while offline releases the cross-tab replay lock and
-  // drops its `online` listener instead of waiting for a network that may
-  // never come back.
-  const onlineWaiters = new Set<() => void>()
-
-  // Tracks in-flight writes per runId so a fast `delete` can't race ahead
-  // of its preceding `write` (the persist-after-delete bug). Callers that
-  // await sequentially (e.g. `replayEntry`) pay zero overhead — the write
-  // has cleared its slot by the time the delete starts. Callers that fire
-  // both fire-and-forget (the `onMutationEnqueue` → `onMutationSettle`
-  // path on a synchronous mutation) get ordered correctly because the
-  // entry is registered before `writeEntry`'s first `await`.
-  const pendingWrites = new Map<string, Promise<unknown>>()
-
-  const entryKey = (mutationId: string, runId: string): string =>
-    `${keyPrefix}/${mutationId}/${runId}`
-
-  /** Drop the dedupe key mapped to `runId` (we don't index runId→key). */
-  const clearActiveKey = (runId: string): void => {
-    for (const [k, v] of activeKeys) {
-      if (v === runId) {
-        activeKeys.delete(k)
-        break
-      }
-    }
-  }
-
-  /** Passed to `onReplaySettle` so apps can invalidate affected queries. */
-  let ownerApi: QueryClientPluginApi | undefined
-  const replaySettleApi: ReplaySettleApi = {
-    invalidate(query, callArgs) {
-      // `ownerApi` is assigned in `init`, which the client calls before any
-      // replay can settle — so a missing one means the plugin was driven
-      // outside its lifecycle. Say so instead of silently not invalidating:
-      // the visible symptom would otherwise be a stale UI after a successful
-      // replay, which is exactly what this method exists to prevent.
-      if (!ownerApi) {
-        onWarn(
-          '[olas/mutation-queue] onReplaySettle invalidate skipped — the plugin is not attached ' +
-            'to a query client yet (init has not run). Subscribers will stay stale until their ' +
-            'own staleTime lapses.',
-        )
-        return
-      }
-      try {
-        void ownerApi.invalidate(query, callArgs ?? []).catch((cause) => {
-          onWarn('[olas/mutation-queue] onReplaySettle invalidate failed', cause)
-        })
-      } catch (cause) {
-        onWarn('[olas/mutation-queue] onReplaySettle invalidate failed', cause)
-      }
-    },
-  }
-
-  const writeEntry = async (entry: QueueEntry): Promise<void> => {
-    try {
-      const json = JSON.stringify(entry)
-      if (maxEntryBytes !== Number.POSITIVE_INFINITY && json.length > maxEntryBytes) {
-        onWarn(
-          `[olas/mutation-queue] entry for ${entry.mutationId}/${entry.runId} is ${json.length} bytes,` +
-            ` over the ${maxEntryBytes}-byte soft cap. Large variables risk hitting storage quotas` +
-            ' (localStorage is typically 5–10 MB total per origin); consider trimming the payload or' +
-            ' moving the queue to indexedDbAdapter.',
-        )
-      }
-      const writeP = Promise.resolve(adapter.set(entryKey(entry.mutationId, entry.runId), json))
-      pendingWrites.set(entry.runId, writeP)
-      try {
-        await writeP
-        knownRuns.set(entry.runId, entry)
-      } finally {
-        if (pendingWrites.get(entry.runId) === writeP) {
-          pendingWrites.delete(entry.runId)
-        }
-      }
-    } catch (cause) {
-      onWarn(
-        `[olas/mutation-queue] failed to persist enqueue for ${entry.mutationId}/${entry.runId}: ` +
-          'variables likely not JSON-serializable. The in-process run continues, but the entry is not durable.',
-        cause,
-      )
-    }
-  }
-
-  const deleteEntry = async (mutationId: string, runId: string): Promise<void> => {
-    const pending = pendingWrites.get(runId)
-    if (pending !== undefined) {
-      // Concurrent write+delete on the same runId — wait for the write to
-      // land first so we don't leave a phantom entry behind.
-      try {
-        await pending
-      } catch {
-        /* writeEntry handles its own errors via onWarn */
-      }
-    }
-    knownRuns.delete(runId)
-    try {
-      await adapter.delete(entryKey(mutationId, runId))
-    } catch (cause) {
-      onWarn(`[olas/mutation-queue] failed to drop entry ${mutationId}/${runId}`, cause)
-    }
-  }
-
-  /**
-   * Drop the entries that earlier failed runs of this logical operation left
-   * behind, now that `keepRunId` has succeeded. Only runs that already
-   * SETTLED in error are eligible — a run still executing in this tab keeps
-   * its own entry, so a second concurrent submit of identical variables stays
-   * durable.
-   */
-  const dropSupersededFailures = (
-    mutationId: string,
-    identity: string | undefined,
-    keepRunId: string,
-  ): void => {
-    if (identity === undefined) return
-    for (const [runId, info] of [...retainedFailures]) {
-      if (runId === keepRunId) continue
-      if (info.mutationId !== mutationId || info.identity !== identity) continue
-      if (isEntryInFlight(runId)) continue
-      retainedFailures.delete(runId)
-      clearActiveKey(runId)
-      void deleteEntry(mutationId, runId)
-    }
-  }
-
-  const parseEntry = (raw: unknown): QueueEntry | null => {
-    if (typeof raw !== 'string') return null
-    try {
-      const parsed = JSON.parse(raw) as unknown
-      if (parsed === null || typeof parsed !== 'object') return null
-      const obj = parsed as Record<string, unknown>
-      const version = typeof obj.v === 'number' ? obj.v : undefined
-      if (version !== PROTOCOL_VERSION) {
-        // Try migrator first; if it returns null (or none configured), drop.
-        if (migrate !== undefined && version !== undefined) {
-          try {
-            const migrated = migrate(parsed, version)
-            if (migrated !== null) return migrated
-          } catch (err) {
-            onWarn('[olas/mutation-queue] migrate threw; dropping entry', err)
-          }
-        }
-        return null
-      }
-      if (
-        typeof obj.mutationId !== 'string' ||
-        typeof obj.runId !== 'string' ||
-        typeof obj.attempts !== 'number' ||
-        typeof obj.enqueuedAt !== 'number'
-      ) {
-        return null
-      }
-      return obj as unknown as QueueEntry
-    } catch {
-      return null
-    }
-  }
-
-  /**
-   * List every persisted entry under `keyPrefix`. The `StorageAdapter`
-   * contract doesn't include `keys()`, so we attempt a structural cast to
-   * an `Iterable`-shaped adapter; falls back to an empty list when the
-   * adapter doesn't expose one. Concrete adapters (`localStorageAdapter`,
-   * `indexedDbAdapter`) ship a `keys()` extension for this purpose.
-   */
-  const listEntries = async (): Promise<QueueEntry[]> => {
-    const ext = adapter as StorageAdapter & {
-      keys?: () => Iterable<string> | Promise<Iterable<string>>
-    }
-    if (typeof ext.keys !== 'function') {
-      onWarn(
-        '[olas/mutation-queue] storage adapter has no keys() method; replay disabled. ' +
-          'Use localStorageAdapter / indexedDbAdapter from @kontsedal/olas-persist, ' +
-          'or implement keys() on your custom adapter.',
-      )
-      return []
-    }
-    const keys = await ext.keys()
-    const entries: QueueEntry[] = []
-    for (const key of keys) {
-      if (!key.startsWith(`${keyPrefix}/`)) continue
-      try {
-        const raw = await adapter.get(key)
-        const parsed = parseEntry(raw)
-        if (parsed === null) {
-          onWarn(`[olas/mutation-queue] dropping malformed entry at ${key}`)
-          try {
-            await adapter.delete(key)
-          } catch {
-            /* best-effort cleanup; the warn above is the primary signal */
-          }
-          continue
-        }
-        entries.push(parsed)
-      } catch (cause) {
-        onWarn(`[olas/mutation-queue] failed to read ${key}`, cause)
-      }
-    }
-    return entries
-  }
-
-  /**
-   * Replay one entry against its registered handler. Returns once the
-   * mutate has settled (success or final error) — the per-mutationId
-   * serial-queue driver awaits this.
-   */
-  const replayEntry = async (entry: QueueEntry): Promise<void> => {
-    if (disposed) return
-    if (isEntryInFlight(entry.runId)) {
-      // The run backing this entry is executing in this tab right now. Its
-      // own settle will drop the entry; replaying it here would issue the
-      // same request a second time. Reached when an `online` event or a
-      // `replayNow()` lands inside the enqueue→settle window.
-      return
-    }
-    const registered = lookupRegisteredMutation(entry.mutationId)
-    if (registered === undefined) {
-      // Module hasn't been imported — leave entry in place and surface so
-      // the user knows it's stuck. They can either import the module to
-      // unstick it or delete the entry from storage.
-      onReplayError(
-        new Error(
-          `[olas/mutation-queue] no registered mutation for "${entry.mutationId}"; ` +
-            'replay skipped. Ensure the module that calls defineMutation(...) is imported.',
-        ),
-        entry,
-      )
-      return
-    }
-    if (entry.attempts >= maxAttempts) {
-      // Already exhausted on a previous load; drop and surface.
-      await deleteEntry(entry.mutationId, entry.runId)
-      onReplayError(
-        new Error(
-          `[olas/mutation-queue] giving up on "${entry.mutationId}/${entry.runId}" after ${entry.attempts} attempts.`,
-        ),
-        entry,
-      )
-      return
-    }
-    // Bump the attempts counter durably BEFORE running so a hard crash
-    // during the mutate doesn't loop forever on the same entry.
-    const next: QueueEntry = { ...entry, attempts: entry.attempts + 1 }
-    await writeEntry(next)
-    const abort = new AbortController()
-    inFlightReplays.add(abort)
-    try {
-      const result = await registered.mutate(entry.variables, {
-        signal: abort.signal,
-        deps: ownerApi?.deps ?? {},
-      })
-      // Success — drop the entry.
-      await deleteEntry(entry.mutationId, entry.runId)
-      // Let the app reconcile its cache (a replay wrote server truth outside
-      // any live query's knowledge). Swallow handler throws (T6.2).
-      if (onReplaySettle !== undefined) {
-        try {
-          onReplaySettle(entry, result, replaySettleApi)
-        } catch (cause) {
-          onWarn('[olas/mutation-queue] onReplaySettle threw', cause)
-        }
-      }
-    } catch (err) {
-      // Single replay attempt failed. If this was the last allowed
-      // attempt, drop and surface; otherwise leave the entry in place
-      // (with the bumped attempts counter) so the next page load tries
-      // again. Fire `onReplayAttempt` either way so consumers can show
-      // "retrying" indicators.
-      if (next.attempts >= maxAttempts) {
-        await deleteEntry(entry.mutationId, entry.runId)
-        onReplayError(err, next)
-      } else if (onReplayAttempt !== undefined) {
-        try {
-          onReplayAttempt(err, next)
-        } catch {
-          /* don't let a buggy onReplayAttempt break replay */
-        }
-      }
-    } finally {
-      inFlightReplays.delete(abort)
-    }
-  }
-
-  /**
-   * Sleep that resolves early when `bail()` returns true. Used by the
-   * per-mutationId driver to short-circuit backoff windows when the
-   * plugin disposes mid-wait — without this, `dispose()` would still
-   * have to wait out the longest backoff to escape.
-   */
-  const sleep = (ms: number, bail: () => boolean): Promise<void> => {
-    return new Promise((resolve) => {
-      if (bail()) {
-        resolve()
-        return
-      }
-      const t = setTimeout(() => {
-        cleanup()
-        resolve()
-      }, ms)
-      const tick = () => {
-        if (bail()) {
-          clearTimeout(t)
-          cleanup()
-          resolve()
-        }
-      }
-      const interval = setInterval(tick, 100)
-      const cleanup = () => {
-        clearInterval(interval)
-        backoffSleepers.delete(cleanup)
-      }
-      backoffSleepers.add(cleanup)
-    })
-  }
-
-  /**
-   * Wait until the tab reports as online. Without this gate, replays burn
-   * `maxAttempts` on `fetch` failures the user can't see and the queue
-   * silently empties. In environments without `navigator` (Node SSR, tests
-   * mocking the global), assume online and proceed.
-   */
-  const waitForOnline = (): Promise<void> => {
-    if (disposed) return Promise.resolve()
-    if (typeof navigator === 'undefined' || navigator.onLine !== false) {
-      return Promise.resolve()
-    }
-    if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
-      return Promise.resolve()
-    }
-    return new Promise((resolve) => {
-      // `dispose()` resolves this wait too. The wait sits INSIDE
-      // `withReplayLock`, so a tab that disposes while offline would
-      // otherwise hold the cross-tab replay lock — and leak this listener —
-      // until the network returned, which may be never.
-      const finish = () => {
-        window.removeEventListener('online', finish)
-        onlineWaiters.delete(finish)
-        resolve()
-      }
-      onlineWaiters.add(finish)
-      window.addEventListener('online', finish)
-    })
-  }
-
-  const lockName = `olas-mq:${keyPrefix}`
-
-  /**
-   * Run `fn` under a cross-tab replay lock so two tabs never replay the same
-   * entries concurrently (T6.2). Prefers the Web Locks API: with `ifAvailable`
-   * a tab that can't get the lock skips this pass — the holding tab replays
-   * every entry under the shared prefix (including ours). Falls back to a
-   * best-effort, TTL'd `localStorage` lease when Web Locks is unavailable
-   * (older Safari); in Node / SSR (neither primitive) there's a single
-   * context, so `fn` just runs. The lease is best-effort — Web Locks is the
-   * real guarantee.
-   */
-  const withReplayLock = async (fn: () => Promise<void>): Promise<void> => {
-    const locks = getWebLocks()
-    if (locks !== undefined) {
-      await locks.request(lockName, { ifAvailable: true }, async (lock) => {
-        if (lock === null) return // another tab holds it — it replays for us
-        await fn()
-      })
-      return
-    }
-    const ls = getLeaseStorage()
-    if (ls !== undefined) {
-      const leaseId = Math.random().toString(36).slice(2, 12)
-      if (!acquireLease(ls, lockName, leaseId, onWarn)) return
-      const heartbeat = setInterval(() => {
-        try {
-          ls.setItem(`${lockName}:lease`, `${Date.now()}:${leaseId}`)
-        } catch {
-          /* lease refresh is best-effort */
-        }
-      }, LEASE_TTL_MS / 2)
-      try {
-        await fn()
-      } finally {
-        clearInterval(heartbeat)
-        releaseLease(ls, lockName, leaseId)
-      }
-      return
-    }
-    // No coordination primitive available (Node / SSR single context).
-    await fn()
-  }
-
-  /**
-   * Replay all pending entries on init, serialized per mutationId so an
-   * `order/create` followed by an `order/cancel` for the same id runs in
-   * order. Different mutationIds run in parallel.
-   *
-   * Blocks until the tab is online before issuing any mutate calls — see
-   * `waitForOnline`.
-   */
-  const replayAll = async (): Promise<void> => {
-    const entries = await listEntries()
-    if (entries.length === 0) return
-    // TTL gate: drop expired entries before waiting for online. A stale
-    // entry from a deleted endpoint shouldn't block the online-wait, and
-    // shouldn't fan back through the bucket loop just to fail.
-    const live: QueueEntry[] = []
-    if (ttlMs !== Number.POSITIVE_INFINITY) {
-      const now = Date.now()
-      for (const e of entries) {
-        if (now - e.enqueuedAt > ttlMs) {
-          await deleteEntry(e.mutationId, e.runId)
-          onReplayError(
-            Object.assign(new Error(`[olas/mutation-queue] dropping ttl-expired entry`), {
-              code: 'ttl-expired' as const,
-            }),
-            e,
-          )
-        } else {
-          live.push(e)
-        }
-      }
-    } else {
-      live.push(...entries)
-    }
-    if (live.length === 0) return
-    await waitForOnline()
-    if (disposed) return
-    const byMutation = new Map<string, QueueEntry[]>()
-    for (const e of live) {
-      const bucket = byMutation.get(e.mutationId)
-      if (bucket === undefined) byMutation.set(e.mutationId, [e])
-      else bucket.push(e)
-    }
-    // Prime the monotonic counter so post-restart enqueues sit after every
-    // pre-restart entry — without this, replay ordering after a reload
-    // would mix new and old entries by wall-clock alone.
-    for (const e of entries) {
-      if (typeof e.seq === 'number' && e.seq > seqCounter) seqCounter = e.seq
-    }
-    const tasks: Promise<void>[] = []
-    for (const bucket of byMutation.values()) {
-      // Prefer monotonic `seq` (assigned at enqueue time, immune to clock
-      // drift). Fall back to `enqueuedAt` for legacy entries without a
-      // `seq` stamp.
-      bucket.sort((a, b) => {
-        const aS = typeof a.seq === 'number' ? a.seq : a.enqueuedAt
-        const bS = typeof b.seq === 'number' ? b.seq : b.enqueuedAt
-        return aS - bS
-      })
-      tasks.push(
-        (async () => {
-          for (const entry of bucket) {
-            if (disposed) return
-            // Exponential backoff against the entry's *prior* attempts.
-            // First-ever replay (attempts === 0) runs immediately; the
-            // 2nd cross-load attempt waits backoffMs, the 3rd waits 2x,
-            // and so on, capped at maxBackoffMs.
-            if (backoffMs > 0 && entry.attempts > 0) {
-              const delay = Math.min(backoffMs * 2 ** (entry.attempts - 1), maxBackoffMs)
-              await sleep(delay, () => disposed)
-              if (disposed) return
-            }
-            await replayEntry(entry)
-          }
-        })(),
-      )
-    }
-    await Promise.all(tasks)
-  }
-
-  /**
-   * Single entry point for a replay pass — init, the `online` reconnect
-   * listener, and `replayNow()` all funnel through here. The `replaying`
-   * guard prevents overlap; `withReplayLock` prevents cross-tab overlap.
-   */
-  const runReplay = async (): Promise<void> => {
-    if (disposed || replaying) return
-    replaying = true
-    try {
-      await withReplayLock(() => replayAll())
-    } catch (err) {
-      onWarn('[olas/mutation-queue] replay failed', err)
-    } finally {
-      replaying = false
-    }
-  }
-
   return {
-    init(api) {
-      ownerApi = api
-      // Retry in-session when the network returns — not only on reload (T6.2).
-      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-        onlineHandler = () => {
-          void runReplay()
-        }
-        window.addEventListener('online', onlineHandler)
+    name: MUTATION_QUEUE_PLUGIN_NAME,
+    setup(host) {
+      const mutations = host.mutations
+      const queries = host.queries
+      if (mutations === null || queries === null) {
+        throw new Error(
+          '[olas/mutation-queue] mutationQueuePlugin needs a query engine: ' +
+            'createRoot(app, { queries: queryEngine(), plugins: [mutationQueuePlugin({ … })] })',
+        )
       }
-      // Kick off the initial replay async — don't block root construction.
-      // Errors route through `onReplayError` per entry.
-      void runReplay()
-    },
 
-    onMutationEnqueue(event: MutationEnqueueEvent) {
-      if (event.meta.persist !== true) return
-      const idempotencyKey = dedupeBy?.(event.mutationId, event.variables)
-      runIdentity.set(event.runId, identityOf(event.mutationId, event.variables, idempotencyKey))
-      if (idempotencyKey !== undefined) {
-        const fullKey = `${event.mutationId}:${idempotencyKey}`
-        const existingRunId = activeKeys.get(fullKey)
-        if (existingRunId !== undefined && existingRunId !== event.runId) {
-          // Already in flight under a different runId — collapse. The
-          // in-process run continues (consumer's promise resolves with
-          // whatever this attempt produces), but we don't write a second
-          // durable entry. The server's dedupe is the canonical gate.
-          // The alias makes this run's settle act on the owner's entry.
-          runAlias.set(event.runId, existingRunId)
-          inFlightRuns.set(event.runId, existingRunId)
+      /**
+       * Monotonic per-tab sequence counter. Persisted entries take this as their
+       * `seq` so replay ordering survives wall-clock drift. **Seeded from
+       * `Date.now()` at construction** so a post-restart enqueue always sorts
+       * after every pre-restart entry WITHOUT waiting to read the disk — the old
+       * design primed this from disk inside `replayAll` (async), so an enqueue
+       * that raced init got `seq` 1 and jumped ahead of prior-session entries
+       * (T6.2). The `replayAll` priming below is now just a belt-and-suspenders
+       * bump for the rare same-millisecond cross-tab case; it can only raise the
+       * counter, never lower it.
+       */
+      let seqCounter = Date.now()
+
+      /**
+       * Map of active `idempotencyKey` → `runId`. When `dedupeBy` returns a
+       * key that matches an in-flight entry, the second enqueue collapses
+       * onto the first (no new write). Cleared on settle (success/error after
+       * exhaustion, NOT cancelled).
+       */
+      const activeKeys = new Map<string, string>()
+
+      /**
+       * Collapsed `runId` → the `runId` of the durable entry it collapsed onto.
+       * A `dedupeBy` collapse writes no entry of its own, so its settle has to
+       * act on the OWNER's entry — deleting `event.runId` would target a key
+       * that was never written and leave the owner on disk to replay after the
+       * collapsed run already succeeded.
+       */
+      const runAlias = new Map<string, string>()
+
+      /**
+       * Durable entries left on disk by a run that settled in error below
+       * `maxAttempts` — `runId` → the logical operation it belongs to. A later
+       * run of the SAME logical operation that succeeds drops them: that run
+       * is the manual retry, and the server has now accepted the write.
+       * Without this the stale entry replays on the next load and writes twice.
+       */
+      const retainedFailures = new Map<string, { mutationId: string; identity: string }>()
+
+      /**
+       * Identity of every run between its enqueue and its settle.
+       * `MutationSettleEvent` carries no variables, so the identity has to be
+       * computed at enqueue time and parked here.
+       */
+      const runIdentity = new Map<string, string | undefined>()
+
+      /**
+       * Runs executing in THIS tab right now — `runId` → the `runId` of the
+       * durable entry backing it (its own, or the owner it collapsed onto).
+       * A replay pass skips these: an `online` event or a `replayNow()` inside
+       * the enqueue→settle window would otherwise fire the same request twice.
+       * Cross-tab overlap is a separate problem, handled by `withReplayLock`.
+       */
+      const inFlightRuns = new Map<string, string>()
+
+      const isEntryInFlight = (runId: string): boolean => {
+        for (const owner of inFlightRuns.values()) {
+          if (owner === runId) return true
+        }
+        return false
+      }
+
+      /**
+       * Stable name for "the same logical operation", used to recognise a manual
+       * retry of a run that already failed. `dedupeBy` is authoritative when the
+       * consumer supplies it; otherwise the variables themselves stand in, since
+       * a retry re-submits them unchanged while a genuinely new operation of the
+       * same `mutationId` carries different ones. Unserializable variables have
+       * no identity — those runs were never durable either (`writeEntry` warns).
+       */
+      const identityOf = (
+        mutationId: string,
+        variables: unknown,
+        dedupeKey: string | undefined,
+      ): string | undefined => {
+        if (dedupeKey !== undefined) return `${mutationId}:key:${dedupeKey}`
+        try {
+          return `${mutationId}:vars:${JSON.stringify(variables ?? null)}`
+        } catch {
+          return undefined
+        }
+      }
+
+      // Per-runId attempt counter so a replay that itself enqueues bumps the
+      // attempts counter rather than allocating a fresh slot.
+      const knownRuns = new Map<string, QueueEntry>()
+      // Replays run in the background after setup and call `onReplayError` for
+      // any that settle in failure; setup does not wait for them.
+      let disposed = false
+      // Guards concurrent replay runs (startup / reconnect / `replayNow` all
+      // funnel through `runReplay`) so a set of entries isn't replayed twice at once.
+      let replaying = false
+      // Outstanding backoff sleepers — `dispose()` triggers each so the
+      // per-mutationId driver short-circuits the wait.
+      const backoffSleepers = new Set<() => void>()
+      // Outstanding `waitForOnline` waiters — `dispose()` triggers each so a
+      // pass that parked while offline releases the cross-tab replay lock and
+      // drops its `online` listener instead of waiting for a network that may
+      // never come back.
+      const onlineWaiters = new Set<() => void>()
+
+      // Tracks in-flight writes per runId so a fast `delete` can't race ahead
+      // of its preceding `write` (the persist-after-delete bug). Callers that
+      // await sequentially (e.g. `replayEntry`) pay zero overhead — the write
+      // has cleared its slot by the time the delete starts. Callers that fire
+      // both fire-and-forget (the `'start'` → settle `onMutation` pair
+      // path on a synchronous mutation) get ordered correctly because the
+      // entry is registered before `writeEntry`'s first `await`.
+      const pendingWrites = new Map<string, Promise<unknown>>()
+
+      const entryKey = (mutationId: string, runId: string): string =>
+        `${keyPrefix}/${mutationId}/${runId}`
+
+      /** Drop the dedupe key mapped to `runId` (we don't index runId→key). */
+      const clearActiveKey = (runId: string): void => {
+        for (const [k, v] of activeKeys) {
+          if (v === runId) {
+            activeKeys.delete(k)
+            break
+          }
+        }
+      }
+
+      const writeEntry = async (entry: QueueEntry): Promise<void> => {
+        try {
+          const json = JSON.stringify(entry)
+          if (maxEntryBytes !== Number.POSITIVE_INFINITY && json.length > maxEntryBytes) {
+            onWarn(
+              `[olas/mutation-queue] entry for ${entry.mutationId}/${entry.runId} is ${json.length} bytes,` +
+                ` over the ${maxEntryBytes}-byte soft cap. Large variables risk hitting storage quotas` +
+                ' (localStorage is typically 5–10 MB total per origin); consider trimming the payload or' +
+                ' moving the queue to indexedDbAdapter.',
+            )
+          }
+          const writeP = Promise.resolve(adapter.set(entryKey(entry.mutationId, entry.runId), json))
+          pendingWrites.set(entry.runId, writeP)
+          try {
+            await writeP
+            knownRuns.set(entry.runId, entry)
+          } finally {
+            if (pendingWrites.get(entry.runId) === writeP) {
+              pendingWrites.delete(entry.runId)
+            }
+          }
+        } catch (cause) {
+          onWarn(
+            `[olas/mutation-queue] failed to persist enqueue for ${entry.mutationId}/${entry.runId}: ` +
+              'variables likely not JSON-serializable. The in-process run continues, but the entry is not durable.',
+            cause,
+          )
+        }
+      }
+
+      const deleteEntry = async (mutationId: string, runId: string): Promise<void> => {
+        const pending = pendingWrites.get(runId)
+        if (pending !== undefined) {
+          // Concurrent write+delete on the same runId — wait for the write to
+          // land first so we don't leave a phantom entry behind.
+          try {
+            await pending
+          } catch {
+            /* writeEntry handles its own errors via onWarn */
+          }
+        }
+        knownRuns.delete(runId)
+        try {
+          await adapter.delete(entryKey(mutationId, runId))
+        } catch (cause) {
+          onWarn(`[olas/mutation-queue] failed to drop entry ${mutationId}/${runId}`, cause)
+        }
+      }
+
+      /**
+       * Drop the entries that earlier failed runs of this logical operation left
+       * behind, now that `keepRunId` has succeeded. Only runs that already
+       * SETTLED in error are eligible — a run still executing in this tab keeps
+       * its own entry, so a second concurrent submit of identical variables stays
+       * durable.
+       */
+      const dropSupersededFailures = (
+        mutationId: string,
+        identity: string | undefined,
+        keepRunId: string,
+      ): void => {
+        if (identity === undefined) return
+        for (const [runId, info] of [...retainedFailures]) {
+          if (runId === keepRunId) continue
+          if (info.mutationId !== mutationId || info.identity !== identity) continue
+          if (isEntryInFlight(runId)) continue
+          retainedFailures.delete(runId)
+          clearActiveKey(runId)
+          void deleteEntry(mutationId, runId)
+        }
+      }
+
+      const parseEntry = (raw: unknown): QueueEntry | null => {
+        if (typeof raw !== 'string') return null
+        try {
+          const parsed = JSON.parse(raw) as unknown
+          if (parsed === null || typeof parsed !== 'object') return null
+          const obj = parsed as Record<string, unknown>
+          const version = typeof obj.v === 'number' ? obj.v : undefined
+          if (version !== PROTOCOL_VERSION) {
+            // Try migrator first; if it returns null (or none configured), drop.
+            if (migrate !== undefined && version !== undefined) {
+              try {
+                const migrated = migrate(parsed, version)
+                if (migrated !== null) return migrated
+              } catch (err) {
+                onWarn('[olas/mutation-queue] migrate threw; dropping entry', err)
+              }
+            }
+            return null
+          }
+          if (
+            typeof obj.mutationId !== 'string' ||
+            typeof obj.runId !== 'string' ||
+            typeof obj.attempts !== 'number' ||
+            typeof obj.enqueuedAt !== 'number'
+          ) {
+            return null
+          }
+          return obj as unknown as QueueEntry
+        } catch {
+          return null
+        }
+      }
+
+      /**
+       * List every persisted entry under `keyPrefix`. The `StorageAdapter`
+       * contract doesn't include `keys()`, so we attempt a structural cast to
+       * an `Iterable`-shaped adapter; falls back to an empty list when the
+       * adapter doesn't expose one. Concrete adapters (`localStorageAdapter`,
+       * `indexedDbAdapter`) ship a `keys()` extension for this purpose.
+       */
+      const listEntries = async (): Promise<QueueEntry[]> => {
+        const ext = adapter as StorageAdapter & {
+          keys?: () => Iterable<string> | Promise<Iterable<string>>
+        }
+        if (typeof ext.keys !== 'function') {
+          onWarn(
+            '[olas/mutation-queue] storage adapter has no keys() method; replay disabled. ' +
+              'Use localStorageAdapter / indexedDbAdapter from @kontsedal/olas-persist, ' +
+              'or implement keys() on your custom adapter.',
+          )
+          return []
+        }
+        const keys = await ext.keys()
+        const entries: QueueEntry[] = []
+        for (const key of keys) {
+          if (!key.startsWith(`${keyPrefix}/`)) continue
+          try {
+            const raw = await adapter.get(key)
+            const parsed = parseEntry(raw)
+            if (parsed === null) {
+              onWarn(`[olas/mutation-queue] dropping malformed entry at ${key}`)
+              try {
+                await adapter.delete(key)
+              } catch {
+                /* best-effort cleanup; the warn above is the primary signal */
+              }
+              continue
+            }
+            entries.push(parsed)
+          } catch (cause) {
+            onWarn(`[olas/mutation-queue] failed to read ${key}`, cause)
+          }
+        }
+        return entries
+      }
+
+      /**
+       * Replay one entry against its registered handler. Returns once the
+       * mutate has settled (success or final error) — the per-mutationId
+       * serial-queue driver awaits this.
+       */
+      const replayEntry = async (entry: QueueEntry): Promise<void> => {
+        if (disposed) return
+        if (isEntryInFlight(entry.runId)) {
+          // The run backing this entry is executing in this tab right now. Its
+          // own settle will drop the entry; replaying it here would issue the
+          // same request a second time. Reached when an `online` event or a
+          // `replayNow()` lands inside the enqueue→settle window.
           return
         }
-        activeKeys.set(fullKey, event.runId)
-      }
-      inFlightRuns.set(event.runId, event.runId)
-      seqCounter += 1
-      const entry: QueueEntry = {
-        v: PROTOCOL_VERSION,
-        mutationId: event.mutationId,
-        runId: event.runId,
-        variables: event.variables,
-        attempts: event.attempt,
-        enqueuedAt: Date.now(),
-        seq: seqCounter,
-        idempotencyKey,
-      }
-      // Fire-and-forget: `onMutationEnqueue` is a synchronous plugin hook, so
-      // we can't await the durable write here. `pendingWrites` still orders a
-      // later delete after this write (no persist-after-delete race). Loss
-      // window: if the durable write REJECTS (quota, or an IDB commit abort now
-      // that the adapter surfaces those — T6.1) the in-process run still
-      // proceeds and the failure is reported via `onWarn`, but a reload before
-      // the run completes loses that mutation. Inherent to a sync enqueue hook —
-      // see the README "best-effort" note (T6.2).
-      void writeEntry(entry)
-    },
-
-    onMutationSettle(event: MutationSettleEvent) {
-      if (event.meta.persist !== true) return
-      // The dedupe key is released ONLY when the durable entry is dropped
-      // (success, or error after exhaustion). On a non-terminal error or a
-      // 'cancelled' the entry stays pending replay, so its key must stay
-      // active — else a re-enqueue writes a SECOND durable entry for the same
-      // logical mutation (T6.2). We don't index runId→key, so walk on drop.
-      //
-      // Every branch acts on `ownerRunId`, the run whose entry is actually on
-      // disk. For a `dedupeBy` collapse that is the run this one collapsed
-      // onto, not `event.runId`.
-      const ownerRunId = runAlias.get(event.runId) ?? event.runId
-      const identity = runIdentity.get(event.runId)
-      // One settle per run (core emits exactly one of the three outcomes per
-      // `runId`), so the per-run bookkeeping goes here whatever the outcome.
-      runAlias.delete(event.runId)
-      runIdentity.delete(event.runId)
-      inFlightRuns.delete(event.runId)
-      switch (event.outcome) {
-        case 'success':
-          clearActiveKey(ownerRunId)
-          retainedFailures.delete(ownerRunId)
-          void deleteEntry(event.mutationId, ownerRunId)
-          // This run is the manual retry of whatever failed before it: the
-          // server has accepted the write, so the entries those earlier runs
-          // left for replay describe a write that already happened. Drop
-          // them, or the next page load submits the operation twice.
-          dropSupersededFailures(event.mutationId, identity, ownerRunId)
+        if (!mutations.has(entry.mutationId)) {
+          // Module hasn't been imported — leave entry in place and surface so
+          // the user knows it's stuck. They can either import the module to
+          // unstick it or delete the entry from storage.
+          onReplayError(
+            new Error(
+              `[olas/mutation-queue] no registered mutation for "${entry.mutationId}"; ` +
+                'replay skipped. Ensure the module that calls defineMutation(...) is imported.',
+            ),
+            entry,
+          )
           return
-        case 'error': {
-          // In-process retries are exhausted by the time the runner emits
-          // `error` — but cross-reload replays still get up to maxAttempts.
-          // Leave the entry (and its key) in place unless we've already
-          // replayed it maxAttempts times.
-          const known = knownRuns.get(ownerRunId)
-          const attempts = known?.attempts ?? 1
-          if (attempts >= maxAttempts) {
+        }
+        if (entry.attempts >= maxAttempts) {
+          // Already exhausted on a previous load; drop and surface.
+          await deleteEntry(entry.mutationId, entry.runId)
+          onReplayError(
+            new Error(
+              `[olas/mutation-queue] giving up on "${entry.mutationId}/${entry.runId}" after ${entry.attempts} attempts.`,
+            ),
+            entry,
+          )
+          return
+        }
+        // Bump the attempts counter durably BEFORE running so a hard crash
+        // during the mutate doesn't loop forever on the same entry.
+        const next: QueueEntry = { ...entry, attempts: entry.attempts + 1 }
+        await writeEntry(next)
+        try {
+          // Through the engine's runner: the definition's `retry` applies, `mutate`
+          // gets the root's `deps`, the run counts toward `waitForIdle()`, and its
+          // `onMutation` events carry this plugin's name — so `onMutation` below
+          // does not persist its own replay a second time.
+          const result = await mutations.run(entry.mutationId, entry.variables)
+          // Success — drop the entry.
+          await deleteEntry(entry.mutationId, entry.runId)
+          // Let the app reconcile its cache (a replay wrote server truth outside
+          // any live query's knowledge). Swallow handler throws (T6.2).
+          if (onReplaySettle !== undefined) {
+            try {
+              onReplaySettle(entry, result, queries)
+            } catch (cause) {
+              onWarn('[olas/mutation-queue] onReplaySettle threw', cause)
+            }
+          }
+        } catch (err) {
+          // The root disposing mid-run cancels it; that is not a failed attempt.
+          // The bumped counter is already on disk, and the next load replays.
+          if (disposed || isAbortError(err)) return
+          // Single replay attempt failed. If this was the last allowed
+          // attempt, drop and surface; otherwise leave the entry in place
+          // (with the bumped attempts counter) so the next page load tries
+          // again. Fire `onReplayAttempt` either way so consumers can show
+          // "retrying" indicators.
+          if (next.attempts >= maxAttempts) {
+            await deleteEntry(entry.mutationId, entry.runId)
+            onReplayError(err, next)
+          } else if (onReplayAttempt !== undefined) {
+            try {
+              onReplayAttempt(err, next)
+            } catch {
+              /* don't let a buggy onReplayAttempt break replay */
+            }
+          }
+        }
+      }
+
+      /**
+       * Sleep that resolves early when `bail()` returns true. Used by the
+       * per-mutationId driver to short-circuit backoff windows when the
+       * plugin disposes mid-wait — without this, `dispose()` would still
+       * have to wait out the longest backoff to escape.
+       */
+      const sleep = (ms: number, bail: () => boolean): Promise<void> => {
+        return new Promise((resolve) => {
+          if (bail()) {
+            resolve()
+            return
+          }
+          const t = setTimeout(() => {
+            cleanup()
+            resolve()
+          }, ms)
+          const tick = () => {
+            if (bail()) {
+              clearTimeout(t)
+              cleanup()
+              resolve()
+            }
+          }
+          const interval = setInterval(tick, 100)
+          const cleanup = () => {
+            clearInterval(interval)
+            backoffSleepers.delete(cleanup)
+          }
+          backoffSleepers.add(cleanup)
+        })
+      }
+
+      /**
+       * Wait until the tab reports as online. Without this gate, replays burn
+       * `maxAttempts` on `fetch` failures the user can't see and the queue
+       * silently empties. Where there is no `navigator` (Node SSR, tests), the
+       * host reports online and this resolves at once.
+       */
+      const waitForOnline = (): Promise<void> => {
+        if (disposed || host.network.isOnline()) return Promise.resolve()
+        return new Promise((resolve) => {
+          // `dispose()` resolves this wait too. The wait sits INSIDE
+          // `withReplayLock`, so a tab that disposes while offline would
+          // otherwise hold the cross-tab replay lock until the network returned,
+          // which may be never.
+          let off: () => void = () => {}
+          const finish = () => {
+            off()
+            onlineWaiters.delete(finish)
+            resolve()
+          }
+          onlineWaiters.add(finish)
+          off = host.network.onReconnect(finish)
+        })
+      }
+
+      const lockName = `olas-mq:${keyPrefix}`
+
+      /**
+       * Run `fn` under a cross-tab replay lock so two tabs never replay the same
+       * entries concurrently (T6.2). Prefers the Web Locks API: with `ifAvailable`
+       * a tab that can't get the lock skips this pass — the holding tab replays
+       * every entry under the shared prefix (including ours). Falls back to a
+       * best-effort, TTL'd `localStorage` lease when Web Locks is unavailable
+       * (older Safari); in Node / SSR (neither primitive) there's a single
+       * context, so `fn` just runs. The lease is best-effort — Web Locks is the
+       * real guarantee.
+       */
+      const withReplayLock = async (fn: () => Promise<void>): Promise<void> => {
+        const locks = getWebLocks()
+        if (locks !== undefined) {
+          await locks.request(lockName, { ifAvailable: true }, async (lock) => {
+            if (lock === null) return // another tab holds it — it replays for us
+            await fn()
+          })
+          return
+        }
+        const ls = getLeaseStorage()
+        if (ls !== undefined) {
+          const leaseId = Math.random().toString(36).slice(2, 12)
+          if (!acquireLease(ls, lockName, leaseId, onWarn)) return
+          const heartbeat = setInterval(() => {
+            try {
+              ls.setItem(`${lockName}:lease`, `${Date.now()}:${leaseId}`)
+            } catch {
+              /* lease refresh is best-effort */
+            }
+          }, LEASE_TTL_MS / 2)
+          try {
+            await fn()
+          } finally {
+            clearInterval(heartbeat)
+            releaseLease(ls, lockName, leaseId)
+          }
+          return
+        }
+        // No coordination primitive available (Node / SSR single context).
+        await fn()
+      }
+
+      /**
+       * Replay all pending entries on init, serialized per mutationId so an
+       * `order/create` followed by an `order/cancel` for the same id runs in
+       * order. Different mutationIds run in parallel.
+       *
+       * Blocks until the tab is online before issuing any mutate calls — see
+       * `waitForOnline`.
+       */
+      const replayAll = async (): Promise<void> => {
+        const entries = await listEntries()
+        if (entries.length === 0) return
+        // TTL gate: drop expired entries before waiting for online. A stale
+        // entry from a deleted endpoint shouldn't block the online-wait, and
+        // shouldn't fan back through the bucket loop just to fail.
+        const live: QueueEntry[] = []
+        if (ttlMs !== Number.POSITIVE_INFINITY) {
+          const now = Date.now()
+          for (const e of entries) {
+            if (now - e.enqueuedAt > ttlMs) {
+              await deleteEntry(e.mutationId, e.runId)
+              onReplayError(
+                Object.assign(new Error(`[olas/mutation-queue] dropping ttl-expired entry`), {
+                  code: 'ttl-expired' as const,
+                }),
+                e,
+              )
+            } else {
+              live.push(e)
+            }
+          }
+        } else {
+          live.push(...entries)
+        }
+        if (live.length === 0) return
+        await waitForOnline()
+        if (disposed) return
+        const byMutation = new Map<string, QueueEntry[]>()
+        for (const e of live) {
+          const bucket = byMutation.get(e.mutationId)
+          if (bucket === undefined) byMutation.set(e.mutationId, [e])
+          else bucket.push(e)
+        }
+        // Prime the monotonic counter so post-restart enqueues sit after every
+        // pre-restart entry — without this, replay ordering after a reload
+        // would mix new and old entries by wall-clock alone.
+        for (const e of entries) {
+          if (typeof e.seq === 'number' && e.seq > seqCounter) seqCounter = e.seq
+        }
+        const tasks: Promise<void>[] = []
+        for (const bucket of byMutation.values()) {
+          // Prefer monotonic `seq` (assigned at enqueue time, immune to clock
+          // drift). Fall back to `enqueuedAt` for legacy entries without a
+          // `seq` stamp.
+          bucket.sort((a, b) => {
+            const aS = typeof a.seq === 'number' ? a.seq : a.enqueuedAt
+            const bS = typeof b.seq === 'number' ? b.seq : b.enqueuedAt
+            return aS - bS
+          })
+          tasks.push(
+            (async () => {
+              for (const entry of bucket) {
+                if (disposed) return
+                // Exponential backoff against the entry's *prior* attempts.
+                // First-ever replay (attempts === 0) runs immediately; the
+                // 2nd cross-load attempt waits backoffMs, the 3rd waits 2x,
+                // and so on, capped at maxBackoffMs.
+                if (backoffMs > 0 && entry.attempts > 0) {
+                  const delay = Math.min(backoffMs * 2 ** (entry.attempts - 1), maxBackoffMs)
+                  await sleep(delay, () => disposed)
+                  if (disposed) return
+                }
+                await replayEntry(entry)
+              }
+            })(),
+          )
+        }
+        await Promise.all(tasks)
+      }
+
+      /**
+       * Single entry point for a replay pass — init, the `online` reconnect
+       * listener, and `replayNow()` all funnel through here. The `replaying`
+       * guard prevents overlap; `withReplayLock` prevents cross-tab overlap.
+       */
+      const runReplay = async (): Promise<void> => {
+        if (disposed || replaying) return
+        replaying = true
+        try {
+          await withReplayLock(() => replayAll())
+        } catch (err) {
+          onWarn('[olas/mutation-queue] replay failed', err)
+        } finally {
+          replaying = false
+        }
+      }
+
+      // In-session failures retry when the network comes back, not only on reload.
+      host.network.onReconnect(() => {
+        void runReplay()
+      })
+      host.provide(MutationQueue, { replayNow: () => runReplay() })
+
+      // The startup replay runs in the background. `root.waitForIdle()` waits for
+      // it when the tab starts online; an offline pass parks until reconnect, and
+      // tracking it would leave `waitForIdle` hanging for as long as that takes.
+      const startup = runReplay()
+      if (host.network.isOnline()) host.track(startup)
+
+      const onStart = (event: MutationEvent, mutationId: string): void => {
+        const idempotencyKey = dedupeBy?.(mutationId, event.variables)
+        runIdentity.set(event.runId, identityOf(mutationId, event.variables, idempotencyKey))
+        if (idempotencyKey !== undefined) {
+          const fullKey = `${mutationId}:${idempotencyKey}`
+          const existingRunId = activeKeys.get(fullKey)
+          if (existingRunId !== undefined && existingRunId !== event.runId) {
+            // Already in flight under a different runId — collapse. The
+            // in-process run continues (consumer's promise resolves with
+            // whatever this attempt produces), but we don't write a second
+            // durable entry. The server's dedupe is the canonical gate.
+            // The alias makes this run's settle act on the owner's entry.
+            runAlias.set(event.runId, existingRunId)
+            inFlightRuns.set(event.runId, existingRunId)
+            return
+          }
+          activeKeys.set(fullKey, event.runId)
+        }
+        inFlightRuns.set(event.runId, event.runId)
+        seqCounter += 1
+        const entry: QueueEntry = {
+          v: PROTOCOL_VERSION,
+          mutationId,
+          runId: event.runId,
+          variables: event.variables,
+          attempts: 0,
+          enqueuedAt: Date.now(),
+          seq: seqCounter,
+          idempotencyKey,
+        }
+        // Fire-and-forget: `onMutation` is a synchronous plugin hook, so we can't
+        // await the durable write here. `pendingWrites` still orders a later
+        // delete after this write (no persist-after-delete race). Loss window: if
+        // the durable write REJECTS (quota, an IDB commit abort) the in-process
+        // run still proceeds and the failure is reported via `onWarn`, but a
+        // reload before the run completes loses that mutation. Inherent to a sync
+        // hook — see the README "best-effort" note.
+        void writeEntry(entry)
+      }
+
+      const onSettle = (event: MutationEvent, mutationId: string): void => {
+        // The dedupe key is released ONLY when the durable entry is dropped
+        // (success, or error after exhaustion). On a non-terminal error or a
+        // cancel the entry stays pending replay, so its key must stay active —
+        // else a re-enqueue writes a SECOND durable entry for the same logical
+        // mutation. We don't index runId→key, so walk on drop.
+        //
+        // Every branch acts on `ownerRunId`, the run whose entry is actually on
+        // disk. For a `dedupeBy` collapse that is the run this one collapsed
+        // onto, not `event.runId`.
+        const ownerRunId = runAlias.get(event.runId) ?? event.runId
+        const identity = runIdentity.get(event.runId)
+        // One settle per run, so the per-run bookkeeping goes here whatever the
+        // outcome.
+        runAlias.delete(event.runId)
+        runIdentity.delete(event.runId)
+        inFlightRuns.delete(event.runId)
+        switch (event.phase) {
+          case 'success':
             clearActiveKey(ownerRunId)
             retainedFailures.delete(ownerRunId)
-            void deleteEntry(event.mutationId, ownerRunId)
-            onReplayError(
-              event.error ??
-                new Error(`[olas/mutation-queue] gave up on "${event.mutationId}/${ownerRunId}"`),
-              known ?? {
-                v: PROTOCOL_VERSION,
-                mutationId: event.mutationId,
-                runId: ownerRunId,
-                variables: undefined,
-                attempts,
-                enqueuedAt: Date.now(),
-              },
-            )
-          } else if (identity !== undefined) {
-            // The entry survives for a cross-load replay. Remember which
-            // logical operation it belongs to so a later successful retry
-            // of that operation can supersede it.
-            retainedFailures.set(ownerRunId, { mutationId: event.mutationId, identity })
+            void deleteEntry(mutationId, ownerRunId)
+            // This run is the manual retry of whatever failed before it: the
+            // server has accepted the write, so the entries those earlier runs
+            // left for replay describe a write that already happened. Drop them,
+            // or the next page load submits the operation twice.
+            dropSupersededFailures(mutationId, identity, ownerRunId)
+            return
+          case 'error': {
+            // In-process retries are exhausted by the time the runner reports
+            // `error` — but cross-reload replays still get up to maxAttempts.
+            // Leave the entry (and its key) in place unless we've already
+            // replayed it maxAttempts times.
+            const known = knownRuns.get(ownerRunId)
+            const attempts = known?.attempts ?? 1
+            if (attempts >= maxAttempts) {
+              clearActiveKey(ownerRunId)
+              retainedFailures.delete(ownerRunId)
+              void deleteEntry(mutationId, ownerRunId)
+              onReplayError(
+                event.error ??
+                  new Error(`[olas/mutation-queue] gave up on "${mutationId}/${ownerRunId}"`),
+                known ?? {
+                  v: PROTOCOL_VERSION,
+                  mutationId,
+                  runId: ownerRunId,
+                  variables: event.variables,
+                  attempts,
+                  enqueuedAt: Date.now(),
+                },
+              )
+            } else if (identity !== undefined) {
+              // The entry survives for a cross-load replay. Remember which
+              // logical operation it belongs to so a later successful retry of
+              // that operation can supersede it.
+              retainedFailures.set(ownerRunId, { mutationId, identity })
+            }
+            return
           }
-          return
+          case 'cancel':
+            // Entry AND key stay in place — a page may reload mid-run and the
+            // next startup's replay picks it up; a re-enqueue must collapse onto
+            // the pending entry, not double-write.
+            return
         }
-        case 'cancelled':
-          // Entry AND key stay in place — a page may reload mid-run and the
-          // next init's replay picks it up; a re-enqueue must collapse onto
-          // the pending entry, not double-write.
-          return
       }
-    },
 
-    replayNow(): Promise<void> {
-      return runReplay()
-    },
+      return {
+        onMutation(event) {
+          // Its own replays report here too; they are already on disk.
+          if (event.origin === MUTATION_QUEUE_PLUGIN_NAME) return
+          const mutationId = event.mutation.id
+          if (mutationId === undefined || event.mutation.meta.persist !== true) return
+          if (event.phase === 'start') onStart(event, mutationId)
+          else onSettle(event, mutationId)
+        },
 
-    dispose() {
-      disposed = true
-      if (onlineHandler !== null && typeof window !== 'undefined') {
-        window.removeEventListener('online', onlineHandler)
-        onlineHandler = null
+        dispose() {
+          disposed = true
+          knownRuns.clear()
+          runAlias.clear()
+          runIdentity.clear()
+          inFlightRuns.clear()
+          retainedFailures.clear()
+          // Release every pass parked in `waitForOnline` so the cross-tab replay
+          // lock is handed back. `replayAll` re-checks `disposed` the moment the
+          // wait returns. In-flight replays are cancelled by the engine when the
+          // root's client disposes.
+          for (const wake of onlineWaiters) wake()
+          onlineWaiters.clear()
+          // Trip every backoff sleeper so the per-mutationId driver's
+          // `await sleep(...)` short-circuits and the outer loop bails on
+          // `if (disposed) return`.
+          for (const wake of backoffSleepers) wake()
+          backoffSleepers.clear()
+        },
       }
-      knownRuns.clear()
-      runAlias.clear()
-      runIdentity.clear()
-      inFlightRuns.clear()
-      retainedFailures.clear()
-      // Release every pass parked in `waitForOnline` so the cross-tab replay
-      // lock is handed back and no `online` listener outlives the plugin.
-      // `replayAll` re-checks `disposed` the moment the wait returns.
-      for (const wake of onlineWaiters) wake()
-      onlineWaiters.clear()
-      // Abort every in-flight replay so a tab close mid-mutate doesn't
-      // leak the network request. Mutations that respect their signal
-      // (the documented contract) will reject with AbortError — caught
-      // inside `replayEntry` as a regular failure path.
-      for (const controller of inFlightReplays) controller.abort()
-      inFlightReplays.clear()
-      // Trip every backoff sleeper so the per-mutationId driver's
-      // `await sleep(...)` short-circuits and the outer loop bails on
-      // `if (disposed) return`.
-      for (const wake of backoffSleepers) wake()
-      backoffSleepers.clear()
     },
   }
 }

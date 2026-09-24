@@ -70,7 +70,28 @@ export type {
   FormValue,
   ItemInitial,
 } from './forms/form-types'
+// Plugins (§13)
+export { definePlugin } from './plugin/host'
+export type {
+  ActivityEvent,
+  FetchContext,
+  InvalidateEvent,
+  MutateContext,
+  MutationEvent,
+  MutationHost,
+  MutationRef,
+  NetworkHost,
+  OlasPlugin,
+  PluginHooks,
+  PluginHost,
+  QueryHost,
+  QueryRef,
+  RemoveEvent,
+  WriteEvent,
+  WriteSource,
+} from './plugin/types'
 export { bindQuery, createCache, createMutation, createQuery } from './query/bind'
+export type { BindQueryOptions } from './query/client'
 export { defineInfiniteQuery, defineQuery } from './query/define'
 export type { QueryEngine, QueryEngineOptions } from './query/engine'
 export { queryEngine } from './query/engine'
@@ -81,11 +102,6 @@ export type {
   InfiniteQuerySpec,
   InfiniteQuerySubscription,
 } from './query/infinite'
-// Key hashing — exported so plugins (entities, etc.) that need a stable
-// per-`keyArgs` index key reuse the canonical implementation instead of
-// rolling their own ad-hoc JSON.stringify (which mishandles Date, key
-// ordering, and `undefined`).
-export { stableHash } from './query/keys'
 export type { LocalCacheOptions } from './query/local'
 export type {
   MutateCtx,
@@ -99,19 +115,6 @@ export type {
   MutationSpec,
 } from './query/mutation'
 export { defineMutation, MutationDisposedError } from './query/mutation'
-// Query-client plugins (§13.2 / §13.3)
-export type {
-  GcEvent,
-  InvalidateEvent,
-  MutationEnqueueEvent,
-  MutationSettleEvent,
-  QueryClientPlugin,
-  QueryClientPluginApi,
-  RegisteredMutation,
-  RegisteredQuery,
-  SetDataEvent,
-} from './query/plugin'
-export { lookupRegisteredMutation, lookupRegisteredQuery } from './query/plugin'
 // Query primitives
 export type {
   AsyncState,

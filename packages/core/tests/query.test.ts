@@ -1075,7 +1075,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     root.dispose()
   })
 
-  test('emits a plugin SetDataEvent with source "set", like any local write', async () => {
+  test('reports a plugin write with source "write"', async () => {
     const events: Array<{ source: string; data: unknown }> = []
     const q = defineQuery({
       id: 'write.plugin',
@@ -1089,17 +1089,19 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
       plugins: [
         {
           name: 'spy',
-          onSetData: (ev) => {
-            events.push({ source: ev.source, data: ev.data })
-          },
+          setup: () => ({
+            onWrite: (ev) => {
+              events.push({ source: ev.source, data: ev.data })
+            },
+          }),
         },
       ],
     })
     await flush()
 
     q.write(() => 'written')
-    const sets = events.filter((e) => e.source === 'set')
-    expect(sets).toEqual([{ source: 'set', data: 'written' }])
+    const writes = events.filter((e) => e.source === 'write')
+    expect(writes).toEqual([{ source: 'write', data: 'written' }])
     root.dispose()
   })
 

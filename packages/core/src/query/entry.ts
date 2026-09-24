@@ -31,7 +31,8 @@ export type EntryEvents = {
 let globalFetchSeq = 0
 
 export type EntryOptions<T> = {
-  fetcher: () => (signal: AbortSignal) => Promise<T>
+  /** Called once per attempt; `attempt` is 0, then one more per retry. */
+  fetcher: () => (signal: AbortSignal, attempt: number) => Promise<T>
   staleTime?: number
   initialData?: T | undefined
   initialUpdatedAt?: number | undefined
@@ -41,18 +42,15 @@ export type EntryOptions<T> = {
   structuralShare?: boolean
   events?: EntryEvents
   /**
-   * Fired after a successful fetch result is written to `data`. Used by the
-   * `QueryClient` to emit a plugin-visible `SetDataEvent` with
-   * `source: 'fetch'` (devtools events live on `events` above). Distinct
-   * from `events.onFetchSuccess`, which carries timing info for the
-   * devtools bus.
+   * Fired after a successful fetch result is written to `data` — and only
+   * then; hydration is reported by the client itself. Used by the
+   * `QueryClient` to report a `'fetch'` write to plugins (devtools events live
+   * on `events` above).
    *
-   * Privileged closure — set up by `ClientEntry` to call
-   * `client.emitSetData(...)`, which already individually try/catches every
-   * plugin via `callPlugin` and routes thrown exceptions through `onError`
-   * with `kind: 'plugin'`. Not wrapped here; an exception escaping this
-   * callback is a programming error in core (not a plugin) and SHOULD
-   * surface so the bug is visible.
+   * Privileged closure, set up by `ClientEntry`. The plugin set isolates each
+   * hook and routes a throw to `onError` as `kind: 'plugin'`, so nothing is
+   * wrapped here: an exception escaping this callback is a bug in core and
+   * SHOULD surface.
    */
   onSuccessData?: (data: T) => void
 }
@@ -82,7 +80,7 @@ export class Entry<T> {
    *  offlineFirst network-error park). See spec §5.5, T3.5. */
   readonly isPaused: Signal<boolean> = signal(false)
 
-  fetcherProvider: () => (signal: AbortSignal) => Promise<T>
+  fetcherProvider: () => (signal: AbortSignal, attempt: number) => Promise<T>
   private staleTime: number
   private retry: RetryPolicy
   private retryDelay: RetryDelay | undefined
@@ -250,7 +248,7 @@ export class Entry<T> {
       }
       try {
         const fetcher = this.fetcherProvider()
-        const result = await fetcher(abort.signal)
+        const result = await fetcher(abort.signal, attempt)
         if (myId !== this.currentFetchId || this.disposed) {
           throw new DOMException('Superseded', 'AbortError')
         }
@@ -424,13 +422,9 @@ export class Entry<T> {
         if (!this.disposed) this.isStale.set(true)
       })
     }
-    this.onSuccessData?.(data)
-    // Resolve any awaiters parked in firstValue / promise.
-    if (this.pendingFirstValueRejects.length > 0) {
-      // First-value awaiters are subscribed to `this.status`; the batched
-      // `status.set('success')` above wakes them through the normal
-      // subscribe path. We don't need to do anything else here.
-    }
+    // Not `onSuccessData`: that reports a fetch, and this is not one. The
+    // client reports the write itself, once, as `'hydrate'`. First-value
+    // awaiters subscribe to `status`, which the batch above already woke.
   }
 
   /**

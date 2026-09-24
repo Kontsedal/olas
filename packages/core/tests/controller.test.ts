@@ -550,8 +550,11 @@ describe('construction error rollback (§12.1)', () => {
     const initSpy = vi.fn()
     const disposeSpy = vi.fn()
     const plugin = {
-      init: initSpy,
-      dispose: disposeSpy,
+      name: 'spy',
+      setup: () => {
+        initSpy()
+        return { dispose: disposeSpy }
+      },
     }
     const broken = defineController(() => {
       throw new Error('bootstrap fail')

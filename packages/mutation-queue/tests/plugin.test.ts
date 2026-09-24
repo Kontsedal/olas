@@ -6,12 +6,15 @@ import {
   defineMutation,
   defineQuery,
   type Mutation,
+  type MutationEvent,
+  type OlasPlugin,
+  type PluginHost,
   queryEngine,
 } from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { mutationQueuePlugin } from '../src/plugin'
+import { MutationQueue, mutationQueuePlugin } from '../src/plugin'
 import { PROTOCOL_VERSION, type QueueEntry } from '../src/protocol'
 
 /**
@@ -45,6 +48,67 @@ const settle = async () => {
   for (let i = 0; i < 10; i++) await flush()
 }
 
+/**
+ * Drive a queue plugin's `onMutation` directly, without a root. The host is a
+ * fake: online, with no registered definitions, so the startup replay is a
+ * no-op against an empty store. The adapters translate the enqueue/settle
+ * vocabulary these tests were written in into `MutationEvent`s.
+ */
+function directHooks(plugin: OlasPlugin) {
+  const host: PluginHost = {
+    deps: {},
+    provide() {},
+    reportError() {},
+    onDispose() {},
+    track() {},
+    network: { isOnline: () => true, onReconnect: () => () => {}, onFocus: () => () => {} },
+    queries: {
+      get: () => undefined,
+      keys: () => [],
+      peek: () => undefined,
+      write() {},
+      replace() {},
+      invalidate: async () => {},
+      hydrate() {},
+      dehydrate: () => ({ version: 1, entries: [] }),
+      hashKey: (key) => JSON.stringify(key),
+    },
+    mutations: { has: () => false, run: () => Promise.reject(new Error('no definitions')) },
+    debug() {},
+  }
+  const hooks = plugin.setup(host) ?? {}
+  const emit = (event: Omit<MutationEvent, 'origin'>) =>
+    hooks.onMutation?.({ ...event, origin: undefined })
+  return {
+    enqueue(e: { mutationId: string; runId: string; variables: unknown; attempt?: number }) {
+      emit({
+        mutation: { id: e.mutationId, meta: { persist: true } },
+        runId: e.runId,
+        variables: e.variables,
+        phase: 'start',
+      })
+    },
+    settle(e: {
+      mutationId: string
+      runId: string
+      outcome: 'success' | 'error' | 'cancelled'
+      error?: unknown
+      variables?: unknown
+    }) {
+      emit({
+        mutation: { id: e.mutationId, meta: { persist: true } },
+        runId: e.runId,
+        variables: e.variables,
+        phase: e.outcome === 'cancelled' ? 'cancel' : e.outcome,
+        ...(e.error !== undefined ? { error: e.error } : {}),
+      })
+    },
+    dispose() {
+      hooks.dispose?.()
+    },
+  }
+}
+
 afterEach(() => {
   // Tests reuse mutationIds within the file via deliberate cleanup; isolate.
 })
@@ -69,7 +133,7 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/v1' })],
     })
 
     expect(adapter.store.size).toBe(0)
@@ -116,7 +180,9 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/err', maxAttempts: 3 })],
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/err', maxAttempts: 3 }),
+      ],
     })
 
     await root.api.run.run({ x: 1 }).catch(() => {})
@@ -160,7 +226,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/replay' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/replay' })],
     })
     await settle()
 
@@ -191,7 +257,7 @@ describe('mutationQueuePlugin — replay on init', () => {
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/orphan',
           onReplayError: (err, e) => errors.push({ err, entry: e }),
         }),
@@ -236,7 +302,7 @@ describe('mutationQueuePlugin — replay on init', () => {
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/giveup',
           maxAttempts: 5,
           onReplayError: (err, e) => errors.push({ err, entry: e }),
@@ -311,9 +377,10 @@ describe('mutationQueuePlugin — replay on init', () => {
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/serial' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/serial' })],
     })
-    await settle()
+    // Waits for the startup replay: the plugin tracks it.
+    await root.waitForIdle()
 
     // A's two entries must have run in enqueuedAt order.
     expect(aOrder).toEqual([1, 2])
@@ -335,7 +402,7 @@ describe('mutationQueuePlugin — replay on init', () => {
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/bad',
           onWarn: (msg) => warnings.push(msg),
         }),
@@ -352,7 +419,9 @@ describe('mutationQueuePlugin — replay on init', () => {
 describe('mutationQueuePlugin — config', () => {
   test('throws on missing keyPrefix', () => {
     const adapter = memoryAdapter()
-    expect(() => mutationQueuePlugin({ adapter, keyPrefix: '' })).toThrow(/keyPrefix is required/)
+    expect(() => mutationQueuePlugin({ storage: adapter, keyPrefix: '' })).toThrow(
+      /keyPrefix is required/,
+    )
   })
 
   test('warns and disables replay when adapter has no keys() method', async () => {
@@ -368,7 +437,7 @@ describe('mutationQueuePlugin — config', () => {
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter: minimal,
+          storage: minimal,
           keyPrefix: 'test/mq/no-keys',
           onWarn: (msg) => warnings.push(msg),
         }),
@@ -446,19 +515,18 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
   test('dedupeBy collapses a second enqueue with the same key onto the first', async () => {
     const adapter = memoryAdapter()
     const plugin = mutationQueuePlugin({
-      adapter,
+      storage: adapter,
       keyPrefix: 'test/mq/dedupe',
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
-    plugin.onMutationEnqueue?.({
-      meta: { persist: true },
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
       attempt: 0,
     })
-    plugin.onMutationEnqueue?.({
-      meta: { persist: true },
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
@@ -467,18 +535,18 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     await settle()
     // Only the first enqueue wrote a durable entry.
     expect(adapter.store.size).toBe(1)
-    plugin.dispose?.()
+    hooks.dispose()
   })
 
   test('a cancelled settle keeps the dedupe key active (re-enqueue does NOT double-write)', async () => {
     const adapter = memoryAdapter()
     const plugin = mutationQueuePlugin({
-      adapter,
+      storage: adapter,
       keyPrefix: 'test/mq/cancel',
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
-    plugin.onMutationEnqueue?.({
-      meta: { persist: true },
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
@@ -487,15 +555,13 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     await settle()
     expect(adapter.store.size).toBe(1)
     // Reload mid-run looks like a cancel — entry + key must survive.
-    plugin.onMutationSettle?.({
-      meta: { persist: true },
+    hooks.settle({
       mutationId: 'm',
       runId: 'run-1',
       outcome: 'cancelled',
     })
     // Re-enqueue the same logical mutation under a new runId → collapses.
-    plugin.onMutationEnqueue?.({
-      meta: { persist: true },
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
@@ -503,12 +569,12 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     })
     await settle()
     expect(adapter.store.size).toBe(1) // NOT two entries
-    plugin.dispose?.()
+    hooks.dispose()
   })
 })
 
 describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T6.2)', () => {
-  test('onReplaySettle fires with the result + an invalidate api after a successful replay', async () => {
+  test('onReplaySettle fires with the result and the root query host after a successful replay', async () => {
     const id = 'mq-test/settle'
     _unregisterMutationById(id)
     const adapter = memoryAdapter()
@@ -542,17 +608,21 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       deps: { owner: 'queue' },
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/settle',
-          onReplaySettle: (entry, result, api) => {
+          onReplaySettle: (entry, result, queries) => {
             settled.push({ result, runId: entry.runId })
-            api.invalidate(query, [1])
+            void queries.invalidate('plugin/523', ['user', 1])
           },
         }),
       ],
     })
-    await Promise.all([root.waitForIdle(), other.waitForIdle()])
+    // Not `root.waitForIdle()`: it waits for the startup replay, which is
+    // parked on `finishReplay` below.
+    await other.waitForIdle()
     await vi.waitFor(() => expect(finishReplay).toBeTypeOf('function'))
+    // Both roots have fetched once before the replay settles.
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
     calls.length = 0
     finishReplay('server-truth')
     await settle()
@@ -578,7 +648,11 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       },
       meta: { persist: true },
     })
-    const plugin = mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/replaynow', maxAttempts: 5 })
+    const plugin = mutationQueuePlugin({
+      storage: adapter,
+      keyPrefix: 'test/mq/replaynow',
+      maxAttempts: 5,
+    })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
       queries: queryEngine(),
@@ -591,7 +665,7 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
     expect(calls).toBe(1)
     expect(adapter.store.size).toBe(1)
     // Manual re-drive → succeeds, entry dropped.
-    await plugin.replayNow()
+    await root.inject(MutationQueue).replayNow()
     await settle()
     expect(calls).toBe(2)
     expect(adapter.store.size).toBe(0)
@@ -611,7 +685,7 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       const root = createRoot(def, {
         queries: queryEngine(),
         deps: {},
-        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/online' })],
+        plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/online' })],
       })
       await settle()
       expect(calls).toBe(0) // offline → gated
@@ -641,7 +715,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/ttl',
           ttlMs: 1000,
           onReplayError: (err) => errors.push(err as { code?: string }),
@@ -676,7 +750,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/migrate',
           migrate: (raw, from) => {
             const o = raw as { mutationId: string; runId: string; legacyVars: unknown }
@@ -703,13 +777,13 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const adapter = memoryAdapter()
     const warnings: string[] = []
     const plugin = mutationQueuePlugin({
-      adapter,
+      storage: adapter,
       keyPrefix: 'test/mq/bytes',
       maxEntryBytes: 50,
       onWarn: (m) => warnings.push(m),
     })
-    plugin.onMutationEnqueue?.({
-      meta: { persist: true },
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'r1',
       variables: { blob: 'x'.repeat(500) },
@@ -719,7 +793,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     expect(warnings.some((w) => w.includes('soft cap'))).toBe(true)
     // The entry is still written (soft cap — warn, don't block).
     expect(adapter.store.size).toBe(1)
-    plugin.dispose?.()
+    hooks.dispose()
   })
 
   test('onReplayAttempt fires on a non-final replay failure', async () => {
@@ -742,7 +816,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/attempt',
           maxAttempts: 5,
           onReplayAttempt: (err) => attemptFailures.push(err),
@@ -790,7 +864,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/seq' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/seq' })],
     })
     await settle()
     expect(order).toEqual(['A', 'B'])
@@ -810,7 +884,9 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       const root = createRoot(def, {
         queries: queryEngine(),
         deps: {},
-        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/backoff', backoffMs: 1000 })],
+        plugins: [
+          mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/backoff', backoffMs: 1000 }),
+        ],
       })
       await vi.advanceTimersByTimeAsync(0) // reach the backoff sleep
       expect(calls).toBe(0) // still waiting out the backoff window
@@ -853,7 +929,7 @@ describe('a run that completed before dispose must not be replayed', () => {
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/v1' })],
     })
 
     const run = root.api.create.run({ sku: 'A-1' }).catch((e: unknown) => e)
@@ -910,7 +986,9 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
       queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/retry', maxAttempts: 5 })],
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/retry', maxAttempts: 5 }),
+      ],
     })
 
     await root.api.create.run({ sku: 'A-1' }).catch(() => {})
@@ -949,7 +1027,9 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
       queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/retry2', maxAttempts: 5 })],
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/retry2', maxAttempts: 5 }),
+      ],
     })
 
     await root.api.create.run({ sku: 'A-1' }).catch(() => {})
@@ -972,21 +1052,20 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
     // on disk to replay a write the server already took.
     const adapter = memoryAdapter()
     const plugin = mutationQueuePlugin({
-      adapter,
+      storage: adapter,
       keyPrefix: 'test/mq/alias',
       maxAttempts: 5,
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
-    plugin.onMutationEnqueue?.({
-      meta: { persist: true },
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
       attempt: 0,
     })
     await settle()
-    plugin.onMutationSettle?.({
-      meta: { persist: true },
+    hooks.settle({
       mutationId: 'm',
       runId: 'run-1',
       outcome: 'error',
@@ -994,15 +1073,13 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
     await settle()
     expect(adapter.store.size).toBe(1) // retained below maxAttempts
 
-    plugin.onMutationEnqueue?.({
-      meta: { persist: true },
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
       attempt: 0,
     })
-    plugin.onMutationSettle?.({
-      meta: { persist: true },
+    hooks.settle({
       mutationId: 'm',
       runId: 'run-2',
       outcome: 'success',
@@ -1010,7 +1087,7 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
     await settle()
     expect(adapter.store.size).toBe(0)
 
-    plugin.dispose?.()
+    hooks.dispose()
   })
 })
 
@@ -1039,7 +1116,7 @@ describe('mutationQueuePlugin — replay skips runs executing in this tab', () =
       },
       meta: { persist: true },
     })
-    const plugin = mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/inflight' })
+    const plugin = mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/inflight' })
     const def = defineController((ctx) => ({
       create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
     }))
@@ -1057,7 +1134,7 @@ describe('mutationQueuePlugin — replay skips runs executing in this tab', () =
     expect(adapter.store.size).toBe(1)
     expect(calls).toBe(1)
 
-    await plugin.replayNow()
+    await root.inject(MutationQueue).replayNow()
     await settle()
     expect(calls).toBe(1) // the live run was skipped, not replayed
 
@@ -1084,12 +1161,13 @@ describe('mutationQueuePlugin — dispose releases the offline wait', () => {
       const root = createRoot(def, {
         queries: queryEngine(),
         deps: {},
-        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/dispose-offline' })],
+        plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/dispose-offline' })],
       })
       await settle()
       expect(calls).toBe(0)
-      // The reconnect listener plus the one the parked `waitForOnline` holds.
-      expect(env.listenerCount('online')).toBe(2)
+      // The reconnect subscription and the parked `waitForOnline` both go
+      // through the engine's one shared `online` listener.
+      expect(env.listenerCount('online')).toBe(1)
 
       root.dispose()
       await settle()

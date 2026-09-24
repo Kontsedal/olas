@@ -16,7 +16,7 @@ declare module '@kontsedal/olas-core' {
 
 export type { ChannelLike } from './channel'
 export { defaultChannelFactory } from './channel'
-export { type CrossTabOptions, crossTabPlugin } from './plugin'
+export { CROSS_TAB_PLUGIN_NAME, type CrossTabOptions, crossTabPlugin } from './plugin'
 export {
   type InvalidateMessage,
   type Message,

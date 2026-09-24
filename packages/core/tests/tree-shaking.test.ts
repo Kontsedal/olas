@@ -34,7 +34,7 @@ describe('createRoot does not statically reach the heavy subsystems', () => {
   })
 
   test('root.ts imports QueryClient as a type only and never constructs one', () => {
-    expect(rootSrc).toMatch(/import type \{ QueryClient \} from '\.\.\/query\/client'/)
+    expect(rootSrc).toMatch(/import type \{[^}]*\bQueryClient\b[^}]*\} from '\.\.\/query\/client'/)
     expect(valueEdges(rootSrc).join('\n')).not.toMatch(/from '\.\.\/query\/client'/)
     expect(rootSrc).not.toMatch(/new QueryClient\(/)
   })
@@ -135,19 +135,22 @@ describe('a root without a query engine', () => {
     client.dispose()
   })
 
-  test('plugins and hydrate without an engine warn rather than vanish', () => {
+  test('hydrate without an engine warns; plugins still set up, with no query host', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    createRoot(
+    const setup = vi.fn()
+    const root = createRoot(
       defineController(() => ({})),
       {
         ...noDeps,
-        plugins: [{ name: 'x', init: () => {} }],
+        plugins: [{ name: 'x', setup }],
         hydrate: { version: 1, entries: [] },
       },
     )
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('plugins'))
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('hydrate'))
+    expect(setup).toHaveBeenCalledTimes(1)
+    expect(setup.mock.calls[0]?.[0].queries).toBeNull()
     warn.mockRestore()
+    root.dispose()
   })
 })
 

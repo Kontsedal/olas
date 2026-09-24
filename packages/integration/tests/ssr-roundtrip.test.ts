@@ -25,7 +25,7 @@ import {
   type QuerySubscription,
   queryEngine,
 } from '@kontsedal/olas-core'
-import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
+import { defineEntity, Entities, entitiesPlugin } from '@kontsedal/olas-entities'
 import { describe, expect, test, vi } from 'vitest'
 import { settle } from './_helpers'
 
@@ -118,7 +118,7 @@ describe('integration: SSR roundtrip', () => {
       ],
     }
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({
       feed: createQuery(ctx, feedQuery, () => []),
     }))
@@ -131,11 +131,11 @@ describe('integration: SSR roundtrip', () => {
 
     // First paint — entity store already populated from the hydrated data.
     expect(client.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
+    expect(client.inject(Entities).get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(client.inject(Entities).get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
 
     // Backprop reaches both paths the hydrated value covers (posts.0 + pinned).
-    plugin.update(Post, 'p1', { likes: 7 })
+    client.inject(Entities).update(Post, 'p1', { likes: 7 })
     expect(client.api.feed.data.peek()?.posts[0]?.likes).toBe(7)
     expect(client.api.feed.data.peek()?.pinned?.likes).toBe(7)
 

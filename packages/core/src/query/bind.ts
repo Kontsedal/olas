@@ -1,5 +1,6 @@
 import { ctxInternals } from '../controller/internals'
 import type { Ctx } from '../controller/types'
+import type { BindQueryOptions } from './client'
 import type { InfiniteQuery, InfiniteQueryActions, InfiniteQuerySubscription } from './infinite'
 import { createLocalCache, type LocalCacheOptions } from './local'
 import {
@@ -146,14 +147,9 @@ export function createMutation<V, R>(
     internals.path,
     client.mutationsInflight$,
     internals.devtools as never,
-    // A mutation with an `id` reports its runs to plugins; the plugin decides
-    // from `meta` whether a run concerns it.
-    spec.id !== undefined
-      ? {
-          emitEnqueue: (ev) => client.emitMutationEnqueue(ev),
-          emitSettle: (ev) => client.emitMutationSettle(ev),
-        }
-      : undefined,
+    // Present only when some plugin observes mutations; each decides from
+    // the run's `meta` whether it concerns them.
+    client.mutationLifecycle(),
     ctx.deps,
   )
   internals.register({ kind: 'cleanup', dispose: () => mutation.dispose() })
@@ -162,18 +158,21 @@ export function createMutation<V, R>(
 
 /**
  * Bind a query value to this controller's root, for imperative reads and
- * writes outside a subscription (§5.5, §6.4).
+ * writes outside a subscription (§5.5, §6.4). `options.origin` tags the
+ * handle's writes for plugins.
  */
 export function bindQuery<Args extends unknown[], T>(
   ctx: Ctx,
   query: Query<Args, T>,
+  options?: BindQueryOptions,
 ): QueryActions<Args, T>
 export function bindQuery<Args extends unknown[], TPage, TItem>(
   ctx: Ctx,
   query: InfiniteQuery<Args, TPage, TItem>,
+  options?: BindQueryOptions,
 ): InfiniteQueryActions<Args, TPage, TItem>
-export function bindQuery(ctx: Ctx, query: any): any {
+export function bindQuery(ctx: Ctx, query: any, options?: BindQueryOptions): any {
   const internals = ctxInternals(ctx, 'bindQuery')
   internals.assertLive('bindQuery')
-  return internals.requireClient('bindQuery').bindQuery(query as never)
+  return internals.requireClient('bindQuery').bindQuery(query as never, options)
 }

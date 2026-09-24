@@ -279,7 +279,12 @@ describe('DevtoolsStore unified timeline', () => {
   test('cache:set-data captures the prior value as `prev` for the diff', () => {
     const store = new DevtoolsStore({ now: fixedNow })
     store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'fetch', data: { n: 1 } })
-    store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'mutate', data: { n: 2 } })
+    store.handle({
+      type: 'cache:set-data',
+      queryKey: ['u', '1'],
+      source: 'optimistic',
+      data: { n: 2 },
+    })
     const writes = store.events$.peek().filter((e) => e.event.type === 'cache:set-data')
     expect(writes[0]!.prev).toBeUndefined() // first write to the key
     expect(writes[1]!.prev).toEqual({ n: 1 }) // diff baseline = prior data
@@ -294,9 +299,9 @@ describe('DevtoolsStore unified timeline', () => {
 
   test('distinct keys (undefined vs null) keep separate diff baselines', () => {
     const store = new DevtoolsStore({ now: fixedNow })
-    store.handle({ type: 'cache:set-data', queryKey: ['x', undefined], source: 'set', data: 1 })
-    store.handle({ type: 'cache:set-data', queryKey: ['x', null], source: 'set', data: 2 })
-    store.handle({ type: 'cache:set-data', queryKey: ['x', null], source: 'set', data: 3 })
+    store.handle({ type: 'cache:set-data', queryKey: ['x', undefined], source: 'write', data: 1 })
+    store.handle({ type: 'cache:set-data', queryKey: ['x', null], source: 'write', data: 2 })
+    store.handle({ type: 'cache:set-data', queryKey: ['x', null], source: 'write', data: 3 })
     const writes = store.events$.peek().filter((e) => e.event.type === 'cache:set-data')
     // `['x', undefined]` and `['x', null]` must NOT alias onto one baseline.
     expect('prev' in writes[0]!).toBe(false) // ['x', undefined] first write
@@ -353,7 +358,12 @@ describe('DevtoolsStore unified timeline', () => {
     store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'fetch', data: { n: 1 } })
     store.clearLogs()
     expect(store.events$.peek()).toEqual([])
-    store.handle({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'mutate', data: { n: 2 } })
+    store.handle({
+      type: 'cache:set-data',
+      queryKey: ['u', '1'],
+      source: 'optimistic',
+      data: { n: 2 },
+    })
     const write = store.events$.peek().find((e) => e.event.type === 'cache:set-data')
     expect(write!.prev).toBeUndefined() // baseline was reset by clearLogs
   })
@@ -398,7 +408,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     })
     // A write to the already-cached key diffs against the seeded value, not
     // "initial" — the fetch that populated it happened before we subscribed.
-    handler?.({ type: 'cache:set-data', queryKey: ['1'], source: 'mutate', data: { n: 2 } })
+    handler?.({ type: 'cache:set-data', queryKey: ['1'], source: 'optimistic', data: { n: 2 } })
     const write = store.events$.peek().find((e) => e.event.type === 'cache:set-data')
     expect(write!.prev).toEqual({ n: 1 })
   })
@@ -418,7 +428,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     })
     expect(store.cacheState$.peek()).toEqual([])
     current = [entry({ data: 42, lastUpdatedAt: 9 })]
-    handler?.({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'set', data: 42 })
+    handler?.({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'write', data: 42 })
     expect(store.cacheState$.peek()).toEqual(current)
   })
 
@@ -479,7 +489,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     })
     store.pause()
     current = [entry({ data: 99 })]
-    handler?.({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'set', data: 99 })
+    handler?.({ type: 'cache:set-data', queryKey: ['u', '1'], source: 'write', data: 99 })
     expect(store.cacheState$.peek()).toEqual([]) // dropped while paused, not refreshed
     store.resume()
     expect(store.cacheState$.peek()).toEqual(current) // forced back in sync on resume

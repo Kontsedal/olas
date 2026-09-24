@@ -17,16 +17,21 @@ export function singleClient(clients: Set<QueryClient>): QueryClient | undefined
   return clients.values().next().value
 }
 
+/**
+ * `origin` is stamped on the plugin events these actions cause. The unbound
+ * module-level actions pass none.
+ */
 export function createQueryActions<Args extends unknown[], T>(
   query: Query<Args, T>,
   getClient: ClientResolver,
+  origin?: string,
 ): QueryActions<Args, T> {
   return {
     async invalidate(...args) {
-      await getClient()?.invalidate(query, args)
+      await getClient()?.invalidate(query, args, origin)
     },
     async invalidateAll() {
-      await getClient()?.invalidateAll(query)
+      await getClient()?.invalidateAll(query, origin)
     },
     cancel(...args) {
       getClient()?.cancel(query, args)
@@ -37,17 +42,17 @@ export function createQueryActions<Args extends unknown[], T>(
     setData(...rest) {
       const updater = rest[rest.length - 1] as (prev: T | undefined) => T
       return (
-        getClient()?.setData(query, rest.slice(0, -1) as unknown as Args, updater) ??
+        getClient()?.setData(query, rest.slice(0, -1) as unknown as Args, updater, origin) ??
         emptySnapshot()
       )
     },
     write(...rest) {
       const updater = rest[rest.length - 1] as (prev: T | undefined) => T
-      getClient()?.writeData(query, rest.slice(0, -1) as unknown as Args, updater)
+      getClient()?.writeData(query, rest.slice(0, -1) as unknown as Args, updater, origin)
     },
     replace(...rest) {
       const value = rest[rest.length - 1] as T
-      getClient()?.replaceData(query, rest.slice(0, -1) as unknown as Args, value)
+      getClient()?.replaceData(query, rest.slice(0, -1) as unknown as Args, value, origin)
     },
     peek(...args) {
       return getClient()?.peekData(query, args)
@@ -66,13 +71,14 @@ export function createQueryActions<Args extends unknown[], T>(
 export function createInfiniteQueryActions<Args extends unknown[], TPage, TItem>(
   query: InfiniteQuery<Args, TPage, TItem>,
   getClient: ClientResolver,
+  origin?: string,
 ): InfiniteQueryActions<Args, TPage, TItem> {
   return {
     async invalidate(...args) {
-      await getClient()?.invalidateInfinite(query, args)
+      await getClient()?.invalidateInfinite(query, args, origin)
     },
     async invalidateAll() {
-      await getClient()?.invalidateAllInfinite(query)
+      await getClient()?.invalidateAllInfinite(query, origin)
     },
     cancel(...args) {
       getClient()?.cancelInfinite(query, args)
@@ -83,8 +89,12 @@ export function createInfiniteQueryActions<Args extends unknown[], TPage, TItem>
     setData(...rest) {
       const updater = rest[rest.length - 1] as (prev: TPage[] | undefined) => TPage[]
       return (
-        getClient()?.setInfiniteData(query, rest.slice(0, -1) as unknown as Args, updater) ??
-        emptySnapshot()
+        getClient()?.setInfiniteData(
+          query,
+          rest.slice(0, -1) as unknown as Args,
+          updater,
+          origin,
+        ) ?? emptySnapshot()
       )
     },
     async prefetch(...args) {

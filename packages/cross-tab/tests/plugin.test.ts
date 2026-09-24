@@ -1,4 +1,5 @@
 import {
+  bindQuery,
   createQuery,
   createRoot,
   defineController,
@@ -472,42 +473,84 @@ describe('crossTabPlugin', () => {
     tabs.tabB.dispose()
   })
 
-  test('11. plugin instance reused across two roots surfaces an onError', () => {
-    // Per `ASSESSMENT.md`: a single `crossTabPlugin({...})` instance owns
-    // one sourceId / channel / listener Map. Sharing across two roots would
-    // clobber state on the second init — the guard throws from `init`. The
-    // QueryClient routes that throw through `onError({ kind: 'plugin' })`
-    // (it doesn't tear down the root), but the misuse is now visible.
+  test('11. one plugin value serves two roots, each with its own channel', async () => {
+    // A plugin is a definition: setup runs per root, so the same value in two
+    // roots is two peers — which is how two tabs look to each other.
     const factory = busChannelFactory()
     const plugin = crossTabPlugin({ channelName: 'reuse', channelFactory: factory })
-
     const q = makeUsersQuery('xtab-test/11')
-    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1' as string]) }))
+    const def = defineController((ctx) => ({
+      user: createQuery(ctx, q, () => ['1' as string]),
+      users: bindQuery(ctx, q),
+    }))
+    const a = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const b = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    await settle()
+    a.api.users.write('1', () => ({ id: '1', name: 'from A' }))
+    await settle()
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'from A' })
+    a.dispose()
+    b.dispose()
+  })
 
-    const onError1 = vi.fn()
-    const root1 = createRoot(def, {
-      queries: queryEngine(),
-      deps: {},
-      plugins: [plugin],
-      onError: onError1,
-    })
-    // First root: clean — no plugin error.
-    expect(onError1).not.toHaveBeenCalled()
+  test('14. writes another plugin or a tagged handle made are not mirrored', async () => {
+    // A realtime push reaches every tab itself; mirroring it would deliver it
+    // twice. Only the app's own writes (origin undefined) cross by default.
+    const factory = busChannelFactory()
+    const q = makeUsersQuery('xtab-test/14')
+    const def = defineController((ctx) => ({
+      user: createQuery(ctx, q, () => ['1' as string]),
+      pushed: bindQuery(ctx, q, { origin: 'realtime' }),
+    }))
+    const make = () =>
+      createRoot(def, {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [crossTabPlugin({ channelName: 'origins', channelFactory: factory })],
+      })
+    const a = make()
+    const b = make()
+    await settle()
+    const before = getBus('origins').postCount
+    a.api.pushed.write('1', () => ({ id: '1', name: 'push' }))
+    await settle()
+    expect(getBus('origins').postCount).toBe(before)
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    a.dispose()
+    b.dispose()
+  })
 
-    const onError2 = vi.fn()
-    const root2 = createRoot(def, {
-      queries: queryEngine(),
-      deps: {},
-      plugins: [plugin],
-      onError: onError2,
-    })
-    // Second root: plugin init throws → dispatched as kind:'plugin'.
-    const pluginErr = onError2.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'plugin')
-    expect(pluginErr).toBeTruthy()
-    expect((pluginErr?.[0] as Error).message).toMatch(/reused across multiple roots/)
-
-    root1.dispose()
-    root2.dispose()
+  test('15. optimistic: false mirrors only canonical writes', async () => {
+    const factory = busChannelFactory()
+    const q = makeUsersQuery('xtab-test/15')
+    const def = defineController((ctx) => ({
+      user: createQuery(ctx, q, () => ['1' as string]),
+      users: bindQuery(ctx, q),
+    }))
+    const make = () =>
+      createRoot(def, {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [
+          crossTabPlugin({
+            channelName: 'optimistic-off',
+            channelFactory: factory,
+            optimistic: false,
+          }),
+        ],
+      })
+    const a = make()
+    const b = make()
+    await settle()
+    const snap = a.api.users.setData('1', () => ({ id: '1', name: 'guess' }))
+    await settle()
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    snap.finalize()
+    a.api.users.replace('1', { id: '1', name: 'confirmed' })
+    await settle()
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'confirmed' })
+    a.dispose()
+    b.dispose()
   })
 
   test('13. receive-side filter — inbound writes for locally non-opted queries are ignored (T6.4)', async () => {

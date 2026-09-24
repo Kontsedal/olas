@@ -4,8 +4,8 @@
  * path from root to the controller that owned the failing code; `queryId`
  * and `key` name the cache entry for `cache` kinds. Spec §12, §20.9.
  *
- * `'plugin'` is used for exceptions raised by `QueryClientPlugin` callbacks
- * (`@kontsedal/olas-cross-tab` and friends); SPEC §13.2.
+ * `'plugin'` is used for exceptions raised by plugin hooks and reported
+ * through `host.reportError` (`@kontsedal/olas-cross-tab` and friends); SPEC §13.
  *
  * The remaining fields are correlation hooks for telemetry adapters
  * (Sentry / OpenTelemetry breadcrumbs / Datadog RUM): `eventId` is a stable
