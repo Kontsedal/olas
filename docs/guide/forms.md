@@ -342,7 +342,7 @@ export const signupForm = defineController((ctx) => {
 })
 ```
 
-`validator` does not forward the `AbortSignal`, because Standard Schema v1 has no cancellation. For a form whose whole structure comes from one Zod schema, `createZodForm` from [`@kontsedal/olas-zod`](/packages/zod) builds the fields, forms and arrays with their validators attached.
+`validator` does not forward the `AbortSignal`, because Standard Schema v1 has no cancellation. For a form whose whole structure comes from one Zod schema, `createZodForm` from [`@kontsedal/olas-zod`](/packages/zod) builds the fields, forms and arrays with their validators attached. It enforces the schema's rules on objects and arrays too, such as the refine above or `z.array(...).min(3)`, and each message lands on the node its path names. An array rule lands in the `FieldArray`'s `topLevelErrors`.
 
 ## In a React component
 

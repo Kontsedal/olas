@@ -1184,6 +1184,15 @@ form.value
 
 Each leaf field's initial is the Zod schema's default if present, otherwise an empty value for that type (`''` for string, `0` for number, etc.). The `initial` option overrides it, as a partial value or as a tracked function that re-seats a clean form (§8.4), with the same `resetOnInitialChange` choices. `extraValidators` adds validators to named fields beside the schema's own.
 
+`createZodForm` enforces the schema's rules on objects and arrays, not only its leaf rules. Such a rule is a `.refine`, `.superRefine` or `.check` on an object or an array, or an array's `.min`, `.max`, `.length` or `.nonempty`. A rule on an `.optional()` or `.default()` wrapper around one counts too. When the schema has one, the root form gets a form-level validator that parses the whole schema, and each issue routes by its path (§8.3):
+
+- an empty path lands in `form.topLevelErrors`;
+- a nested object's path lands in that nested form's `topLevelErrors`;
+- an array's path, as from `z.array(...).min(3)`, lands in that `FieldArray`'s `topLevelErrors`;
+- a path at or under a leaf, as from `.refine(fn, { path: ['confirm'] })`, lands on that field.
+
+An issue at a leaf is dropped when the leaf's own schema reports the same message for the same value, so each message appears once. A schema with no such rule gets no whole-schema validator, and a change runs only the changed leaf's validators.
+
 `zodValidator(schema)` returns a `Validator<T>` that runs the schema through the Standard Schema interface (`validator(schema)`, §8.1) and reports **all** issues as `FormIssue[]`, each carrying its `path`. As a leaf field validator the paths are empty and collapse to messages; as a whole-object form-level validator the paths route each issue onto the matching field (§8.3). An async schema (`.refine(async ...)`) is awaited. `zodValidatorAsync(schema)` is the variant that honours the validator's `AbortSignal` and reports the first issue only.
 
 Olas core stays Zod-free; `@kontsedal/olas-zod` has peer dependencies on `zod` 4 and `@kontsedal/olas-core` (§19.7).

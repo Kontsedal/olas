@@ -7,9 +7,11 @@ import {
   type Field,
   type FieldArray,
   type Form,
+  type FormIssue,
   type StandardSchemaV1,
   validator as standardValidator,
   type Validator,
+  type ValidatorResult,
 } from '@kontsedal/olas-core'
 import { z } from 'zod'
 
@@ -86,11 +88,19 @@ function isForeignZod(s: unknown): boolean {
   return o.def !== undefined || o._def !== undefined
 }
 
+/**
+ * Once per process. A duplicate zod copy shows up on every leaf the walker
+ * visits, in every form, and one warning names the fix for all of them.
+ */
+let warnedDuplicateZod = false
+
 function warnDuplicateZod(): void {
   // Not gated on NODE_ENV: this package has no build-time dev flag (`__DEV__`
   // is core-only), and the warning fires ONLY on a genuine misconfiguration (a
   // schema from a foreign zod copy) that's broken in every environment — so
   // there's no prod-noise concern.
+  if (warnedDuplicateZod) return
+  warnedDuplicateZod = true
   console.warn(
     '[olas-zod] a schema failed every zod `instanceof` check but looks like a zod schema ' +
       '(it has a `def`/`_def`). This almost always means TWO copies of `zod` are installed — ' +
@@ -100,13 +110,15 @@ function warnDuplicateZod(): void {
 }
 
 /**
- * Run the schema and report only **root-level** issues (those with empty
- * `path`). Leaf issues are already covered by `zodValidator(propSchema)` on
- * each leaf field — surfacing them here would double-count.
+ * Run the schema and report only its first **root-level** issue, one with an
+ * empty `path`. Every issue with a path is dropped, on the assumption that
+ * each leaf field carries its own validator and reports it there.
  *
- * Used by `createZodForm` to lift root-level `.refine(...)` rules into a
- * form-level validator. Returns `null` when every issue belongs to a leaf
- * (or there are no issues at all).
+ * For a hand-built `createForm` whose leaves validate themselves.
+ * `createZodForm` does not use it: it installs a validator that also routes
+ * a path-carrying rule, such as `.refine(fn, { path: ['confirm'] })` or an
+ * array's `.min(3)`, onto the node the path names. Returns `null` when the
+ * schema has no root-level issue.
  */
 export function rootOnlyZodValidator<T>(schema: z.ZodType<T>): Validator<T> {
   return (value, signal) => {
@@ -124,6 +136,21 @@ export function rootOnlyZodValidator<T>(schema: z.ZodType<T>): Validator<T> {
 // is `.unwrap()` for optional/nullable and `.def.innerType` for default.
 type AnyZodType = z.ZodType
 
+// Strip one optional/nullable/default wrapper, or return `undefined` when
+// `schema` is not one of them.
+function unwrapOnce(schema: AnyZodType): AnyZodType | undefined {
+  if (schema instanceof z.ZodDefault) {
+    // ZodDefault stores the inner schema on `def.innerType` in Zod 4 (the
+    // peer dep is `^4.0.0`). The public type is opaque, so read `def`
+    // through a cast.
+    return (schema as unknown as { def: { innerType: AnyZodType } }).def.innerType
+  }
+  if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) {
+    return (schema as z.ZodOptional<AnyZodType>).unwrap() as AnyZodType
+  }
+  return undefined
+}
+
 // Strip the outer optional/nullable/default wrappers to find the inner schema.
 // Unwraps to a fixed point with identity-cycle detection so a pathological
 // schema graph can never loop. `.optional().nullable().default(x).optional()`
@@ -133,20 +160,147 @@ function unwrap(schema: AnyZodType): AnyZodType {
   const seen = new Set<AnyZodType>()
   while (!seen.has(s)) {
     seen.add(s)
-    if (s instanceof z.ZodDefault) {
-      // ZodDefault stores the inner schema on `def.innerType` in Zod 4 (the
-      // peer dep is `^4.0.0`). The public type is opaque, so read `def`
-      // through a cast.
-      s = (s as unknown as { def: { innerType: AnyZodType } }).def.innerType
-    } else if (s instanceof z.ZodOptional) {
-      s = (s as z.ZodOptional<AnyZodType>).unwrap() as AnyZodType
-    } else if (s instanceof z.ZodNullable) {
-      s = (s as z.ZodNullable<AnyZodType>).unwrap() as AnyZodType
-    } else {
-      return s
-    }
+    const next = unwrapOnce(s)
+    if (next === undefined) return s
+    s = next
   }
   return s
+}
+
+/** Does `createZodForm` build this schema into a `Form` or a `FieldArray`, not a `Field`? */
+function isStructural(schema: AnyZodType): boolean {
+  const inner = unwrap(schema)
+  return inner instanceof z.ZodObject || inner instanceof z.ZodArray
+}
+
+// Zod 4 keeps a schema's own rules on `def.checks`: `.refine`, `.superRefine`
+// and `.check` on any schema, and `.min`, `.max`, `.length` and `.nonempty`
+// on an array. The list is absent when there are none.
+const hasOwnChecks = (schema: AnyZodType): boolean =>
+  ((schema as unknown as { def: { checks?: readonly unknown[] } }).def.checks?.length ?? 0) > 0
+
+/**
+ * Does an object or an array in the form's structure carry a rule of its
+ * own? Only a parse of the whole schema reports such a rule, because no leaf
+ * validator sees the object or the array it is on. A leaf's rules are not
+ * counted: its own `zodValidator` reports them.
+ *
+ * `seen` stops a recursive schema. A getter-built `z.object` can reach itself
+ * through an array, and a schema already walked had no rule, or the walk
+ * would have returned.
+ */
+function hasStructuralRules(schema: AnyZodType, seen: Set<AnyZodType> = new Set()): boolean {
+  let s: AnyZodType | undefined = schema
+  let inner: AnyZodType = schema
+  // A wrapper can carry the rule too: `z.object({...}).optional().refine(fn)`
+  // puts it on the `ZodOptional`.
+  while (s !== undefined) {
+    if (seen.has(s)) return false
+    seen.add(s)
+    if (hasOwnChecks(s)) return true
+    inner = s
+    s = unwrapOnce(s)
+  }
+  const children =
+    inner instanceof z.ZodObject
+      ? (Object.values((inner as z.ZodObject<z.ZodRawShape>).shape) as AnyZodType[])
+      : [(inner as z.ZodArray<AnyZodType>).element as AnyZodType]
+  return children.some((child) => isStructural(child) && hasStructuralRules(child, seen))
+}
+
+/**
+ * Find the leaf field an issue path reaches in the tree `createZodForm`
+ * builds from `root`. Returns the leaf's schema, which is the one its own
+ * `zodValidator` runs, the path to the leaf, and the leaf's value. Returns
+ * `undefined` when no leaf owns the path: it ends at a `Form` or a
+ * `FieldArray`, or it names a key the schema does not have.
+ */
+function leafAlong(
+  root: AnyZodType,
+  path: ReadonlyArray<string | number>,
+  value: unknown,
+): { schema: AnyZodType; path: (string | number)[]; value: unknown } | undefined {
+  let node = root
+  let cursor = value
+  for (let depth = 0; ; depth++) {
+    const inner = unwrap(node)
+    if (!(inner instanceof z.ZodObject) && !(inner instanceof z.ZodArray)) {
+      return { schema: node, path: path.slice(0, depth), value: cursor }
+    }
+    if (depth === path.length) return undefined
+    const seg = path[depth] as string | number
+    // An array descends whatever the segment is, as core's router does: it
+    // reads a numeric string as an index, and anything else runs off the tree.
+    const shape = (inner as z.ZodObject<z.ZodRawShape>).shape as Record<string, AnyZodType>
+    const next =
+      inner instanceof z.ZodArray
+        ? ((inner as z.ZodArray<AnyZodType>).element as AnyZodType)
+        : Object.hasOwn(shape, seg)
+          ? shape[seg]
+          : undefined
+    if (next === undefined) return undefined
+    node = next
+    // A refine's `path` can name an array index the value does not have.
+    cursor = (cursor as Record<PropertyKey, unknown> | undefined)?.[seg]
+  }
+}
+
+/**
+ * Keep the whole-schema issues that no leaf validator reports, with paths
+ * the form can route. An issue with no owning leaf keeps its path. An issue
+ * at or under a leaf is cut to the leaf's path, and is dropped when the
+ * leaf's own schema reports the same message for the same value: the leaf's
+ * field already shows it.
+ *
+ * `zodValidator` is core's Standard Schema `validator`, which resolves each
+ * run to a `FormIssue[]`, empty when the value is valid. It never returns
+ * the `string` or `null` a `Validator` may, hence the casts.
+ */
+function unownedIssues(
+  root: AnyZodType,
+  value: unknown,
+  result: ValidatorResult,
+  signal: AbortSignal,
+): FormIssue[] | Promise<FormIssue[]> {
+  const kept = (result as FormIssue[]).map((issue) => {
+    const leaf = leafAlong(root, issue.path, value)
+    if (leaf === undefined) return issue
+    const keep = (own: ValidatorResult) =>
+      (own as FormIssue[]).some((o) => o.message === issue.message)
+        ? undefined
+        : { path: leaf.path, message: issue.message }
+    const own = zodValidator(leaf.schema as z.ZodType<unknown>)(leaf.value, signal)
+    return own instanceof Promise ? own.then(keep) : keep(own)
+  })
+  const defined = (list: Array<FormIssue | undefined>) =>
+    list.filter((issue): issue is FormIssue => issue !== undefined)
+  return kept.some((issue) => issue instanceof Promise)
+    ? Promise.all(kept).then(defined)
+    : defined(kept as Array<FormIssue | undefined>)
+}
+
+/**
+ * The form-level validator `createZodForm` installs when the schema has a
+ * rule on an object or an array. It parses the whole schema, and each issue
+ * that no leaf validator reports lands on the node its path names:
+ *
+ * - a root `.refine(fn)` with no `path` → `form.topLevelErrors`;
+ * - a `.refine(fn, { path: ['confirm'] })` → the `confirm` field's errors;
+ * - an array's `.min(3)` → that `FieldArray`'s `topLevelErrors`;
+ * - a nested object's `.refine(fn)` → that nested form's `topLevelErrors`.
+ *
+ * A message a leaf's own schema reports is dropped here, because the leaf's
+ * field already shows it. An async rule is awaited, as core's `validator`
+ * awaits one.
+ */
+function schemaRulesValidator(root: z.ZodObject<z.ZodRawShape>): Validator<unknown> {
+  const whole = zodValidator(root as z.ZodType<unknown>)
+  return (value, signal) => {
+    const result = whole(value, signal)
+    return result instanceof Promise
+      ? result.then((settled) => unownedIssues(root, value, settled, signal))
+      : unownedIssues(root, value, result, signal)
+  }
 }
 
 function defaultInitial(schema: AnyZodType): unknown {
@@ -251,14 +405,11 @@ export type ZodToLeaf<S> =
  * - `z.array(z.object({ name }))` under `tags` → `'tags.name'` validates
  *   each item's `name` field
  *
- * There is no path that addresses the `FieldArray` itself. An array-level
- * rule — "at least three tags", "no duplicates" — takes a
- * `FieldArrayValidator`, a different signature over the whole item list,
- * and `createZodForm` does not wire those. An array-level rule in the Zod
- * schema (`z.array(...).min(3)`) is not enforced either: its issue has a
- * path, and the root validator keeps only path-less issues. Restate it as a
- * root `.refine(...)` with no `path`, whose message lands in
- * `form.topLevelErrors`.
+ * There is no path that addresses the `FieldArray` itself. Put an
+ * array-level rule, such as "at least three tags" or "no duplicates", in the
+ * Zod schema instead: `z.array(...).min(3)` or `z.array(...).refine(fn)`.
+ * `createZodForm` enforces it, and its message lands in the array's
+ * `topLevelErrors`.
  *
  * Validators run alongside `zodValidator(schema)` — both must pass.
  */
@@ -289,6 +440,12 @@ export type ZodFormOptions<T extends z.ZodObject<z.ZodRawShape>> = {
  *
  * Each leaf's initial value is the Zod default if present, otherwise an empty
  * value for that type (`''` for strings, `0` for numbers, etc.).
+ *
+ * A rule on an object or an array is enforced too. A root `.refine(fn)`
+ * lands in `form.topLevelErrors`, a `.refine(fn, { path: ['confirm'] })`
+ * lands on `confirm`, and `z.array(...).min(3)` lands in that array's
+ * `topLevelErrors`. The form parses the whole schema for these on every
+ * change, so a schema with no such rule does not get that validator.
  *
  * The return type is structurally precise — `form.fields.title.value` is
  * `string` (not `string | boolean | …`), `form.fields.subtasks.add(...)`
@@ -330,9 +487,9 @@ function buildForm(
   /**
    * The original top-level schema. Passed only when constructing the ROOT
    * form — nested `buildForm` calls (from object-typed leaves) pass
-   * `undefined`. Used to attach a root-only Zod validator so
-   * `z.object({...}).refine(fn)` rules surface as form-level errors
-   * without double-reporting leaf issues. See `rootOnlyZodValidator`.
+   * `undefined`. When an object or an array in it carries a rule, the root
+   * form gets `schemaRulesValidator(rootSchema)`, which enforces every such
+   * rule anywhere in the tree without repeating a leaf's own message.
    */
   rootSchema?: z.ZodObject<z.ZodRawShape>,
   tracked?: {
@@ -348,13 +505,15 @@ function buildForm(
     const leafPath = path === '' ? key : `${path}.${key}`
     fields[key] = buildLeaf(ctx, propSchema, initial, leafPath, extras)
   }
-  // Lift root-level `.refine(...)` checks on the top-level object into a
-  // form-level validator. Leaf checks remain owned by leaf-level
-  // `zodValidator(propSchema)`; `rootOnlyZodValidator` filters to issues
-  // whose `path` is empty so leaf issues are not double-reported.
+  // A leaf's rules stay with the leaf's own `zodValidator`. A rule on an
+  // object or an array needs a parse of the whole schema, and that parse
+  // runs on every change to the form, so it is installed only when the
+  // schema has such a rule. A plain schema pays for its leaves alone.
   if (rootSchema !== undefined) {
     return createForm(ctx, fields, {
-      validators: [rootOnlyZodValidator(rootSchema as z.ZodType<unknown>) as never],
+      ...(hasStructuralRules(rootSchema)
+        ? { validators: [schemaRulesValidator(rootSchema) as never] }
+        : {}),
       ...(tracked !== undefined
         ? {
             initial: tracked.initial as never,

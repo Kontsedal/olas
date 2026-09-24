@@ -100,6 +100,14 @@ describe('zodValidatorAsync — abort handling', () => {
 })
 
 describe('createZodForm — duplicate zod copy detection', () => {
+  // The warning is once per module, so the test that must see no warning
+  // runs first, before the foreign schema below uses the warning up.
+  test('schemas from this zod copy never warn', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    leafValues(z.object({ a: z.string(), b: z.object({ c: z.number() }), d: z.array(z.boolean()) }))
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
   test('a Zod 3-shaped foreign schema (only `_def`) also triggers the warning', () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const foreign = { _def: { typeName: 'ZodObject' } } as unknown as z.ZodType
@@ -111,12 +119,6 @@ describe('createZodForm — duplicate zod copy detection', () => {
     expect(warnSpy.mock.calls[0]?.[0]).toMatch(/TWO copies of `zod`/)
     // It degrades to a flat field with the unknown-type fallback initial.
     expect(values.nested).toBeUndefined()
-  })
-
-  test('schemas from this zod copy never warn', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    leafValues(z.object({ a: z.string(), b: z.object({ c: z.number() }), d: z.array(z.boolean()) }))
-    expect(warnSpy).not.toHaveBeenCalled()
   })
 })
 

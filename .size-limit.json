@@ -102,7 +102,7 @@
     "path": "packages/zod/dist/index.js",
     "import": "*",
     "ignore": ["zod", "@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "1.35 KB"
+    "limit": "1.8 KB"
   },
   {
     "name": "devtools",

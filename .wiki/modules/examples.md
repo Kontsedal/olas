@@ -156,10 +156,11 @@ they imply a library change.
    infinite entry dehydrates with its pages in `data` and its `pageParams`
    (`packages/core/src/query/client.ts:1159`). The kanban archive drawer
    keeps cursor-paged history per tab and does not use SSR.
-3. **`createZodForm` does NOT promote array-level `.min(N)` rules** from the
-   outer Zod schema to a `FieldArray`-level validator. Leaf fields and nested
-   object schemas walk correctly. Root-level `.refine(...)` on the top-level
-   `z.object({...})` IS lifted (via `rootOnlyZodValidator`).
+3. **Array-level `.min(N)` rules in a `createZodForm` schema.** Resolved in
+   1.0: an array rule lands in that `FieldArray`'s `topLevelErrors`, and a root
+   `.refine(fn, { path })` lands on the field its path names. See
+   `modules/zod.md`. The kanban card schema has rules on its leaves alone, so
+   it gets no whole-schema validator.
 4. **`createZodForm` accepts extra leaf validators** via
    `createZodForm(ctx, schema, { extraValidators: { 'title': uniqueAsync } })`
    — keyed by dotted path. Resolved against the kanban "title-is-unique"

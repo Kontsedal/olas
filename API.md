@@ -2510,9 +2510,38 @@ const signup = defineController((ctx) => {
 })
 ```
 
-`ZodFormOptions<T>` is `{ initial?, resetOnInitialChange?, extraValidators? }`. `initial` is a partial value or a tracked function, which re-seats the form when the signals it reads change, as `createForm`'s does. `extraValidators` adds validators per leaf, keyed by the leaf's dotted path in the schema (`'address.street'`). `rootOnlyZodValidator(schema)` is the form-level validator `createZodForm` uses to lift root-level `.refine(...)` rules.
+`ZodFormOptions<T>` is `{ initial?, resetOnInitialChange?, extraValidators? }`. `initial` is a partial value or a tracked function, which re-seats the form when the signals it reads change, as `createForm`'s does. `extraValidators` adds validators per leaf, keyed by the leaf's dotted path in the schema (`'address.street'`).
 
-**Limitation:** array-level `.min(N)` rules from the outer Zod schema are *not* promoted to a `FieldArray`-level validator today. Leaf and nested-object rules work.
+**Rules on objects and arrays are enforced.** A leaf's own rules run on its field. A rule on an object or an array lands on the node its path names:
+
+- a root `.refine(fn)` with no `path` lands in `form.topLevelErrors`;
+- a `.refine(fn, { path: ['confirm'] })` lands in `form.fields.confirm.errors`;
+- an array-level rule, `z.array(...).min(3)` or a `.refine` on the array, lands in that `FieldArray`'s `topLevelErrors`;
+- a `.refine` on a nested object lands in that nested form's `topLevelErrors`.
+
+```ts
+import { defineController } from '@kontsedal/olas-core'
+import { createZodForm } from '@kontsedal/olas-zod'
+import { z } from 'zod'
+
+const Order = z
+  .object({
+    lines: z.array(z.object({ sku: z.string().min(1) })).min(1, 'Add a line'),
+    total: z.number(),
+  })
+  .refine((v) => v.total > 0, { path: ['total'], message: 'Total must be positive' })
+
+const checkout = defineController((ctx) => {
+  const form = createZodForm(ctx, Order)
+  form.fields.lines.topLevelErrors.value // ['Add a line']
+  form.fields.total.errors.value // ['Total must be positive']
+  return { form }
+})
+```
+
+A message the leaf's own rule already reports is not repeated. An unresolvable path lands in `form.topLevelErrors`, and an async rule is awaited. The rules need a parse of the whole schema on every change to the form, so `createZodForm` installs that parse only when an object or an array in the schema carries a rule. A schema with rules on its leaves alone pays for those leaves only.
+
+`rootOnlyZodValidator(schema)` reports only a schema's first issue with an empty path, and drops every issue with a path. It suits a hand-built `createForm` whose leaves validate themselves. `createZodForm` does not use it.
 
 ### Types: `ZodToLeaf<S>`, `UnwrapZod<S>`
 

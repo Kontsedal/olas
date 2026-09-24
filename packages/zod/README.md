@@ -95,18 +95,52 @@ type ZodFormOptions<S> = {
 | `zodValidator(schema)` | A `Validator<T>` for a single `Field`, or for a whole form, where each issue lands on the field its path names. |
 | `zodValidatorAsync(schema)` | Async variant — awaits `safeParseAsync`, for schemas with async `.refine` / `.transform`. Aborts with the field's validation pass. |
 | `createZodForm(ctx, schema, options?)` | Walks a `z.object(...)` into a matching `Form` / `Field` / `FieldArray` tree with validators auto-attached. |
-| `rootOnlyZodValidator(schema)` | The form-level validator `createZodForm` attaches: it reports only the schema's root issues, which leaf validators cannot see. |
+| `rootOnlyZodValidator(schema)` | A form-level validator for a hand-built `createForm` whose leaves validate themselves. It reports only the schema's first issue with an empty path. `createZodForm` does not use it. |
 
 `ZodFormOptions`, `ZodToLeaf`, `UnwrapZod` and `ExtraValidators` are exported types.
 
 `extraValidators` adds a rule to one leaf, next to its Zod check, by dotted schema path: `'title'`, `'address.street'`. An array adds no segment, so `'tags'` applies to every tag.
 
-## Limitations
+## Rules on objects and arrays
 
-Leaf and nested-object rules walk correctly in every case. A root-level `.refine(...)` on the top `z.object(...)` becomes a form-level error in `form.topLevelErrors`. Two outer-schema rules are not lifted:
+A rule on a leaf, such as `z.string().min(8)`, runs on that leaf's field. A rule on an object or an array is enforced too, and its message lands on the node its path names:
 
-- **A root `.refine(..., { path })`** is dropped, rather than landing on the field its path names. Leave out `path`, and the message lands in `form.topLevelErrors`.
-- **An array-level rule such as `z.array(...).min(3)`** is dropped, and `form.isValid` stays `true` with one item. Restate the rule as a root `.refine(...)` with no `path`, such as `.refine((v) => v.tags.length >= 3, 'Add at least three tags')`. Its message lands in `form.topLevelErrors`.
+| Rule in the schema | Where the message lands |
+|---|---|
+| `z.object({...}).refine(fn, message)`, with no `path` | `form.topLevelErrors` |
+| `.refine(fn, { path: ['confirm'], message })` | `form.fields.confirm.errors` |
+| `z.array(...).min(3, message)`, or a `.refine` on the array | that `FieldArray`'s `topLevelErrors` |
+| a `.refine` on a nested `z.object(...)` | that nested form's `topLevelErrors` |
+
+A path the form has no node for, such as a missing key, lands in `form.topLevelErrors`. The node reads invalid while its rule fails, and so does every form above it.
+
+```ts
+import { defineController } from '@kontsedal/olas-core'
+import { createZodForm } from '@kontsedal/olas-zod'
+import { z } from 'zod'
+
+const signupSchema = z
+  .object({
+    password: z.string().min(8),
+    confirm: z.string().min(1, 'Confirm your password'),
+    tags: z.array(z.string().min(1)).min(3, 'Add at least three tags'),
+  })
+  .refine((v) => v.password === v.confirm, { path: ['confirm'], message: 'Passwords must match' })
+
+const signup = defineController((ctx) => {
+  const form = createZodForm(ctx, signupSchema, {
+    initial: { password: 'correct horse', confirm: 'correct hose', tags: ['a'] },
+  })
+  form.fields.confirm.errors.value // ['Passwords must match']
+  form.fields.tags.topLevelErrors.value // ['Add at least three tags']
+  form.isValid.value // false
+  return { form }
+})
+```
+
+Each message appears once. With `confirm: ''`, the field shows `'Confirm your password'` from its own rule and `'Passwords must match'` from the refine. The whole-schema pass also sees the leaf's own failure, and drops it, because the leaf's validator already shows that message. An async rule such as `.refine(async (v) => …)` is awaited, and `form.isValidating` reads `true` until it settles.
+
+**What it costs.** These rules need a parse of the whole schema, and that parse runs on every change to the form, beside the leaf validators. `createZodForm` installs it only when an object or an array in the schema carries a rule, including one on an `.optional()` or `.default()` wrapper around it. A schema with rules on its leaves alone gets no whole-schema parse: a change runs only the changed field's own validator.
 
 ## Further reading
 
