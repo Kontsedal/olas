@@ -473,6 +473,12 @@ export function createPersisted<T>(
     writingFromLoad = true
     try {
       source.set(value as T)
+    } catch (err) {
+      // The stored value parsed but the source refused it, a shape it does not
+      // accept. Report it, and settle `ready` so later writes still persist.
+      reportError(err, 'deserialize')
+      settleReady()
+      return
     } finally {
       writingFromLoad = false
     }

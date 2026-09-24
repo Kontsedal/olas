@@ -32,7 +32,7 @@
     "path": "packages/react/dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom", "@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "3.2 KB"
+    "limit": "3.8 KB"
   },
   {
     "name": "vue",
@@ -53,7 +53,7 @@
     "path": "packages/cross-tab/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "1.2 KB"
+    "limit": "1.4 KB"
   },
   {
     "name": "entities",
@@ -67,7 +67,7 @@
     "path": "packages/mutation-queue/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@kontsedal/olas-persist", "@preact/signals-core"],
-    "limit": "3 KB"
+    "limit": "3.3 KB"
   },
   {
     "name": "persist: createPersisted",

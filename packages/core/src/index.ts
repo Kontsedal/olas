@@ -82,6 +82,8 @@ export type {
   SubmitOptions,
   SubmitResult,
 } from './forms/form-types'
+// Utilities
+export { serializeForScript } from './html'
 // Plugins (§13)
 export { definePlugin } from './plugin/host'
 export type {
@@ -162,6 +164,4 @@ export { batch, computed, effect, signal, untracked } from './signals'
 // Timing
 export type { TimingOptions, TimingSignal } from './timing'
 export { debounced, throttled } from './timing'
-
-// Utilities
 export { isAbortError } from './utils'

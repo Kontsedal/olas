@@ -352,6 +352,10 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   private applyPartial(partial: DeepPartial<FormValue<S>>, asInitial: boolean): void {
     for (const [k, val] of Object.entries(partial)) {
+      // Own keys only: `fields` is a plain object, so `__proto__`, `constructor`
+      // or `toString` in a partial (parsed JSON can carry them) would otherwise
+      // find `Object.prototype` members and call `set` on them.
+      if (!Object.hasOwn(this.fields, k)) continue
       const child = (this.fields as Record<string, unknown>)[k]
       if (!child) continue
       // `partial.someNestedForm === undefined` means "leave this subtree

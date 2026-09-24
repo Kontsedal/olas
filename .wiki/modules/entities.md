@@ -5,13 +5,14 @@ type: module
 covers:
   - packages/entities/src/index.ts
 edges:
+  - { type: related, target: ../decisions/trust-model.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: documented-in, target: ../../BACKLOG.md }
   - { type: tested-by, target: ../../packages/entities/tests/entities.test.ts }
   - { type: uses, target: query.md }
   - { type: uses, target: signals.md }
   - { type: related, target: cross-tab.md }
-last_verified: 2026-09-21
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -128,3 +129,7 @@ Reverse-index keys are `${queryId} ${stableHash(keyArgs)}`. `stableHash` is the 
 - `modules/query.md` — the underlying `setData` and fetch lifecycle.
 - `modules/cross-tab.md` — closest sibling plugin (lifecycle + plugin reuse pattern).
 - `BACKLOG.md` → `@kontsedal/olas-entities` entry (now `[done]`).
+
+## Deep merge and prototype keys (1.0)
+
+`deepMerge` reads the current value with `Object.hasOwn` and writes each key with `Object.defineProperty`. A patch parsed from JSON can carry an own `__proto__` key; an assignment `out[key] = v` with that key replaced the merged entity's prototype, and the read `current[key]` returned `Object.prototype` as if it were a plain object to merge into. Pinned by `tests/merge-security.test.ts`; the same bug class is `pitfalls/proto-key-assignment.md`.

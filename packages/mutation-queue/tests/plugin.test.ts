@@ -73,7 +73,11 @@ function directHooks(plugin: OlasPlugin) {
       dehydrate: () => ({ version: 1, entries: [] }),
       hashKey: (key) => JSON.stringify(key),
     },
-    mutations: { has: () => false, run: () => Promise.reject(new Error('no definitions')) },
+    mutations: {
+      has: () => false,
+      get: () => undefined,
+      run: () => Promise.reject(new Error('no definitions')),
+    },
     debug() {},
   }
   const hooks = plugin.setup(host) ?? {}

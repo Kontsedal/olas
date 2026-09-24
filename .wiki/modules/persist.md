@@ -7,13 +7,14 @@ covers:
   - packages/persist/src/storage.ts
   - packages/persist/src/query-cache.ts
 edges:
+  - { type: related, target: ../decisions/trust-model.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/persist/tests/persist.test.ts }
   - { type: tested-by, target: ../../packages/persist/tests/indexeddb-adapter.test.ts }
   - { type: tested-by, target: ../../packages/persist/tests/query-cache.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: controller.md }
-last_verified: 2026-09-25
+last_verified: 2026-09-24
 confidence: medium
 ---
 
@@ -105,3 +106,11 @@ Both adapters share the same `StorageAdapter` shape, so `createPersisted` is agn
 
 - Encryption.
 - Conflict resolution across tabs beyond last-delivery-wins (a local user write outranks a racing load/remote at startup, but steady-state concurrent writes in two tabs are last-writer-wins).
+
+## Restoring untrusted storage (1.0)
+
+- `persistQueryCachePlugin`'s `parse` drops an entry whose `lastUpdatedAt` is not finite or is more than five minutes ahead. A far-future timestamp passed `maxAgeMs` and stayed fresh for any `staleTime`.
+- An async restore reports a parse or restore throw through `onError`, with `.then(ok).catch(onError)`, as the sync path always did.
+- `createPersisted` catches a throw from `source.set` during load, reports it as `'deserialize'`, and still settles `ready`, so later writes persist.
+
+Pinned by `tests/query-cache-security.test.ts` and `tests/persisted-security.test.ts`; see `decisions/trust-model.md`.

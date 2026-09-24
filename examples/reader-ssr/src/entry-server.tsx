@@ -8,6 +8,8 @@ import { App } from './App'
 import { createFakeApi } from './api'
 import { createAppRoot } from './controller'
 
+export { renderPage } from './page'
+
 export async function render(_url: string): Promise<{ html: string; state: DehydratedState }> {
   const api = createFakeApi()
   const root = createAppRoot({

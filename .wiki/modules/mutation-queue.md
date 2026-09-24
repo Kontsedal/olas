@@ -6,10 +6,11 @@ covers:
   - packages/mutation-queue/src/plugin.ts
   - packages/mutation-queue/src/protocol.ts
 edges:
+  - { type: related, target: ../decisions/trust-model.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/mutation-queue/tests/plugin.test.ts }
   - { type: uses, target: persist.md }
-last_verified: 2026-09-21
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -59,3 +60,12 @@ Cross-`mutationId` causal ordering is NOT guaranteed (different ids replay in pa
 ## Replay invalidation scope (0.9)
 
 `ReplaySettleApi.invalidate(query, callArgs)` delegates to the owning plugin API, selecting only that root. It uses original fetcher arguments and works for anonymous definitions too. The replay reconciliation test in `packages/mutation-queue/tests/plugin.test.ts` verifies that another live root is not refetched.
+
+## Replaying stored entries safely (1.0)
+
+Storage is state other same-origin code can write, so replay checks it:
+- **Only opted-in mutations run.** `replayEntry` reads the definition through `host.mutations.get(id)` and drops an entry whose definition lacks `meta.persist: true`.
+- **The key must match the contents.** `listEntries` drops an entry stored under a key other than `entryKey(mutationId, runId)`. Every later write and delete goes by that key, so a mismatched entry was never removed and replayed on every load. A migrated entry is rewritten under its new key, and its old key deleted, so a `migrate` that renames the mutation runs once.
+- **Every field is checked** by `isValidEntry`: a whole, non-negative `attempts`, a finite `seq`, and an `enqueuedAt` no more than `CLOCK_SKEW_MS` (five minutes) ahead. Migrated entries go through the same check.
+
+Pinned by `tests/security.test.ts`; the review is `decisions/trust-model.md`.

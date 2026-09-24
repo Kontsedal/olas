@@ -54,7 +54,9 @@
     "@preact/signals-core": "^1.8.0"
   },
   "devDependencies": {
-    "@preact/signals-core": "^1.14.2"
+    "@preact/signals-core": "^1.14.2",
+    "@tanstack/query-core": "^5.103.2",
+    "mobx": "^7.0.4"
   },
   "publishConfig": {
     "access": "public"

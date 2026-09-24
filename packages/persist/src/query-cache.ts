@@ -58,6 +58,8 @@ type Stored = { v: typeof FORMAT; buster: string; entries: DehydratedEntry[] }
 
 const DEFAULT_KEY = 'olas/query-cache'
 const DAY_MS = 24 * 60 * 60 * 1000
+/** How far in the future a stored timestamp may sit, for clock drift between loads. */
+const CLOCK_SKEW_MS = 5 * 60_000
 
 const defaultOnError = (error: unknown, op: QueryCacheErrorOp): void => {
   if (__DEV__) console.warn(`[olas/persist] persistQueryCachePlugin ${op} failed:`, error)
@@ -70,6 +72,7 @@ const isEntry = (e: unknown): e is DehydratedEntry => {
     typeof x.id === 'string' &&
     Array.isArray(x.key) &&
     typeof x.lastUpdatedAt === 'number' &&
+    Number.isFinite(x.lastUpdatedAt) &&
     (x.pageParams === undefined || Array.isArray(x.pageParams))
   )
 }
@@ -91,7 +94,11 @@ function parse(
     return undefined
   }
   const now = Date.now()
-  return stored.entries.filter((e) => isEntry(e) && now - e.lastUpdatedAt < maxAgeMs)
+  // A timestamp in the future is corrupt, or planted: it would pass `maxAgeMs`
+  // and keep the entry fresh for any `staleTime`, so its data never refetches.
+  return stored.entries.filter(
+    (e) => isEntry(e) && e.lastUpdatedAt <= now + CLOCK_SKEW_MS && now - e.lastUpdatedAt < maxAgeMs,
+  )
 }
 
 /**
@@ -227,11 +234,12 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
         try {
           const raw = storage.get(storageKey)
           if (raw instanceof Promise) {
+            // `.catch` after `.then`, so a parse or restore that throws is
+            // reported too, as it is on the synchronous path.
             host.track(
-              raw.then(
-                (value) => restore(parse(value, buster, maxAgeMs), queries),
-                (error: unknown) => onError(error, 'restore'),
-              ),
+              raw
+                .then((value) => restore(parse(value, buster, maxAgeMs), queries))
+                .catch((error: unknown) => onError(error, 'restore')),
             )
           } else {
             // Synchronous: setup runs before any controller binds, so nothing

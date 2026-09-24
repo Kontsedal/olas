@@ -43,4 +43,5 @@ export {
   OLAS_BOOTSTRAP_SCRIPT,
   STREAMING_GLOBAL,
   type StreamingHydrator,
+  type StreamingHydratorOptions,
 } from './streaming'

@@ -9,6 +9,7 @@ covers:
   - packages/react/src/keep-alive.ts
   - packages/react/src/streaming.ts
 edges:
+  - { type: related, target: ../decisions/trust-model.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/react/tests/adapter.test.tsx }
   - { type: tested-by, target: ../../packages/react/tests/ssr-hydration.test.tsx }
@@ -158,3 +159,9 @@ The adapter imports only hooks, `createContext` and three types from `react`, an
 ## Fakes for UI tests
 
 `@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` or `AsyncState<T>` so a test can pass them straight into a `useField`/`useQuery`-consuming component without building a real controller. See `testing.ts:31-132`.
+
+## Streaming SSR security (1.0)
+
+`createStreamingTransform` writes a batch only where the HTML so far sits between elements. `HtmlBoundary` in `streaming.ts` tracks the markup it passes through. The old transform wrote a `<script>` after every chunk, and React's fixed-size chunks can end inside an attribute value, which was an XSS (`pitfalls/stream-chunks-split-tags.md`).
+
+Each batch's payload is `serializeForScript` from core: `JSON.parse("…")` over a fully escaped string. So an own `__proto__` key stays data on the client, and no quote, angle bracket or line separator reaches the script raw. `createStreamingHydrator({ nonce })` puts a CSP nonce on each tag. The bootstrap and each batch check that `self.__OLAS_HYDRATION__` is the intake, so a page element with that id cannot clobber it. Pinned by `tests/streaming-security.test.tsx`; the rest is in `decisions/trust-model.md`.

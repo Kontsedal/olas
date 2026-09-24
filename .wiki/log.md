@@ -1898,3 +1898,27 @@ For the W6 docs pass: README (adapters list), API.md (the React section gains `u
 **BACKLOG.** The eslint-plugin idea is replaced by the two rules that did not make the first cut: a fetcher or `mutate` that ignores its `signal`, and `/testing` imported outside tests. New idea: `LocalCache` has no canonical `write`.
 
 For the W6 docs pass: README (tooling section), RECIPES (the optimistic recipe can point at the rules), and the `.cursorrules` file.
+
+## [2026-09-24 23:50] ingest | 1.0 W15a: benchmark baselines, two teardown costs, and the security pass
+
+**Benchmarks.** New `packages/core/bench/baselines.bench.ts` runs the same operations through Olas, raw `@preact/signals-core`, MobX and `@tanstack/query-core`, which are new core devDependencies. The results and the method are in the new `decisions/benchmarks.md`. The `svelte` vitest project sets `benchmark: { include: [] }`, so each bench runs once.
+
+**Two teardown costs the first comparison exposed**, both with regression tests confirmed to fail on the old code:
+- A settled request kept its `AbortController` as `currentAbort`, so the next refetch, a hydration, a cancel or dispose aborted it. Each abort built a `DOMException`: half of a 1,000-query root's CPU time. `releaseOnSettle` in `Entry` and `InfiniteEntry` now drops it. A fetcher's `signal` also no longer fires after its request has finished.
+- `root.dispose()` armed and then cleared a gc timer per entry. It now calls the new `QueryClient.close()` before disposing the controllers.
+- Together: 1,000-query dispose went from 6.9 ms to 0.37 ms, and the fetch-cycle gap to TanStack from 2.7× to 1.14×. One devtools test used `root.dispose()` to make a subscriber leave; it now detaches a child.
+
+**Security pass.** A read-only review agent covered streaming SSR, every deserialization path, prototype pollution and the trust boundaries. It reproduced each finding against the built `dist`. Every finding is fixed with a regression test that fails on the old code. The record is the new `decisions/trust-model.md`, and the contract is the new SPEC §22, which also fills the §22 numbering gap.
+- H1 (XSS): `createStreamingTransform` wrote a batch mid-tag. The new `HtmlBoundary` tokenizer holds a batch until a chunk ends between elements. New `pitfalls/stream-chunks-split-tags.md`.
+- H2: the mutation queue replayed any registered mutation storage named, and replayed a key/contents mismatch forever. It now requires `meta.persist` through the new `host.mutations.get` and a matching key, rewrites migrated entries, and validates every field.
+- M1–M3: new core `serializeForScript` (`JSON.parse` over a fully escaped string) for the streamed payload and for inlined state; `createStreamingHydrator({ nonce })`; reader-ssr's `renderPage` with function replacements.
+- L1–L6 and L8: future timestamps in the stored query cache, async restore errors, `Form.set` own keys, `createPersisted` settling `ready`, per-entry hydration guards, the entities deep merge, cross-tab listener hardening with a new `validate` option, and a clobbered intake global.
+- L7, the devtools URL hash, lands with the devtools work in W15b.
+
+**Wiki.** New: `decisions/benchmarks.md`, `decisions/trust-model.md`, `pitfalls/stream-chunks-split-tags.md`. Security notes on `modules/react.md`, `modules/mutation-queue.md`, `modules/persist.md`, `modules/cross-tab.md`, `modules/entities.md`, `modules/forms.md` and `entities/query-client.md`. The teardown notes are on `entities/entry.md` and `entities/query-client.md`.
+
+**Bundle budgets, raised on purpose for the security code:** react 3.2 → 3.8 kB (measured 3.54; the `HtmlBoundary` tokenizer and the script escaping), cross-tab 1.2 → 1.4 kB (1.31; the listener guards and `validate`), mutation-queue 3.0 → 3.3 kB (3.07; entry validation and the key check). The react figure is `import *`; a client that does not stream tree-shakes most of the growth.
+
+**BACKLOG.** New idea: the signal wrappers cost about 30% over raw preact in fan-out.
+
+For the W6 docs pass: API.md (`serializeForScript`, `StreamingHydratorOptions`, `MutationHost.get`, cross-tab `validate`), the React README's streaming section (the old Node `Transform` advice is unsafe), RECIPES' SSR recipe, and the performance numbers for the docs site.

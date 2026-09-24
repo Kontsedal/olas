@@ -179,14 +179,19 @@ describe('runtime devtools events', () => {
       fetcher: async (_ctx, id) => id,
       gcTime: 0, // immediate gc
     })
-    const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['1']) }))
+    // The subscriber is a child the root outlives. A root dispose tears the whole
+    // cache down at once instead, with no gc pass per entry.
+    const panel = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['1']) }))
+    const def = defineController((ctx) => ({ open: () => ctx.attach(panel, undefined) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    await root.api.x.firstValue()
+    const child = root.api.open()
+    await child.api.x.firstValue()
     root.debug.subscribe((ev) => events.push(ev))
 
-    root.dispose()
+    child.dispose()
 
     expect(events.some((e) => e.type === 'cache:gc')).toBe(true)
+    root.dispose()
   })
 
   // -------------------------------------------------------------------------

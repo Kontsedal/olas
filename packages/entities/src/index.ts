@@ -178,13 +178,13 @@ const deepMerge = (current: object, patch: object): object => {
   if (!isPlainObject(current) || !isPlainObject(patch)) return patch
   const out: Record<string, unknown> = { ...current }
   for (const key of Object.keys(patch)) {
-    const a = (current as Record<string, unknown>)[key]
+    // Own properties only, read and written: `current['__proto__']` reads the
+    // prototype, and `out['__proto__'] = v` replaces it. A patch parsed from
+    // JSON can carry that key, so it is copied as the plain data it is.
+    const a = Object.hasOwn(current, key) ? (current as Record<string, unknown>)[key] : undefined
     const b = (patch as Record<string, unknown>)[key]
-    if (isPlainObject(a) && isPlainObject(b)) {
-      out[key] = deepMerge(a, b)
-    } else {
-      out[key] = b
-    }
+    const value = isPlainObject(a) && isPlainObject(b) ? deepMerge(a, b) : b
+    Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
   }
   return out
 }

@@ -120,6 +120,7 @@ function buildRootHandle<Api>(
     // about to be disposed. Then controllers, then the plugins in reverse
     // install order, then the cache.
     plugins?.close()
+    queryClient?.close()
     instance.dispose()
     plugins?.dispose()
     queryClient?.dispose()

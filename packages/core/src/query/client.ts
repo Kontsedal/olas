@@ -113,6 +113,18 @@ type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
  */
 const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
 
+/** The shape a dehydrated entry must have before hydration reads it. */
+function isHydrationEntry(value: unknown): value is DehydratedEntry {
+  if (value === null || typeof value !== 'object') return false
+  const e = value as Record<string, unknown>
+  return (
+    typeof e.id === 'string' &&
+    Array.isArray(e.key) &&
+    typeof e.lastUpdatedAt === 'number' &&
+    (e.pageParams === undefined || Array.isArray(e.pageParams))
+  )
+}
+
 /**
  * An infinite entry's hydration payload, when `data` is a pages array with a
  * `pageParams` array of the same length. Anything else cannot seed pages.
@@ -308,6 +320,9 @@ export class ClientEntry<T> {
       if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
       this.stopEventSubscriptions()
+      // The root is tearing down, and the client disposes every entry next: a
+      // gc timer armed now would only be cancelled.
+      if (this.client.isClosing) return
       if (this.gcTime === 0) {
         this.client.dropEntry(this)
       } else {
@@ -557,6 +572,9 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
       this.stopEventSubscriptions()
+      // The root is tearing down, and the client disposes every entry next: a
+      // gc timer armed now would only be cancelled.
+      if (this.client.isClosing) return
       if (this.gcTime === 0) {
         this.client.dropInfiniteEntry(
           this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
@@ -672,6 +690,8 @@ export class QueryClient implements PluginEngine {
   readonly mutationsInflight$: Signal<number> = signal(0)
   private onError: ErrorHandler | undefined
   private disposed = false
+  /** Set by `close()`: the root is disposing its controllers, then this client. */
+  private closing = false
   /** Devtools bus, if any — passed by `createRoot`. Used to emit cache events. */
   readonly devtools: DevtoolsEmitter | undefined
 
@@ -872,6 +892,10 @@ export class QueryClient implements PluginEngine {
   mutationHost(origin: string): MutationHost {
     return {
       has: (id) => lookupRegisteredMutation(id) !== undefined,
+      get: (id) => {
+        const registered = lookupRegisteredMutation(id)
+        return registered === undefined ? undefined : { id, meta: registered.definition.meta ?? {} }
+      },
       run: (id, variables) => this.runRegistered(id, variables, origin),
     }
   }
@@ -963,7 +987,7 @@ export class QueryClient implements PluginEngine {
   }
 
   private acceptsState(state: DehydratedState): boolean {
-    if (state.version === 1) return true
+    if (state.version === 1 && Array.isArray(state.entries)) return true
     // A silent drop would hide a schema-bumped payload. Warn so a future
     // format bump is detectable from the client side.
     if (__DEV__) {
@@ -1053,13 +1077,13 @@ export class QueryClient implements PluginEngine {
    */
   hydrateLive(state: DehydratedState, origin?: string): void {
     if (!this.acceptsState(state)) return
-    for (const e of state.entries) this.applyDehydratedEntry(e, origin)
+    this.eachHydrationEntry(state, (e) => this.applyDehydratedEntry(e, origin))
   }
 
   /** Buffer a payload for entries not bound yet (`RootOptions.hydrate`). */
   hydrate(state: DehydratedState): void {
     if (!this.acceptsState(state)) return
-    for (const entry of state.entries) {
+    this.eachHydrationEntry(state, (entry) => {
       const hash = stableHash(entry.key)
       this.hydratedData.set(hydrationKey(entry.id, hash), {
         data: entry.data,
@@ -1067,6 +1091,26 @@ export class QueryClient implements PluginEngine {
         origin: undefined,
         pageParams: entry.pageParams,
       })
+    })
+  }
+
+  /**
+   * Apply `apply` to each entry, skipping any that is malformed or that throws.
+   * A payload can come from storage a user edited (`persistQueryCachePlugin`),
+   * and one bad entry, such as a key nested deep enough to overflow
+   * `stableHash`, must not fail `createRoot` for the rest.
+   */
+  private eachHydrationEntry(
+    state: DehydratedState,
+    apply: (entry: DehydratedEntry) => void,
+  ): void {
+    for (const entry of state.entries as readonly unknown[]) {
+      try {
+        if (!isHydrationEntry(entry)) throw new TypeError('not a dehydrated entry')
+        apply(entry)
+      } catch (err) {
+        if (__DEV__) console.warn('[olas] hydrate(): skipped a malformed entry.', err)
+      }
     }
   }
 
@@ -1820,6 +1864,19 @@ export class QueryClient implements PluginEngine {
       })
     })()
     return promise.finally(() => entry.release())
+  }
+
+  /**
+   * The root is about to dispose its controllers, and this client after them.
+   * Their subscriptions release entries on the way out; `close` tells those
+   * releases not to arm gc timers `dispose` would cancel straight away.
+   */
+  close(): void {
+    this.closing = true
+  }
+
+  get isClosing(): boolean {
+    return this.closing
   }
 
   dispose(): void {

@@ -132,6 +132,10 @@ Each of the four could be a separate change; they share one question, which is w
 
 ## Queries / data layer
 
+### [idea] The signal wrappers cost about 30% over raw preact in fan-out
+
+[from W15] `baselines.bench.ts`: setting one source read by 10,000 `computed` + `effect` pairs runs 1.30× faster on raw `@preact/signals-core` than through Olas's `signal` / `computed` / `effect` (`.wiki/decisions/benchmarks.md`). The wrappers add a closure per `computed` and the error routing around each `effect`. A profile of that bench would show which one, and whether the effect wrapper can take its `try` off the hot path.
+
 ### [idea] `LocalCache` has no canonical `write`
 
 [from W13] `Query` has `setData` for an optimistic guess and `write` / `replace` for a canonical patch (`.wiki/decisions/canonical-vs-optimistic-writes.md`). `LocalCache` has only `setData`, so a canonical patch to a local cache is `setData(…).finalize()`. reader-ssr's composer forgot the `.finalize()`, and every post left `hasPendingMutations` true. `write` and `replace` on `LocalCache`, mirroring `Query`, would make the right call the obvious one.

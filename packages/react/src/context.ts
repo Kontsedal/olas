@@ -123,9 +123,11 @@ export function createOlasContext<Api>(displayName?: string): OlasContext<Api> {
  * Usage:
  *
  * ```tsx
- * // server: render -> root.dehydrate() -> serialize into HTML
- * const dehydrated = root.dehydrate()
- * // emit: <script>window.__OLAS_STATE__ = {...dehydrated}</script>
+ * // server: render -> root.dehydrate() -> serialize into HTML. Query data
+ * // is untrusted text: `serializeForScript` escapes it for the script, so a
+ * // `</script>` inside it cannot end the tag.
+ * import { serializeForScript } from '@kontsedal/olas-core'
+ * const html = `<script>window.__OLAS_STATE__ = ${serializeForScript(root.dehydrate())}</script>`
  *
  * // client entry:
  * <HydrationBoundary

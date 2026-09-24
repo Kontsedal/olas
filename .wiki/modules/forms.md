@@ -10,6 +10,7 @@ covers:
   - packages/core/src/forms/validators.ts
   - packages/core/src/forms/index.ts
 edges:
+  - { type: related, target: ../decisions/trust-model.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/validators.test.ts }
@@ -131,3 +132,7 @@ See `../pitfalls/fieldarray-factory-uses-initial.md`.
 - `form.fieldAt('a.b.c')` path-typed lookup — spec §20.7 says this is "deferred to post-v1". Use `form.fields.a.fields.b.fields.c` chained access.
 
 Reactive `initial` **is** implemented. This page's prior "not reactive between resets" note was bootstrap-era drift. An `initial: () => …` thunk runs in a tracking scope and re-applies when its tracked signals change, gated by `resetOnInitialChange`, whose values are `'when-clean'` by default, `'always'` and `'never'`. The `'when-clean'` guard consults `isDirty`, which now includes the structural FieldArray edits described above. Spec §8.4, §8.5.
+
+## Partials with prototype keys (1.0)
+
+`Form.applyPartial`, behind `set` and `setAsInitial`, skips a key that is not an own property of `fields`. `fields` is a plain object, so a partial parsed from JSON with `__proto__`, `constructor` or `toString` found an `Object.prototype` member and threw `node.set is not a function`. Pinned by `regressions.test.ts`, "a form partial carrying prototype keys".

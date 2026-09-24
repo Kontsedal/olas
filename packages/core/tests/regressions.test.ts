@@ -2658,3 +2658,138 @@ describe('W13 regression: an async validator abandoned by a failing sync one set
     }
   })
 })
+
+describe('W15 regression: teardown costs', () => {
+  test('a settled fetch keeps its signal unaborted when the entry refetches or is disposed', async () => {
+    const signals: AbortSignal[] = []
+    const q = defineQuery({
+      id: 'w15/settled-signal',
+      key: () => [],
+      fetcher: async ({ signal }) => {
+        signals.push(signal)
+        return signals.length
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ s: createQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+      },
+    )
+    await root.waitForIdle()
+    await root.api.s.refetch()
+    root.dispose()
+    // Aborting a finished request's controller cancels nothing and still
+    // builds a DOMException; it also fired late abort listeners.
+    expect(signals.map((s) => s.aborted)).toEqual([false, false])
+  })
+
+  test('a settled infinite fetch keeps its signal unaborted too', async () => {
+    const signals: AbortSignal[] = []
+    const q = defineInfiniteQuery({
+      id: 'w15/settled-infinite-signal',
+      key: () => [],
+      fetcher: async ({ pageParam, signal }: { pageParam: number; signal: AbortSignal }) => {
+        signals.push(signal)
+        return [pageParam]
+      },
+      initialPageParam: 0,
+      getNextPageParam: (_last: number[], all: number[][]) => (all.length < 2 ? all.length : null),
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+      },
+    )
+    await root.waitForIdle()
+    await root.api.feed.fetchNextPage()
+    root.dispose()
+    expect(signals.map((s) => s.aborted)).toEqual([false, false])
+  })
+
+  test('disposing a root arms no gc timer for the entries it is about to drop', async () => {
+    const q = defineQuery({
+      id: 'w15/dispose-timers',
+      key: (i: number) => [i],
+      fetcher: async (_c, i) => i,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({
+        subs: [0, 1, 2].map((i) => createQuery(ctx, q, () => [i] as [number])),
+      })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await root.waitForIdle()
+    const spy = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      root.dispose()
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('W15 regression: a form partial carrying prototype keys', () => {
+  test('Form.set and setAsInitial skip keys the form does not own', () => {
+    const root = createRoot(
+      defineController((ctx) => ({
+        form: createForm(ctx, { name: createField<string>(ctx, '') }),
+      })),
+      { deps: emptyDeps },
+    )
+    // Parsed JSON keeps `__proto__` as an own key; the rest name Object.prototype members.
+    const partial = JSON.parse(
+      '{"__proto__":{"x":1},"constructor":"c","toString":"t","name":"Ada"}',
+    )
+    expect(() => root.api.form.set(partial)).not.toThrow()
+    expect(root.api.form.fields.name.value).toBe('Ada')
+    expect(() => root.api.form.setAsInitial(partial)).not.toThrow()
+    expect(root.api.form.fields.name.isDirty.value).toBe(false)
+    expect(({} as Record<string, unknown>).x).toBeUndefined()
+    root.dispose()
+  })
+})
+
+describe('W15 regression: a malformed hydration payload', () => {
+  const deepKey = (depth: number): unknown[] => {
+    let key: unknown[] = []
+    for (let i = 0; i < depth; i++) key = [key]
+    return key
+  }
+
+  test('one bad entry does not fail createRoot, and the good ones still hydrate', () => {
+    const q = defineQuery({
+      id: 'w15/hydrate-guard',
+      key: () => [],
+      fetcher: async () => 'fetched',
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const root = createRoot(
+        defineController((ctx) => ({ q: createQuery(ctx, q) })),
+        {
+          queries: queryEngine(),
+          deps: emptyDeps,
+          hydrate: {
+            version: 1,
+            entries: [
+              null,
+              { id: 'w15/deep', key: deepKey(20_000), data: 1, lastUpdatedAt: 1 },
+              { id: 'w15/hydrate-guard', key: [], data: 'hydrated', lastUpdatedAt: Date.now() },
+            ],
+          } as unknown as Parameters<typeof createRoot>[1]['hydrate'],
+        },
+      )
+      expect(root.api.q.data.value).toBe('hydrated')
+      root.hydrate({ version: 1, entries: [null] } as unknown as Parameters<typeof root.hydrate>[0])
+      root.hydrate({ version: 1, entries: null } as unknown as Parameters<typeof root.hydrate>[0])
+      root.dispose()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+})

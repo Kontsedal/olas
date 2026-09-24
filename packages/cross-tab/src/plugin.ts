@@ -45,6 +45,13 @@ export type CrossTabOptions = {
    * twice.
    */
   origins?: readonly string[]
+  /**
+   * Check a peer's `setData` payload before this tab writes it. Any same-origin
+   * script can post on the channel, so a tab whose data shape matters can
+   * reject what it did not expect: return `false` to drop the message, which
+   * is reported through `onWarn`. Default: every payload is accepted.
+   */
+  validate?: (queryId: string, data: unknown) => boolean
 }
 
 /**
@@ -93,6 +100,7 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
   const maxPayloadBytes = options.maxPayloadBytes ?? 512 * 1024
   const mirrorOptimistic = options.optimistic ?? true
   const extraOrigins = new Set(options.origins ?? [])
+  const validate = options.validate
 
   return {
     name: CROSS_TAB_PLUGIN_NAME,
@@ -131,6 +139,27 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         return ref !== undefined && ref.meta.crossTab === true
       }
 
+      /**
+       * Apply a peer's message. A key the engine cannot hash (a `Map`, a cycle,
+       * nesting deep enough to overflow) throws; it is reported through
+       * `onWarn` instead of escaping the channel's event handler.
+       */
+      const applying = (apply: () => void): void => {
+        try {
+          apply()
+        } catch (cause) {
+          onWarn('[olas/cross-tab] failed to apply a peer message', cause)
+        }
+      }
+      /** A `validate` that throws rejects the message. */
+      const safely = (check: () => boolean): boolean => {
+        try {
+          return check() === true
+        } catch {
+          return false
+        }
+      }
+
       const listener = (event: { data: unknown }) => {
         const msg = event.data as Partial<Message> | null
         if (!msg || typeof msg !== 'object') return
@@ -139,10 +168,14 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         // Layer 2 — own-source drop (the transport echoed our own message).
         if (msg.sourceId === sourceId) return
         // Layer 3 — out-of-order / duplicate drop.
-        if (typeof msg.sourceId !== 'string' || typeof msg.msgId !== 'number') return
+        // A `msgId` that is not a counter value, such as `Number.MAX_VALUE` posted
+        // under a real peer's `sourceId`, would silence that peer for good.
+        const msgId = msg.msgId
+        if (typeof msg.sourceId !== 'string' || typeof msgId !== 'number') return
+        if (!Number.isSafeInteger(msgId) || msgId < 0) return
         const last = seenByPeer.get(msg.sourceId) ?? -1
-        if (msg.msgId <= last) return
-        recordPeerMsg(msg.sourceId, msg.msgId)
+        if (msgId <= last) return
+        recordPeerMsg(msg.sourceId, msgId)
 
         if (typeof msg.queryId !== 'string' || !Array.isArray(msg.keyArgs)) {
           onWarn(`[olas/cross-tab] malformed ${String(msg.type)} message`)
@@ -157,18 +190,24 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
             onWarn('[olas/cross-tab] malformed setData message: pageParams is not an array')
             return
           }
+          if (validate !== undefined && !safely(() => validate(msg.queryId as string, data))) {
+            onWarn('[olas/cross-tab] setData message rejected by validate')
+            return
+          }
           // An infinite query's pages arrive with their params, so this tab can
           // keep paging from them.
-          queries.write(
-            msg.queryId,
-            msg.keyArgs,
-            () => data,
-            pageParams ? { pageParams } : undefined,
+          applying(() =>
+            queries.write(
+              msg.queryId as string,
+              msg.keyArgs as unknown[],
+              () => data,
+              pageParams ? { pageParams } : undefined,
+            ),
           )
           return
         }
         if (msg.type === 'invalidate') {
-          void queries.invalidate(msg.queryId, msg.keyArgs)
+          applying(() => void queries.invalidate(msg.queryId as string, msg.keyArgs as unknown[]))
         }
       }
       channel.addEventListener('message', listener)

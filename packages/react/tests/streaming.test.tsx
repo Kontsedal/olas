@@ -16,6 +16,7 @@ import {
   installStreamingIntake,
   STREAMING_GLOBAL,
 } from '../src/streaming'
+import { entriesOf } from './_streaming'
 
 afterEach(() => {
   // Wipe the global between tests so leaks don't infect the next case.
@@ -38,9 +39,10 @@ describe('createStreamingHydrator (server side)', () => {
     await root.waitForIdle()
 
     const html = flush()
-    expect(html).toContain('<script>')
-    expect(html).toContain('"queryId":"streaming-test-users"')
-    expect(html).toContain('"data":["alice","bob"]')
+    expect(html.startsWith('<script>')).toBe(true)
+    expect(entriesOf(html)).toMatchObject([
+      { queryId: 'streaming-test-users', key: [], data: ['alice', 'bob'] },
+    ])
 
     // Second flush is empty (no new entries).
     expect(flush()).toBe('')
@@ -74,8 +76,7 @@ describe('createStreamingHydrator (server side)', () => {
 
     // Must NOT throw. The good entry survives; the BigInt one is skipped + warned.
     const html = flush()
-    expect(html).toContain('"queryId":"streaming-good"')
-    expect(html).not.toContain('streaming-bad')
+    expect(entriesOf(html).map((e) => e.queryId)).toEqual(['streaming-good'])
     expect(warn).toHaveBeenCalled()
 
     warn.mockRestore()
@@ -96,10 +97,10 @@ describe('createStreamingHydrator (server side)', () => {
     await root.waitForIdle()
 
     const html = flush()
-    // The literal `</` must not appear unescaped between <script> tags.
-    expect(html).toContain('<script>')
-    expect(html).not.toContain('</script><img')
-    expect(html).toContain('\\u003c/script')
+    // The payload cannot end the script: its one `</script>` is the tag's own.
+    expect(html.match(/<\/script>/g)).toHaveLength(1)
+    expect(html).not.toContain('<img')
+    expect(entriesOf(html)[0]?.data).toBe('</script><img src=x onerror=alert(1)>')
     root.dispose()
   })
 })
@@ -359,16 +360,12 @@ describe('streaming an infinite query', () => {
     await server.waitForIdle()
     await server.api.feed.fetchNextPage()
     const html = flush()
-    expect(html).toContain('"pageParams":[0,1]')
+    const payload = entriesOf(html)
+    expect(payload[0]?.pageParams).toEqual([0, 1])
     dispose()
     server.dispose()
 
     // The client receives the batch the bootstrap script would have pushed.
-    const json = html.slice(
-      html.lastIndexOf('.push(') + '.push('.length,
-      html.lastIndexOf(')</script>'),
-    )
-    const payload = JSON.parse(json)
     const fetched: number[] = []
     const clientFeed = defineInfiniteQuery({
       id: 'streaming-feed',

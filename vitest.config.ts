@@ -57,6 +57,8 @@ export default defineConfig({
           name: 'svelte',
           include: SVELTE_TESTS,
           environment: 'jsdom',
+          // Benchmarks run once, in the default project.
+          benchmark: { include: [] },
         },
       },
     ],

@@ -199,7 +199,21 @@ export class Entry<T> {
       // devtools handlers must not break the program.
     }
 
-    return this.runWithRetry(myId, abort)
+    return this.releaseOnSettle(this.runWithRetry(myId, abort), abort)
+  }
+
+  /**
+   * Forget `abort` once the request it belongs to settles. A finished request
+   * has nothing to cancel, and `abort()` on its controller still builds a
+   * `DOMException`: kept as `currentAbort`, it made every refetch, hydration
+   * and dispose pay for one.
+   */
+  private releaseOnSettle<R>(work: Promise<R>, abort: AbortController): Promise<R> {
+    const release = (): void => {
+      if (this.currentAbort === abort) this.currentAbort = null
+    }
+    work.then(release, release)
+    return work
   }
 
   private isOffline(): boolean {

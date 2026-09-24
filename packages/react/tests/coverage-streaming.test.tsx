@@ -9,20 +9,12 @@ import {
 } from '@kontsedal/olas-core'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createStreamingHydrator, createStreamingTransform, STREAMING_GLOBAL } from '../src'
+import { entriesOf } from './_streaming'
 
 afterEach(() => {
   delete (globalThis as Record<string, unknown>)[STREAMING_GLOBAL]
   vi.restoreAllMocks()
 })
-
-type Shipped = { queryId: string; key: unknown[]; data: unknown; lastUpdatedAt: number }
-
-/** Pull the batch array out of one `flush()` script tag. */
-function entriesOf(html: string): Shipped[] {
-  const start = html.lastIndexOf('.push(') + '.push('.length
-  const end = html.lastIndexOf(')</script>')
-  return JSON.parse(html.slice(start, end)) as Shipped[]
-}
 
 describe('createStreamingHydrator — which writes it ships', () => {
   test('canonical write and replace are captured, and a key keeps only its latest value', async () => {

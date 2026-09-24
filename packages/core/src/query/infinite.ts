@@ -318,7 +318,24 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
     this.announceFetchStart()
 
-    return this.runRefetchAll(myId, abort.signal, Math.max(1, previousPages.length), previousPages)
+    return this.releaseOnSettle(
+      this.runRefetchAll(myId, abort.signal, Math.max(1, previousPages.length), previousPages),
+      abort,
+    )
+  }
+
+  /**
+   * Forget `abort` once the request it belongs to settles. A finished request
+   * has nothing to cancel, and `abort()` on its controller still builds a
+   * `DOMException`: kept as `currentAbort`, it made every refetch, hydration
+   * and dispose pay for one.
+   */
+  private releaseOnSettle<R>(work: Promise<R>, abort: AbortController): Promise<R> {
+    const release = (): void => {
+      if (this.currentAbort === abort) this.currentAbort = null
+    }
+    work.then(release, release)
+    return work
   }
 
   /**
@@ -460,28 +477,31 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
     this.announceFetchStart()
 
-    return this.runFetch(
-      myId,
-      abort.signal,
-      nextParam,
-      (page, param) => {
-        if (myId !== this.currentFetchId || this.disposed) return
-        batch(() => {
-          this.pages.set([...this.pages.peek(), page])
-          this.pageParams.set([...this.pageParams.peek(), param])
-          this.error.set(undefined)
-          // A successful page op owns the terminal status: restore 'success'
-          // so paging that superseded a mid-flight full refetch (which left
-          // status at 'pending') can't wedge the entry / Suspense (T3.3).
-          this.status.set('success')
-          this.isFetchingNextPage.set(false)
-          this.isFetching.set(false)
-          this.lastUpdatedAt.set(Date.now())
-        })
-        this.onSuccessData?.(this.pages.peek())
-      },
-      'next',
-    ).then(() => {})
+    return this.releaseOnSettle(
+      this.runFetch(
+        myId,
+        abort.signal,
+        nextParam,
+        (page, param) => {
+          if (myId !== this.currentFetchId || this.disposed) return
+          batch(() => {
+            this.pages.set([...this.pages.peek(), page])
+            this.pageParams.set([...this.pageParams.peek(), param])
+            this.error.set(undefined)
+            // A successful page op owns the terminal status: restore 'success'
+            // so paging that superseded a mid-flight full refetch (which left
+            // status at 'pending') can't wedge the entry / Suspense (T3.3).
+            this.status.set('success')
+            this.isFetchingNextPage.set(false)
+            this.isFetching.set(false)
+            this.lastUpdatedAt.set(Date.now())
+          })
+          this.onSuccessData?.(this.pages.peek())
+        },
+        'next',
+      ).then(() => {}),
+      abort,
+    )
   }
 
   fetchPreviousPage(): Promise<void> {
@@ -510,27 +530,30 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
     this.announceFetchStart()
 
-    return this.runFetch(
-      myId,
-      abort.signal,
-      prevParam,
-      (page, param) => {
-        if (myId !== this.currentFetchId || this.disposed) return
-        batch(() => {
-          this.pages.set([page, ...this.pages.peek()])
-          this.pageParams.set([param, ...this.pageParams.peek()])
-          this.error.set(undefined)
-          // A successful page op owns the terminal status — see fetchNextPage
-          // (T3.3).
-          this.status.set('success')
-          this.isFetchingPreviousPage.set(false)
-          this.isFetching.set(false)
-          this.lastUpdatedAt.set(Date.now())
-        })
-        this.onSuccessData?.(this.pages.peek())
-      },
-      'prev',
-    ).then(() => {})
+    return this.releaseOnSettle(
+      this.runFetch(
+        myId,
+        abort.signal,
+        prevParam,
+        (page, param) => {
+          if (myId !== this.currentFetchId || this.disposed) return
+          batch(() => {
+            this.pages.set([page, ...this.pages.peek()])
+            this.pageParams.set([param, ...this.pageParams.peek()])
+            this.error.set(undefined)
+            // A successful page op owns the terminal status — see fetchNextPage
+            // (T3.3).
+            this.status.set('success')
+            this.isFetchingPreviousPage.set(false)
+            this.isFetching.set(false)
+            this.lastUpdatedAt.set(Date.now())
+          })
+          this.onSuccessData?.(this.pages.peek())
+        },
+        'prev',
+      ).then(() => {}),
+      abort,
+    )
   }
 
   private async runFetch(

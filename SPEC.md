@@ -3257,6 +3257,30 @@ Implementation: a signal `idleCount` that increments/decrements; `waitForIdle` r
 
 ---
 
+## 22. Trust model
+
+Olas trusts its own process. It treats everything that reaches it from outside as data, and it checks that data before use. Three classes of input, from most to least trusted:
+
+**Trusted as authored.**
+- A `DehydratedState` passed to `createRoot({ hydrate })` or `root.hydrate`. It comes from the app's own server, so core checks its `version` and the shape of each entry. It skips an entry it cannot read, such as one whose key is nested too deep to hash, and hydrates the rest.
+- Every script in the page. Same-origin code can already push to the streaming intake, write storage and post on a `BroadcastChannel`. Olas does not defend against it.
+
+**Untrusted: query and mutation data.** A fetcher's result usually holds strings someone else wrote. Olas never evaluates that data, and never lets a key in it change a prototype. `structuralShare`, `Form.set`, `setAsInitial` and the entities deep merge copy only own keys, and they write a `__proto__` key as a plain data property. Where Olas writes data into HTML, it escapes it for that context:
+- `serializeForScript(value)` returns `JSON.parse("…")` over the JSON, with every character that could end the string, the script or an attribute written as a `\uXXXX` escape. Use it for any state inlined into a page.
+- The streaming hydrator serializes each batch that way, and `createStreamingTransform` writes a batch only where the HTML so far sits between elements. React writes in fixed-size chunks, so a chunk can end inside a tag or an attribute value. `createStreamingHydrator({ nonce })` puts a CSP nonce on every tag it emits.
+
+**Possibly corrupt: same-origin state other code can write.** Storage and `BroadcastChannel` messages may come from a user's edit, an old build, or a script that ran once. Olas treats them as possibly corrupt, not hostile. Before use, each package checks structure, types, ranges and depth, and drops or reports what does not fit:
+- `persistQueryCachePlugin` rejects an entry dated in the future, which would otherwise stay fresh for any `staleTime`. It reports every restore failure through `onError`, on sync and async storage alike.
+- `createPersisted` reports a stored value its source refuses as a `'deserialize'` error, and still settles `ready`.
+- The mutation queue checks each entry's shape, attempt count and timestamps, and requires its storage key to match its contents. It replays only definitions whose `meta.persist` is `true`, looked up through `host.mutations.get`. Stored data can delay or repeat an opted-in write; it cannot choose which operation runs.
+- `crossTabPlugin` ignores a message whose `msgId` is not a safe non-negative integer. It reports a message it cannot apply through `onWarn`, and never lets it throw out of the channel's handler. Its `validate(queryId, data)` option lets a tab reject a payload shape it did not expect.
+
+A malformed value never throws out of `createRoot`, never leaves a root or signal wedged, and never bypasses `onError` or `onWarn`. The security tests pin each rule above: `streaming-security.test.tsx` in react, `security.test.ts` in mutation-queue and cross-tab, `query-cache-security.test.ts` and `persisted-security.test.ts` in persist, `merge-security.test.ts` in entities, and the "W15 regression" blocks in core's `regressions.test.ts`.
+
+Olas does not check that restored data matches a query's type. The tools for that are the consumer's: `persistQueryCachePlugin`'s `buster`, versioned channel names, `createPersisted`'s `version` and `migrate`, and cross-tab's `validate`.
+
+---
+
 ## 23. Performance characteristics
 
 Honest estimates so users know what they're paying for. All numbers are order-of-magnitude — actual perf depends on platform, payload size, and usage pattern.

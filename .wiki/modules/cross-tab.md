@@ -8,6 +8,7 @@ covers:
   - packages/cross-tab/src/protocol.ts
   - packages/cross-tab/src/channel.ts
 edges:
+  - { type: related, target: ../decisions/trust-model.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/cross-tab/tests/plugin.test.ts }
   - { type: tested-by, target: ../../packages/cross-tab/tests/ssr.test.ts }
@@ -15,7 +16,7 @@ edges:
   - { type: uses, target: query.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: persist.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-24
 confidence: medium
 ---
 
@@ -116,3 +117,7 @@ No consensus and clocks: each tab applies inbound writes in delivery order, last
 - **Infinite queries sync with `meta: { crossTab: true }`, like regular ones (1.0).** A `setData` message for one carries `pageParams`, and the receiver writes the pages and their params together through `host.queries.write(…, { pageParams })`. A `pageParams` field that is not an array drops the message with a warning. Page arrays can be large; `maxPayloadBytes` warns.
 - **No structural diffs.** Every `setData` broadcasts the full post-update value. Fine for `BroadcastChannel` (in-memory); known cost for very large entries.
 - **Optimistic writes cross tabs.** All `setData` events broadcast regardless of cause, so optimistic state (and rollback) is visible cross-tab. Mitigate by skipping cross-tab for optimistic-heavy queries (`crossTab: false`).
+
+## Receiving untrusted messages (1.0)
+
+Any same-origin script can post on the channel. The listener ignores a `msgId` that is not a safe non-negative integer, since `Number.MAX_VALUE` under a real peer's `sourceId` would silence that peer. It applies a message inside a try/catch that reports to `onWarn`: a key the engine cannot hash, such as a cycle, no longer throws out of the event handler. The `validate(queryId, data)` option rejects a payload shape the tab does not expect. Pinned by `tests/security.test.ts`; see `decisions/trust-model.md`.

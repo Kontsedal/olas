@@ -68,6 +68,8 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/typed-use-root.md](decisions/typed-use-root.md) — `useRoot()` typed through an augmented `Register`; why `createOlasContext` and `useFieldInput` stay
 - [decisions/infinite-query-parity.md](decisions/infinite-query-parity.md) — how infinite queries reach parity: `pageParams` on dehydrated entries and write events, hydration seeding, focus/reconnect, the `offlineFirst` park, cross-tab, devtools
 - [decisions/engine-assurance.md](decisions/engine-assurance.md) — property models (fast-check), per-package coverage gates and the Stryker run; the 29 bugs they found before 1.0
+- [decisions/benchmarks.md](decisions/benchmarks.md) — how Olas is benchmarked against raw preact signals, MobX and TanStack Query core, the 1.0 results, and the two teardown costs they exposed
+- [decisions/trust-model.md](decisions/trust-model.md) — what Olas trusts and checks, and the 1.0 security pass: findings by severity, fixes and tests (SPEC §22)
 - [decisions/esm-only-build.md](decisions/esm-only-build.md) — why every package ships ESM only on Node >= 20.19, and the dist checks: types, tree-shaking, size
 - [decisions/forms-are-read-signals.md](decisions/forms-are-read-signals.md) — why `Form` and `FieldArray` are `ReadSignal`s of their value, like `Field`, and why `submit` resolves a union
 - [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`
@@ -89,6 +91,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/dispose-order-is-registration-order.md](pitfalls/dispose-order-is-registration-order.md) — teardown is one reverse-registration pass, not phased; an `onDispose` hook reaches an effect only if the effect was created first
 - [pitfalls/no-invalidator-still-refetches.md](pitfalls/no-invalidator-still-refetches.md) — "nothing invalidates this query" is not grounds to skip `cancel()` before an optimistic `setData`: a stale entry refetches on subscribe and `resume()` with no invalidator anywhere
 - [pitfalls/proto-key-assignment.md](pitfalls/proto-key-assignment.md) — rebuilding an object with `out[key] = value` swaps its prototype when the key is `__proto__`, and `JSON.parse` can put one in a payload
+- [pitfalls/stream-chunks-split-tags.md](pitfalls/stream-chunks-split-tags.md) — a server-rendered stream's chunks can end inside a tag or attribute; anything written between two chunks has to check where it lands
 - [pitfalls/node-localstorage-shadows-jsdom.md](pitfalls/node-localstorage-shadows-jsdom.md) — on Node 25+, Node's own `localStorage` global (undefined without a flag) hides jsdom's, so jsdom tests silently skip storage
 - [pitfalls/persisted-state-breaks-hydration.md](pitfalls/persisted-state-breaks-hydration.md) — `createPersisted` reads localStorage during construction, so a returning visitor's first client render disagrees with the server HTML
 

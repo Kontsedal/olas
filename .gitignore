@@ -147,3 +147,6 @@ vite.config.ts.timestamp-*
 # Stryker mutation runs
 .stryker-tmp/
 reports/mutation/
+
+# Claude Code agent worktrees (local only)
+.claude/worktrees/

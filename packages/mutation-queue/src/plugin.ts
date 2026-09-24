@@ -12,6 +12,9 @@ import { PROTOCOL_VERSION, type QueueEntry } from './protocol'
 /** The plugin's name — and the `origin` its replays carry. */
 export const MUTATION_QUEUE_PLUGIN_NAME = 'olas-mutation-queue'
 
+/** How far in the future a stored `enqueuedAt` may sit, for clock drift between tabs and loads. */
+const CLOCK_SKEW_MS = 5 * 60_000
+
 /** The service `mutationQueuePlugin` provides, under the `MutationQueue` scope. */
 export type MutationQueueService = {
   /**
@@ -397,34 +400,52 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         }
       }
 
-      const parseEntry = (raw: unknown): QueueEntry | null => {
+      /**
+       * Storage is same-origin state that a user, an extension or an old build
+       * can write, so an entry is checked in full before anything trusts it:
+       * the shape, an attempt count that is a whole number, and timestamps
+       * that are not in the future. A future `enqueuedAt` would never expire
+       * under `ttlMs`. A migrated entry is checked the same way.
+       */
+      const isValidEntry = (value: unknown): value is QueueEntry => {
+        if (value === null || typeof value !== 'object') return false
+        const e = value as Record<string, unknown>
+        return (
+          e.v === PROTOCOL_VERSION &&
+          typeof e.mutationId === 'string' &&
+          e.mutationId.length > 0 &&
+          typeof e.runId === 'string' &&
+          e.runId.length > 0 &&
+          Number.isInteger(e.attempts) &&
+          (e.attempts as number) >= 0 &&
+          typeof e.enqueuedAt === 'number' &&
+          Number.isFinite(e.enqueuedAt) &&
+          e.enqueuedAt <= Date.now() + CLOCK_SKEW_MS &&
+          (e.seq === undefined || (typeof e.seq === 'number' && Number.isFinite(e.seq))) &&
+          (e.idempotencyKey === undefined || typeof e.idempotencyKey === 'string')
+        )
+      }
+
+      /** Parse one stored value. `migrated` says whether `migrate` produced it. */
+      const parseEntry = (raw: unknown): { entry: QueueEntry; migrated: boolean } | null => {
         if (typeof raw !== 'string') return null
         try {
           const parsed = JSON.parse(raw) as unknown
           if (parsed === null || typeof parsed !== 'object') return null
-          const obj = parsed as Record<string, unknown>
-          const version = typeof obj.v === 'number' ? obj.v : undefined
-          if (version !== PROTOCOL_VERSION) {
-            // Try migrator first; if it returns null (or none configured), drop.
-            if (migrate !== undefined && version !== undefined) {
-              try {
-                const migrated = migrate(parsed, version)
-                if (migrated !== null) return migrated
-              } catch (err) {
-                onWarn('[olas/mutation-queue] migrate threw; dropping entry', err)
-              }
-            }
+          const version = (parsed as Record<string, unknown>).v
+          if (version === PROTOCOL_VERSION) {
+            return isValidEntry(parsed) ? { entry: parsed, migrated: false } : null
+          }
+          // Try the migrator; if it returns null (or none is configured), drop.
+          if (migrate === undefined || typeof version !== 'number') return null
+          let migrated: unknown
+          try {
+            migrated = migrate(parsed, version)
+          } catch (err) {
+            onWarn('[olas/mutation-queue] migrate threw; dropping entry', err)
             return null
           }
-          if (
-            typeof obj.mutationId !== 'string' ||
-            typeof obj.runId !== 'string' ||
-            typeof obj.attempts !== 'number' ||
-            typeof obj.enqueuedAt !== 'number'
-          ) {
-            return null
-          }
-          return obj as unknown as QueueEntry
+          return isValidEntry(migrated) ? { entry: migrated, migrated: true } : null
         } catch {
           return null
         }
@@ -456,7 +477,12 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           try {
             const raw = await adapter.get(key)
             const parsed = parseEntry(raw)
-            if (parsed === null) {
+            const expected =
+              parsed === null ? undefined : entryKey(parsed.entry.mutationId, parsed.entry.runId)
+            if (parsed === null || (key !== expected && !parsed.migrated)) {
+              // Malformed, or stored under a key its contents do not name. Every
+              // later write and delete goes by the contents' key, so a mismatched
+              // one would never be removed and would replay on every load.
               onWarn(`[olas/mutation-queue] dropping malformed entry at ${key}`)
               try {
                 await adapter.delete(key)
@@ -465,7 +491,18 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
               }
               continue
             }
-            entries.push(parsed)
+            if (parsed.migrated) {
+              // Store the migrated entry under the key its new contents name,
+              // and drop the old one, so the migration runs once. A migration
+              // that renames the mutation otherwise leaves the old key behind.
+              try {
+                await adapter.set(expected as string, JSON.stringify(parsed.entry))
+                if (key !== expected) await adapter.delete(key)
+              } catch (cause) {
+                onWarn(`[olas/mutation-queue] failed to rewrite migrated entry at ${key}`, cause)
+              }
+            }
+            entries.push(parsed.entry)
           } catch (cause) {
             onWarn(`[olas/mutation-queue] failed to read ${key}`, cause)
           }
@@ -487,7 +524,8 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           // `replayNow()` lands inside the enqueue→settle window.
           return
         }
-        if (!mutations.has(entry.mutationId)) {
+        const definition = mutations.get(entry.mutationId)
+        if (definition === undefined) {
           // Module hasn't been imported — leave entry in place and surface so
           // the user knows it's stuck. They can either import the module to
           // unstick it or delete the entry from storage.
@@ -495,6 +533,20 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             new Error(
               `[olas/mutation-queue] no registered mutation for "${entry.mutationId}"; ` +
                 'replay skipped. Ensure the module that calls defineMutation(...) is imported.',
+            ),
+            entry,
+          )
+          return
+        }
+        if (definition.meta.persist !== true) {
+          // Stored data named a mutation that never opted in to the queue. The
+          // queue writes entries only for `meta.persist` runs, so this one came
+          // from somewhere else: drop it rather than let storage pick what runs.
+          await deleteEntry(entry.mutationId, entry.runId)
+          onReplayError(
+            new Error(
+              `[olas/mutation-queue] "${entry.mutationId}" is not a persisted mutation (meta.persist is not true); ` +
+                'dropped its stored entry without running it.',
             ),
             entry,
           )

@@ -139,6 +139,13 @@ export type MutationHost = {
    */
   has(id: string): boolean
   /**
+   * The definition registered under `id`, as plugins see a mutation: its id and
+   * `meta`. `undefined` until the module calling `defineMutation({ id })` has
+   * been imported. A plugin that replays stored runs checks the definition's
+   * `meta` here, so stored data cannot pick a mutation that never opted in.
+   */
+  get(id: string): MutationRef | undefined
+  /**
    * Run the mutation registered under `id` through the engine's runner: its
    * `retry` and `concurrency` apply, `mutate` receives the root's `deps`, the
    * run counts toward `root.waitForIdle()`, and its `onMutation` events carry
