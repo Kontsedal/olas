@@ -4,5 +4,7 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["packages/*/src/**/*", "packages/*/tests/**/*", "vitest.config.ts"]
+  "include": ["packages/*/src/**/*", "packages/*/tests/**/*", "vitest.config.ts"],
+  // The codemod's fixtures are 0.8 code by design; they compile against 0.8 stubs only.
+  "exclude": ["packages/codemod/tests/fixtures/**/*"]
 }

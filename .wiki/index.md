@@ -31,6 +31,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/svelte.md](modules/svelte.md) — `@kontsedal/olas-svelte`: `setRoot`/`getRoot` + store views; a signal is a Svelte store as it is
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
 - [modules/eslint-plugin.md](modules/eslint-plugin.md) — `@kontsedal/olas-eslint-plugin`: six syntax-only rules, the configs, and the example-app lint check
+- [modules/codemod.md](modules/codemod.md) — `@kontsedal/olas-codemod`: the 0.8 → 1.0 migration CLI, its seventeen ordered transforms, the edit engine and the TODO list
 - [modules/examples.md](modules/examples.md) — the five runnable example apps in `examples/`
 
 ## Entities

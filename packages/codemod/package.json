@@ -1,0 +1,52 @@
+{
+  "name": "@kontsedal/olas-codemod",
+  "version": "0.0.0",
+  "description": "Codemod for upgrading an Olas app from 0.8 to 1.0: the renames, the root handle, required ids, plugin meta and the new async contexts, with a TODO list for what needs a human.",
+  "keywords": [
+    "olas",
+    "codemod",
+    "migration",
+    "ts-morph",
+    "upgrade"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/codemod#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/codemod"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "olas-codemod": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ts-morph": "^28.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

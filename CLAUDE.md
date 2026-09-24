@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: thirteen published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 911 tests across 63 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
+Current implementation status: fourteen published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 911 tests across 63 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -65,6 +65,7 @@ packages/
   mutation-queue/  # @kontsedal/olas-mutation-queue — durable persist + reload-safe replay for `persist: true` mutations (QueryClientPlugin)
   router/          # @kontsedal/olas-router         — createRouterAdapter + RouteParams/Search/Pathname scopes (TanStack Router / React Router v6)
   eslint-plugin/   # @kontsedal/olas-eslint-plugin  — six syntax-only lint rules + recommended/strict flat configs
+  codemod/         # @kontsedal/olas-codemod        — 0.8 → 1.0 migration CLI on ts-morph (npx @kontsedal/olas-codemod 1.0)
   integration/     # private — cross-package integration test suite, not published
 ```
 

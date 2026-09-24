@@ -79,6 +79,7 @@ export default defineConfig({
         lines: 97,
         'packages/core/src/**': { statements: 96, branches: 92, functions: 96, lines: 97 },
         // One gate per satellite, so a package cannot slip while others carry it.
+        'packages/codemod/src/**': satellite,
         'packages/cross-tab/src/**': satellite,
         'packages/devtools/src/**': satellite,
         'packages/entities/src/**': satellite,

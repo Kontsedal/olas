@@ -1950,3 +1950,27 @@ Built by an agent in a git worktree and merged as one commit.
 **Wiki.** The candidate page is promoted to `decisions/devtools-overhaul.md`, with 8A marked landed and 8B–8D kept as the open design. `modules/devtools-panel.md` is re-verified, and the package README is refreshed.
 
 **BACKLOG.** The devtools-overhaul item points at the promoted page and drops T8.2, T8.3 and the lane half of T8.8. New ideas: first-party plugins emit onto their lanes, and the `DebugEvent` contract graduates to SPEC.
+
+## [2026-09-25 02:00] ingest | 1.0 W15c: `@kontsedal/olas-codemod`
+
+Built by an agent in a git worktree and merged as one commit. New package `packages/codemod/`: `npx @kontsedal/olas-codemod 1.0 [--tsconfig path] [--dry] [paths…]` migrates an app from 0.8 to 1.0 on ts-morph. New page `modules/codemod.md` describes it.
+
+- **Seventeen transforms in `src/transforms/`**, ordered in `transforms/index.ts` with the type-driven ones first. They run while the code still resolves the 0.8 types, because rewriting to a 1.0 name removes those types. They cover every mechanical rename in the 1.0 table: the root handle (`root.api`), required ids and `meta`, the `{ signal, deps }` context, ctx primitives as free functions, `queryEngine({ defaults })`, the forms value shape, the `create*` and `useValue` renames, and the satellite option changes.
+- **The edit engine** (`edits.ts`) collects position edits after a full read pass and applies them back to front, so nested matches keep both edits. `util/olas.ts` traces imports through specifiers and alias chains. Sites the tool cannot rewrite safely are listed as `file:line` TODOs, for example `ctx.session`, `applyDehydratedEntry`, custom plugins, and specs passed through a variable.
+- **Three findings:**
+  - ts-morph's `replaceWithText` turns CRLF into LF, so the engine writes each file with its own line ending.
+  - tsdown's `banner` function caches its first result (a BACKLOG item).
+  - A closed output pipe lost writes, so the CLI saves before printing.
+- **Tests:** 51 in 19 files. Every transform runs on an input/output fixture against self-contained 0.8 stubs (`tests/fixtures/_types.d.ts`), plus an end-to-end CLI run over a multi-file project. Coverage is 100% lines and 98.2% branches, under a new satellite gate. `packages/codemod/biome.json` (`root: false`) keeps Biome off the byte-exact fixtures, and the root `tsconfig.json` excludes them too.
+- **Checked on the real thing:** run over the four example apps from the 0.8 tag with the 0.8 types, it changed 208 sites in 47 files and reported 11 TODOs. The migrated controllers of three apps typecheck against 1.0, and the output matches this repo's hand migration apart from formatting.
+
+**Left out, recorded in the README:**
+- custom plugins, which need a redesign;
+- cross-tab's new mirroring default, which is behaviour;
+- unbound query helpers;
+- `typeof root.x` and `root['x']`;
+- a second run of `forms`, which is not idempotent.
+
+**BACKLOG.** New ideas: run the codemod over the 0.8 examples in CI, and report the tsdown `banner` bug.
+
+For the W6 docs pass: MIGRATING's 0.8 → 1.0 section opens with the codemod, and the README lists the package.

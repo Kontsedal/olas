@@ -281,6 +281,14 @@ symbol the range must contain.
 
 ## Loose ends
 
+### [idea] Run the codemod over the 0.8 example apps in CI
+
+[from W15c] `@kontsedal/olas-codemod` was checked once over the four example apps taken from the 0.8 tag: 208 sites in 47 files, 11 TODOs, and the migrated controllers typecheck against 1.0. A CI job could repeat that on every change: extract the tag with `git archive`, run the built CLI, and typecheck the result. It would catch a transform that a later 1.0 rename breaks.
+
+### [idea] Report the tsdown `banner` caching bug upstream
+
+[from W15c] tsdown 0.22's `banner` option, given as a function, caches its first result, so it cannot target one chunk. The codemod puts its `#!/usr/bin/env node` line at the top of `src/cli.ts` instead.
+
 ### [idea] A Vue hook called outside an effect scope never unsubscribes
 
 [from W12] `@kontsedal/olas-vue` ties each subscription to the current effect scope with `onScopeDispose`. Called outside any scope, from a plain module or a `setTimeout`, a hook still returns a working ref, and nothing ends its subscription. The README says so. A development-build warning when `getCurrentScope()` is `undefined` would catch the mistake where it happens.
