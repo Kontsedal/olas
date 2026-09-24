@@ -13,6 +13,12 @@ const SVELTE_TESTS = [
   'packages/integration/tests/adapter-parity/svelte.test.ts',
 ]
 
+// Each codemod test builds a TypeScript program through ts-morph: 2–5 s on a
+// fast machine, and past vitest's 5 s default on a two-core CI runner under
+// coverage. They run as their own project with a longer timeout, so the rest
+// of the suite keeps the default and a real hang there still fails fast.
+const CODEMOD_TESTS = ['packages/codemod/tests/**/*.test.ts']
+
 export default defineConfig({
   define: {
     __DEV__: 'true',
@@ -46,7 +52,16 @@ export default defineConfig({
         test: {
           name: 'default',
           include: ['packages/*/tests/**/*.test.ts', 'packages/*/tests/**/*.test.tsx'],
-          exclude: SVELTE_TESTS,
+          exclude: [...SVELTE_TESTS, ...CODEMOD_TESTS],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'codemod',
+          include: CODEMOD_TESTS,
+          testTimeout: 30_000,
+          benchmark: { include: [] },
         },
       },
       {

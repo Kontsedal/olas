@@ -2141,3 +2141,5 @@ Opening PR #3 ran `ci.yml` on Linux for the first time; until then the chain ran
 - `packages/devtools/tests/store-stress.test.ts` asserted a doubled workload costs under 2.5× the single one, and a loaded runner measured 2.54× on linear code. The three ratio checks share `LINEAR_BOUND = 3`: linear work doubles, quadratic work quadruples, so 3 still catches the regression the test exists for.
 
 The local `ci.sh` mirror runs on the machine's Node, so it cannot see a gap like the first one; the `dist-on-node` job covers only the dist smoke on 20.19, 22 and 24.
+
+The second run passed both, and timed out three codemod tests at vitest's 5 s default instead: each builds a TypeScript program through ts-morph, 2–5 s locally and slower on a two-core runner under coverage. The first run had passed them, so they were timing-sensitive all along. `vitest.config.ts` now runs `packages/codemod/tests/` as a third project, `codemod`, with `testTimeout: 30_000`; every other suite keeps the default, so a hang elsewhere still fails fast.
