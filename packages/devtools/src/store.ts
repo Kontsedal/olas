@@ -1,5 +1,7 @@
-import type { DebugCacheEntry, DebugEvent, Root } from '@kontsedal/olas-core'
-import { type Signal, signal } from '@kontsedal/olas-core'
+import type { DebugCacheEntry, DebugEvent, ReadSignal, Root } from '@kontsedal/olas-core'
+import { batch, computed, type Signal, signal } from '@kontsedal/olas-core'
+import { type SearchGroup, SearchIndex, type SearchStats } from './search'
+import { entryKey, isSignalLike, pathKey } from './util'
 
 /**
  * Per-path node in the live controller tree. `state` reflects the most
@@ -14,9 +16,12 @@ export type ControllerNode = {
   /**
    * Values registered via `ctx.debug({...})` — live references the panel
    * renders reactively (signals show current values). Absent until the
-   * controller registers any.
+   * controller registers any. On a disposed node they are frozen: each signal
+   * was read once, at dispose time, and replaced by the value it held.
    */
   debug?: Record<string, unknown>
+  /** Epoch ms of the `controller:disposed` that retired this node. Disposed nodes only. */
+  disposedAt?: number
 }
 
 /** One entry in the cache timeline. */
@@ -110,31 +115,32 @@ export type TimelineEvent = {
 export const DEFAULT_MAX_ENTRIES = 100
 
 /**
- * Cap on the unified timeline (`events$`). Higher than the per-view log cap
- * because the timeline aggregates *every* event. Bounded rather than
- * virtualized (windowed rendering is a later phase), so kept modest.
+ * Capacity of the unified timeline's ring buffer (`events$`). The panel
+ * renders it through a windowed list, so the bound is about memory, not DOM.
+ * Past it the oldest event is overwritten and `droppedEvents$` counts it.
  */
-export const DEFAULT_MAX_TIMELINE_ENTRIES = 500
+export const DEFAULT_MAX_TIMELINE_ENTRIES = 10_000
 
 /**
  * Cap on disposed controller nodes retained in the tree. Beyond this, the
- * oldest fully-disposed subtrees are pruned so a long session with churny
- * controllers (virtualized lists, lazy children) doesn't grow the tree
- * unbounded. Active/suspended nodes are never pruned.
+ * earliest-disposed fully-disposed subtrees are pruned so a long session with
+ * churny controllers (virtualized lists, lazy children) doesn't grow the tree
+ * unbounded. Active and suspended nodes are never pruned.
  */
 export const DEFAULT_MAX_DISPOSED_NODES = 200
 
 export type DevtoolsStoreOptions = {
   /** Cap on each event log (cache, mutation, field). Oldest entries drop first. */
   maxEntries?: number
-  /** Cap on the unified timeline (`events$`). Oldest entries drop first. Default 500. */
+  /** Ring-buffer capacity of the unified timeline (`events$`). Default 10,000. */
   maxTimelineEntries?: number
-  /** Cap on retained disposed controller nodes. Oldest disposed subtrees drop first. */
+  /** Cap on retained disposed controller nodes. Earliest-disposed subtrees drop first. */
   maxDisposedNodes?: number
   /** Optional clock — useful for tests. Default: `() => Date.now()`. */
   now?: () => number
   /**
-   * Event-write coalescing strategy.
+   * Event-write coalescing strategy for the logs and the timeline. The tree
+   * applies every lifecycle event at once, whatever this says.
    *
    * - `'sync'` (default) — each event writes its signal immediately. Best
    *   for low-volume apps and tests; produces one React render per event.
@@ -144,10 +150,6 @@ export type DevtoolsStoreOptions = {
    * - A `(fn) => handle` function — custom scheduler. Pair with
    *   `cancelSchedule`. Useful for tests that want explicit control via
    *   a deterministic queue.
-   *
-   * The default is `'sync'` because devtools panels are typically
-   * driven by hand-curated test scenarios; opt into `'raf'` when wiring
-   * the production `<DevtoolsPanel>`.
    */
   coalesce?: 'sync' | 'raf' | ((fn: () => void) => number)
   /** Cancel a scheduled flush — only needed when `coalesce` is a function. */
@@ -155,28 +157,170 @@ export type DevtoolsStoreOptions = {
 }
 
 /**
+ * A fixed-capacity log. `add` buffers an item; `flush` moves the buffer in,
+ * overwriting the oldest item once full, and publishes a new array through
+ * `view`. Both are O(1) per item. The array is built lazily, when `view` is
+ * read, so a burst of flushes nobody reads costs nothing.
+ */
+class Ring<T> {
+  private items: T[] = []
+  private head = 0
+  private pending: T[] = []
+  private readonly capacity: number
+  private readonly rev = signal(0)
+  /** Items evicted by capacity since the last `clear`. */
+  dropped = 0
+  /** The items, oldest first. */
+  readonly view: ReadSignal<T[]> = computed(() => {
+    this.rev.value
+    const { items, head } = this
+    return head === 0 ? items.slice() : items.slice(head).concat(items.slice(0, head))
+  })
+  readonly dropped$: ReadSignal<number> = computed(() => {
+    this.rev.value
+    return this.dropped
+  })
+
+  constructor(capacity: number) {
+    this.capacity = Math.max(0, Math.floor(capacity))
+  }
+
+  add(item: T): void {
+    this.pending.push(item)
+  }
+
+  /** Returns whether anything moved in. */
+  flush(): boolean {
+    if (this.pending.length === 0) return false
+    const cap = this.capacity
+    for (const item of this.pending) {
+      if (this.items.length < cap) {
+        this.items.push(item)
+        continue
+      }
+      this.dropped++
+      if (cap === 0) continue
+      this.items[this.head] = item
+      this.head = (this.head + 1) % cap
+    }
+    this.pending = []
+    this.rev.set(this.rev.peek() + 1)
+    return true
+  }
+
+  clear(): void {
+    this.items = []
+    this.head = 0
+    this.pending = []
+    this.dropped = 0
+    this.rev.set(this.rev.peek() + 1)
+  }
+}
+
+/**
+ * A live, mutable tree node. The store edits these in place — O(1) lookup by
+ * path key, O(depth) bookkeeping — and hands the panel immutable
+ * `ControllerNode` snapshots, rebuilt only along the paths that changed.
+ */
+type Cell = {
+  readonly key: string
+  readonly segment: string
+  readonly path: readonly string[]
+  readonly parent: Cell | null
+  state: ControllerNode['state']
+  props: unknown
+  debug: Record<string, unknown> | undefined
+  disposedAt: number | undefined
+  /** By segment. A Map keeps insertion (construction) order and deletes in O(1). */
+  readonly children: Map<string, Cell>
+  /** Nodes in this subtree, itself included. */
+  size: number
+  /** Non-disposed nodes in this subtree, itself included. 0 = fully disposed. */
+  live: number
+  /** The cached snapshot; `null` once this node or a descendant changed. */
+  snap: ControllerNode | null
+  removed: boolean
+  /** Stamp of this cell's latest dispose; matches its live queue entry. */
+  disposeSeq: number
+}
+
+function makeCell(path: readonly string[], parent: Cell | null): Cell {
+  return {
+    key: pathKey(path),
+    segment: path[path.length - 1] ?? '',
+    path,
+    parent,
+    state: 'active',
+    props: undefined,
+    debug: undefined,
+    disposedAt: undefined,
+    children: new Map(),
+    size: 1,
+    live: 1,
+    snap: null,
+    removed: false,
+    disposeSeq: 0,
+  }
+}
+
+function snapshot(cell: Cell): ControllerNode {
+  if (cell.snap !== null) return cell.snap
+  const children: ControllerNode[] = []
+  for (const c of cell.children.values()) children.push(snapshot(c))
+  const node: ControllerNode = { path: cell.path, state: cell.state, props: cell.props, children }
+  if (cell.debug !== undefined) node.debug = cell.debug
+  if (cell.disposedAt !== undefined) node.disposedAt = cell.disposedAt
+  cell.snap = node
+  return node
+}
+
+/** Replace every signal in a `ctx.debug` record by the value it holds now. */
+function freezeDebug(debug: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(debug)) {
+    if (!isSignalLike(v)) out[k] = v
+    else {
+      try {
+        out[k] = v.peek()
+      } catch (err) {
+        out[k] = err
+      }
+    }
+  }
+  return out
+}
+
+/**
  * Subscribes to a root's `debug` bus and maintains live state for the
  * devtools panel. Exposes signals so the React layer can consume via
  * `@kontsedal/olas-react`'s `use()`.
  *
- * Pure logic — no DOM, no React. Construct one per root.
+ * Pure logic — no DOM, no React. Construct one per root. Applying one event
+ * costs O(1) plus O(path depth): nothing here scans the tree or a log.
  */
 export class DevtoolsStore {
-  readonly tree$: Signal<ControllerNode> = signal(makeRoot())
-  readonly cache$: Signal<CacheEntry[]> = signal([])
-  readonly mutations$: Signal<MutationEntry[]> = signal([])
-  readonly fields$: Signal<FieldEntry[]> = signal([])
-  /** Unified causal timeline — every event, ordered by seq. Bounded. */
-  readonly events$: Signal<TimelineEvent[]> = signal([])
+  /** The live controller tree. Unchanged subtrees keep their object identity. */
+  readonly tree$: ReadSignal<ControllerNode>
+  readonly cache$: ReadSignal<CacheEntry[]>
+  readonly mutations$: ReadSignal<MutationEntry[]>
+  readonly fields$: ReadSignal<FieldEntry[]>
+  /** Unified causal timeline — every event, ordered by seq. A ring buffer. */
+  readonly events$: ReadSignal<TimelineEvent[]>
+  /** Timeline events the ring buffer overwrote since the last `clearLogs()`. */
+  readonly droppedEvents$: ReadSignal<number>
   /**
    * Live cache-entry state for the inspector. Seeded from
    * `root.debug.queryEntries()` on `attach()`, then refreshed (coalesced) on
    * every cache / snapshot event — NO polling. Empty until attached.
    */
   readonly cacheState$: Signal<DebugCacheEntry[]> = signal([])
+  /** Capacity of the timeline ring buffer. */
+  readonly maxTimelineEntries: number
 
-  private readonly maxEntries: number
-  private readonly maxTimelineEntries: number
+  private readonly cacheLog: Ring<CacheEntry>
+  private readonly mutationLog: Ring<MutationEntry>
+  private readonly fieldLog: Ring<FieldEntry>
+  private readonly timeline: Ring<TimelineEvent>
   private readonly maxDisposedNodes: number
   private readonly now: () => number
   private readonly schedule: (fn: () => void) => number
@@ -187,7 +331,7 @@ export class DevtoolsStore {
    * `handle()` calls in tests). Real root events are pre-stamped by the emitter.
    */
   private timelineSeq = 0
-  /** Last-seen data per query-key hash — the baseline for the next set-data diff. */
+  /** Last-seen data per entry (query id and key) — the baseline for the next set-data diff. */
   private lastDataByKey = new Map<string, unknown>()
   /** Source of the live cache snapshot, captured on `attach()`. */
   private queryEntries: (() => DebugCacheEntry[]) | undefined
@@ -197,34 +341,59 @@ export class DevtoolsStore {
    */
   private cacheStateDirty = false
 
-  /** Keyed by `path#name` → a FIFO queue of `run` start times. Overlapping
-   *  runs of the same mutation each pair with their own start (shifted on
-   *  settle); the key is deleted when its queue empties. A single-value map
-   *  used to let a later run clobber an earlier run's start (T6.3). */
-  private mutationStarts = new Map<string, number[]>()
+  /** The virtual root (path `[]`); the first real controller is its child. */
+  private readonly rootCell: Cell = makeCell([], null)
+  private readonly cells = new Map<string, Cell>([['', this.rootCell]])
+  /**
+   * Disposals in order: the pruning candidates, oldest first. An entry whose
+   * `seq` is not its cell's latest `disposeSeq` is stale (the cell was
+   * re-constructed, or disposed again later) and is skipped.
+   */
+  private disposedQueue: Array<{ cell: Cell; seq: number }> = []
+  private disposedHead = 0
+  private disposeSeq = 0
+  private readonly treeRev = signal(0)
+  private treeDirty = false
+
+  /** Moves whenever anything the search index reads changed. */
+  private rev = 0
+  private readonly index = new SearchIndex()
 
   /**
-   * Coalesce buffers — events arrive synchronously off the bus but
-   * commits to the signals happen at most once per frame, so the React
-   * panel re-renders at a sane rate even under 1000 evt/sec bursts.
+   * Pending `run` start times, in a trie by controller path, then by mutation
+   * name: a FIFO queue each. Overlapping runs of one mutation each pair with
+   * their own start (T6.3). The trie lets a dispose drop a controller's
+   * starts and all its descendants' in O(depth), where a flat map needed a
+   * scan of every pending key.
    */
-  private pendingCache: CacheEntry[] = []
-  private pendingMutations: MutationEntry[] = []
-  private pendingFields: FieldEntry[] = []
-  private pendingTimeline: TimelineEvent[] = []
+  private starts: StartNode = newStartNode()
+
   private flushHandle: number | null = null
 
   /**
    * When `true`, incoming events are DROPPED at the store boundary —
    * unlike the panel-side pause which only hides them. Useful for
    * profiling without skewing recorded timings and for "freeze the log
-   * so I can read it" UX.
+   * so I can read it" UX. The tree keeps updating: it is the current world.
    */
   private paused = false
 
   constructor(options?: DevtoolsStoreOptions) {
-    this.maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES
+    const maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES
     this.maxTimelineEntries = options?.maxTimelineEntries ?? DEFAULT_MAX_TIMELINE_ENTRIES
+    this.cacheLog = new Ring(maxEntries)
+    this.mutationLog = new Ring(maxEntries)
+    this.fieldLog = new Ring(maxEntries)
+    this.timeline = new Ring(this.maxTimelineEntries)
+    this.cache$ = this.cacheLog.view
+    this.mutations$ = this.mutationLog.view
+    this.fields$ = this.fieldLog.view
+    this.events$ = this.timeline.view
+    this.droppedEvents$ = this.timeline.dropped$
+    this.tree$ = computed(() => {
+      this.treeRev.value
+      return snapshot(this.rootCell)
+    })
     this.maxDisposedNodes = options?.maxDisposedNodes ?? DEFAULT_MAX_DISPOSED_NODES
     this.now = options?.now ?? (() => Date.now())
     const coalesce = options?.coalesce ?? 'sync'
@@ -292,8 +461,11 @@ export class DevtoolsStore {
     // rather than reading as an "initial" write (the fetch that populated it
     // happened before we subscribed).
     for (const e of this.cacheState$.peek()) {
-      this.lastDataByKey.set(keyHash(e.key), e.data)
+      this.lastDataByKey.set(entryKey(e.queryId, e.key), e.data)
     }
+    // The bus replayed the live tree synchronously inside `subscribe`; publish
+    // it now rather than a frame later.
+    this.flushPending()
     return unsub
   }
 
@@ -302,29 +474,64 @@ export class DevtoolsStore {
     // Every event lands on the unified timeline (ordered by seq), regardless of
     // which specialized view (tree / cache / mutations / fields) it also feeds.
     this.pushTimeline(event)
+    this.route(event)
+    // The tree publishes at once, one notification per event however many
+    // cells it touched: its lifecycle view never waits for a frame.
+    if (this.treeDirty) {
+      this.treeDirty = false
+      this.treeRev.set(this.treeRev.peek() + 1)
+    }
+  }
+
+  private route(event: DebugEvent): void {
     switch (event.type) {
-      case 'controller:constructed':
-        this.tree$.set(insertNode(this.tree$.peek(), event.path, event.props, event.debug))
+      case 'controller:constructed': {
+        const cell = this.ensureCell(event.path)
+        cell.props = event.props
+        // A re-construction after a dispose is a new instance: the frozen
+        // variables belong to the old one.
+        if (event.debug !== undefined) cell.debug = event.debug
+        else if (cell.state === 'disposed') cell.debug = undefined
+        cell.disposedAt = undefined
+        this.setState(cell, 'active')
+        this.touch(cell)
         return
-      case 'controller:debug':
-        this.tree$.set(setNodeDebug(this.tree$.peek(), event.path, event.values))
+      }
+      case 'controller:debug': {
+        const cell = this.cells.get(pathKey(event.path))
+        if (cell === undefined) return
+        cell.debug = event.values
+        this.touch(cell)
         return
+      }
       case 'controller:suspended':
-        this.tree$.set(setNodeState(this.tree$.peek(), event.path, 'suspended'))
+      case 'controller:resumed': {
+        const cell = this.cells.get(pathKey(event.path))
+        if (cell !== undefined) {
+          this.setState(cell, event.type === 'controller:suspended' ? 'suspended' : 'active')
+        }
         return
-      case 'controller:resumed':
-        this.tree$.set(setNodeState(this.tree$.peek(), event.path, 'active'))
-        return
-      case 'controller:disposed':
-        this.tree$.set(setNodeState(this.tree$.peek(), event.path, 'disposed'))
+      }
+      case 'controller:disposed': {
+        const cell = this.cells.get(pathKey(event.path))
+        if (cell !== undefined) {
+          // Freeze the dispose-time state: the controller's signals stop
+          // meaning anything once it is gone, and holding them live would
+          // keep its graph reachable from the panel.
+          if (cell.debug !== undefined) cell.debug = freezeDebug(cell.debug)
+          cell.disposedAt = event.t ?? this.now()
+          this.setState(cell, 'disposed')
+          this.touch(cell)
+          cell.disposeSeq = ++this.disposeSeq
+          this.disposedQueue.push({ cell, seq: cell.disposeSeq })
+          this.pruneDisposed()
+        }
         // A controller that disposed mid-mutation (before `success`/`error`
         // ever fired) would otherwise leave its `mutation:run` start entry
         // in `mutationStarts` forever. Drop any starts under this path.
         this.dropStartsForPath(event.path)
-        // Bound the tree — prune the oldest fully-disposed subtrees once the
-        // retained-disposed count exceeds the cap (T6.3).
-        this.pruneDisposed()
         return
+      }
       case 'cache:subscribed':
         this.pushCache({
           kind: 'subscribed',
@@ -353,18 +560,28 @@ export class DevtoolsStore {
       case 'cache:invalidated':
         this.pushCache({ kind: 'invalidated', queryKey: event.queryKey })
         return
-      case 'cache:gc':
+      case 'cache:gc': {
         // The entry is gone — drop its diff baseline so a later re-fetch of the
         // same key renders as an initial write (not a diff against a ghost
         // value), and so `lastDataByKey` stays bounded to live keys instead of
         // growing one entry per distinct key ever seen.
-        this.lastDataByKey.delete(keyHash(event.queryKey))
+        this.lastDataByKey.delete(entryKey(event.queryId, event.queryKey))
         this.pushCache({ kind: 'gc', queryKey: event.queryKey })
         return
+      }
       case 'mutation:run': {
-        const key = mutationKey(event.path, event.name)
-        const q = this.mutationStarts.get(key)
-        if (q === undefined) this.mutationStarts.set(key, [this.now()])
+        let node = this.starts
+        for (const seg of event.path) {
+          let kid = node.kids.get(seg)
+          if (kid === undefined) {
+            kid = newStartNode()
+            node.kids.set(seg, kid)
+          }
+          node = kid
+        }
+        const name = event.name ?? ''
+        const q = node.names.get(name)
+        if (q === undefined) node.names.set(name, [this.now()])
         else q.push(this.now())
         this.pushMutation({ kind: 'run', path: event.path, name: event.name, vars: event.vars })
         return
@@ -406,20 +623,18 @@ export class DevtoolsStore {
   }
 
   /**
-   * Clear every log AND the unified timeline. Tree + live cache state are
-   * preserved — they reflect the current world, not a history.
+   * Clear every log AND the unified timeline, and reset the dropped count.
+   * Tree + live cache state are preserved — they reflect the current world,
+   * not a history.
    */
   clearLogs(): void {
-    this.cache$.set([])
-    this.mutations$.set([])
-    this.fields$.set([])
-    this.events$.set([])
-    // Drop pending coalesce buffers too — a scheduled flush after `clearLogs`
-    // would otherwise revive entries the user just cleared.
-    this.pendingCache = []
-    this.pendingMutations = []
-    this.pendingFields = []
-    this.pendingTimeline = []
+    batch(() => {
+      this.cacheLog.clear()
+      this.mutationLog.clear()
+      this.fieldLog.clear()
+      this.timeline.clear()
+    })
+    this.rev++
     // Reset the per-key diff baseline: after a clear, the next `cache:set-data`
     // starts a fresh before/after history rather than diffing against a value
     // whose originating event was just wiped.
@@ -431,7 +646,31 @@ export class DevtoolsStore {
     // Drop pending mutation-start timing records too — `clearLogs()` is the
     // user's "start fresh" gesture; any subsequent `success`/`error` for a
     // pre-clear `run` would have produced a duration anchored to noise.
-    this.mutationStarts.clear()
+    this.starts = newStartNode()
+  }
+
+  /**
+   * Search controllers, live queries, mutations, form fields and event
+   * payloads for `query` (whitespace-separated terms, all must match,
+   * case-insensitive). The index is built on the first search after a change
+   * and reused until the next one, so typing costs no re-stringification.
+   */
+  search(query: string, limitPerKind?: number): SearchGroup[] {
+    return this.index.search(
+      query,
+      this.rev,
+      () => ({
+        tree: this.tree$.peek(),
+        entries: this.cacheState$.peek(),
+        events: this.events$.peek(),
+      }),
+      limitPerKind,
+    )
+  }
+
+  /** Search-index diagnostics: how often it was built, and how many values it turned into text. */
+  searchStats(): SearchStats {
+    return { ...this.index.stats }
   }
 
   // -----------------------------------------------------------------------
@@ -461,12 +700,12 @@ export class DevtoolsStore {
     }
     if (event.causeId !== undefined) entry.causeId = event.causeId
     if (event.type === 'cache:set-data') {
-      const key = keyHash(event.queryKey)
+      const key = entryKey(event.queryId, event.queryKey)
       // Capture the pre-write value for the diff, then advance the baseline.
       if (this.lastDataByKey.has(key)) entry.prev = this.lastDataByKey.get(key)
       this.lastDataByKey.set(key, event.data)
     }
-    this.pendingTimeline.push(entry)
+    this.timeline.add(entry)
     this.scheduleFlush()
   }
 
@@ -479,26 +718,24 @@ export class DevtoolsStore {
     if (this.queryEntries === undefined) return
     this.cacheState$.set(this.queryEntries())
     this.cacheStateDirty = false
+    this.rev++
   }
 
   private pushCache(entry: DistributiveOmit<CacheEntry, 'id' | 't'>): void {
     if (this.paused) return
-    const full = { id: this.nextId++, t: this.now(), ...entry } as CacheEntry
-    this.pendingCache.push(full)
+    this.cacheLog.add({ id: this.nextId++, t: this.now(), ...entry } as CacheEntry)
     this.scheduleFlush()
   }
 
   private pushMutation(entry: DistributiveOmit<MutationEntry, 'id' | 't'>): void {
     if (this.paused) return
-    const full = { id: this.nextId++, t: this.now(), ...entry } as MutationEntry
-    this.pendingMutations.push(full)
+    this.mutationLog.add({ id: this.nextId++, t: this.now(), ...entry } as MutationEntry)
     this.scheduleFlush()
   }
 
   private pushField(entry: Omit<FieldEntry, 'id' | 't'>): void {
     if (this.paused) return
-    const full = { id: this.nextId++, t: this.now(), ...entry } as FieldEntry
-    this.pendingFields.push(full)
+    this.fieldLog.add({ id: this.nextId++, t: this.now(), ...entry })
     this.scheduleFlush()
   }
 
@@ -525,121 +762,147 @@ export class DevtoolsStore {
    * flush without waiting on rAF; production code shouldn't call this.
    */
   flushPending(): void {
-    if (this.pendingCache.length > 0) {
-      let next = this.cache$.peek().slice()
-      for (const e of this.pendingCache) next.push(e)
-      if (next.length > this.maxEntries) next = next.slice(next.length - this.maxEntries)
-      this.pendingCache = []
-      this.cache$.set(next)
-    }
-    if (this.pendingMutations.length > 0) {
-      let next = this.mutations$.peek().slice()
-      for (const e of this.pendingMutations) next.push(e)
-      if (next.length > this.maxEntries) next = next.slice(next.length - this.maxEntries)
-      this.pendingMutations = []
-      this.mutations$.set(next)
-    }
-    if (this.pendingFields.length > 0) {
-      let next = this.fields$.peek().slice()
-      for (const e of this.pendingFields) next.push(e)
-      if (next.length > this.maxEntries) next = next.slice(next.length - this.maxEntries)
-      this.pendingFields = []
-      this.fields$.set(next)
-    }
-    if (this.pendingTimeline.length > 0) {
-      let next = this.events$.peek().slice()
-      for (const e of this.pendingTimeline) next.push(e)
-      if (next.length > this.maxTimelineEntries) {
-        next = next.slice(next.length - this.maxTimelineEntries)
-      }
-      this.pendingTimeline = []
-      this.events$.set(next)
-    }
-    // Coalesced inspector refresh — one snapshot read per frame no matter how
-    // many cache events landed, and only when something actually changed.
-    if (this.cacheStateDirty) this.refreshCacheState()
+    batch(() => {
+      let moved = this.cacheLog.flush()
+      moved = this.mutationLog.flush() || moved
+      moved = this.fieldLog.flush() || moved
+      moved = this.timeline.flush() || moved
+      if (moved) this.rev++
+      // Coalesced inspector refresh — one snapshot read per frame no matter how
+      // many cache events landed, and only when something actually changed.
+      if (this.cacheStateDirty) this.refreshCacheState()
+    })
   }
 
+  // ---- the keyed tree -----------------------------------------------------
+
+  /** The cell at `path`, creating it and any missing ancestors as active placeholders. */
+  private ensureCell(path: readonly string[]): Cell {
+    const existing = this.cells.get(pathKey(path))
+    if (existing !== undefined) return existing
+    const parent = this.ensureCell(path.slice(0, -1))
+    const cell = makeCell(path, parent)
+    parent.children.set(cell.segment, cell)
+    this.cells.set(cell.key, cell)
+    for (let p: Cell | null = parent; p !== null; p = p.parent) {
+      p.size++
+      p.live++
+    }
+    this.touch(parent)
+    return cell
+  }
+
+  private setState(cell: Cell, next: ControllerNode['state']): void {
+    if (cell.state === next) return
+    const delta = (next !== 'disposed' ? 1 : 0) - (cell.state !== 'disposed' ? 1 : 0)
+    cell.state = next
+    if (delta !== 0) for (let p: Cell | null = cell; p !== null; p = p.parent) p.live += delta
+    this.touch(cell)
+  }
+
+  /**
+   * Invalidate the cached snapshot of `cell` and its ancestors. Stops at the
+   * first ancestor already invalid: an invalid node's ancestors are invalid
+   * too, so the walk is O(depth) at worst and O(1) in a burst.
+   */
+  private touch(cell: Cell): void {
+    for (let c: Cell | null = cell; c !== null && c.snap !== null; c = c.parent) c.snap = null
+    this.rev++
+    this.treeDirty = true
+  }
+
+  /**
+   * Remove the earliest-disposed fully-disposed subtrees once the retained
+   * disposed count exceeds `maxDisposedNodes`. A candidate with a live
+   * descendant is skipped: when that descendant disposes it is queued, and
+   * pruning it prunes the ancestor with it. Each candidate is looked at once.
+   */
+  private pruneDisposed(): void {
+    const root = this.rootCell
+    const q = this.disposedQueue
+    while (root.size - root.live > this.maxDisposedNodes && this.disposedHead < q.length) {
+      const { cell, seq } = q[this.disposedHead++] as { cell: Cell; seq: number }
+      if (seq !== cell.disposeSeq || cell.removed || cell.live !== 0 || cell === root) continue
+      // Prune the largest fully-disposed subtree containing it, never the root.
+      let top = cell
+      while (top.parent !== null && top.parent !== root && top.parent.live === 0) top = top.parent
+      this.removeCell(top)
+    }
+    // Drop consumed and stale entries once they outnumber the live ones, so a
+    // session that disposes and re-constructs the same paths keeps the queue
+    // bounded by the disposed count. Amortized O(1) per dispose.
+    const head = this.disposedHead
+    if (q.length - head > 2 * (root.size - root.live) + 64 || (head > 64 && head * 2 > q.length)) {
+      this.disposedQueue = q
+        .slice(head)
+        .filter(
+          (e) => e.seq === e.cell.disposeSeq && !e.cell.removed && e.cell.state === 'disposed',
+        )
+      this.disposedHead = 0
+    }
+  }
+
+  private removeCell(cell: Cell): void {
+    const parent = cell.parent as Cell
+    parent.children.delete(cell.segment)
+    for (let p: Cell | null = parent; p !== null; p = p.parent) p.size -= cell.size
+    const stack = [cell]
+    for (let c = stack.pop(); c !== undefined; c = stack.pop()) {
+      c.removed = true
+      this.cells.delete(c.key)
+      for (const child of c.children.values()) stack.push(child)
+    }
+    this.touch(parent)
+  }
+
+  // ---- mutation timing ----------------------------------------------------
+
   private consumeStart(path: readonly string[], name: string | undefined): number | undefined {
-    const key = mutationKey(path, name)
-    const q = this.mutationStarts.get(key)
-    if (q === undefined || q.length === 0) return undefined
+    const trail: StartNode[] = [this.starts]
+    for (const seg of path) {
+      const kid = (trail[trail.length - 1] as StartNode).kids.get(seg)
+      if (kid === undefined) return undefined
+      trail.push(kid)
+    }
+    const node = trail[trail.length - 1] as StartNode
+    const q = node.names.get(name ?? '')
+    if (q === undefined) return undefined
     // FIFO: pair this settle with the OLDEST pending start so overlapping runs
     // of the same mutation each get a duration (T6.3). Exact run↔settle
     // attribution isn't possible — the debug bus carries no per-run id — but
     // FIFO never loses a start the way the old single-value map did.
     const startedAt = q.shift() as number
-    if (q.length === 0) this.mutationStarts.delete(key)
+    if (q.length === 0) node.names.delete(name ?? '')
+    // Prune the now-empty tail of the path, so the trie holds only paths
+    // with a run in flight.
+    for (let i = trail.length - 1; i > 0; i--) {
+      const n = trail[i] as StartNode
+      if (n.names.size > 0 || n.kids.size > 0) break
+      ;(trail[i - 1] as StartNode).kids.delete(path[i - 1] as string)
+    }
     return this.now() - startedAt
   }
 
   /**
    * Drop every pending mutation-start record under `path` (and its
    * descendants). Called on `controller:disposed` so a dispose mid-mutation
-   * doesn't leave a permanent entry in `mutationStarts`.
+   * doesn't leave a start behind forever.
    */
   private dropStartsForPath(path: readonly string[]): void {
-    if (this.mutationStarts.size === 0) return
-    const prefix = `${path.join('>')}>`
-    const exact = path.join('>')
-    for (const key of this.mutationStarts.keys()) {
-      const beforeHash = key.split('#')[0] ?? ''
-      if (beforeHash === exact || beforeHash.startsWith(prefix)) {
-        this.mutationStarts.delete(key)
-      }
+    let node: StartNode | undefined = this.starts
+    for (let i = 0; i < path.length - 1 && node !== undefined; i++) {
+      node = node.kids.get(path[i] as string)
     }
-  }
-
-  /**
-   * Remove the oldest fully-disposed subtrees once the retained-disposed count
-   * exceeds `maxDisposedNodes`. "Fully-disposed subtree" = a node whose entire
-   * subtree is disposed, so an active/suspended node (or one with a live
-   * descendant) is never pruned. Roots are collected in depth-first
-   * (construction) order, so the earliest-constructed disposed subtrees drop
-   * first (T6.3).
-   */
-  private pruneDisposed(): void {
-    const tree = this.tree$.peek()
-    let remaining = countDisposed(tree)
-    if (remaining <= this.maxDisposedNodes) return
-    const roots: { path: readonly string[]; size: number }[] = []
-    collectPrunableRoots(tree, roots)
-    let next = tree
-    for (const r of roots) {
-      if (remaining <= this.maxDisposedNodes) break
-      next = removeNodeAt(next, r.path)
-      remaining -= r.size
-    }
-    if (next !== tree) this.tree$.set(next)
+    if (path.length === 0) this.starts = newStartNode()
+    else node?.kids.delete(path[path.length - 1] as string)
   }
 }
 
-function mutationKey(path: readonly string[], name: string | undefined): string {
-  return `${path.join('>')}#${name ?? ''}`
-}
+/** One controller-path segment of the pending-start trie. */
+type StartNode = { names: Map<string, number[]>; kids: Map<string, StartNode> }
 
-/**
- * Stable string key for a query-key array — tracks the last-seen data per entry
- * so the timeline can diff a `cache:set-data` against the prior value.
- * `JSON.stringify` covers the common primitive-array case; a `String` join is
- * the fallback for keys carrying unserializable members.
- */
-function keyHash(key: readonly unknown[]): string {
-  try {
-    // Distinguish `undefined` from `null` (both otherwise serialize to `null`)
-    // and stringify BigInt (`JSON.stringify` throws on it), so two distinct
-    // keys can't collide onto one diff-baseline slot. Tagged with a shape
-    // unlikely to occur as a real key value.
-    return JSON.stringify(key, (_k, v) => {
-      if (v === undefined) return { __olasKey: 'undefined' }
-      if (typeof v === 'bigint') return { __olasKey: 'bigint', v: v.toString() }
-      return v
-    })
-  } catch {
-    // Last resort for genuinely unserializable keys (circular refs). Type-tag
-    // each member so the join can't alias e.g. `['a','b']` and `['a|b']`.
-    return key.map((k) => `${typeof k}:${String(k)}`).join('|')
-  }
+function newStartNode(): StartNode {
+  return { names: new Map(), kids: new Map() }
 }
 
 /**
@@ -650,17 +913,14 @@ function keyHash(key: readonly unknown[]): string {
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never
 
 // ---------------------------------------------------------------------------
-// Pure helpers — tested independently of the class.
+// Pure, immutable tree helpers. The store no longer uses them — it keeps a
+// keyed, mutable tree — but they stay public for code that builds a
+// `ControllerNode` tree by hand.
 // ---------------------------------------------------------------------------
-
-function makeRoot(): ControllerNode {
-  return { path: [], state: 'active', props: undefined, children: [] }
-}
 
 /**
  * Insert (or update) a node at `path` inside the tree. Auto-creates any
- * missing intermediate ancestors as 'active' placeholders — needed if the
- * subscriber attached after the root was constructed.
+ * missing intermediate ancestors as 'active' placeholders.
  *
  * Returns a NEW tree object (immutable update).
  */
@@ -670,53 +930,13 @@ export function insertNode(
   props: unknown,
   debug?: Record<string, unknown>,
 ): ControllerNode {
-  if (path.length === 0) {
-    // The root controller's "constructed" event has path === ['root']
-    // (one segment), not []. We never receive empty paths in practice, but
-    // handle defensively.
-    return { ...root, state: 'active', props, ...(debug !== undefined ? { debug } : {}) }
-  }
-  return cloneWithUpsert(root, path, 0, props, debug)
-}
-
-function cloneWithUpsert(
-  node: ControllerNode,
-  path: readonly string[],
-  depth: number,
-  props: unknown,
-  debug: Record<string, unknown> | undefined,
-): ControllerNode {
-  if (depth === path.length) {
-    // Update props always; set debug only when the event carried it, so a
-    // re-construction without debug preserves any existing variables.
-    return { ...node, state: 'active', props, ...(debug !== undefined ? { debug } : {}) }
-  }
-  const segment = path[depth] as string
-  // Match by both segment AND depth: matching only by last segment aliases
-  // children whose paths happen to end in the same string but actually have
-  // different depths or different prefixes (e.g. a controller renamed mid-
-  // session, or a collection item whose path tail collides with an unrelated
-  // sibling at a different level). Comparing depth + segment uniquely
-  // identifies a direct child of this node.
-  const idx = node.children.findIndex(
-    (c) => c.path.length === depth + 1 && c.path[depth] === segment,
-  )
-  const childPath = path.slice(0, depth + 1)
-  if (idx === -1) {
-    const newChild = cloneWithUpsert(
-      { path: childPath, state: 'active', props: undefined, children: [] },
-      path,
-      depth + 1,
-      props,
-      debug,
-    )
-    return { ...node, children: [...node.children, newChild] }
-  }
-  const existing = node.children[idx]!
-  const updatedChild = cloneWithUpsert(existing, path, depth + 1, props, debug)
-  const nextChildren = node.children.slice()
-  nextChildren[idx] = updatedChild
-  return { ...node, children: nextChildren }
+  return updateAt(
+    root,
+    path,
+    0,
+    (node) => ({ ...node, state: 'active', props, ...(debug !== undefined ? { debug } : {}) }),
+    true,
+  ) as ControllerNode
 }
 
 /**
@@ -728,137 +948,50 @@ export function setNodeState(
   path: readonly string[],
   state: ControllerNode['state'],
 ): ControllerNode {
-  if (path.length === 0) {
-    return { ...root, state }
-  }
-  return setStateAt(root, path, 0, state) ?? root
-}
-
-function setStateAt(
-  node: ControllerNode,
-  path: readonly string[],
-  depth: number,
-  state: ControllerNode['state'],
-): ControllerNode | null {
-  if (depth === path.length) {
-    return { ...node, state }
-  }
-  const segment = path[depth] as string
-  // Same depth+segment match as `cloneWithUpsert`.
-  const idx = node.children.findIndex(
-    (c) => c.path.length === depth + 1 && c.path[depth] === segment,
-  )
-  if (idx === -1) return null
-  const existing = node.children[idx]!
-  const updatedChild = setStateAt(existing, path, depth + 1, state)
-  if (updatedChild === null) return null
-  const nextChildren = node.children.slice()
-  nextChildren[idx] = updatedChild
-  return { ...node, children: nextChildren }
+  return updateAt(root, path, 0, (node) => ({ ...node, state }), false) ?? root
 }
 
 /**
- * Set the `debug` variables record on the node at `path` (a post-construction
- * `ctx.debug(...)` update). Returns the tree unchanged if the node doesn't
- * exist (out-of-order delivery).
+ * Set the `debug` variables record on the node at `path`. Returns the tree
+ * unchanged if the node doesn't exist (out-of-order delivery).
  */
 export function setNodeDebug(
   root: ControllerNode,
   path: readonly string[],
   debug: Record<string, unknown>,
 ): ControllerNode {
-  if (path.length === 0) {
-    return { ...root, debug }
-  }
-  return setDebugAt(root, path, 0, debug) ?? root
-}
-
-function setDebugAt(
-  node: ControllerNode,
-  path: readonly string[],
-  depth: number,
-  debug: Record<string, unknown>,
-): ControllerNode | null {
-  if (depth === path.length) {
-    return { ...node, debug }
-  }
-  const segment = path[depth] as string
-  const idx = node.children.findIndex(
-    (c) => c.path.length === depth + 1 && c.path[depth] === segment,
-  )
-  if (idx === -1) return null
-  const existing = node.children[idx]!
-  const updatedChild = setDebugAt(existing, path, depth + 1, debug)
-  if (updatedChild === null) return null
-  const nextChildren = node.children.slice()
-  nextChildren[idx] = updatedChild
-  return { ...node, children: nextChildren }
-}
-
-/** Total disposed nodes in a subtree. */
-function countDisposed(node: ControllerNode): number {
-  let n = node.state === 'disposed' ? 1 : 0
-  for (const c of node.children) n += countDisposed(c)
-  return n
-}
-
-/** Total nodes in a subtree. */
-function countNodes(node: ControllerNode): number {
-  let n = 1
-  for (const c of node.children) n += countNodes(c)
-  return n
-}
-
-/** True iff `node` and every descendant is disposed. */
-function subtreeAllDisposed(node: ControllerNode): boolean {
-  return node.state === 'disposed' && node.children.every(subtreeAllDisposed)
+  return updateAt(root, path, 0, (node) => ({ ...node, debug }), false) ?? root
 }
 
 /**
- * Collect the roots of maximal fully-disposed subtrees, in depth-first
- * (construction) order. A fully-disposed subtree is pruned as a unit, so we
- * don't descend into one once found — and an active/suspended ancestor is
- * never a root, protecting live nodes.
+ * Path-copying update of the node at `path`. With `create`, missing nodes are
+ * made as active placeholders; without it, a missing node returns null.
  */
-function collectPrunableRoots(
-  node: ControllerNode,
-  out: { path: readonly string[]; size: number }[],
-): void {
-  if (subtreeAllDisposed(node)) {
-    out.push({ path: node.path, size: countNodes(node) })
-    return
-  }
-  for (const c of node.children) collectPrunableRoots(c, out)
-}
-
-/**
- * Remove the node at `path` (and its subtree) from the tree. Returns a NEW
- * tree object (immutable update); returns the input unchanged if the path
- * doesn't resolve or targets the virtual root (never removed).
- */
-export function removeNodeAt(root: ControllerNode, path: readonly string[]): ControllerNode {
-  if (path.length === 0) return root
-  return removeAt(root, path, 0) ?? root
-}
-
-function removeAt(
+function updateAt(
   node: ControllerNode,
   path: readonly string[],
   depth: number,
+  fn: (node: ControllerNode) => ControllerNode,
+  create: boolean,
 ): ControllerNode | null {
+  if (depth === path.length) return fn(node)
   const segment = path[depth] as string
+  // Match by both segment AND depth, so children whose paths end in the same
+  // string at different levels never alias.
   const idx = node.children.findIndex(
     (c) => c.path.length === depth + 1 && c.path[depth] === segment,
   )
-  if (idx === -1) return null
-  if (depth + 1 === path.length) {
-    const nextChildren = node.children.slice()
-    nextChildren.splice(idx, 1)
-    return { ...node, children: nextChildren }
+  if (idx === -1 && !create) return null
+  const child: ControllerNode = node.children[idx] ?? {
+    path: path.slice(0, depth + 1),
+    state: 'active',
+    props: undefined,
+    children: [],
   }
-  const updatedChild = removeAt(node.children[idx]!, path, depth + 1)
-  if (updatedChild === null) return null
-  const nextChildren = node.children.slice()
-  nextChildren[idx] = updatedChild
-  return { ...node, children: nextChildren }
+  const updated = updateAt(child, path, depth + 1, fn, create)
+  if (updated === null) return null
+  const children = node.children.slice()
+  if (idx === -1) children.push(updated)
+  else children[idx] = updated
+  return { ...node, children }
 }

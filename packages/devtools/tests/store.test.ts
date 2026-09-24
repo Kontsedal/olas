@@ -371,6 +371,7 @@ describe('DevtoolsStore unified timeline', () => {
 
 describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
   const entry = (over: Partial<DebugCacheEntry> = {}): DebugCacheEntry => ({
+    queryId: 'u',
     key: ['u', '1'],
     status: 'success',
     data: 1,
@@ -408,7 +409,13 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     })
     // A write to the already-cached key diffs against the seeded value, not
     // "initial" — the fetch that populated it happened before we subscribed.
-    handler?.({ type: 'cache:set-data', queryKey: ['1'], source: 'optimistic', data: { n: 2 } })
+    handler?.({
+      type: 'cache:set-data',
+      queryId: 'u',
+      queryKey: ['1'],
+      source: 'optimistic',
+      data: { n: 2 },
+    })
     const write = store.events$.peek().find((e) => e.event.type === 'cache:set-data')
     expect(write!.prev).toEqual({ n: 1 })
   })

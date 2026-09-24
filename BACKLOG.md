@@ -178,14 +178,27 @@ Keep this entry as a reference: future contributors will ask "why not Next?" and
 
 ## Devtools
 
-The flagship **devtools overhaul** (causal-timeline debugger) is partially landed: T8.1
-(event backbone — `seq`/`t`/`causeId`, `cache:set-data`, `snapshot:*`, ambient-cause
-threading, event-driven inspector) and T8.4 (the causal Timeline tab + structural diffs)
-shipped 2026-07-28. The remaining phases live in
-`.wiki/candidates/decisions/devtools-overhaul.md` (T8.2 virtualize + ring buffer, T8.3
-omnibox, T8.5 subscription/effect tracing, T8.6 live actions, T8.7 env sim + forms
-inspector, T8.8 plugin lanes, T8.9 session traces, T8.10 UX pass). The small T8.1
-leftovers below are terse enough to live here.
+The flagship **devtools overhaul** (causal-timeline debugger) has its foundation. T8.1
+(event backbone) and T8.4 (the causal Timeline tab and structural diffs) shipped
+2026-07-28. Phase 8A finished in 1.0: T8.2 (ring buffer, windowed lists, keyed tree),
+T8.3 (omnibox) and the lane half of T8.8. The design for what remains is
+`.wiki/decisions/devtools-overhaul.md`: T8.5 subscription and effect tracing, T8.6 live
+actions, T8.7 environment simulation and the forms inspector, the rest of T8.8, T8.9
+session traces and T8.10 UX pass. The small T8.1 leftovers below are terse enough to
+live here.
+
+### [idea] First-party plugins emit onto their devtools lane
+
+[from W15b] The panel shows a lane per plugin for events sent through `host.debug`.
+cross-tab, entities and mutation-queue send nothing there yet. Sent and received messages
+with peer ids, backprop fan-out, and replay attempts would each make a useful lane.
+
+### [idea] Graduate the `DebugEvent` contract to `SPEC.md`
+
+[from W15b] The devtools panel now depends on the event union's shape: `seq`, `t`,
+`causeId`, the `cache:*` and `snapshot:*` events, and plugin lanes. SPEC §14 still
+describes the bus loosely. Committing the union in the spec would let a browser extension
+build against it.
 
 ### [idea] Wire `cache:subscribed` / `cache:unsubscribed`
 

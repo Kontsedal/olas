@@ -242,6 +242,7 @@ describe('Fields log', () => {
 
 describe('Cache inspector', () => {
   const entry = (over: Partial<DebugCacheEntry>): DebugCacheEntry => ({
+    queryId: 'q',
     key: ['k'],
     status: 'success',
     data: undefined,

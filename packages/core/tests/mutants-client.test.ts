@@ -1055,6 +1055,7 @@ describe('devtools cache events', () => {
     await root.waitForIdle()
     expect(root.debug.queryEntries()).toEqual([
       {
+        queryId: 'mut-client/dt-snapshot',
         key: ['k'],
         status: 'success',
         data: 'v',

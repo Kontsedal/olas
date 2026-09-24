@@ -70,6 +70,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/engine-assurance.md](decisions/engine-assurance.md) — property models (fast-check), per-package coverage gates and the Stryker run; the 29 bugs they found before 1.0
 - [decisions/benchmarks.md](decisions/benchmarks.md) — how Olas is benchmarked against raw preact signals, MobX and TanStack Query core, the 1.0 results, and the two teardown costs they exposed
 - [decisions/trust-model.md](decisions/trust-model.md) — what Olas trusts and checks, and the 1.0 security pass: findings by severity, fixes and tests (SPEC §22)
+- [decisions/devtools-overhaul.md](decisions/devtools-overhaul.md) — the devtools overhaul; 8A landed (ring buffer, windowed lists, keyed tree, omnibox, plugin lanes); 8B–8D open
 - [decisions/esm-only-build.md](decisions/esm-only-build.md) — why every package ships ESM only on Node >= 20.19, and the dist checks: types, tree-shaking, size
 - [decisions/forms-are-read-signals.md](decisions/forms-are-read-signals.md) — why `Form` and `FieldArray` are `ReadSignal`s of their value, like `Field`, and why `submit` resolves a union
 - [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`
@@ -100,4 +101,3 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 Speculative and unbuilt — excluded from authoritative queries. New low-evidence inferences go into `candidates/<type>/`.
 
 - [candidates/backlog.md](candidates/backlog.md) — staging backlog of substantial forward-looking **proposals** (rich design candidates); complements the terse repo-root `BACKLOG.md`
-- [candidates/decisions/devtools-overhaul.md](candidates/decisions/devtools-overhaul.md) — proposed devtools overhaul (causal-timeline debugger); rescued from the transient remediation plan

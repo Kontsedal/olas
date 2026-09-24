@@ -1125,6 +1125,7 @@ export class QueryClient implements PluginEngine {
     for (const map of this.maps.values()) {
       for (const ce of map.values()) {
         out.push({
+          queryId: ce.query.__id,
           key: ce.keyArgs as readonly unknown[],
           status: ce.entry.status.peek(),
           data: ce.entry.data.peek(),
@@ -1139,6 +1140,7 @@ export class QueryClient implements PluginEngine {
     for (const map of this.infiniteMaps.values()) {
       for (const ce of map.values()) {
         out.push({
+          queryId: ce.query.__id,
           key: ce.keyArgs as readonly unknown[],
           status: ce.entry.status.peek(),
           // Infinite entries carry an array of pages; expose them verbatim.

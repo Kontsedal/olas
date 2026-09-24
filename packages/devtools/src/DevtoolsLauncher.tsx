@@ -23,6 +23,8 @@ export type DevtoolsLauncherProps = {
   defaultTab?: DevtoolsTab
   /** Cap on each event log. */
   maxEntries?: number
+  /** Capacity of the timeline's ring buffer. Default 10,000. */
+  maxTimelineEntries?: number
   /** Persist tab+filter state under this key (independent of window state). */
   urlHashKey?: string
   /** localStorage key for window state (position/size/open/minimized). */
@@ -92,6 +94,7 @@ export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
                 root={props.root}
                 defaultTab={props.defaultTab}
                 maxEntries={props.maxEntries}
+                maxTimelineEntries={props.maxTimelineEntries}
                 urlHashKey={props.urlHashKey}
               />
             </div>

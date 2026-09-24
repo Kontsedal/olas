@@ -4,7 +4,6 @@ import {
   type ControllerNode,
   DevtoolsStore,
   insertNode,
-  removeNodeAt,
   setNodeDebug,
   setNodeState,
 } from '../src/store'
@@ -291,15 +290,5 @@ describe('tree helpers — empty paths and missing nodes', () => {
   test('setNodeState on a missing grandchild leaves the tree unchanged', () => {
     const tree = insertNode(emptyRoot(), ['root'], undefined)
     expect(setNodeState(tree, ['root', 'ghost'], 'disposed')).toBe(tree)
-  })
-
-  test('removeNodeAt removes a nested node and ignores unresolved paths', () => {
-    const tree = insertNode(insertNode(emptyRoot(), ['root', 'a'], 1), ['root', 'b'], 2)
-    expect(removeNodeAt(tree, [])).toBe(tree) // the virtual root is never removed
-    expect(removeNodeAt(tree, ['nope'])).toBe(tree)
-    expect(removeNodeAt(tree, ['root', 'nope', 'deeper'])).toBe(tree)
-    const next = removeNodeAt(tree, ['root', 'a'])
-    expect(next.children[0]?.children.map((c) => c.path[1])).toEqual(['b'])
-    expect(tree.children[0]?.children).toHaveLength(2) // immutable update
   })
 })

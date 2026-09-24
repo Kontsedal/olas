@@ -1,9 +1,20 @@
 import type { DebugCacheEntry, DebugEvent, ReadSignal, Root } from '@kontsedal/olas-core'
 import { useValue } from '@kontsedal/olas-react'
-import { type ReactElement, useEffect, useMemo, useState } from 'react'
+import {
+  type KeyboardEvent,
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { type Diff, diffValues, hasChange } from './diff'
+import { badgeLabel, eventPayload, eventTarget, laneOf, timelineKindClass } from './events'
 import { formatPath, formatTime } from './format'
 import { JsonView } from './JsonView'
+import { Omnibox } from './Omnibox'
+import type { SearchHit } from './search'
 import {
   type CacheEntry,
   type ControllerNode,
@@ -13,8 +24,28 @@ import {
   type TimelineEvent,
 } from './store'
 import { DEVTOOLS_CSS } from './styles'
+import {
+  ancestorKeys,
+  entryKey,
+  isSignalLike,
+  pathKey,
+  type SignalLike,
+  toSearchText,
+} from './util'
+import { type Toggles, useToggles, VirtualList } from './virtual'
 
 export type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
+
+/** Each tab: its id, its label, and the short label a narrow panel shows. */
+const TAB_LABELS: ReadonlyArray<readonly [DevtoolsTab, string, string]> = [
+  ['timeline', 'Timeline', 'Time'],
+  ['tree', 'Tree', 'Tree'],
+  ['cache', 'Cache', 'Cache'],
+  ['inspector', 'Inspector', 'Insp'],
+  ['mutations', 'Mutations', 'Mut'],
+  ['fields', 'Fields', 'Fld'],
+]
+const TABS: readonly DevtoolsTab[] = TAB_LABELS.map(([name]) => name)
 
 export type DevtoolsPanelProps = {
   /** The root to inspect. The panel subscribes to `root.debug` on mount. */
@@ -23,6 +54,8 @@ export type DevtoolsPanelProps = {
   defaultTab?: DevtoolsTab
   /** Cap on each event log. Default: 100. */
   maxEntries?: number
+  /** Capacity of the timeline's ring buffer. Default: 10,000. */
+  maxTimelineEntries?: number
   /**
    * Persist filter state to the URL hash under this key. When set,
    * reloading the page restores filter + tab. Default: no persistence.
@@ -36,34 +69,39 @@ export type DevtoolsPanelProps = {
   inspectorPollMs?: number
 }
 
+/** A search jump: the row to scroll to and highlight. `nonce` makes a repeat jump fire again. */
+type Focus = { tab: DevtoolsTab; key: string; nonce: number }
+
 /**
  * Drop-in devtools panel for an Olas root.
  *
  * Features:
- *  - **Tree** populated from the snapshot replay on mount (no lost events).
- *  - **Cache / Mutations / Fields** event logs in reverse chronological order.
+ *  - **Omnibox** (`/` to focus) — one search over controllers, queries,
+ *    mutations, form fields and payloads; Enter jumps to the match.
+ *  - **Timeline** — every event in a ring buffer, grouped by cause, with one
+ *    lane per plugin that can be shown or hidden.
+ *  - **Tree / Cache / Inspector / Mutations / Fields** — each a windowed list
+ *    that mounts only the rows in view.
  *  - **Filter** field per tab — text-matches kind, path, name, payload.
  *  - **Pause** toggle freezes the log without stopping ingestion.
- *  - **Click a row** to expand its payload from a truncated preview to the full
- *    JSON.
- *  - **Mutation durations** — `run → success/error` pairing surfaces elapsed ms.
  *
  * Styled inline (no CSS import needed) and scoped to the `.olas-devtools-*`
  * class prefix. Hosts override the palette via `--olas-*` custom properties.
  * Spec §13.
  */
 export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
-  const { root, defaultTab = 'timeline', maxEntries, urlHashKey } = props
+  const { root, defaultTab = 'timeline', maxEntries, maxTimelineEntries, urlHashKey } = props
   const store = useMemo(
     () =>
       new DevtoolsStore({
         ...(maxEntries !== undefined ? { maxEntries } : {}),
+        ...(maxTimelineEntries !== undefined ? { maxTimelineEntries } : {}),
         // Live panel — rAF-coalesce so a burst of N events flushes in one
         // React render per frame, not N. Tests construct DevtoolsStore
         // directly without this option and stay synchronous.
         coalesce: 'raf',
       }),
-    [maxEntries],
+    [maxEntries, maxTimelineEntries],
   )
   useEffect(() => store.attach(root), [root, store])
 
@@ -76,11 +114,10 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const filter = filters[tab]
   const setFilter = (q: string) => setFilters((prev) => ({ ...prev, [tab]: q }))
 
-  // The input stays responsive (`value={filter}`), but the expensive filtering
-  // (a JSON.stringify per entry) runs against a DEBOUNCED value so typing
-  // doesn't re-filter the whole log on every keystroke (T6.3).
-  // Keyed by tab: switching tabs applies that tab's own stored filter at once,
-  // and only typing waits out the debounce.
+  // The input stays responsive (`value={filter}`), but filtering runs against a
+  // DEBOUNCED value so typing doesn't re-filter the whole log on every
+  // keystroke (T6.3). Keyed by tab: switching tabs applies that tab's own
+  // stored filter at once, and only typing waits out the debounce.
   const [debounced, setDebounced] = useState({ tab, value: filter })
   useEffect(() => {
     const id = setTimeout(() => setDebounced({ tab, value: filter }), 150)
@@ -99,6 +136,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const liveMutations = useValue(store.mutations$)
   const liveFields = useValue(store.fields$)
   const liveEvents = useValue(store.events$)
+  const dropped = useValue(store.droppedEvents$)
   // The cache inspector is event-driven: the store seeds this from
   // `root.debug.queryEntries()` on attach and refreshes it whenever a cache
   // event lands — no polling interval (the old 800ms poll is gone).
@@ -127,7 +165,6 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
       setFrozen(null)
     }
     // We only re-snapshot when the toggle flips, not on every event.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paused])
 
   const tree = frozen?.tree ?? liveTree
@@ -137,58 +174,71 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const events = frozen?.events ?? liveEvents
   const cacheState = frozen?.cacheState ?? liveCacheState
 
+  // Lanes are hidden panel-wide, so a hidden plugin stays hidden across tabs.
+  const [hiddenLanes, setHiddenLanes] = useState<ReadonlySet<string>>(() => new Set())
+  const toggleLane = (lane: string): void =>
+    setHiddenLanes((prev) => {
+      const next = new Set(prev)
+      if (!next.delete(lane)) next.add(lane)
+      return next
+    })
+
+  // ---- omnibox + jump ------------------------------------------------------
+  const omnibox = useRef<HTMLInputElement>(null)
+  const [focus, setFocus] = useState<Focus | null>(null)
+  const search = useCallback((q: string) => store.search(q), [store])
+  const dataRev = useMemo(() => ({}), [liveTree, liveEvents, liveCacheState])
+  const jump = (hit: SearchHit): void => {
+    setTab(hit.tab)
+    // A filter or a hidden lane on the target tab could hide the match.
+    setFilters((prev) => (prev[hit.tab] === '' ? prev : { ...prev, [hit.tab]: '' }))
+    setDebounced({ tab: hit.tab, value: '' })
+    const lane = hit.lane
+    if (lane !== undefined) {
+      setHiddenLanes((prev) => {
+        if (!prev.has(lane)) return prev
+        const next = new Set(prev)
+        next.delete(lane)
+        return next
+      })
+    }
+    setFocus((f) => ({ tab: hit.tab, key: hit.key, nonce: (f?.nonce ?? 0) + 1 }))
+  }
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return
+    // A `/` typed into a field is text, not a shortcut.
+    if ((e.target as HTMLElement).closest('input, textarea, select, [contenteditable="true"]')) {
+      return
+    }
+    e.preventDefault()
+    omnibox.current?.focus()
+  }
+  const focusFor = (t: DevtoolsTab): Focus | undefined => (focus?.tab === t ? focus : undefined)
+  const counts: Record<DevtoolsTab, number> = {
+    timeline: liveEvents.length,
+    tree: countLiveControllers(liveTree),
+    cache: liveCache.length,
+    inspector: liveCacheState.length,
+    mutations: liveMutations.length,
+    fields: liveFields.length,
+  }
+
   return (
-    <div className="olas-devtools" data-testid="olas-devtools">
+    <div className="olas-devtools" data-testid="olas-devtools" tabIndex={-1} onKeyDown={onKeyDown}>
       <style>{DEVTOOLS_CSS}</style>
+      <Omnibox search={search} onPick={jump} rev={dataRev} inputRef={omnibox} />
       <div className="olas-devtools-tabs" role="tablist">
-        <Tab
-          name="timeline"
-          current={tab}
-          setTab={setTab}
-          label="Timeline"
-          short="Time"
-          count={liveEvents.length}
-        />
-        <Tab
-          name="tree"
-          current={tab}
-          setTab={setTab}
-          label="Tree"
-          short="Tree"
-          count={countLiveControllers(liveTree)}
-        />
-        <Tab
-          name="cache"
-          current={tab}
-          setTab={setTab}
-          label="Cache"
-          short="Cache"
-          count={liveCache.length}
-        />
-        <Tab
-          name="inspector"
-          current={tab}
-          setTab={setTab}
-          label="Inspector"
-          short="Insp"
-          count={liveCacheState.length}
-        />
-        <Tab
-          name="mutations"
-          current={tab}
-          setTab={setTab}
-          label="Mutations"
-          short="Mut"
-          count={liveMutations.length}
-        />
-        <Tab
-          name="fields"
-          current={tab}
-          setTab={setTab}
-          label="Fields"
-          short="Fld"
-          count={liveFields.length}
-        />
+        {TAB_LABELS.map(([name, label, short]) => (
+          <Tab
+            key={name}
+            name={name}
+            current={tab}
+            setTab={setTab}
+            label={label}
+            short={short}
+            count={counts[name]}
+          />
+        ))}
         <button
           type="button"
           aria-pressed={paused}
@@ -229,10 +279,28 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
       )}
 
       <div className="olas-devtools-body" role="tabpanel">
-        {tab === 'timeline' && <TimelineView events={events} filter={debouncedFilter} />}
-        {tab === 'tree' && <TreeView tree={tree} mutations={liveMutations} />}
+        {tab === 'timeline' && (
+          <TimelineView
+            events={events}
+            filter={debouncedFilter}
+            hidden={hiddenLanes}
+            onToggleLane={toggleLane}
+            dropped={dropped}
+            capacity={store.maxTimelineEntries}
+            focus={focusFor('timeline')}
+          />
+        )}
+        {tab === 'tree' && (
+          <TreeView tree={tree} mutations={liveMutations} focus={focusFor('tree')} />
+        )}
         {tab === 'cache' && <CacheView entries={cache} filter={debouncedFilter} />}
-        {tab === 'inspector' && <InspectorView entries={cacheState} filter={debouncedFilter} />}
+        {tab === 'inspector' && (
+          <InspectorView
+            entries={cacheState}
+            filter={debouncedFilter}
+            focus={focusFor('inspector')}
+          />
+        )}
         {tab === 'mutations' && <MutationsView entries={mutations} filter={debouncedFilter} />}
         {tab === 'fields' && <FieldsView entries={fields} filter={debouncedFilter} />}
       </div>
@@ -284,31 +352,96 @@ function countLiveControllers(tree: ControllerNode): number {
 }
 
 // ===========================================================================
-// Tree
+// Tree — flattened to one row per visible node, then windowed
 // ===========================================================================
+
+type TreeRow = { node: ControllerNode; key: string; depth: number }
+
+/** Depth-first rows, skipping the children of collapsed nodes. */
+function flattenTree(tree: ControllerNode, collapsed: ReadonlySet<string>): TreeRow[] {
+  const out: TreeRow[] = []
+  const walk = (node: ControllerNode, depth: number): void => {
+    for (const c of node.children) {
+      const key = pathKey(c.path)
+      out.push({ node: c, key, depth })
+      if (!collapsed.has(key)) walk(c, depth + 1)
+    }
+  }
+  walk(tree, 0)
+  return out
+}
 
 function TreeView({
   tree,
   mutations,
+  focus,
 }: {
   tree: ControllerNode
   mutations: MutationEntry[]
+  focus: Focus | undefined
 }): ReactElement {
   // Roll up pending-mutation counts per controller path. A "pending" mutation
   // is one whose last entry is `run` with no matching success/error for the
-  // same (path, name). Computed unconditionally — must run before any early
-  // return so hook-order is stable across renders (rules of hooks).
+  // same (path, name).
   const pending = useMemo(() => rollupPending(mutations), [mutations])
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set())
+  const toggles = useToggles()
+  const rows = useMemo(() => flattenTree(tree, collapsed), [tree, collapsed])
+  // A jump into a collapsed subtree opens the target's ancestors.
+  useEffect(() => {
+    if (focus === undefined) return
+    const up = ancestorKeys(focus.key)
+    setCollapsed((c) =>
+      up.some((k) => c.has(k)) ? new Set([...c].filter((k) => !up.includes(k))) : c,
+    )
+  }, [focus?.nonce])
   if (tree.children.length === 0) {
     return <Empty title="No controllers yet" hint="The root hasn't constructed any controllers." />
   }
+  const collapse = (key: string): void =>
+    setCollapsed((c) => {
+      const next = new Set(c)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  const focusIndex = focus === undefined ? -1 : rows.findIndex((r) => r.key === focus.key)
   return (
-    <div className="olas-devtools-tree">
-      {tree.children.map((child) => (
-        <TreeNode key={child.path.join('/')} node={child} pending={pending} />
-      ))}
-    </div>
+    <VirtualList
+      count={rows.length}
+      getKey={(i) => (rows[i] as TreeRow).key}
+      estimate={(i) => treeRowEstimate(rows[i] as TreeRow, toggles)}
+      renderRow={(i) => {
+        const row = rows[i] as TreeRow
+        return (
+          <TreeItem
+            row={row}
+            pending={pending.get(row.node.path.join('>')) ?? 0}
+            collapsed={collapsed.has(row.key)}
+            onCollapse={() => collapse(row.key)}
+            varsOpen={toggles.is(`v${row.key}`, true)}
+            onVars={() => toggles.toggle(`v${row.key}`, true)}
+            propsOpen={toggles.is(`p${row.key}`, false)}
+            onProps={() => toggles.toggle(`p${row.key}`, false)}
+            hit={focus?.key === row.key}
+          />
+        )
+      }}
+      role="tree"
+      label="Controller tree"
+      className="olas-devtools-tree"
+      pad={10}
+      scrollToIndex={focusIndex}
+      scrollNonce={focus?.nonce}
+    />
   )
+}
+
+function treeRowEstimate(row: TreeRow, toggles: Toggles): number {
+  const vars = row.node.debug ? Object.keys(row.node.debug).length : 0
+  let h = 24
+  if (vars > 0 && toggles.is(`v${row.key}`, true)) h += 24 + vars * 19
+  if (toggles.is(`p${row.key}`, false)) h += 40
+  return h
 }
 
 function rollupPending(entries: readonly MutationEntry[]): Map<string, number> {
@@ -334,102 +467,120 @@ function rollupPending(entries: readonly MutationEntry[]): Map<string, number> {
   return out
 }
 
-function TreeNode({
-  node,
-  pending,
-}: {
-  node: ControllerNode
-  pending: Map<string, number>
+function TreeItem(props: {
+  row: TreeRow
+  pending: number
+  collapsed: boolean
+  onCollapse: () => void
+  varsOpen: boolean
+  onVars: () => void
+  propsOpen: boolean
+  onProps: () => void
+  hit: boolean
 }): ReactElement {
+  const { row, pending, varsOpen, propsOpen, hit } = props
+  const { node, depth } = row
   const name = node.path[node.path.length - 1] ?? '?'
-  const stateClass =
-    node.state === 'suspended'
-      ? 'olas-devtools-tree-state-suspended'
-      : node.state === 'disposed'
-        ? 'olas-devtools-tree-state-disposed'
-        : 'olas-devtools-tree-state-active'
-  const pendingCount = pending.get(node.path.join('>')) ?? 0
+  const disposed = node.state === 'disposed'
+  const hasChildren = node.children.length > 0
   const propsPreview = useMemo(() => summarizeProps(node.props), [node.props])
-  const [propsOpen, setPropsOpen] = useState(false)
   const canExpandProps = node.props !== undefined && node.props !== null
   const debugKeys = node.debug ? Object.keys(node.debug) : []
-  // Variables (ctx.debug) are the point of this view — open by default.
-  const [varsOpen, setVarsOpen] = useState(true)
-
+  const indents: ReactElement[] = []
+  for (let i = 0; i < depth; i++) {
+    indents.push(<span key={i} className="olas-devtools-tree-indent" aria-hidden="true" />)
+  }
+  let cls = 'olas-devtools-tree-item'
+  if (disposed) cls += ' olas-devtools-tree-item-disposed'
+  if (hit) cls += ' olas-devtools-hit'
   return (
-    <div className="olas-devtools-tree-node">
-      <span className="olas-devtools-tree-row">
-        <span className="olas-devtools-tree-name">{name}</span>
-        <span className={stateClass}>{node.state}</span>
-        {pendingCount > 0 && (
-          <span className="olas-devtools-tree-pending" title="pending mutations on this controller">
-            {pendingCount} pending
+    <div
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-expanded={hasChildren ? !props.collapsed : undefined}
+      aria-selected={hit}
+      className={cls}
+    >
+      {indents}
+      <div className="olas-devtools-tree-content">
+        <span className="olas-devtools-tree-row">
+          {hasChildren ? (
+            <button
+              type="button"
+              className="olas-devtools-tree-toggle"
+              aria-label={`${props.collapsed ? 'Expand' : 'Collapse'} ${name}`}
+              onClick={props.onCollapse}
+            >
+              <span
+                aria-hidden="true"
+                className={`olas-devtools-chevron${props.collapsed ? '' : ' olas-devtools-chevron-open'}`}
+              >
+                ›
+              </span>
+            </button>
+          ) : (
+            <span className="olas-devtools-tree-leaf" aria-hidden="true" />
+          )}
+          <span className="olas-devtools-tree-name">{name}</span>
+          <span
+            className={`olas-devtools-tree-state-${node.state}`}
+            title={
+              node.disposedAt !== undefined
+                ? `Disposed at ${formatTime(node.disposedAt)}; values frozen then`
+                : undefined
+            }
+          >
+            {node.state}
           </span>
+          {pending > 0 && (
+            <span
+              className="olas-devtools-tree-pending"
+              title="pending mutations on this controller"
+            >
+              {pending} pending
+            </span>
+          )}
+          {debugKeys.length > 0 && (
+            <button
+              type="button"
+              className="olas-devtools-tree-vars-toggle"
+              aria-expanded={varsOpen}
+              onClick={props.onVars}
+              title={varsOpen ? 'Hide variables' : 'Show variables'}
+            >
+              {debugKeys.length} var{debugKeys.length === 1 ? '' : 's'}
+            </button>
+          )}
+          {canExpandProps && (
+            <button
+              type="button"
+              className="olas-devtools-tree-props-toggle"
+              aria-expanded={propsOpen}
+              onClick={props.onProps}
+              title={propsOpen ? 'Hide props' : 'Show full props'}
+            >
+              {propsPreview}
+            </button>
+          )}
+        </span>
+        {varsOpen && node.debug && debugKeys.length > 0 && (
+          <div className="olas-devtools-tree-vars">
+            {debugKeys.map((k) => (
+              <DebugVar key={k} name={k} value={(node.debug as Record<string, unknown>)[k]} />
+            ))}
+          </div>
         )}
-        {debugKeys.length > 0 && (
-          <button
-            type="button"
-            className="olas-devtools-tree-vars-toggle"
-            aria-expanded={varsOpen}
-            onClick={() => setVarsOpen((v) => !v)}
-            title={varsOpen ? 'Hide variables' : 'Show variables'}
-          >
-            {debugKeys.length} var{debugKeys.length === 1 ? '' : 's'}
-          </button>
+        {propsOpen && canExpandProps && (
+          <div className="olas-devtools-tree-props">
+            <JsonView value={node.props} />
+          </div>
         )}
-        {canExpandProps && (
-          <button
-            type="button"
-            className="olas-devtools-tree-props-toggle"
-            aria-expanded={propsOpen}
-            onClick={() => setPropsOpen((v) => !v)}
-            title={propsOpen ? 'Hide props' : 'Show full props'}
-          >
-            {propsPreview}
-          </button>
-        )}
-      </span>
-      {varsOpen && node.debug && debugKeys.length > 0 && (
-        <div className="olas-devtools-tree-vars">
-          {debugKeys.map((k) => (
-            <DebugVar key={k} name={k} value={(node.debug as Record<string, unknown>)[k]} />
-          ))}
-        </div>
-      )}
-      {propsOpen && canExpandProps && (
-        <div className="olas-devtools-tree-props">
-          <JsonView value={node.props} />
-        </div>
-      )}
-      {node.children.length > 0 && (
-        <div className="olas-devtools-tree-children">
-          {node.children.map((child) => (
-            <TreeNode key={child.path.join('/')} node={child} pending={pending} />
-          ))}
-        </div>
-      )}
+      </div>
     </div>
   )
 }
 
 // ---- ctx.debug variables (reactive) ----
-
-/** A signal-like value: what `use()` needs to read + subscribe reactively. */
-type SignalLike = { peek(): unknown; subscribeChanges(cb: () => void): () => void }
-
-/**
- * Duck-type a `ReadSignal` (signal / computed / field / readOnly view) — core
- * exports no runtime guard, and this avoids importing internals. Matches the
- * surface `use()` actually uses (`peek` + `subscribeChanges`).
- */
-function isSignalLike(v: unknown): v is SignalLike {
-  return (
-    typeof v === 'object' &&
-    v !== null &&
-    typeof (v as { peek?: unknown }).peek === 'function' &&
-    typeof (v as { subscribeChanges?: unknown }).subscribeChanges === 'function'
-  )
-}
 
 /** One `ctx.debug({...})` variable row: `name: value` (reactive if a signal). */
 function DebugVar({ name, value }: { name: string; value: unknown }): ReactElement {
@@ -494,124 +645,175 @@ function truncate(s: string, max: number): string {
 }
 
 // ===========================================================================
-// Cache Inspector — live state, not history
-// ===========================================================================
-
-function InspectorView({
-  entries,
-  filter,
-}: {
-  entries: DebugCacheEntry[]
-  filter: string
-}): ReactElement {
-  const filtered = useFiltered(entries, filter, inspectorHaystack)
-  if (entries.length === 0) {
-    return (
-      <Empty
-        title="No cache entries"
-        hint="Subscribe to a query somewhere in the tree to see its data."
-      />
-    )
-  }
-  if (filtered.length === 0) {
-    return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
-  }
-  return (
-    <ul className="olas-devtools-list">
-      {filtered.map((entry) => (
-        <InspectorRow key={entry.key.join('|')} entry={entry} />
-      ))}
-    </ul>
-  )
-}
-
-function inspectorHaystack(e: DebugCacheEntry): string {
-  return [...e.key.map(String), e.status, safeStringify(e.data)].join(' ')
-}
-
-function InspectorRow({ entry }: { entry: DebugCacheEntry }): ReactElement {
-  const kindClass =
-    entry.status === 'error'
-      ? 'olas-devtools-kind-error'
-      : entry.status === 'success'
-        ? 'olas-devtools-kind-success'
-        : entry.status === 'pending'
-          ? 'olas-devtools-kind-warn'
-          : ''
-  const ageMs = entry.lastUpdatedAt != null ? Date.now() - entry.lastUpdatedAt : null
-  const tags: string[] = []
-  if (entry.isStale) tags.push('stale')
-  if (entry.isFetching) tags.push('fetching')
-  if (entry.hasPendingMutations) tags.push('optimistic')
-  return (
-    <Row
-      kind={entry.status}
-      kindClass={kindClass}
-      target={formatPath(entry.key)}
-      t={entry.lastUpdatedAt ?? Date.now()}
-      payload={entry.error ?? entry.data}
-      suffix={[ageMs != null ? `${formatAge(ageMs)} ago` : '—', ...tags].join(' · ')}
-    />
-  )
-}
-
-function safeStringify(v: unknown): string {
-  try {
-    return JSON.stringify(v) ?? ''
-  } catch {
-    return String(v)
-  }
-}
-
-function formatAge(ms: number): string {
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`
-  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`
-  return `${Math.round(ms / 3_600_000)}h`
-}
-
-// ===========================================================================
 // Timeline — unified, causally-grouped event stream (the headline view)
 // ===========================================================================
+
+/** Events an open cause-group mounts at a time; "Show more" adds another page. */
+const GROUP_PAGE = 100
 
 type TimelineRow =
   | { kind: 'single'; event: TimelineEvent }
   | { kind: 'group'; causeId: string; events: TimelineEvent[] }
 
-function TimelineView({
-  events,
-  filter,
-}: {
-  events: TimelineEvent[]
+const rowKey = (row: TimelineRow): string =>
+  row.kind === 'single' ? `e${row.event.id}` : `g${row.causeId}`
+const rowHas = (row: TimelineRow, key: string): boolean =>
+  row.kind === 'single' ? `e${row.event.id}` === key : row.events.some((e) => `e${e.id}` === key)
+const laneLabel = (lane: string): string => (lane === 'core' ? 'core' : lane.slice(7))
+
+function TimelineView(props: {
+  events: readonly TimelineEvent[]
   filter: string
+  hidden: ReadonlySet<string>
+  onToggleLane: (lane: string) => void
+  dropped: number
+  capacity: number
+  focus: Focus | undefined
 }): ReactElement {
-  const filtered = useFiltered(events, filter, timelineHaystack)
-  const rows = useMemo(() => groupByCause(filtered), [filtered])
+  const { events, filter, hidden, focus } = props
+  const lanes = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const e of events) {
+      const lane = laneOf(e.event)
+      m.set(lane, (m.get(lane) ?? 0) + 1)
+    }
+    return m
+  }, [events])
+  const visible = useMemo(
+    () => (hidden.size === 0 ? events : events.filter((e) => !hidden.has(laneOf(e.event)))),
+    [events, hidden],
+  )
+  const filtered = useFiltered(visible, filter, timelineHaystack)
+  // Newest activity on top; within a cause-group the chain stays chronological
+  // (top-to-bottom) so the cause → effect story reads in order.
+  const rows = useMemo(() => groupByCause(filtered).reverse(), [filtered])
+  const toggles = useToggles()
+  const [limits, setLimits] = useState<ReadonlyMap<string, number>>(() => new Map())
+  // A group's default open state is decided when the panel first sees it, so a
+  // chain that grows past the threshold while you watch doesn't snap shut.
+  const firstOpen = useRef(new Map<string, boolean>())
+  const isOpen = (row: Extract<TimelineRow, { kind: 'group' }>): boolean => {
+    let dflt = firstOpen.current.get(row.causeId)
+    if (dflt === undefined) {
+      dflt = row.events.length <= 12
+      firstOpen.current.set(row.causeId, dflt)
+    }
+    return toggles.is(`g${row.causeId}`, dflt)
+  }
+  const limitOf = (causeId: string): number => limits.get(causeId) ?? GROUP_PAGE
+  const focusIndex = focus === undefined ? -1 : rows.findIndex((r) => rowHas(r, focus.key))
+  // A jump into a group opens it and pages far enough to mount the target.
+  useEffect(() => {
+    const row = rows[focusIndex]
+    if (focus === undefined || row === undefined || row.kind !== 'group') return
+    toggles.set(`g${row.causeId}`, true)
+    const at = row.events.findIndex((e) => `e${e.id}` === focus.key)
+    if (at >= limitOf(row.causeId)) setLimits((m) => new Map(m).set(row.causeId, at + 1))
+  }, [focus?.nonce, focusIndex >= 0])
+
+  const pluginLanes = lanes.size - (lanes.has('core') ? 1 : 0)
+  const toolbar =
+    pluginLanes > 0 || props.dropped > 0 ? (
+      <div className="olas-devtools-tl-toolbar">
+        {pluginLanes > 0 && (
+          <div className="olas-devtools-lanes" role="group" aria-label="Lanes">
+            {[...lanes].map(([lane, n]) => {
+              const label = laneLabel(lane)
+              const shown = !hidden.has(lane)
+              return (
+                <button
+                  key={lane}
+                  type="button"
+                  className="olas-devtools-lane"
+                  aria-pressed={shown}
+                  title={`${shown ? 'Hide' : 'Show'} ${label} events`}
+                  onClick={() => props.onToggleLane(lane)}
+                >
+                  {label} <span className="olas-devtools-lane-count">{n}</span>
+                </button>
+              )
+            })}
+          </div>
+        )}
+        {props.dropped > 0 && (
+          <span
+            className="olas-devtools-dropped"
+            title={`The timeline keeps the newest ${props.capacity} events. Clear resets the count.`}
+          >
+            {props.dropped} older dropped
+          </span>
+        )}
+      </div>
+    ) : null
+
+  let content: ReactElement
   if (events.length === 0) {
-    return (
+    content = (
       <Empty
         title="No events yet"
         hint="Interact with the app — mutations, fetches, cache writes and lifecycle events stream here, grouped by cause."
       />
     )
+  } else if (rows.length === 0) {
+    content =
+      filter.trim() !== '' ? (
+        <NoMatches filter={filter} />
+      ) : (
+        <Empty title="Every lane is hidden" hint="Show a lane above to see its events." />
+      )
+  } else {
+    content = (
+      <VirtualList
+        count={rows.length}
+        getKey={(i) => rowKey(rows[i] as TimelineRow)}
+        estimate={(i) => {
+          const row = rows[i] as TimelineRow
+          if (row.kind === 'single') return 31
+          if (!isOpen(row)) return 44
+          const shown = Math.min(row.events.length, limitOf(row.causeId))
+          return 44 + shown * 31 + (row.events.length > shown ? 30 : 0)
+        }}
+        renderRow={(i) => {
+          const row = rows[i] as TimelineRow
+          if (row.kind === 'single') {
+            const key = `e${row.event.id}`
+            return (
+              <TimelineEventRow
+                entry={row.event}
+                expanded={toggles.is(key, false)}
+                onToggle={() => toggles.toggle(key, false)}
+                hit={focus?.key === key}
+              />
+            )
+          }
+          const open = isOpen(row)
+          return (
+            <CauseGroup
+              events={row.events}
+              open={open}
+              onToggle={() => toggles.set(`g${row.causeId}`, !open)}
+              limit={limitOf(row.causeId)}
+              onMore={() =>
+                setLimits((m) => new Map(m).set(row.causeId, limitOf(row.causeId) + GROUP_PAGE))
+              }
+              toggles={toggles}
+              focusKey={focus?.key}
+            />
+          )
+        }}
+        label="Timeline"
+        className="olas-devtools-timeline"
+        pad={6}
+        scrollToIndex={focusIndex}
+        scrollNonce={focus?.nonce}
+      />
+    )
   }
-  if (rows.length === 0) {
-    return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
-  }
-  // Newest activity on top; within a cause-group the chain stays chronological
-  // (top-to-bottom) so the cause → effect story reads in order.
   return (
-    <div className="olas-devtools-timeline">
-      {[...rows]
-        .reverse()
-        .map((row) =>
-          row.kind === 'single' ? (
-            <TimelineEventRow key={row.event.id} entry={row.event} />
-          ) : (
-            <CauseGroup key={row.causeId} events={row.events} />
-          ),
-        )}
-    </div>
+    <>
+      {toolbar}
+      {content}
+    </>
   )
 }
 
@@ -646,24 +848,33 @@ function timelineHaystack(e: TimelineEvent): string {
   if (e.causeId !== undefined) parts.push(e.causeId)
   // `cache:set-data` carries its payload in `data` (not via `eventPayload`,
   // which returns undefined for it) — include source + data so the filter can
-  // match a write by its content or `fetch`/`mutate`/`set`/`remote` source.
-  if (ev.type === 'cache:set-data') parts.push(ev.source, safeStringify(ev.data))
+  // match a write by its content or by its source.
+  if (ev.type === 'cache:set-data') parts.push(ev.source, toSearchText(ev.data))
+  if (ev.type === 'plugin:event') parts.push(ev.plugin)
   const payload = eventPayload(ev)
-  if (payload !== undefined) parts.push(safeStringify(payload))
+  if (payload !== undefined) parts.push(toSearchText(payload))
   return parts.join(' ')
 }
 
-function CauseGroup({ events }: { events: TimelineEvent[] }): ReactElement {
-  const [open, setOpen] = useState(events.length <= 12)
-  const start = events[0]!.t
-  const status = groupStatus(events)
+function CauseGroup(props: {
+  events: TimelineEvent[]
+  open: boolean
+  onToggle: () => void
+  limit: number
+  onMore: () => void
+  toggles: Toggles
+  focusKey: string | undefined
+}): ReactElement {
+  const { events, open, limit, toggles } = props
+  const start = (events[0] as TimelineEvent).t
+  const rest = events.length - limit
   return (
-    <div className={`olas-devtools-tl-group olas-devtools-tl-group-${status}`}>
+    <div className={`olas-devtools-tl-group olas-devtools-tl-group-${groupStatus(events)}`}>
       <button
         type="button"
         className="olas-devtools-tl-group-head"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={props.onToggle}
       >
         <span
           aria-hidden="true"
@@ -677,9 +888,24 @@ function CauseGroup({ events }: { events: TimelineEvent[] }): ReactElement {
       </button>
       {open && (
         <div className="olas-devtools-tl-group-body">
-          {events.map((e) => (
-            <TimelineEventRow key={e.id} entry={e} groupStart={start} />
-          ))}
+          {events.slice(0, limit).map((e) => {
+            const key = `e${e.id}`
+            return (
+              <TimelineEventRow
+                key={e.id}
+                entry={e}
+                groupStart={start}
+                expanded={toggles.is(key, false)}
+                onToggle={() => toggles.toggle(key, false)}
+                hit={props.focusKey === key}
+              />
+            )
+          })}
+          {rest > 0 && (
+            <button type="button" className="olas-devtools-tl-more" onClick={props.onMore}>
+              Show {Math.min(GROUP_PAGE, rest)} more of {rest}
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -690,8 +916,8 @@ function CauseGroup({ events }: { events: TimelineEvent[] }): ReactElement {
 function groupHeadline(events: readonly TimelineEvent[]): string {
   const run = events.find((e) => e.event.type === 'mutation:run')
   if (run) return eventTarget(run.event)
-  const first = events[0]!.event
-  return `${badgeLabel(first.type)} · ${eventTarget(first)}`
+  const first = (events[0] as TimelineEvent).event
+  return `${badgeLabel(first)} · ${eventTarget(first)}`
 }
 
 /** Worst outcome seen in a group — drives the group's accent color. */
@@ -703,28 +929,31 @@ function groupStatus(events: readonly TimelineEvent[]): 'error' | 'rollback' | '
   return 'active'
 }
 
-function TimelineEventRow({
-  entry,
-  groupStart,
-}: {
+function TimelineEventRow(props: {
   entry: TimelineEvent
   groupStart?: number
+  expanded: boolean
+  onToggle: () => void
+  hit: boolean
 }): ReactElement {
+  const { entry, groupStart, expanded, hit } = props
   const ev = entry.event
-  const [expanded, setExpanded] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  // After the list has scrolled to the row's group, bring the event itself in.
+  useEffect(() => {
+    if (hit) ref.current?.scrollIntoView?.({ block: 'nearest' })
+  }, [hit])
   const isSetData = ev.type === 'cache:set-data'
   const payload = eventPayload(ev)
   const hasDetail = isSetData || payload !== undefined
   const delta = groupStart !== undefined ? entry.t - groupStart : undefined
+  let cls = 'olas-devtools-tl-row'
+  if (hasDetail) cls += ' olas-devtools-row-clickable'
+  if (hit) cls += ' olas-devtools-hit'
   return (
-    <div className={`olas-devtools-tl-row ${hasDetail ? 'olas-devtools-row-clickable' : ''}`}>
-      <div
-        className="olas-devtools-tl-row-top"
-        onClick={hasDetail ? () => setExpanded((v) => !v) : undefined}
-      >
-        <span className={`olas-devtools-kind ${timelineKindClass(ev.type)}`}>
-          {badgeLabel(ev.type)}
-        </span>
+    <div ref={ref} className={cls}>
+      <div className="olas-devtools-tl-row-top" onClick={hasDetail ? props.onToggle : undefined}>
+        <span className={`olas-devtools-kind ${timelineKindClass(ev.type)}`}>{badgeLabel(ev)}</span>
         <span className="olas-devtools-target">{eventTarget(ev)}</span>
         {delta !== undefined && delta > 0 && (
           <span className="olas-devtools-tl-delta">+{delta}ms</span>
@@ -842,98 +1071,47 @@ function DiffNode({ diff }: { diff: Diff }): ReactElement {
   }
 }
 
-// ---- per-event display helpers ----
-
-/** A compact target string for an event: controller path / query key / field. */
-function eventTarget(ev: DebugEvent): string {
-  switch (ev.type) {
-    case 'controller:constructed':
-    case 'controller:suspended':
-    case 'controller:resumed':
-    case 'controller:disposed':
-      return formatPath(ev.path)
-    case 'mutation:run':
-    case 'mutation:success':
-    case 'mutation:error':
-    case 'mutation:rollback':
-      return ev.name !== undefined ? `${ev.name} · ${formatPath(ev.path)}` : formatPath(ev.path)
-    case 'field:validated':
-      return `${formatPath(ev.path)} · ${ev.field}`
-    default:
-      // All remaining variants (cache:* / snapshot:*) carry a queryKey.
-      return 'queryKey' in ev ? formatPath(ev.queryKey) : ''
-  }
-}
-
-/** The payload to reveal on expand, for non-`set-data` events (undefined = no detail). */
-function eventPayload(ev: DebugEvent): unknown {
-  switch (ev.type) {
-    case 'controller:constructed':
-      return ev.props
-    case 'mutation:run':
-      return ev.vars
-    case 'mutation:success':
-      return ev.result
-    case 'mutation:error':
-    case 'cache:fetch-error':
-      return ev.error
-    default:
-      return undefined
-  }
-}
-
-/** Short badge text: the part after the `family:` prefix (snapshot kept as `snap:`). */
-function badgeLabel(type: DebugEvent['type']): string {
-  if (type.startsWith('snapshot:')) return type.replace('snapshot:', 'snap:')
-  const i = type.indexOf(':')
-  return i === -1 ? type : type.slice(i + 1)
-}
-
-function timelineKindClass(type: DebugEvent['type']): string {
-  if (type === 'mutation:error' || type === 'cache:fetch-error') return 'olas-devtools-kind-error'
-  if (type === 'mutation:rollback' || type === 'snapshot:rollback') {
-    return 'olas-devtools-kind-rollback'
-  }
-  if (type === 'mutation:success' || type === 'cache:fetch-success') {
-    return 'olas-devtools-kind-success'
-  }
-  if (
-    type === 'cache:invalidated' ||
-    type === 'cache:gc' ||
-    type === 'controller:disposed' ||
-    type === 'controller:suspended'
-  ) {
-    return 'olas-devtools-kind-warn'
-  }
-  return ''
-}
-
 // ===========================================================================
 // URL-hash persistence
 // ===========================================================================
 
+/**
+ * Read the panel state from the hash. The hash comes from a URL anyone can
+ * craft, so its shape is checked, not trusted (W15 security review, L7): an
+ * unknown or non-string `tab` is ignored, a non-string filter is dropped,
+ * and anything that is not a JSON object falls back to the defaults. A
+ * non-string filter used to reach `filter.trim()` during render and unmount
+ * the host app.
+ */
 function readUrlHash(
   key: string | undefined,
   defaultTab: DevtoolsTab,
 ): { tab: DevtoolsTab; filters: Record<DevtoolsTab, string> } {
-  const empty = { timeline: '', tree: '', cache: '', inspector: '', mutations: '', fields: '' }
-  if (key === undefined) return { tab: defaultTab, filters: empty }
-  if (typeof window === 'undefined') return { tab: defaultTab, filters: empty }
+  const filters = Object.fromEntries(TABS.map((t) => [t, ''])) as Record<DevtoolsTab, string>
+  const fallback = { tab: defaultTab, filters }
+  if (key === undefined || typeof window === 'undefined') return fallback
+  let parsed: unknown
   try {
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-    const raw = params.get(key)
-    if (raw === null) return { tab: defaultTab, filters: empty }
-    const parsed = JSON.parse(decodeURIComponent(raw)) as {
-      tab?: DevtoolsTab
-      filters?: Partial<Record<DevtoolsTab, string>>
-    }
-    return {
-      tab: parsed.tab ?? defaultTab,
-      filters: { ...empty, ...(parsed.filters ?? {}) },
-    }
+    const raw = new URLSearchParams(window.location.hash.replace(/^#/, '')).get(key)
+    if (raw === null) return fallback
+    parsed = JSON.parse(decodeURIComponent(raw))
   } catch {
-    return { tab: defaultTab, filters: empty }
+    return fallback
   }
+  if (!isRecord(parsed)) return fallback
+  const stored = parsed.filters
+  if (isRecord(stored)) {
+    for (const t of TABS) {
+      const v = Object.hasOwn(stored, t) ? stored[t] : undefined
+      if (typeof v === 'string') filters[t] = v
+    }
+  }
+  const tab = TABS.find((t) => t === parsed.tab) ?? defaultTab
+  return { tab, filters }
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function writeUrlHash(
@@ -950,36 +1128,172 @@ function writeUrlHash(
 }
 
 // ===========================================================================
-// Cache
+// Log lists — cache, inspector, mutations, fields — each windowed
 // ===========================================================================
 
-function CacheView({ entries, filter }: { entries: CacheEntry[]; filter: string }): ReactElement {
-  const filtered = useFiltered(entries, filter, cacheHaystack)
-  if (entries.length === 0) {
-    return (
-      <Empty title="No cache events yet" hint="Trigger a query subscription to see fetches here." />
-    )
-  }
-  if (filtered.length === 0) {
-    return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
-  }
+/** The shared shape of the four list views: filter, order, window, and lifted row state. */
+function LogList<T extends object>(props: {
+  items: readonly T[]
+  filter: string
+  haystack: (item: T) => string
+  itemKey: (item: T) => string
+  newestFirst: boolean
+  empty: ReactElement
+  label: string
+  renderItem: (item: T, expanded: boolean, onToggle: () => void, hit: boolean) => ReactElement
+  focus?: Focus | undefined
+}): ReactElement {
+  const { focus, itemKey } = props
+  const filtered = useFiltered(props.items, props.filter, props.haystack)
+  const rows = useMemo(
+    () => (props.newestFirst ? filtered.slice().reverse() : filtered),
+    [filtered, props.newestFirst],
+  )
+  const toggles = useToggles()
+  if (props.items.length === 0) return props.empty
+  if (rows.length === 0) return <NoMatches filter={props.filter} />
+  const focusIndex = focus === undefined ? -1 : rows.findIndex((r) => itemKey(r) === focus.key)
   return (
-    <ul className="olas-devtools-list">
-      {[...filtered].reverse().map((entry) => (
-        <CacheRow key={entry.id} entry={entry} />
-      ))}
-    </ul>
+    <VirtualList
+      count={rows.length}
+      getKey={(i) => itemKey(rows[i] as T)}
+      estimate={() => 33}
+      renderRow={(i) => {
+        const item = rows[i] as T
+        const key = itemKey(item)
+        return props.renderItem(
+          item,
+          toggles.is(key, false),
+          () => toggles.toggle(key, false),
+          focus?.key === key,
+        )
+      }}
+      as="ul"
+      label={props.label}
+      className="olas-devtools-list"
+      scrollToIndex={focusIndex}
+      scrollNonce={focus?.nonce}
+    />
+  )
+}
+
+const idKey = (e: { id: number }): string => String(e.id)
+
+function InspectorView({
+  entries,
+  filter,
+  focus,
+}: {
+  entries: DebugCacheEntry[]
+  filter: string
+  focus: Focus | undefined
+}): ReactElement {
+  return (
+    <LogList
+      items={entries}
+      filter={filter}
+      haystack={inspectorHaystack}
+      itemKey={(e) => entryKey(e.queryId, e.key)}
+      newestFirst={false}
+      label="Cache entries"
+      empty={
+        <Empty
+          title="No cache entries"
+          hint="Subscribe to a query somewhere in the tree to see its data."
+        />
+      }
+      focus={focus}
+      renderItem={(entry, expanded, onToggle, hit) => (
+        <InspectorRow entry={entry} expanded={expanded} onToggle={onToggle} hit={hit} />
+      )}
+    />
+  )
+}
+
+function inspectorHaystack(e: DebugCacheEntry): string {
+  return [...e.key.map(String), e.status, toSearchText(e.data)].join(' ')
+}
+
+function InspectorRow({
+  entry,
+  ...state
+}: {
+  entry: DebugCacheEntry
+  expanded: boolean
+  onToggle: () => void
+  hit: boolean
+}): ReactElement {
+  const kindClass =
+    entry.status === 'error'
+      ? 'olas-devtools-kind-error'
+      : entry.status === 'success'
+        ? 'olas-devtools-kind-success'
+        : entry.status === 'pending'
+          ? 'olas-devtools-kind-warn'
+          : ''
+  const ageMs = entry.lastUpdatedAt != null ? Date.now() - entry.lastUpdatedAt : null
+  const tags: string[] = []
+  if (entry.isStale) tags.push('stale')
+  if (entry.isFetching) tags.push('fetching')
+  if (entry.hasPendingMutations) tags.push('optimistic')
+  return (
+    <Row
+      {...state}
+      kind={entry.status}
+      kindClass={kindClass}
+      target={formatPath(entry.key)}
+      t={entry.lastUpdatedAt ?? Date.now()}
+      payload={entry.error ?? entry.data}
+      suffix={[ageMs != null ? `${formatAge(ageMs)} ago` : '—', ...tags].join(' · ')}
+    />
+  )
+}
+
+function formatAge(ms: number): string {
+  if (ms < 1000) return `${ms}ms`
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`
+  if (ms < 3_600_000) return `${Math.round(ms / 60_000)}m`
+  return `${Math.round(ms / 3_600_000)}h`
+}
+
+function CacheView({ entries, filter }: { entries: CacheEntry[]; filter: string }): ReactElement {
+  return (
+    <LogList
+      items={entries}
+      filter={filter}
+      haystack={cacheHaystack}
+      itemKey={idKey}
+      newestFirst
+      label="Cache events"
+      empty={
+        <Empty
+          title="No cache events yet"
+          hint="Trigger a query subscription to see fetches here."
+        />
+      }
+      renderItem={(entry, expanded, onToggle, hit) => (
+        <CacheRow entry={entry} expanded={expanded} onToggle={onToggle} hit={hit} />
+      )}
+    />
   )
 }
 
 function cacheHaystack(e: CacheEntry): string {
   const parts: string[] = [e.kind, ...e.queryKey.map((p) => String(p))]
-  if (e.kind === 'fetch-error') parts.push(safeStringify(e.error))
+  if (e.kind === 'fetch-error') parts.push(toSearchText(e.error))
   if (e.kind === 'subscribed') parts.push(...e.subscriberPath)
   return parts.join(' ')
 }
 
-function CacheRow({ entry }: { entry: CacheEntry }): ReactElement {
+function CacheRow({
+  entry,
+  ...state
+}: {
+  entry: CacheEntry
+  expanded: boolean
+  onToggle: () => void
+  hit: boolean
+}): ReactElement {
   const kindClass =
     entry.kind === 'fetch-error'
       ? 'olas-devtools-kind-error'
@@ -1003,6 +1317,7 @@ function CacheRow({ entry }: { entry: CacheEntry }): ReactElement {
 
   return (
     <Row
+      {...state}
       kind={entry.kind}
       kindClass={kindClass}
       target={formatPath(entry.queryKey)}
@@ -1014,10 +1329,6 @@ function CacheRow({ entry }: { entry: CacheEntry }): ReactElement {
   )
 }
 
-// ===========================================================================
-// Mutations
-// ===========================================================================
-
 function MutationsView({
   entries,
   filter,
@@ -1025,31 +1336,41 @@ function MutationsView({
   entries: MutationEntry[]
   filter: string
 }): ReactElement {
-  const filtered = useFiltered(entries, filter, mutationHaystack)
-  if (entries.length === 0) {
-    return <Empty title="No mutations yet" hint="Trigger a mutation to see the lifecycle here." />
-  }
-  if (filtered.length === 0) {
-    return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
-  }
   return (
-    <ul className="olas-devtools-list">
-      {[...filtered].reverse().map((entry) => (
-        <MutationRow key={entry.id} entry={entry} />
-      ))}
-    </ul>
+    <LogList
+      items={entries}
+      filter={filter}
+      haystack={mutationHaystack}
+      itemKey={idKey}
+      newestFirst
+      label="Mutations"
+      empty={
+        <Empty title="No mutations yet" hint="Trigger a mutation to see the lifecycle here." />
+      }
+      renderItem={(entry, expanded, onToggle, hit) => (
+        <MutationRow entry={entry} expanded={expanded} onToggle={onToggle} hit={hit} />
+      )}
+    />
   )
 }
 
 function mutationHaystack(e: MutationEntry): string {
   const parts: string[] = [e.kind, ...e.path, e.name ?? '']
-  if (e.kind === 'run') parts.push(safeStringify(e.vars))
-  if (e.kind === 'success') parts.push(safeStringify(e.result))
-  if (e.kind === 'error') parts.push(safeStringify(e.error))
+  if (e.kind === 'run') parts.push(toSearchText(e.vars))
+  if (e.kind === 'success') parts.push(toSearchText(e.result))
+  if (e.kind === 'error') parts.push(toSearchText(e.error))
   return parts.join(' ')
 }
 
-function MutationRow({ entry }: { entry: MutationEntry }): ReactElement {
+function MutationRow({
+  entry,
+  ...state
+}: {
+  entry: MutationEntry
+  expanded: boolean
+  onToggle: () => void
+  hit: boolean
+}): ReactElement {
   const kindClass =
     entry.kind === 'error'
       ? 'olas-devtools-kind-error'
@@ -1074,6 +1395,7 @@ function MutationRow({ entry }: { entry: MutationEntry }): ReactElement {
 
   return (
     <Row
+      {...state}
       kind={entry.kind}
       kindClass={kindClass}
       target={target}
@@ -1084,29 +1406,25 @@ function MutationRow({ entry }: { entry: MutationEntry }): ReactElement {
   )
 }
 
-// ===========================================================================
-// Fields
-// ===========================================================================
-
 function FieldsView({ entries, filter }: { entries: FieldEntry[]; filter: string }): ReactElement {
-  const filtered = useFiltered(entries, filter, fieldHaystack)
-  if (entries.length === 0) {
-    return (
-      <Empty
-        title="No field validations yet"
-        hint="Type into a form bound via createForm(ctx, ...) or createField(ctx, ...) — each pass lands here."
-      />
-    )
-  }
-  if (filtered.length === 0) {
-    return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
-  }
   return (
-    <ul className="olas-devtools-list">
-      {[...filtered].reverse().map((entry) => (
-        <FieldRow key={entry.id} entry={entry} />
-      ))}
-    </ul>
+    <LogList
+      items={entries}
+      filter={filter}
+      haystack={fieldHaystack}
+      itemKey={idKey}
+      newestFirst
+      label="Field validations"
+      empty={
+        <Empty
+          title="No field validations yet"
+          hint="Type into a form bound via createForm(ctx, ...) or createField(ctx, ...) — each pass lands here."
+        />
+      }
+      renderItem={(entry, expanded, onToggle, hit) => (
+        <FieldRow entry={entry} expanded={expanded} onToggle={onToggle} hit={hit} />
+      )}
+    />
   )
 }
 
@@ -1114,10 +1432,19 @@ function fieldHaystack(e: FieldEntry): string {
   return [e.field, ...e.path, e.valid ? 'valid' : 'invalid', ...e.errors].join(' ')
 }
 
-function FieldRow({ entry }: { entry: FieldEntry }): ReactElement {
+function FieldRow({
+  entry,
+  ...state
+}: {
+  entry: FieldEntry
+  expanded: boolean
+  onToggle: () => void
+  hit: boolean
+}): ReactElement {
   const kindClass = entry.valid ? 'olas-devtools-kind-success' : 'olas-devtools-kind-error'
   return (
     <Row
+      {...state}
       kind={entry.valid ? 'valid' : 'invalid'}
       kindClass={kindClass}
       target={`${formatPath(entry.path)} · ${entry.field}`}
@@ -1140,20 +1467,19 @@ type RowProps = {
   inline?: string | null
   payload?: unknown
   suffix?: string | null
+  expanded: boolean
+  onToggle: () => void
+  hit: boolean
 }
 
 function Row(props: RowProps): ReactElement {
-  const { kind, kindClass, target, t, inline, payload, suffix } = props
-  const hasPayload = payload !== undefined
-  const [expanded, setExpanded] = useState(false)
-  const togglable = hasPayload
-
+  const { kind, kindClass, target, t, inline, payload, suffix, expanded, hit } = props
+  const togglable = payload !== undefined
+  let cls = togglable ? 'olas-devtools-row-clickable' : ''
+  if (hit) cls = `${cls} olas-devtools-hit`.trim()
   return (
-    <li className={togglable ? 'olas-devtools-row-clickable' : ''}>
-      <div
-        className="olas-devtools-row-top"
-        onClick={togglable ? () => setExpanded((v) => !v) : undefined}
-      >
+    <li className={cls}>
+      <div className="olas-devtools-row-top" onClick={togglable ? props.onToggle : undefined}>
         <span className={`olas-devtools-kind ${kindClass}`}>{kind}</span>
         <span className="olas-devtools-target">{target}</span>
         {suffix !== undefined && suffix !== null && (
@@ -1172,7 +1498,7 @@ function Row(props: RowProps): ReactElement {
       {inline != null && (
         <div className="olas-devtools-payload olas-devtools-payload-inline">{inline}</div>
       )}
-      {hasPayload && expanded && (
+      {togglable && expanded && (
         <div className="olas-devtools-payload olas-devtools-payload-json">
           <JsonView value={payload} />
         </div>
@@ -1181,12 +1507,35 @@ function Row(props: RowProps): ReactElement {
   )
 }
 
-function useFiltered<T>(items: readonly T[], filter: string, haystack: (item: T) => string): T[] {
+/**
+ * Search text per item, lowercased once. Log entries and timeline events are
+ * immutable, so an item is turned into text the first time a filter runs over
+ * it and never again: the debounced filter re-scans strings, it does not
+ * re-stringify payloads.
+ */
+const hayCache = new WeakMap<object, string>()
+
+function useFiltered<T extends object>(
+  items: readonly T[],
+  filter: string,
+  haystack: (item: T) => string,
+): readonly T[] {
   return useMemo(() => {
-    if (filter.trim() === '') return [...items]
+    if (filter.trim() === '') return items
     const q = filter.toLowerCase()
-    return items.filter((item) => haystack(item).toLowerCase().includes(q))
+    return items.filter((item) => {
+      let hay = hayCache.get(item)
+      if (hay === undefined) {
+        hay = haystack(item).toLowerCase()
+        hayCache.set(item, hay)
+      }
+      return hay.includes(q)
+    })
   }, [items, filter, haystack])
+}
+
+function NoMatches({ filter }: { filter: string }): ReactElement {
+  return <Empty title="No matches" hint={`Nothing matches “${filter}”.`} />
 }
 
 function Empty({ title, hint }: { title: string; hint: string }): ReactElement {

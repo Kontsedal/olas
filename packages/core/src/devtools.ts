@@ -122,6 +122,8 @@ export type DebugEvent = DebugEventBody extends infer B
  * so devtools panels can show *current data*, not just past fetch events.
  */
 export type DebugCacheEntry = {
+  /** The query this entry belongs to. Two queries can hold entries under one key. */
+  queryId: string
   key: readonly unknown[]
   status: 'idle' | 'pending' | 'success' | 'error'
   data: unknown

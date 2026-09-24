@@ -96,6 +96,9 @@ export const DEVTOOLS_CSS = `
 .olas-devtools *,
 .olas-devtools *::before,
 .olas-devtools *::after { box-sizing: border-box; }
+/* The panel takes focus on a click (tabindex -1) so the / shortcut can reach
+   it; the panel is not a control, so the focus draws no ring. */
+.olas-devtools:focus { outline: none; }
 
 @media (prefers-color-scheme: dark) {
   .olas-devtools,
@@ -218,6 +221,80 @@ export const DEVTOOLS_CSS = `
   .olas-devtools-pause, .olas-devtools-clear { padding: 4px 8px; }
 }
 
+/* ---- omnibox --------------------------------------------------------- */
+.olas-devtools-omnibox {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--olas-border-soft);
+  background: var(--olas-bg);
+  flex-shrink: 0;
+}
+.olas-devtools-kbd {
+  position: absolute;
+  right: 18px;
+  pointer-events: none;
+  color: var(--olas-muted);
+  border: 1px solid var(--olas-border-control);
+  border-radius: var(--olas-radius-mark);
+  padding: 0 6px;
+  font-family: var(--olas-font-mono);
+  font-size: var(--olas-text-mark);
+  line-height: 1.4;
+}
+/* A popover floats, so it takes the elevation and no edge. */
+.olas-devtools-omnibox-results {
+  position: absolute;
+  top: 100%;
+  left: 10px;
+  right: 10px;
+  z-index: 3;
+  max-height: 320px;
+  overflow: auto;
+  padding: 4px 0;
+  background: var(--olas-bg);
+  border-radius: var(--olas-radius-surface);
+  box-shadow: var(--olas-shadow-float);
+}
+/* A heading above a group: capitals, no tracking. */
+.olas-devtools-omnibox-group {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 12px 2px;
+  color: var(--olas-muted);
+  font-size: var(--olas-text-mark);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.olas-devtools-omnibox-total { font-variant-numeric: tabular-nums; }
+.olas-devtools-omnibox-hit {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 12px;
+  cursor: pointer;
+  min-width: 0;
+}
+/* The active option is what Enter picks next. */
+.olas-devtools-omnibox-hit[aria-selected="true"] { background: var(--olas-soft-2); }
+.olas-devtools-omnibox-label,
+.olas-devtools-omnibox-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--olas-font-mono);
+  font-size: var(--olas-text-chrome);
+}
+.olas-devtools-omnibox-label { flex-shrink: 0; max-width: 55%; color: var(--olas-fg); }
+.olas-devtools-omnibox-detail { flex: 1; min-width: 0; color: var(--olas-muted); }
+.olas-devtools-omnibox-empty {
+  padding: 8px 12px;
+  color: var(--olas-muted);
+  font-size: var(--olas-text-meta);
+}
+
 /* ---- filter ---------------------------------------------------------- */
 .olas-devtools-filter {
   position: sticky;
@@ -230,7 +307,8 @@ export const DEVTOOLS_CSS = `
   border-bottom: 1px solid var(--olas-border-soft);
   background: var(--olas-bg);
 }
-.olas-devtools-filter input {
+.olas-devtools-filter input,
+.olas-devtools-omnibox input {
   flex: 1;
   padding: 5px 9px;
   border: 1px solid var(--olas-border);
@@ -242,12 +320,15 @@ export const DEVTOOLS_CSS = `
   outline: none;
   transition: border-color var(--olas-motion-fast), box-shadow var(--olas-motion-fast);
 }
-.olas-devtools-filter input:focus {
+.olas-devtools-omnibox input { padding-right: 30px; }
+.olas-devtools-filter input:focus,
+.olas-devtools-omnibox input:focus {
   border-color: var(--olas-accent);
   outline: 2px solid var(--olas-accent);
   outline-offset: 1px;
 }
-.olas-devtools-filter input::placeholder { color: var(--olas-muted); }
+.olas-devtools-filter input::placeholder,
+.olas-devtools-omnibox input::placeholder { color: var(--olas-muted); }
 .olas-devtools-filter button {
   background: transparent;
   border: 0;
@@ -262,7 +343,25 @@ export const DEVTOOLS_CSS = `
 /* ---- body ------------------------------------------------------------ */
 .olas-devtools-body {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
+}
+/* The windowed scroller. It fills the body and is the element that scrolls,
+   so the list can mount only the rows in its viewport. */
+.olas-devtools-vlist {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.olas-devtools-vlist:focus { outline: none; }
+.olas-devtools-vlist:focus-visible { outline: 2px solid var(--olas-accent); outline-offset: -2px; }
+/* A search jump's target: the row you chose. */
+.olas-devtools-hit {
+  outline: 2px solid var(--olas-accent);
+  outline-offset: -2px;
+  border-radius: var(--olas-radius-mark);
 }
 
 /* ---- list rows ------------------------------------------------------- */
@@ -442,12 +541,41 @@ export const DEVTOOLS_CSS = `
 }
 
 /* ---- tree ------------------------------------------------------------ */
-.olas-devtools-tree { padding: 10px 12px; }
-.olas-devtools-tree-node {
-  padding: 1px 0;
+.olas-devtools-tree { padding: 0 12px; }
+/* One row per visible node. The indent guides are per-level spans that line
+   up across rows, so the flattened list still draws its nesting. */
+.olas-devtools-tree-item {
+  display: flex;
   font-family: var(--olas-font-mono);
   font-size: var(--olas-text-meta);
 }
+.olas-devtools-tree-indent {
+  flex: 0 0 auto;
+  width: 10px;
+  margin-left: 8px;
+  border-left: 1px dashed var(--olas-border);
+}
+.olas-devtools-tree-content { flex: 1; min-width: 0; padding: 1px 0; }
+.olas-devtools-tree-toggle {
+  display: inline-flex;
+  padding: 0;
+  border: 0;
+  border-radius: var(--olas-radius-mark);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+.olas-devtools-tree-toggle:hover { background: var(--olas-soft-2); }
+.olas-devtools-tree-leaf { display: inline-block; width: 16px; }
+/* A disposed node is kept for a while, greyed: its name and every value in it
+   drop to the dim tier, which is solved to clear 4.5:1 on its own. */
+.olas-devtools-tree-item-disposed {
+  --olas-json-key: var(--olas-dim);
+  --olas-json-string: var(--olas-dim);
+  --olas-json-number: var(--olas-dim);
+  --olas-json-boolean: var(--olas-dim);
+}
+.olas-devtools-tree-item-disposed .olas-devtools-tree-name { color: var(--olas-dim); }
 .olas-devtools-tree-row {
   display: inline-flex;
   align-items: center;
@@ -504,12 +632,6 @@ export const DEVTOOLS_CSS = `
   font-size: var(--olas-text-chrome);
   overflow-x: auto;
 }
-.olas-devtools-tree-children {
-  margin-left: 8px;
-  border-left: 1px dashed var(--olas-border);
-  padding-left: 10px;
-  margin-top: 2px;
-}
 
 /* ---- controller variables (ctx.debug) -------------------------------- */
 .olas-devtools-tree-vars-toggle {
@@ -553,7 +675,55 @@ export const DEVTOOLS_CSS = `
 .olas-devtools-var-value { min-width: 0; }
 
 /* ---- timeline -------------------------------------------------------- */
-.olas-devtools-timeline { padding: 6px 8px 12px; }
+.olas-devtools-timeline { padding: 0 8px; }
+.olas-devtools-tl-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--olas-border-soft);
+  flex-shrink: 0;
+}
+.olas-devtools-lanes { display: flex; flex-wrap: wrap; gap: 4px; }
+.olas-devtools-lane {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  background: transparent;
+  color: var(--olas-fg);
+  border: 1px solid var(--olas-border-control);
+  border-radius: var(--olas-radius-mark);
+  cursor: pointer;
+  font-family: var(--olas-font-mono);
+  font-size: var(--olas-text-mark);
+  line-height: 1.6;
+}
+.olas-devtools-lane:hover { background: var(--olas-soft-2); }
+/* One mark for a hidden lane: the strike. */
+.olas-devtools-lane[aria-pressed="false"] { text-decoration: line-through; }
+.olas-devtools-lane-count { color: var(--olas-muted); font-variant-numeric: tabular-nums; }
+/* Events lost to the ring buffer's bound are a warning, not a failure. */
+.olas-devtools-dropped {
+  margin-left: auto;
+  color: var(--olas-warn);
+  font-size: var(--olas-text-chrome);
+  font-variant-numeric: tabular-nums;
+}
+.olas-devtools-tl-more {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  color: var(--olas-accent);
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--olas-text-chrome);
+  text-align: left;
+}
+.olas-devtools-tl-more:hover { background: var(--olas-row-alt); }
 
 .olas-devtools-tl-group {
   border: 1px solid var(--olas-border-soft);

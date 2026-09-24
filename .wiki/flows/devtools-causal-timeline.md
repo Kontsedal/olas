@@ -14,7 +14,7 @@ edges:
   - { type: uses, target: ../modules/devtools-panel.md }
   - { type: related, target: mutation-concurrency.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-07-28
+last_verified: 2026-09-24
 confidence: medium
 ---
 
@@ -80,7 +80,7 @@ successful run instead ends `snapshot:finalize` + `mutation:success`.
 `DevtoolsStore.handle` calls `pushTimeline(event)` for EVERY event (`store.ts`): it
 appends a `TimelineEvent { id, seq, t, causeId?, event, prev? }` to the bounded
 `events$`. For a `cache:set-data` it records `prev` = the last-seen data for that key
-(`lastDataByKey`, seeded on `attach()` from `queryEntries()`) BEFORE advancing the
+(`lastDataByKey`, keyed by query id and key, seeded on `attach()` from `queryEntries()`) BEFORE advancing the
 baseline — this is the diff's "before". Cache/snapshot events also flip
 `cacheStateDirty`, so `flushPending` refreshes `cacheState$` from `queryEntries()` (the
 event-driven inspector — no poll).
@@ -96,5 +96,5 @@ to `<DiffView>`, which runs `diffValues(prev, data)` from `diff.ts` — the firs
 Net: the entire optimistic-apply → fail → rollback story is one readable, timestamped
 group instead of seven scattered log lines — the correlation Olas can do because one bus
 spans mutations, the cache, and the snapshot stack. This is the acceptance scenario in
-`candidates/decisions/devtools-overhaul.md` (T8.4), verified by
+`decisions/devtools-overhaul.md` (T8.4), verified by
 `packages/devtools/tests/panel.test.tsx` and `packages/core/tests/devtools-events.test.ts`.

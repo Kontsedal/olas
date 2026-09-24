@@ -86,11 +86,11 @@ describe('Timeline rows', () => {
     expect(targets).toEqual(['second', 'first'])
   })
 
-  test('a plugin lane event renders with its badge and no query-key target', () => {
+  test('a plugin event is badged with its plugin name and shows its payload as the target', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} />)
     bus.emit({ type: 'plugin:event', plugin: 'persist', payload: { restored: 3 } })
-    expect(rowOf('event').querySelector('.olas-devtools-target')?.textContent).toBe('')
+    expect(rowOf('persist').querySelector('.olas-devtools-target')?.textContent).toBe('restored:3')
   })
 
   test('clicking a row with a payload expands it to JSON; clicking again collapses', () => {

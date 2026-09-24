@@ -1,29 +1,99 @@
 ---
 name: devtools-overhaul
-description: "Proposed devtools overhaul — turn the polling JSON panel into a causal-timeline debugger. Candidate design (unbuilt); rescued from the transient REMEDIATION.md Phase 8."
+description: "The devtools overhaul, from a polling JSON panel to a causal-timeline debugger. Phase 8A has landed: event backbone, windowed lists, ring buffer, keyed tree, omnibox and plugin lanes. 8B-8D are the open design."
 type: decision
+covers:
+  - packages/devtools/src/store.ts
+  - packages/devtools/src/search.ts
+  - packages/devtools/src/virtual.tsx
+  - packages/devtools/src/Omnibox.tsx
+  - packages/devtools/src/events.ts
 edges:
-  - { type: related, target: ../../modules/devtools-panel.md }
-  - { type: related, target: ../../modules/devtools.md }
-  - { type: related, target: ../backlog.md }
-  - { type: related, target: ../../flows/devtools-causal-timeline.md }
-last_verified: 2026-07-28
-confidence: candidate
+  - { type: related, target: ../modules/devtools-panel.md }
+  - { type: related, target: ../modules/devtools.md }
+  - { type: related, target: ../candidates/backlog.md }
+  - { type: related, target: ../flows/devtools-causal-timeline.md }
+  - { type: tested-by, target: ../../packages/devtools/tests/store-stress.test.ts }
+  - { type: tested-by, target: ../../packages/devtools/tests/store-foundation.test.ts }
+  - { type: tested-by, target: ../../packages/devtools/tests/panel-foundation.test.tsx }
+last_verified: 2026-09-24
+confidence: medium
 ---
 
-# Devtools overhaul — proposed design (candidate, unbuilt)
+# Devtools overhaul
 
-> **Status: partially landed (2026-07-28).** **T8.1** (event backbone) and **T8.4**
-> (causal timeline) have shipped — the tasks marked ✅ below are implemented; the rest
-> are still proposals. See `modules/devtools.md`, `modules/devtools-panel.md`, and
-> `flows/devtools-causal-timeline.md`, plus the [Landed](#landed-2026-07-28) note. The
-> remainder of 8A (T8.2 virtualize, T8.3 omnibox) and all of 8B (except T8.4), 8C and 8D
-> remain a *future* design. This page stays in `candidates/` until all of 8A lands (its
-> promotion criterion, below). The remediation's **T6.3** already fixed the outright
-> devtools *bugs* (false `[Circular]`, unbounded tree, per-keystroke re-stringify,
-> run→success pairing) — see `modules/devtools-panel.md`. This overhaul is additive on top.
+> **Status (2026-09-24): 8A has landed.** T8.1, the event backbone, and T8.4, the causal
+> timeline, shipped on 2026-07-28. T8.2, T8.3 and the lane half of T8.8 shipped on
+> 2026-09-24. The tasks marked ✅ below are implemented. The rest of 8B, and all of 8C and
+> 8D, are the open design. The remediation's **T6.3** fixed the outright devtools bugs
+> before any of this: the false `[Circular]`, the unbounded tree, the per-keystroke
+> re-stringify and the run-to-success pairing. See `modules/devtools-panel.md`.
 
-## Landed (2026-07-28)
+## Landed (2026-09-24): the rest of 8A
+
+### T8.2: windowed lists, bounded memory, O(1) apply
+
+- **The timeline is a ring buffer.** `DevtoolsStore` keeps the newest
+  `maxTimelineEntries` events, 10,000 by default, and `droppedEvents$` counts the events it
+  overwrote. The timeline toolbar shows that count, and Clear resets it. The three
+  per-view logs use the same `Ring` class at their `maxEntries` cap (`store.ts`).
+- **Log arrays are built on read.** A flush moves buffered items into a ring at O(1) each.
+  The ring copies its items into an array only when someone reads the signal, and the
+  panel reads once per frame.
+- **The tree is keyed and mutable.** The store finds a node by its path key in a `Map`,
+  and each node holds its children in a `Map` by segment. A lifecycle event costs
+  O(path depth). The panel reads immutable `ControllerNode` snapshots, which the store
+  rebuilds only along the changed paths, so an untouched subtree keeps its identity.
+- **Pruning runs in dispose order.** The `maxDisposedNodes` cap is unchanged. A queue of
+  disposals replaces the whole-tree walk the old code ran on every dispose, so the
+  earliest-disposed subtree goes first. The old code picked the earliest-constructed one.
+- **A disposed node is greyed and frozen.** The store reads each `ctx.debug` signal once,
+  at dispose time, and keeps the value it held. The Tree draws the node in the dim tier.
+- **Mutation start times live in a trie by path.** The old flat map was scanned on every
+  dispose, and under load that scan was the store's largest cost.
+- **`VirtualList` windows every long view** (`virtual.tsx`). That covers the Tree, the
+  Timeline and the four log lists. It follows the `examples/virtualized-table` approach
+  without that example's `@tanstack/react-virtual` dependency. Rows start at an estimated
+  size, keep a measured size by key, and prefix sums plus a binary search pick the window.
+  The Tree renders as flat rows with `aria-level`. An open cause-group mounts 100 events
+  at a time behind a "Show more" button, because windowing inside a windowed row costs more
+  code than a page does.
+
+The stress test, `store-stress.test.ts`, drives 1,001 controllers and 50,000 events in
+250-event frames. It asserts three ratios, because an absolute time would flake on CI.
+Doubling the events costs under 2.5 times the time. A late frame costs under 2.5 times an
+early one. 10,000 sibling controllers cost under 2.5 times 5,000. On the authoring machine a
+frame took a median 0.09 ms, and the 50,000-event run took 19 ms.
+
+### T8.3: the omnibox
+
+One search box sits above the tabs, and `/` focuses it from anywhere in the panel except a
+text field. It matches controller names and paths, query ids, key args, mutation names, form
+field paths and errors, and payload content (`search.ts`). Results come back grouped by kind.
+Enter jumps to the active result. The panel switches tab, clears that tab's filter, opens a
+collapsed ancestor or cause-group, shows a hidden lane and highlights the row.
+
+`SearchIndex` builds on the first search after a change. It caches each item's text by
+object identity, so a rebuild converts only new or changed values. A keystroke with no
+change in between reuses the built index. `toSearchText` stops each value at 2,000
+characters, which bounds the index to about 20 MB for a full ring of large payloads.
+
+### T8.8, the lane half
+
+Core emits `plugin:event`, with the plugin's name, for every `host.debug(payload)` call
+(`plugin/host.ts`). The timeline badges each of those rows with the plugin name. A toolbar
+shows one chip per lane, `core` first, and a chip hides or shows its lane. No core change was
+needed. The per-plugin payloads that T8.8 describes below are not emitted yet.
+
+### The bundle
+
+The devtools size budget is 14.1 KB brotli, and 8A took the bundle from 13.76 KB to 17.88 KB.
+The build now minifies the inline stylesheet (`scripts/minify-css.ts`), which gave back
+2.1 KB. The source keeps its CSS comments, because they carry the reasoning of
+`ui-rules.md`. The remaining growth is the search index and omnibox, the windowed list, the
+keyed tree and ring, and the panel wiring for lanes and jumps.
+
+## Landed (2026-07-28): T8.1 and T8.4
 
 **T8.1 — event backbone (partial: no poll-kill-via-synthetic-event; done via store seed).**
 `DebugEvent` gained optional `seq`, `t` and `causeId`; `cache:set-data` (source + data) and
@@ -40,7 +110,7 @@ the devtools package — core internals not imported) on each `cache:set-data`. 
 scenario (a failing latest-wins/optimistic mutation shown as one apply→rollback group) is
 covered by `packages/devtools/tests/panel.test.tsx`.
 
-Everything below that is NOT ticked ✅ remains a proposal.
+Everything below that is not ticked ✅ is still a proposal.
 
 ## Why
 
@@ -87,7 +157,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   correlation backbone is cheap at emit time and *impossible to reconstruct later* — do
   not skip it. Acceptance: kanban running, panel open — no `setInterval`, all cache
   changes appear within one frame, events strictly `seq`-ordered.
-- **T8.2 — virtualize everything; bound all memory.** Windowed rendering for tree,
+- ✅ **T8.2 — virtualize everything; bound all memory.** *Landed 2026-09-24, see above.* Windowed rendering for tree,
   timeline and cache list (reuse `examples/virtualized-table`'s approach, no new dep).
   Event log → ring buffer (default 10k, configurable) with a dropped-count indicator.
   Disposed controllers retained-but-capped (from T6.3), greyed with dispose-time state
@@ -95,7 +165,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   `Map<pathKey, node>` (O(1)/event). Acceptance: synthetic stress test (1,000
   controllers, 50k events) — store apply loop stays sub-16ms/frame (time the loop, not
   the DOM; assert no O(n²)).
-- **T8.3 — search that works.** One omnibox (`/` to focus) matching controller
+- ✅ **T8.3 — search that works.** *Landed 2026-09-24, see above.* One omnibox (`/` to focus) matching controller
   names/paths, query names, key args, mutation names, form field paths, and payload
   CONTENT — against a lazily-built, invalidated-on-change stringified index (never
   per-keystroke re-stringification). Results grouped by kind; Enter jumps + highlights.
@@ -145,7 +215,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   the structural-dirty flag (T5.1), validation events in the timeline. **Sensitive-value
   elision:** field values render only on click-to-reveal, and `form:field-change` events
   carry paths, not values, unless reveal is on.
-- **T8.8 — plugin lens.** The generic `plugin:event` envelope (T8.1) gets a dedicated
+- **T8.8 — plugin lens.** *The lanes landed 2026-09-24 over the existing `plugin:event` and `host.debug`. The per-plugin payloads below are open.* The generic `plugin:event` envelope (T8.1) gets a dedicated
   timeline lane per plugin: cross-tab shows sent/received/deduped with peer ids; entities
   shows walk/backprop counts per set-data (surfacing the "walk cost on every event" tax);
   mutation-queue shows enqueue/replay/attempt lifecycles with durable-entry contents.
@@ -167,9 +237,8 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   (CSS only, no layout thrash); teaching empty states. Update `packages/devtools/README.md`
   with annotated screenshots + a "devtools tour" in the kanban example README.
 
-## Promotion criteria
+## Promotion
 
-Promote out of `candidates/` (into `.wiki/decisions/` or split into per-area pages, and
-graduate to `SPEC.md` if the event-bus contract is committed) when 8A lands — at that
-point the `DebugEvent` union + `causeId` correlation become a real design contract worth
-pinning, not a proposal.
+This page left `candidates/` on 2026-09-24, when 8A landed, which was its promotion
+criterion. The `DebugEvent` union and the `causeId` correlation are a working contract in
+core now. `SPEC.md` does not pin them yet.

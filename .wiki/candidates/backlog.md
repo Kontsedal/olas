@@ -3,7 +3,7 @@ name: candidate-backlog
 description: "Staging backlog of substantial, forward-looking proposals (rich design candidates). The terse grab-bag of smaller ideas stays in the repo-root BACKLOG.md."
 type: overview
 edges:
-  - { type: related, target: decisions/devtools-overhaul.md }
+  - { type: related, target: ../decisions/devtools-overhaul.md }
 last_verified: 2026-07-28
 confidence: candidate
 ---
@@ -45,7 +45,7 @@ inspector), T8.8 (plugin lanes), T8.9 (session traces), T8.10 (UX pass) — plus
 leftovers (`cache:subscribe/unsubscribe`, `effect:run`, `form:field-change`, `scope:*`,
 `plugin:event`).
 
-→ **Full design: [`decisions/devtools-overhaul.md`](decisions/devtools-overhaul.md)**
+→ **Full design: [`decisions/devtools-overhaul.md`](../decisions/devtools-overhaul.md)**
 (sub-phases 8A foundation → 8B causal timeline → 8C live actions → 8D polish, ten tasks;
 T8.1 + T8.4 marked ✅ there). The devtools *bugs* were already fixed (remediation T6.3,
 see `modules/devtools-panel.md`); this is additive.

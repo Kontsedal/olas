@@ -71,10 +71,12 @@ describe('Tree view', () => {
     expect(nodeRow('b').querySelector('.olas-devtools-tree-state-disposed')?.textContent).toBe(
       'disposed',
     )
-    const children = body().querySelector('.olas-devtools-tree-children') as HTMLElement
-    expect(children.contains(nodeRow('a'))).toBe(true)
-    expect(children.contains(nodeRow('b'))).toBe(true)
-    expect(children.contains(nodeRow('root'))).toBe(false)
+    // The tree renders flat, one windowed row per node; nesting is the level.
+    const level = (name: string) =>
+      nodeRow(name).closest('[role="treeitem"]')?.getAttribute('aria-level')
+    expect(level('root')).toBe('1')
+    expect(level('a')).toBe('2')
+    expect(level('b')).toBe('2')
   })
 
   test('counts in-flight mutations per controller until they settle', () => {

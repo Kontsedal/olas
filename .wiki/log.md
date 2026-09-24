@@ -1922,3 +1922,31 @@ For the W6 docs pass: README (tooling section), RECIPES (the optimistic recipe c
 **BACKLOG.** New idea: the signal wrappers cost about 30% over raw preact in fan-out.
 
 For the W6 docs pass: API.md (`serializeForScript`, `StreamingHydratorOptions`, `MutationHost.get`, cross-tab `validate`), the React README's streaming section (the old Node `Transform` advice is unsafe), RECIPES' SSR recipe, and the performance numbers for the docs site.
+
+## [2026-09-25 01:10] ingest | 1.0 W15b: devtools 8A — ring buffer, windowed lists, keyed tree, omnibox, plugin lanes
+
+Built by an agent in a git worktree and merged as one commit.
+
+**T8.2.**
+- The timeline keeps a ring of the newest events, 10,000 by default. It is configurable through the new `maxTimelineEntries` prop on the panel and the launcher. `droppedEvents$` counts what the ring overwrote, the toolbar shows it, and Clear resets it. The three logs use the same ring.
+- The controller tree is a keyed map, so an event costs constant time plus the path depth. Disposed nodes are pruned earliest-disposed first, greyed, and their `ctx.debug` values frozen at dispose time.
+- `VirtualList` (`packages/devtools/src/virtual.tsx`, no new dependency) windows the tree, the timeline and the log lists. The tree renders as flat rows with `aria-level`.
+- The stress test exposed a hotspot: the store scanned every pending mutation start on each dispose. The starts now sit in a trie by path, which took a 50,000-event run from 143 ms to 19 ms.
+
+**T8.3.** An omnibox, focused with `/`, over a lazily built index with a per-item text cache (`search.ts`, `Omnibox.tsx`). Enter jumps to the match and highlights it.
+
+**Plugin lanes, the lane half of T8.8.** Core already stamps `host.debug` events with the plugin's name. The timeline badges each such row and shows one chip per lane.
+
+**Security L7** from W15a: the panel validates its URL-hash state before use. `url-hash-hostile.test.tsx` failed 5 of 12 cases on the old panel.
+
+**Numbers.** Stress: 1,001 controllers and 50,000 events in 250-event frames, median frame 0.09 ms, total 19 ms, and doubling the events costs 1.8–2.0× the time. Coverage: 99.75% lines, 97.69% branches, 291 tests.
+
+**Bundle budget, raised on purpose:** devtools 14.1 → 18.8 kB, measured at 17.88 kB. The growth is the search index and omnibox, the windowed list, the keyed tree and the ring. A build step strips the inline stylesheet's comments and whitespace (`scripts/minify-css.ts`), which won back 2.1 kB. The panel is a development tool, loaded behind the app's own dev gate.
+
+**A browser smoke run found one more bug**, driving the kanban example with the panel open. Two queries with entries under the same key (the board query and the archive query, both at `["b1"]`) collided, because `DebugCacheEntry` had no query id and the panel keyed entries by key alone. The omnibox listed one label for both, with duplicate React keys, and the two shared a diff baseline. Core's `DebugCacheEntry` now carries `queryId` (set in `QueryClient.queryEntriesSnapshot`), and the store, the search index and the inspector key entries by `entryKey(queryId, key)` in `util.ts`. The store's `queryIds` map, which learned ids from events, is gone. Two regression tests in `store-foundation.test.ts` fail on the pre-fix code.
+
+**Behaviour changes.** `DevtoolsStore`'s `tree$`, `cache$`, `mutations$`, `fields$` and `events$` are read-only signals. The store's default `maxTimelineEntries` rose from 500 to 10,000.
+
+**Wiki.** The candidate page is promoted to `decisions/devtools-overhaul.md`, with 8A marked landed and 8B–8D kept as the open design. `modules/devtools-panel.md` is re-verified, and the package README is refreshed.
+
+**BACKLOG.** The devtools-overhaul item points at the promoted page and drops T8.2, T8.3 and the lane half of T8.8. New ideas: first-party plugins emit onto their lanes, and the `DebugEvent` contract graduates to SPEC.
