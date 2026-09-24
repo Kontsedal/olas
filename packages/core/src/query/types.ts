@@ -107,8 +107,14 @@ export type DehydratedEntry = {
    */
   id: string
   key: readonly unknown[]
+  /** The cached value. For an infinite query, its pages. */
   data: unknown
   lastUpdatedAt: number
+  /**
+   * Present for an infinite query: the params of `data`'s pages, one per page,
+   * so the client can continue paging from where the server stopped.
+   */
+  pageParams?: readonly unknown[]
 }
 
 /**
@@ -289,9 +295,8 @@ export type QuerySpec<Args extends unknown[], T> = {
  * - `id` / `key` / `fetcher` / `meta` — per-query identity and plugin
  *   settings; meaningless as an app-wide default.
  *
- * `refetchOnWindowFocus` / `refetchOnReconnect` apply to regular queries
- * only — infinite queries have no focus/reconnect subscription (see
- * `InfiniteClientEntry`), so setting them here is a no-op for those.
+ * Every default applies to infinite queries too. A focus or reconnect
+ * refetch of an infinite query re-fetches every loaded page.
  */
 export type QueryDefaults = Pick<
   QuerySpec<never[], unknown>,

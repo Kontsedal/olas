@@ -170,7 +170,7 @@ function buildRootHandle<Api>(
       return
     }
     for (const entry of state.entries) {
-      queryClient.applyDehydratedEntry(entry.id, entry.key, entry.data, entry.lastUpdatedAt)
+      queryClient.applyDehydratedEntry(entry)
     }
   }
 

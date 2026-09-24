@@ -62,6 +62,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/disabled-subscriptions.md](decisions/disabled-subscriptions.md) — what a subscription does while `enabled` is false: `isEnabled`, `QueryDisabledError`, a `firstValue` that waits (suspense on a dependent query)
 - [decisions/duration-naming.md](decisions/duration-naming.md) — milliseconds everywhere; `*Time` for core's lifetime policies, `*Ms` for every other knob
 - [decisions/typed-use-root.md](decisions/typed-use-root.md) — `useRoot()` typed through an augmented `Register`; why `createOlasContext` and `useFieldInput` stay
+- [decisions/infinite-query-parity.md](decisions/infinite-query-parity.md) — how infinite queries reach parity: `pageParams` on dehydrated entries and write events, hydration seeding, focus/reconnect, the `offlineFirst` park, cross-tab, devtools
 - [decisions/esm-only-build.md](decisions/esm-only-build.md) — why every package ships ESM only on Node >= 20.19, and the dist checks: types, tree-shaking, size
 - [decisions/forms-are-read-signals.md](decisions/forms-are-read-signals.md) — why `Form` and `FieldArray` are `ReadSignal`s of their value, like `Field`, and why `submit` resolves a union
 - [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`

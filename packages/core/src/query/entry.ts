@@ -30,6 +30,11 @@ export type EntryEvents = {
  */
 let globalFetchSeq = 0
 
+/** The next fetch's `causeId`. Shared by `Entry` and `InfiniteEntry`. */
+export function nextFetchCauseId(): string {
+  return `fetch:${++globalFetchSeq}`
+}
+
 export type EntryOptions<T> = {
   /** Called once per attempt; `attempt` is 0, then one more per retry. */
   fetcher: () => (signal: AbortSignal, attempt: number) => Promise<T>
@@ -187,7 +192,7 @@ export class Entry<T> {
     })
 
     this.fetchStartTime = Date.now()
-    this.currentFetchCauseId = `fetch:${++globalFetchSeq}`
+    this.currentFetchCauseId = nextFetchCauseId()
     try {
       this.events.onFetchStart?.(this.currentFetchCauseId)
     } catch {

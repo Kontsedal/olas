@@ -51,7 +51,7 @@ Every consumer resolves the same way — **`spec.X ?? client.defaults.X ?? built
 Two asymmetries worth knowing:
 
 - **`refetchInterval` is not defaultable** — a root-wide interval would silently poll every query in the app. Same reasoning keeps it off `UseOptions`: the timer is per **entry**, so a per-subscriber interval would need a "whose interval wins" rule.
-- **`refetchOnWindowFocus` and `refetchOnReconnect` are no-ops for infinite queries.** `InfiniteClientEntry` installs no focus/online subscription at all, so those fields aren't threaded there (comment at the ctor records this).
+- **`refetchOnWindowFocus` and `refetchOnReconnect` apply to infinite queries too.** `InfiniteClientEntry` subscribes on its first `acquire` like `ClientEntry`, and a focus or reconnect refetch re-fetches every loaded page (1.0; `../decisions/infinite-query-parity.md`).
 - **`createCache` only gets `staleTime` and `keepPreviousData`**, because those are the only fields `LocalCacheOptions` carries — `retry`, `gcTime` and `networkMode` aren't part of its surface.
 
 ## ClientEntry vs Entry
@@ -77,7 +77,7 @@ Two of these deliberately do **not** go through `bindEntry`. `peekData` stays ou
 
 ## SSR
 
-`dehydrate()`: iterate `maps`, emit `{ id: query.__id, key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`. Skip infinite queries, error/idle, and (since 0.9) every query without an explicit `queryId` — `__id === undefined`. The skipped-but-successful entries are counted and reported in one dev warning per call, because a short payload is otherwise invisible: the page still works but is slower. Spec §15. `hydrate(state)` populates `hydratedData: Map<keyHash, { data, lastUpdatedAt }>`. `bindEntry` checks `hydratedData` on first bind for a key and threads the values into the new Entry's `initialData` and `initialUpdatedAt`. Consumed once — subsequent rebinds refetch normally. See `../flows/ssr.md`.
+`dehydrate()`: iterate `maps` and `infiniteMaps`, emit `{ id: query.__id, key: keyArgs, data, lastUpdatedAt }` for entries in `status: 'success'`, plus `pageParams` for an infinite entry. Error and idle entries are skipped. Spec §15. `hydrate(state)` populates `hydratedData: Map<keyHash, { data, lastUpdatedAt }>`. `bindEntry` checks `hydratedData` on first bind for a key and threads the values into the new Entry's `initialData` and `initialUpdatedAt`. Consumed once — subsequent rebinds refetch normally. See `../flows/ssr.md`.
 
 ## What `dispose()` does
 

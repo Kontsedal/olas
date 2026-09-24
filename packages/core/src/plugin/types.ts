@@ -103,13 +103,18 @@ export type QueryHost = {
    * snapshot, and an in-flight fetch is left alone. No-op when this root
    * holds no entry for the key.
    */
-  write(id: string, key: readonly unknown[], updater: (prev: unknown) => unknown): void
+  write(
+    id: string,
+    key: readonly unknown[],
+    updater: (prev: unknown) => unknown,
+    options?: WriteOptions,
+  ): void
   /**
    * Replace an existing entry's data with a value that is the whole record,
    * superseding any fetch in flight for it (spec §6.4). No-op when this root
    * holds no entry for the key.
    */
-  replace(id: string, key: readonly unknown[], value: unknown): void
+  replace(id: string, key: readonly unknown[], value: unknown, options?: WriteOptions): void
   /**
    * Mark an entry stale; it refetches now if it has subscribers, else on the
    * next subscribe (spec §5.7). Resolves when that refetch settles.
@@ -167,6 +172,20 @@ export type WriteEvent = {
    * the app itself and the engine's own fetches.
    */
   readonly origin: string | undefined
+  /**
+   * For an infinite query, the params of `data`'s pages, one per page. A
+   * plugin that persists or relays infinite state needs both to restore it.
+   */
+  readonly pageParams?: readonly unknown[]
+}
+
+/** Options for `QueryHost.write` and `replace`. */
+export type WriteOptions = {
+  /**
+   * For an infinite query: the params of the new pages, one per page. Without
+   * them, the entry's params are trimmed or padded to the new page count.
+   */
+  pageParams?: readonly unknown[]
 }
 
 /** A cache entry was invalidated. */

@@ -54,7 +54,7 @@ Controller state isn't serialized; only the query cache. Controllers reconstruct
 }
 ```
 
-Only entries with `status: 'success'` are included. Errors and pending fetches are not serialized — they'd be useless on the client. Infinite queries are skipped today (Phase 12 baseline); supporting them is straightforward but wasn't part of the v1 minimum.
+Only entries with `status: 'success'` are included. Errors and pending fetches are not serialized — they'd be useless on the client. Infinite queries are included: their entry carries the pages in `data` and one param per page in `pageParams`, and the client seeds the pages without refetching them. See `../decisions/infinite-query-parity.md`.
 
 `keyArgs` is `spec.key(...callArgs)`. `id` is the explicit `spec.queryId`, identical in server/client bundles. Only identified queries are dehydrated. Anonymous ones are counted and reported in a single dev warning per `dehydrate()` call, so a missing `queryId` presents as a config warning rather than as an unexplained slow hydrate. Anonymous queries fetch on the client and cannot consume legacy auto-ID payloads. Registration order has no role in identity. `cache-identity.test.ts` evaluates separate modules in opposite orders to verify both anonymous fallback and explicit-ID hydration.
 

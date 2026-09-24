@@ -436,21 +436,6 @@ describe('entitiesPlugin', () => {
     root.dispose()
   })
 
-  test('infinite queries are skipped (kind: "infinite" SetDataEvents are ignored)', async () => {
-    // Sanity check that infinite-query SetDataEvents don't crash the walker.
-    // We don't assert positively because v1 doesn't populate from infinite
-    // — this just pins the "no exception, no surprising store entry" contract.
-    const plugin = entitiesPlugin({ entities: [Post] })
-    const def = defineController(() => ({}))
-    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
-    const entities = root.inject(Entities)
-
-    // Construct + dispose with no infinite query bound — nothing to walk.
-    expect(entities.get(Post, 'p1')).toBeUndefined()
-
-    root.dispose()
-  })
-
   test('cycle in query data does not stack-overflow the walker', async () => {
     type Cyclic = { id: string; title: string; likes: number; self?: unknown }
     const cyclicQuery: Query<[], Cyclic> = defineQuery({
@@ -1128,6 +1113,10 @@ describe('entitiesPlugin', () => {
     entities.update(FeedItem, 'p3', { likes: 7 })
     expect(entities.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 7 })
     expect(root.api.feed.pages.peek()[1]?.[0]).toEqual({ id: 'p3', title: 'C', likes: 7 })
+    // The backprop write keeps the pages' params, so a dehydrate or cross-tab
+    // relay after it still carries the right cursors.
+    const entry = root.dehydrate().entries.find((e) => e.id === 'ent-test/infinite-feed')
+    expect(entry?.pageParams).toEqual([0, 1])
 
     root.dispose()
   })

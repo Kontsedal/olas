@@ -1717,3 +1717,33 @@ Wiki: new `decisions/esm-only-build.md`; CLAUDE.md's command list and CI line ar
 - the detached `refetch`.
 
 The fine-grained `useQuery` item lost its now-fixed "fresh promise per suspended render" sentence.
+
+## [2026-09-25 03:10] ingest | 1.0 W10: infinite-query parity
+
+- **`InfiniteEntry`** (`packages/core/src/query/infinite.ts`):
+  - seeds from `initialPages` / `initialPageParams` / `initialUpdatedAt`, and gains `applyHydration`;
+  - `setData(…, { pageParams })` takes explicit params;
+  - `parksOnOffline` / `settleParked` add the `offlineFirst` park to both loops;
+  - reports through `EntryEvents`, with the counter shared via the new `nextFetchCauseId()` in `entry.ts`.
+- **`QueryClient`:**
+  - `devtoolsEntryEvents` builds one bundle for both entry kinds, and fetch events now carry `queryId`;
+  - `InfiniteClientEntry` subscribes to focus and reconnect;
+  - `emitWrite` takes `pageParams`, and the new `emitInfiniteWrite` sends every infinite write with them;
+  - `dehydrate` walks `infiniteMaps`, and the hydration buffer (`HydratedSlot`) keeps `pageParams`;
+  - `bindInfiniteEntry` adopts a validated payload (`infinitePayload`);
+  - `applyDehydratedEntry` takes a `DehydratedEntry` and applies infinite payloads to bound entries.
+- **Plugin types:** `WriteEvent.pageParams`, `WriteOptions` on `QueryHost.write` / `replace`, and `DehydratedEntry.pageParams`.
+- **react streaming:** captures and delivers infinite entries with `pageParams`.
+- **cross-tab:** the send and receive gates take either kind with `meta.crossTab`, and `setData` messages carry `pageParams`.
+
+**Tests.**
+- New `packages/core/tests/infinite-parity.test.ts` (8 cases).
+- Streaming: the infinite round trip.
+- cross-tab: three infinite cases, one of them pinning that the receiver stores the sender's params (`[0, 1, 2]`, where padding would give `[0, 0, 0]`).
+- entities: a params-preserved assertion on backprop. Its vacuous "infinite queries are skipped" test is deleted.
+
+Wiki: new `decisions/infinite-query-parity.md`. Updated `flows/ssr.md`, `entities/query-client.md`, `modules/cross-tab.md` and `modules/query.md` where they said infinite queries were unsupported.
+
+BACKLOG: the four infinite items (SSR, `offlineFirst`, cross-tab, devtools) are removed. Snapshot rebase stays.
+
+Bundle cost: infinite parity added about 0.9 kB brotli to core's queries entry (14.95 → 15.84 kB) and to "everything" (20.34 → 21.23 kB). The budgets were raised on purpose, to 16.6 kB and 22.3 kB. The controllers-only and forms entries did not move.

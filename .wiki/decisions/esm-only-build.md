@@ -48,4 +48,4 @@ All of these run in CI after `pnpm build`:
 
 A bundle built from `dist` used to keep all of forms even when nothing imported them: 8.62 KB gzipped for controllers only, against 4.8 KB from `src`. `tsdown` emits one shared chunk, so exclusion rests on statement-level dead-code elimination. esbuild keeps a class that has a computed class-field key (`readonly [FORM_BRAND] = true`) even when the class is unused. The brands are now set in the constructors (`packages/core/src/forms/form.ts`), and the same bundle is 6.35 KB gzipped, the same as from `src`. The rest is `createRoot`'s own code, including the plugin host it always builds. The smoke check above pins this; a negative test reintroducing the class field made it fail.
 
-Measured budgets at the time of the change (brotli, `size-limit`): controllers + signals 5.21 kB, + forms 8.96 kB, + queries and mutations 14.95 kB, everything 20.34 kB.
+Measured at the time of the change (brotli, `size-limit`): controllers + signals 5.21 kB, + forms 8.96 kB, + queries and mutations 14.95 kB, everything 20.34 kB. W10 (infinite-query parity) grew the last two to 15.84 kB and 21.23 kB, and their budgets were raised with it.

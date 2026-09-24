@@ -113,6 +113,6 @@ No consensus and clocks: each tab applies inbound writes in delivery order, last
 
 ## Limitations (v1)
 
-- **No infinite queries.** `defineInfiniteQuery` writes fire plugin events with `kind: 'infinite'`, but the plugin drops them on **both** send and receive — peers can't apply page arrays (core early-returns). The `crossTab: 'infinite'`/'both'` option values were removed (T6.4); see the opt-in section.
+- **Infinite queries sync with `meta: { crossTab: true }`, like regular ones (1.0).** A `setData` message for one carries `pageParams`, and the receiver writes the pages and their params together through `host.queries.write(…, { pageParams })`. A `pageParams` field that is not an array drops the message with a warning. Page arrays can be large; `maxPayloadBytes` warns.
 - **No structural diffs.** Every `setData` broadcasts the full post-update value. Fine for `BroadcastChannel` (in-memory); known cost for very large entries.
 - **Optimistic writes cross tabs.** All `setData` events broadcast regardless of cause, so optimistic state (and rollback) is visible cross-tab. Mitigate by skipping cross-tab for optimistic-heavy queries (`crossTab: false`).

@@ -72,7 +72,9 @@ function makeSourceId(): string {
  * ```
  *
  * Only queries with `meta: { crossTab: true }` sync, on both the send and the
- * receive side. Infinite queries do not sync. Fetches and hydration are a
+ * receive side. That covers infinite queries: their pages travel with their
+ * `pageParams`, so the receiving tab keeps paging from them. Page arrays can be
+ * large, and `maxPayloadBytes` warns about them. Fetches and hydration are a
  * per-tab concern — every tab runs its own fetcher — so they never cross.
  *
  * **SSR safety.** Where `BroadcastChannel` is not defined and no
@@ -123,10 +125,10 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         }
       }
 
-      /** Receive-side mirror of the send gate: only opted-in regular queries. */
+      /** Receive-side mirror of the send gate: only opted-in queries, either kind. */
       const accepts = (queryId: string): boolean => {
         const ref = queries.get(queryId)
-        return ref !== undefined && ref.kind === 'query' && ref.meta.crossTab === true
+        return ref !== undefined && ref.meta.crossTab === true
       }
 
       const listener = (event: { data: unknown }) => {
@@ -150,8 +152,19 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         if (msg.type === 'setData') {
           // Stamped with this plugin's name as `origin`, which is what keeps
           // the write from being mirrored straight back.
-          const data = (msg as { data?: unknown }).data
-          queries.write(msg.queryId, msg.keyArgs, () => data)
+          const { data, pageParams } = msg as { data?: unknown; pageParams?: unknown }
+          if (pageParams !== undefined && !Array.isArray(pageParams)) {
+            onWarn('[olas/cross-tab] malformed setData message: pageParams is not an array')
+            return
+          }
+          // An infinite query's pages arrive with their params, so this tab can
+          // keep paging from them.
+          queries.write(
+            msg.queryId,
+            msg.keyArgs,
+            () => data,
+            pageParams ? { pageParams } : undefined,
+          )
           return
         }
         if (msg.type === 'invalidate') {
@@ -193,7 +206,7 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
       const mirrors = (event: WriteEvent | InvalidateEvent): boolean => {
         if (event.origin !== undefined && !extraOrigins.has(event.origin)) return false
         if (event.origin === CROSS_TAB_PLUGIN_NAME) return false
-        return event.query.kind === 'query' && event.query.meta.crossTab === true
+        return event.query.meta.crossTab === true
       }
 
       return {
@@ -211,6 +224,7 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
             queryId: event.query.id,
             keyArgs: event.key,
             data: event.data,
+            ...(event.pageParams !== undefined ? { pageParams: event.pageParams } : {}),
           })
         },
 

@@ -11,6 +11,8 @@ type StreamingEntry = {
   key: readonly unknown[]
   data: unknown
   lastUpdatedAt: number
+  /** Present for an infinite query: the params of `data`'s pages. */
+  pageParams?: readonly unknown[]
 }
 
 /**
@@ -85,16 +87,14 @@ export type StreamingHydrator = {
 }
 
 /**
- * Server-side hydrator. Captures every committed write to a regular query —
- * a fetch resolving, a canonical `write` or `replace` — through the plugin
- * `onWrite` hook, then serializes captured entries to inline `<script>` tags
- * via `flush()`.
+ * Server-side hydrator. Captures every committed write — a fetch resolving, a
+ * canonical `write` or `replace` — through the plugin `onWrite` hook, then
+ * serializes captured entries to inline `<script>` tags via `flush()`. An
+ * infinite query's entry carries its pages and their `pageParams`, so the
+ * client continues paging from where the server stopped.
  *
  * Hydration and optimistic writes are not captured: the first is data the
  * client already has, and the second is a guess the server never confirmed.
- * Infinite queries are not captured either — the page-array payload is heavy
- * enough that streaming each settled page is rarely the right default; the
- * client refetches them.
  */
 export function createStreamingHydrator(): StreamingHydrator {
   const pending: StreamingEntry[] = []
@@ -106,7 +106,6 @@ export function createStreamingHydrator(): StreamingHydrator {
       setup(host) {
         return {
           onWrite(event) {
-            if (event.query.kind !== 'query') return
             const { source } = event
             if (source !== 'fetch' && source !== 'write' && source !== 'replace') return
             // Dedupe by (query id, key hash) — most recent value wins. A
@@ -119,6 +118,7 @@ export function createStreamingHydrator(): StreamingHydrator {
               key: event.key,
               data: event.data,
               lastUpdatedAt: event.updatedAt,
+              ...(event.pageParams !== undefined ? { pageParams: event.pageParams } : {}),
             }
             const lastEmittedIdx = seen.get(dedupeKey)
             if (lastEmittedIdx !== undefined) {
@@ -240,7 +240,7 @@ export function installStreamingIntake<Api>(root: Root<Api>): () => void {
     string,
     unknown
   >
-  type Entry = { queryId: string; key: readonly unknown[]; data: unknown; lastUpdatedAt: number }
+  type Entry = StreamingEntry
   type Sink = (entries: Entry[]) => void
   type Intake = { q: Entry[][]; push: (entries: Entry[]) => void; sinks?: Set<Sink> }
   const toState = (entries: Entry[]) => ({
@@ -250,6 +250,7 @@ export function installStreamingIntake<Api>(root: Root<Api>): () => void {
       key: e.key,
       data: e.data,
       lastUpdatedAt: e.lastUpdatedAt,
+      ...(e.pageParams !== undefined ? { pageParams: e.pageParams } : {}),
     })),
   })
   // Apply every entry of one stream batch in a single signal `batch(...)`, so

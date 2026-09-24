@@ -3,6 +3,7 @@ import {
   createQuery,
   createRoot,
   defineController,
+  defineInfiniteQuery,
   defineQuery,
   type Query,
   type QuerySubscription,
@@ -587,5 +588,88 @@ describe('crossTabPlugin', () => {
     expect((tab.api as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
 
     tab.dispose()
+  })
+})
+
+describe('crossTabPlugin — infinite queries', () => {
+  type Page = { items: string[]; next: number | null }
+  const pageAt = (n: number): Page => ({ items: [`p${n}`], next: n < 5 ? n + 1 : null })
+  const makeFeed = (id: string, crossTab = true) =>
+    defineInfiniteQuery({
+      id,
+      meta: { crossTab },
+      key: () => ['feed'],
+      fetcher: async ({ pageParam }) => pageAt(pageParam),
+      initialPageParam: 0,
+      getNextPageParam: (p: Page) => p.next,
+      itemsOf: (p: Page) => p.items,
+      staleTime: 60_000,
+    })
+
+  const mountFeedTab = (
+    feed: ReturnType<typeof makeFeed>,
+    channelName: string,
+    factory: ReturnType<typeof busChannelFactory>,
+  ) =>
+    createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, feed) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [crossTabPlugin({ channelName, channelFactory: factory })],
+      },
+    )
+
+  test('an opted-in infinite write reaches the other tab with its page params', async () => {
+    const factory = busChannelFactory()
+    const feedA = makeFeed('xtab-inf/1')
+    const tabA = mountFeedTab(feedA, 'inf-chan', factory)
+    const tabB = mountFeedTab(makeFeed('xtab-inf/1'), 'inf-chan', factory)
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+
+    // Tab A replaces its pages with three pages whose params are 3, 4, 5.
+    tabA.bindQuery(feedA).write(() => [pageAt(3), pageAt(4), pageAt(5)])
+    expect(tabA.api.feed.flat.value).toEqual(['p3', 'p4', 'p5'])
+    await settle()
+    expect(tabB.api.feed.flat.value).toEqual(['p3', 'p4', 'p5'])
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('the receiving tab stores the params that came with the pages', async () => {
+    const factory = busChannelFactory()
+    const feedA = makeFeed('xtab-inf/2')
+    const tabA = mountFeedTab(feedA, 'inf-chan-2', factory)
+    const tabB = mountFeedTab(makeFeed('xtab-inf/2'), 'inf-chan-2', factory)
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+    // Tab A pages to params [0, 1, 2]; fetches never cross, a canonical write
+    // of the same three pages does, with A's params.
+    await tabA.api.feed.fetchNextPage()
+    await tabA.api.feed.fetchNextPage()
+    tabA.bindQuery(feedA).write((pages) => [...(pages ?? [])])
+    await settle()
+    expect(tabB.api.feed.flat.value).toEqual(['p0', 'p1', 'p2'])
+    // Padding tab B's own [0] would give [0, 0, 0]: these are the params that
+    // crossed, and tab B's dehydrate would ship them on.
+    const entry = tabB.dehydrate().entries.find((e) => e.id === 'xtab-inf/2')
+    expect(entry?.pageParams).toEqual([0, 1, 2])
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('an infinite query without meta.crossTab stays in its tab', async () => {
+    const factory = busChannelFactory()
+    const feedA = makeFeed('xtab-inf/3', false)
+    const tabA = mountFeedTab(feedA, 'inf-chan-3', factory)
+    const tabB = mountFeedTab(makeFeed('xtab-inf/3', false), 'inf-chan-3', factory)
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+    tabA.bindQuery(feedA).write(() => [pageAt(4)])
+    await settle()
+    expect(tabB.api.feed.flat.value).toEqual(['p0'])
+    tabA.dispose()
+    tabB.dispose()
   })
 })

@@ -4,6 +4,7 @@ import {
   createQuery,
   createRoot,
   defineController,
+  defineInfiniteQuery,
   defineQuery,
   effect,
   queryEngine,
@@ -335,5 +336,63 @@ describe('createStreamingTransform', () => {
       seen.push(dec.decode(value))
     }
     expect(seen).toEqual(['<script>trailing</script>'])
+  })
+})
+
+describe('streaming an infinite query', () => {
+  test('the server captures pages with params, and the client pages on from them', async () => {
+    type Page = { items: string[]; next: number | null }
+    const pageAt = (n: number): Page => ({ items: [`item-${n}`], next: n < 3 ? n + 1 : null })
+    const serverFeed = defineInfiniteQuery({
+      id: 'streaming-feed',
+      key: () => [],
+      fetcher: async ({ pageParam }) => pageAt(pageParam),
+      initialPageParam: 0,
+      getNextPageParam: (p: Page) => p.next,
+      itemsOf: (p: Page) => p.items,
+    })
+    const { plugin, flush, dispose } = createStreamingHydrator()
+    const server = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, serverFeed) })),
+      { queries: queryEngine(), deps: {}, plugins: [plugin] },
+    )
+    await server.waitForIdle()
+    await server.api.feed.fetchNextPage()
+    const html = flush()
+    expect(html).toContain('"pageParams":[0,1]')
+    dispose()
+    server.dispose()
+
+    // The client receives the batch the bootstrap script would have pushed.
+    const json = html.slice(
+      html.lastIndexOf('.push(') + '.push('.length,
+      html.lastIndexOf(')</script>'),
+    )
+    const payload = JSON.parse(json)
+    const fetched: number[] = []
+    const clientFeed = defineInfiniteQuery({
+      id: 'streaming-feed',
+      key: () => [],
+      fetcher: async ({ pageParam }) => {
+        fetched.push(pageParam)
+        return pageAt(pageParam)
+      },
+      initialPageParam: 0,
+      getNextPageParam: (p: Page) => p.next,
+      itemsOf: (p: Page) => p.items,
+      staleTime: 60_000,
+    })
+    ;(globalThis as Record<string, unknown>)[STREAMING_GLOBAL] = { q: [payload], push() {} }
+    const client = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, clientFeed) })),
+      { queries: queryEngine(), deps: {} },
+    )
+    const uninstall = installStreamingIntake(client)
+    await client.waitForIdle()
+    expect(client.api.feed.flat.value).toEqual(['item-0', 'item-1'])
+    await client.api.feed.fetchNextPage()
+    expect(fetched.at(-1)).toBe(2) // paged on from the streamed params
+    uninstall()
+    client.dispose()
   })
 })

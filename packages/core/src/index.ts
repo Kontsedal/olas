@@ -100,6 +100,7 @@ export type {
   QueryRef,
   RemoveEvent,
   WriteEvent,
+  WriteOptions,
   WriteSource,
 } from './plugin/types'
 export { bindQuery, createCache, createMutation, createQuery } from './query/bind'

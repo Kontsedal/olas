@@ -114,10 +114,6 @@ Examples:
 
 ## Storage / sync
 
-### [idea] Cross-tab sync for infinite queries
-
-[from T6.4] `@kontsedal/olas-cross-tab` and core's remote-apply paths, `applyRemoteSetData` and `applyRemoteInvalidate`, only handle regular `'query'` defs. Infinite queries early-return, so their page arrays cannot be applied cross-tab. The `crossTab: 'infinite'` and `'both'` option values were removed (they broadcast noise no peer could apply). Real support needs a receive path that reconstructs an infinite entry's page array + params (heavier payload, and the receiving tab may have a different page count and cursor), plus a size guard since page arrays can be large. Until then, cross-tab infinite lists should refetch (`invalidate`) rather than sync.
-
 ### [idea] Cross-`mutationId` causal ordering in the mutation queue
 
 [from T6.2] `@kontsedal/olas-mutation-queue` replays entries serially **within** a `mutationId` (sorted by `seq`), but different `mutationId`s replay in parallel and cross-tab order isn't coordinated. So a logical dependency like `order/cancel` needing to land after `order/create` (distinct ids) isn't guaranteed on replay. A full fix needs a cross-id dependency DAG (or a global replay sequence with per-entry `dependsOn` edges) plus cross-tab agreement on that order — significant design. Today's guidance: model dependent steps under one `mutationId`, or make the server tolerant of out-of-order arrival (idempotency + reconciliation). Documented as a limitation in the package README.
@@ -178,14 +174,6 @@ Dropped on purpose. A component that creates a cache subscription owns data life
 
 [from SPEC §6.4] T3.4 rebases live optimistic snapshots onto fresh server truth in `Entry.applySuccess`, so a rollback after an intervening fetch restores server data, not a pre-fetch baseline. `InfiniteEntry` does **not** do this: its success paths (initial refetch, `fetchNextPage`, `fetchPreviousPage`) don't touch live snapshots' captured `prev`/`prevParams`. So an optimistic `setData` on an infinite query, followed by a successful page fetch and then a rollback, restores the pre-fetch pages (dropping an appended page). Rare (infinite + optimistic + concurrent fetch) and the rebase semantics for a paginated append are non-obvious (rebase `prev` to the *current* pages array?), so deferred. `query.cancel(...)` already lets callers avoid the race for infinite queries too.
 
-### [idea] `offlineFirst` park for infinite queries
-
-[from SPEC §5.5] T3.5 implemented the `offlineFirst` network-error park in `Entry.runWithRetry`, which waits for reconnect and then retries. `InfiniteEntry.runFetch` does not. An `offlineFirst` infinite query that hits a network error while offline still surfaces the error rather than parking. `InfiniteEntry.isPaused` is wired for the `online`-mode offline-defer path only. Adding the park to `runFetch` needs per-direction handling (initial/next/prev) and interacts with the collapse-to-page-one behavior (T3.7). Deferred until infinite offline support is a real requirement.
-
-### [idea] Dehydrate/hydrate infinite queries for SSR
-
-[from SPEC §15] `dehydrate()` skips infinite entries, because `client.ts` walks only `client.maps` and not `infiniteMaps`. A server-rendered infinite list therefore refetches its currently-loaded pages on the client after hydration (T3.7 part 2). Adding it needs: serialize `pages` + `pageParams` per infinite entry (heavier than a single-value payload), a `DehydratedInfiniteEntry` shape, hydration wiring in `bindInfiniteEntry` (seed `pages`/`pageParams`/status like `Entry`'s `initialData` path), and the streaming hydrator (`packages/react/src/streaming.ts:114`) to carry the page arrays. Deferred: the first-page refetch-on-client is acceptable for now, and page-array payloads bloat the SSR document. Documented as a limitation in SPEC §15 and the react README.
-
 ### [dropped] Next.js app-router / RSC support
 
 Next.js is misaligned with olas's philosophy: the controller-tree model assumes a client-driven, signal-reactive runtime where lifecycle, dispose, and `createQuery` keying live in user space. RSC inverts that — the server owns rendering, components are render functions of props, and the framework dictates data-fetching boundaries. Bolting olas onto that model leads to one of two bad outcomes. It makes olas a thin pass-through to whatever Next.js already does, which defeats the point. Or it requires a parallel server-side controller runtime, doubling the surface area for an audience already well served by TanStack Query and `'use server'` actions.
@@ -217,13 +205,6 @@ The `cache:subscribed` variant is declared in the `DebugEvent` union but never e
 it needs the subscriber's controller path threaded through `createQuery` → `ClientEntry.acquire`
 (and a matching `cache:unsubscribed` on `release` 1→0). Feeds per-entry subscriber counts
 in the inspector and "who's watching this" in the timeline. Part of overhaul T8.5.
-
-### [idea] Devtools events for infinite queries
-
-T8.1 wired `cache:fetch-*` + `snapshot:*` only for regular queries — `InfiniteEntry` has
-no `EntryEvents` hooks, so infinite fetches/optimistic writes don't appear on the timeline
-(only `setInfiniteData` emits `cache:set-data`). Add the same hook bundle to `InfiniteEntry`
-(per-direction: initial, next and prev) and wire it in `InfiniteClientEntry`.
 
 ### [idea] Timeline group ordering by most-recent activity
 

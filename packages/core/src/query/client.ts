@@ -7,7 +7,7 @@ import type { FetchContext, MutationHost, QueryHost, QueryRef, WriteSource } fro
 import { type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
 import { createInfiniteQueryActions, createQueryActions } from './actions'
-import { Entry } from './entry'
+import { Entry, type EntryEvents } from './entry'
 import { subscribeReconnect, subscribeWindowFocus } from './focus-online'
 import {
   InfiniteEntry,
@@ -24,6 +24,7 @@ import {
 } from './mutation'
 import { lookupRegisteredMutation } from './mutation-registry'
 import type {
+  DehydratedEntry,
   DehydratedState,
   Query,
   QueryActions,
@@ -112,6 +113,82 @@ type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
  */
 const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
 
+/**
+ * An infinite entry's hydration payload, when `data` is a pages array with a
+ * `pageParams` array of the same length. Anything else cannot seed pages.
+ */
+function infinitePayload(
+  data: unknown,
+  pageParams: readonly unknown[] | undefined,
+): { pages: unknown[]; pageParams: unknown[] } | undefined {
+  if (!Array.isArray(data) || !Array.isArray(pageParams)) return undefined
+  if (data.length === 0 || data.length !== pageParams.length) return undefined
+  return { pages: data, pageParams: [...pageParams] }
+}
+
+/** A buffered hydration payload, waiting for its entry to be bound. */
+type HydratedSlot = {
+  data: unknown
+  lastUpdatedAt: number
+  origin: string | undefined
+  /** Present for an infinite query's payload; `data` is then its pages. */
+  pageParams: readonly unknown[] | undefined
+}
+
+/**
+ * The devtools event bundle an entry reports through, regular or infinite:
+ * fetch start and settle (with the write it produced, correlated by
+ * `causeId`), and the optimistic snapshot layer events.
+ */
+function devtoolsEntryEvents(
+  devtools: DevtoolsEmitter | undefined,
+  queryId: string,
+  queryKey: readonly unknown[],
+): EntryEvents | undefined {
+  if (devtools === undefined) return undefined
+  return {
+    onFetchStart: (fetchId) =>
+      devtools.emit({ type: 'cache:fetch-start', queryId, queryKey, causeId: fetchId }),
+    onFetchSuccess: (durationMs, data, fetchId) => {
+      devtools.emit({
+        type: 'cache:fetch-success',
+        queryId,
+        queryKey,
+        durationMs,
+        causeId: fetchId,
+      })
+      // The data write the fetch produced — correlated with the fetch via
+      // `causeId` so the timeline groups them and the cache inspector updates
+      // without polling.
+      devtools.emit({
+        type: 'cache:set-data',
+        queryId,
+        queryKey,
+        source: 'fetch',
+        data,
+        causeId: fetchId,
+      })
+    },
+    onFetchError: (durationMs, error, fetchId) =>
+      devtools.emit({
+        type: 'cache:fetch-error',
+        queryId,
+        queryKey,
+        durationMs,
+        error,
+        causeId: fetchId,
+      }),
+    // `causeId` is read from the ambient cause (the mutation run whose
+    // `onMutate`/rollback is executing) at emit time — see `__runWithCause`.
+    onSnapshotPush: () =>
+      devtools.emit({ type: 'snapshot:push', queryKey, causeId: __currentCauseId() }),
+    onSnapshotRollback: () =>
+      devtools.emit({ type: 'snapshot:rollback', queryKey, causeId: __currentCauseId() }),
+    onSnapshotFinalize: () =>
+      devtools.emit({ type: 'snapshot:finalize', queryKey, causeId: __currentCauseId() }),
+  }
+}
+
 /** Options for `bindQuery(ctx, query, options?)` and `root.bindQuery(query, options?)`. */
 export type BindQueryOptions = {
   /**
@@ -184,6 +261,7 @@ export class ClientEntry<T> {
     const deps = client.deps as import('../controller/types').AmbientDeps
     const devtools = client.devtools
     const queryKey = this.keyArgs
+    const queryId = query.__id
     const ref = client.refOf(query)
     this.entry = new Entry<T>({
       fetcher: () => (signal, attempt) =>
@@ -197,48 +275,7 @@ export class ClientEntry<T> {
       structuralShare: spec.structuralShare ?? defaults.structuralShare,
       initialData: hydrated?.data,
       initialUpdatedAt: hydrated?.lastUpdatedAt,
-      events:
-        __DEV__ && devtools !== undefined
-          ? {
-              onFetchStart: (fetchId) =>
-                devtools.emit({ type: 'cache:fetch-start', queryKey, causeId: fetchId }),
-              onFetchSuccess: (durationMs, data, fetchId) => {
-                devtools.emit({
-                  type: 'cache:fetch-success',
-                  queryKey,
-                  durationMs,
-                  causeId: fetchId,
-                })
-                // The data write the fetch produced — correlated with the
-                // fetch via `causeId` so the timeline groups them and the
-                // cache inspector updates without polling.
-                devtools.emit({
-                  type: 'cache:set-data',
-                  queryKey,
-                  source: 'fetch',
-                  data,
-                  causeId: fetchId,
-                })
-              },
-              onFetchError: (durationMs, error, fetchId) =>
-                devtools.emit({
-                  type: 'cache:fetch-error',
-                  queryKey,
-                  durationMs,
-                  error,
-                  causeId: fetchId,
-                }),
-              // Optimistic snapshot layer events. `causeId` is read from the
-              // ambient cause (the mutation run whose `onMutate`/rollback is
-              // executing) at emit time — see `__runWithCause` in devtools.ts.
-              onSnapshotPush: () =>
-                devtools.emit({ type: 'snapshot:push', queryKey, causeId: __currentCauseId() }),
-              onSnapshotRollback: () =>
-                devtools.emit({ type: 'snapshot:rollback', queryKey, causeId: __currentCauseId() }),
-              onSnapshotFinalize: () =>
-                devtools.emit({ type: 'snapshot:finalize', queryKey, causeId: __currentCauseId() }),
-            }
-          : undefined,
+      events: __DEV__ ? devtoolsEntryEvents(devtools, queryId, queryKey) : undefined,
       onSuccessData: onFetched,
     })
   }
@@ -413,6 +450,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   private gcTime: number
   /** See `ClientEntry.nextIntervalMs` — same closure, same variance reason. */
   private nextIntervalMs: (() => number | null) | undefined
+  private unsubFocus: (() => void) | null = null
+  private unsubOnline: (() => void) | null = null
+  private readonly refetchOnWindowFocus: boolean
+  private readonly refetchOnReconnect: boolean
 
   constructor(
     client: QueryClient,
@@ -420,6 +461,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     callArgs: readonly unknown[],
     keyArgs: readonly unknown[],
     spec: InfiniteQuerySpec<any, PageParam, TPage, TItem>,
+    hydrated: { pages: TPage[]; pageParams: PageParam[]; lastUpdatedAt: number } | undefined,
     /** Reports every successful page batch as a `'fetch'` write. See `ClientEntry`. */
     onFetched: (pages: TPage[]) => void,
   ) {
@@ -427,9 +469,8 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     this.query = query
     this.callArgs = callArgs
     this.keyArgs = keyArgs
-    // `refetchOnWindowFocus` / `refetchOnReconnect` are intentionally absent:
-    // infinite entries install no focus/online subscription, so honoring a
-    // root default here would be dead config. See `QueryDefaults`.
+    this.refetchOnWindowFocus = spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus
+    this.refetchOnReconnect = spec.refetchOnReconnect ?? client.refetchOnReconnect
     const defaults = client.defaults
     this.gcTime = spec.gcTime ?? defaults.gcTime ?? DEFAULT_GC_TIME
     const interval = spec.refetchInterval
@@ -455,6 +496,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       retryDelay: (spec.retryDelay ?? defaults.retryDelay) as RetryDelay | undefined,
       networkMode: spec.networkMode ?? defaults.networkMode,
       structuralShare: spec.structuralShare ?? defaults.structuralShare,
+      initialPages: hydrated?.pages,
+      initialPageParams: hydrated?.pageParams,
+      initialUpdatedAt: hydrated?.lastUpdatedAt,
+      events: __DEV__ ? devtoolsEntryEvents(client.devtools, query.__id, keyArgs) : undefined,
       onSuccessData: onFetched,
     })
   }
@@ -468,7 +513,29 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     if (this.subscriberCount === 1) {
       this.client.emitActivity(this.query, this.keyArgs, true)
       if (this.nextIntervalMs !== undefined) this.startIntervalTimer()
+      if (this.refetchOnWindowFocus) {
+        this.unsubFocus = subscribeWindowFocus(() => this.triggerEventRefetch())
+      }
+      if (this.refetchOnReconnect) {
+        this.unsubOnline = subscribeReconnect(() => this.triggerEventRefetch())
+      }
     }
+  }
+
+  /** See `ClientEntry.triggerEventRefetch`. A refetch re-fetches every loaded page. */
+  private triggerEventRefetch(): void {
+    if (!this.entry.isStaleNow()) return
+    if (this.entry.isFetching.peek()) return
+    this.entry.startFetch().catch(() => {
+      /* error captured on entry */
+    })
+  }
+
+  private stopEventSubscriptions(): void {
+    this.unsubFocus?.()
+    this.unsubFocus = null
+    this.unsubOnline?.()
+    this.unsubOnline = null
   }
 
   hasSubscribers(): boolean {
@@ -480,6 +547,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     if (this.subscriberCount <= 0) {
       if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
+      this.stopEventSubscriptions()
       if (this.gcTime === 0) {
         this.client.dropInfiniteEntry(
           this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
@@ -561,6 +629,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       this.gcTimer = null
     }
     this.stopIntervalTimer()
+    this.stopEventSubscriptions()
     this.entry.dispose()
   }
 }
@@ -578,10 +647,7 @@ export class QueryClient implements PluginEngine {
   >()
   private readonly touchedQueries = new Set<AnyQuery>()
   private readonly touchedInfiniteQueries = new Set<AnyInfiniteQuery>()
-  private readonly hydratedData = new Map<
-    string,
-    { data: unknown; lastUpdatedAt: number; origin: string | undefined }
-  >()
+  private readonly hydratedData = new Map<string, HydratedSlot>()
   /**
    * The queries this root has used, by `id`. Plugins address queries by id,
    * and only a query this root has bound can have entries to address. Kept
@@ -671,6 +737,7 @@ export class QueryClient implements PluginEngine {
     updatedAt: number | undefined,
     source: WriteSource,
     origin: string | undefined,
+    pageParams?: readonly unknown[],
   ): void {
     const plugins = this.plugins
     if (plugins === null || !plugins.listens('onWrite')) return
@@ -681,7 +748,27 @@ export class QueryClient implements PluginEngine {
       updatedAt: updatedAt ?? Date.now(),
       source,
       origin,
+      ...(pageParams !== undefined ? { pageParams } : {}),
     })
+  }
+
+  /** `emitWrite` for an infinite entry: the pages, with their params. */
+  private emitInfiniteWrite(
+    entry: InfiniteClientEntry<unknown, unknown, unknown>,
+    source: WriteSource,
+    origin: string | undefined,
+  ): void {
+    const pages = entry.entry.pages.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      pages,
+      entry.entry.lastUpdatedAt.peek(),
+      source,
+      origin,
+      entry.entry.pageParams.peek(),
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, source)
   }
 
   private emitInvalidated(
@@ -754,8 +841,10 @@ export class QueryClient implements PluginEngine {
           ? found.entry.entry.data.peek()
           : found.entry.entry.pages.peek()
       },
-      write: (id, key, updater) => this.writeByKey(id, key, updater, 'write', origin),
-      replace: (id, key, value) => this.writeByKey(id, key, () => value, 'replace', origin),
+      write: (id, key, updater, options) =>
+        this.writeByKey(id, key, updater, 'write', origin, options?.pageParams),
+      replace: (id, key, value, options) =>
+        this.writeByKey(id, key, () => value, 'replace', origin, options?.pageParams),
       invalidate: (id, key) => {
         const found = this.entryByKey(id, key)
         if (found === undefined) return Promise.resolve()
@@ -765,9 +854,7 @@ export class QueryClient implements PluginEngine {
       },
       hydrate: (state) => {
         if (!this.acceptsState(state)) return
-        for (const e of state.entries) {
-          this.applyDehydratedEntry(e.id, e.key, e.data, e.lastUpdatedAt, origin)
-        }
+        for (const e of state.entries) this.applyDehydratedEntry(e, origin)
       },
       dehydrate: () => this.dehydrate(),
       hashKey: (key) => stableHash(key),
@@ -839,6 +926,7 @@ export class QueryClient implements PluginEngine {
     updater: (prev: unknown) => unknown,
     source: 'write' | 'replace',
     origin: string,
+    pageParams?: readonly unknown[],
   ): void {
     const found = this.entryByKey(id, key)
     if (found === undefined) return
@@ -859,18 +947,12 @@ export class QueryClient implements PluginEngine {
       return
     }
     const { entry } = found
-    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], { track: false })
-    const pages = entry.entry.pages.peek()
+    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], {
+      track: false,
+      pageParams,
+    })
     if (source === 'replace') entry.entry.cancel()
-    this.emitWrite(
-      entry.query,
-      entry.keyArgs,
-      pages,
-      entry.entry.lastUpdatedAt.peek(),
-      source,
-      origin,
-    )
-    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, source)
+    this.emitInfiniteWrite(entry, source, origin)
   }
 
   private acceptsState(state: DehydratedState): boolean {
@@ -927,13 +1009,8 @@ export class QueryClient implements PluginEngine {
    * on the server pushes its dehydrated entry through this method on the
    * client as the bootstrap script executes.
    */
-  applyDehydratedEntry(
-    queryId: string,
-    keyArgs: readonly unknown[],
-    data: unknown,
-    lastUpdatedAt: number,
-    origin?: string,
-  ): void {
+  applyDehydratedEntry(dehydrated: DehydratedEntry, origin?: string): void {
+    const { id: queryId, key: keyArgs, data, lastUpdatedAt, pageParams } = dehydrated
     const hash = stableHash(keyArgs)
     const query = this.byId.get(queryId)
     if (query !== undefined && query[BRAND] === 'query') {
@@ -945,11 +1022,21 @@ export class QueryClient implements PluginEngine {
         return
       }
     }
+    if (query !== undefined && query[BRAND] === 'infiniteQuery') {
+      const entry = this.infiniteMaps.get(query as AnyInfiniteQuery)?.get(hash)
+      const pages = infinitePayload(data, pageParams)
+      if (entry !== undefined) {
+        if (pages === undefined) return
+        entry.entry.applyHydration(pages.pages, pages.pageParams, lastUpdatedAt)
+        this.emitInfiniteWrite(entry, 'hydrate', origin)
+        return
+      }
+    }
     // No local entry yet — buffer in the same map the constructor uses.
     // The next bindEntry for this query + key will adopt the buffered payload
     // and clear the slot. Namespaced by queryId so a colliding-key query can't
     // steal it (spec §15, T1.2).
-    this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt, origin })
+    this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt, origin, pageParams })
   }
 
   /** Buffer a payload for entries not bound yet (`RootOptions.hydrate`). */
@@ -961,6 +1048,7 @@ export class QueryClient implements PluginEngine {
         data: entry.data,
         lastUpdatedAt: entry.lastUpdatedAt,
         origin: undefined,
+        pageParams: entry.pageParams,
       })
     }
   }
@@ -1017,6 +1105,18 @@ export class QueryClient implements PluginEngine {
             lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
           })
         }
+      }
+    }
+    for (const [query, map] of this.infiniteMaps) {
+      for (const ce of map.values()) {
+        if (ce.entry.status.peek() !== 'success') continue
+        entries.push({
+          id: query.__id,
+          key: ce.keyArgs,
+          data: ce.entry.pages.peek(),
+          pageParams: ce.entry.pageParams.peek(),
+          lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
+        })
       }
     }
     return { version: 1, entries }
@@ -1123,7 +1223,7 @@ export class QueryClient implements PluginEngine {
     if (!entry) {
       const hkey = hydrationKey(internal.__id, hash)
       const hydrated = this.hydratedData.get(hkey) as
-        | { data: T; lastUpdatedAt: number; origin: string | undefined }
+        | (HydratedSlot & { data: T; lastUpdatedAt: number })
         | undefined
       if (hydrated) this.hydratedData.delete(hkey)
       // The entry reports its own successful fetches through this closure, so
@@ -1476,6 +1576,21 @@ export class QueryClient implements PluginEngine {
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as InfiniteClientEntry<TPage, TItem, unknown> | undefined
     if (!entry) {
+      // Adopt a buffered hydration payload, as `bindEntry` does. Only one that
+      // carries aligned `pageParams`: a regular-shaped payload under an
+      // infinite query's id cannot seed pages.
+      const hkey = hydrationKey(internal.__id, hash)
+      const slot = this.hydratedData.get(hkey)
+      if (slot !== undefined) this.hydratedData.delete(hkey)
+      const payload = slot === undefined ? undefined : infinitePayload(slot.data, slot.pageParams)
+      const hydrated =
+        payload === undefined || slot === undefined
+          ? undefined
+          : {
+              pages: payload.pages as TPage[],
+              pageParams: payload.pageParams,
+              lastUpdatedAt: slot.lastUpdatedAt,
+            }
       // Every successful page batch (initial, next, prev) reports through this
       // closure, as in `bindEntry`.
       const onFetched = (pages: TPage[]): void =>
@@ -1486,15 +1601,23 @@ export class QueryClient implements PluginEngine {
           created.entry.lastUpdatedAt.peek(),
           'fetch',
           undefined,
+          created.entry.pageParams.peek(),
         )
       const created: InfiniteClientEntry<TPage, TItem, unknown> = new InfiniteClientEntry<
         TPage,
         TItem,
         unknown
-      >(this, internal, args, keyArgs, internal.__spec, onFetched)
+      >(this, internal, args, keyArgs, internal.__spec, hydrated, onFetched)
       entry = created
       map.set(hash, entry as InfiniteClientEntry<unknown, unknown, unknown>)
       entry.scheduleGcIfOrphan()
+      if (hydrated !== undefined && slot !== undefined) {
+        this.emitInfiniteWrite(
+          entry as InfiniteClientEntry<unknown, unknown, unknown>,
+          'hydrate',
+          slot.origin,
+        )
+      }
     }
     return entry
   }
@@ -1592,16 +1715,7 @@ export class QueryClient implements PluginEngine {
   ): void {
     const entry = this.bindInfiniteEntry(query, args)
     entry.entry.setData(updater, { track: false })
-    const pages = entry.entry.pages.peek()
-    this.emitWrite(
-      entry.query,
-      entry.keyArgs,
-      pages,
-      entry.entry.lastUpdatedAt.peek(),
-      'write',
-      origin,
-    )
-    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, 'write')
+    this.emitInfiniteWrite(entry as InfiniteClientEntry<unknown, unknown, unknown>, 'write', origin)
   }
 
   /**
@@ -1618,16 +1732,11 @@ export class QueryClient implements PluginEngine {
     const entry = this.bindInfiniteEntry(query, args)
     entry.entry.setData(() => value, { track: false })
     if (value !== undefined) entry.entry.cancel()
-    const pages = entry.entry.pages.peek()
-    this.emitWrite(
-      entry.query,
-      entry.keyArgs,
-      pages,
-      entry.entry.lastUpdatedAt.peek(),
+    this.emitInfiniteWrite(
+      entry as InfiniteClientEntry<unknown, unknown, unknown>,
       'replace',
       origin,
     )
-    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, 'replace')
   }
 
   setInfiniteData<Args extends unknown[], TPage>(
@@ -1638,33 +1747,16 @@ export class QueryClient implements PluginEngine {
   ): Snapshot {
     const entry = this.bindInfiniteEntry(query, args)
     const snapshot = entry.entry.setData(updater)
-    const pages = entry.entry.pages.peek()
-    this.emitWrite(
-      entry.query,
-      entry.keyArgs,
-      pages,
-      entry.entry.lastUpdatedAt.peek(),
-      'optimistic',
-      origin,
-    )
-    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, 'optimistic')
+    const any = entry as InfiniteClientEntry<unknown, unknown, unknown>
+    this.emitInfiniteWrite(any, 'optimistic', origin)
     // Report the rollback so plugins mirroring the optimistic pages drop them
     // (T3.6); only on an actual change (a non-top chain-splice is a no-op).
     return {
       rollback: () => {
         const before = entry.entry.pages.peek()
         snapshot.rollback()
-        const after = entry.entry.pages.peek()
-        if (!Object.is(before, after)) {
-          this.emitWrite(
-            entry.query,
-            entry.keyArgs,
-            after,
-            entry.entry.lastUpdatedAt.peek(),
-            'rollback',
-            origin,
-          )
-          if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, after, 'rollback')
+        if (!Object.is(before, entry.entry.pages.peek())) {
+          this.emitInfiniteWrite(any, 'rollback', origin)
         }
       },
       finalize: () => snapshot.finalize(),
