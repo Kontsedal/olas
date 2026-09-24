@@ -5,6 +5,7 @@ type: entity
 covers:
   - packages/core/src/expiry-timer.ts
   - packages/core/src/query/entry.ts
+  - packages/core/src/query/infinite.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/expiry-timers.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
@@ -13,7 +14,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/regressions.test.ts }
   - { type: uses, target: ../modules/signals.md }
   - { type: related, target: ../pitfalls/isstale-needs-timer.md }
-last_verified: 2026-09-22
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -59,6 +60,8 @@ catch err:
 An `AbortError` that arrives while this fetch is still `currentFetchId` therefore did **not** come from the engine. It came from the fetcher: its own `AbortSignal.timeout`, an axios cancel token, a rethrown stale abort. Nothing is coming to settle the entry after it, so it settles like any other failure: `status: 'error'`, `error` set, `isFetching` and `isLoading` cleared, `data` untouched.
 
 Rethrowing it, which the single fused check did, left `isFetching` true with nothing to clear it. The spinner then runs until the entry is disposed, `root.waitForIdle()` does not resolve during SSR, and `firstValue()` does not settle under Suspense. The retry policy stays out of it, as it does for every abort. Pinned by `regressions.test.ts` under "a fetcher-originated AbortError settles the entry", which also pins the converse: a superseded fetch aborting late must not clear the newer fetch's `pending`.
+
+`InfiniteEntry` makes the same split in both of its loops (`runRefetchAll` and `runFetch` in `query/infinite.ts`). It has no `applyFailure` to route through, so each loop settles the failure inline: `error` set, `status: 'error'`, `isFetching` and `isLoading` cleared, and for a page fetch the direction flag cleared too. Loaded pages stay. The retry policy is skipped for an abort there as well. Pinned by `regressions.test.ts` under "a fetcher-originated AbortError settles an infinite entry".
 
 `retry`: `number | (attempt, err) => boolean`. `retryDelay`: `number | (attempt) => number`. Defaults: `retry: 0`, `retryDelay: 1000`.
 

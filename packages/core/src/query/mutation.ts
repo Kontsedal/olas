@@ -186,13 +186,6 @@ export function defineMutation<V, R>(
 }
 
 /**
- * A running mutation. Created via `createMutation(ctx, spec)` — the controller owns
- * its lifetime. Each `run(vars)` returns a Promise; the four signals reflect
- * the last-resolved run for UI binding.
- *
- * Spec §6, §20.5.
- */
-/**
  * Call signature for `mutation.run`:
  *  - When `V` is `void` → no args. (`mutation.run()`)
  *  - When `V` was not constrained (default-inferred as `unknown`) → optional
@@ -207,6 +200,13 @@ export type MutationRun<V, R> = (
   ...args: unknown extends V ? [V?] : [V] extends [void] ? [] : [V]
 ) => Promise<R>
 
+/**
+ * A running mutation. Created via `createMutation(ctx, spec)` — the controller owns
+ * its lifetime. Each `run(vars)` returns a Promise; the signals reflect the
+ * last-resolved run for UI binding.
+ *
+ * Spec §6, §20.5.
+ */
 export type Mutation<V, R> = {
   /** Trigger a run. Returns a Promise that resolves with the mutate result. */
   run: MutationRun<V, R>

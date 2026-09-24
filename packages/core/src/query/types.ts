@@ -176,14 +176,6 @@ export type FetchCtx = {
 }
 
 /**
- * Configuration passed to `defineQuery({ ... })`. The `Args` tuple is what
- * callers pass as cache keys and to the fetcher. Spec §20.4.
- *
- * The fetcher's first argument is a `FetchCtx` (signal + deps); positional
- * cache args come after. This shape lets module-scoped queries read
- * `ctx.deps.api` etc. — no `setApiForQuery(api)` module-level capture needed.
- */
-/**
  * How a query behaves with respect to the network reachability signal.
  *
  * - `online` (default) — pause fetches while `navigator.onLine` is `false`;
@@ -203,6 +195,14 @@ export type FetchCtx = {
  */
 export type NetworkMode = 'online' | 'always' | 'offlineFirst'
 
+/**
+ * Configuration passed to `defineQuery({ ... })`. The `Args` tuple is what
+ * callers pass as cache keys and to the fetcher. Spec §20.4.
+ *
+ * The fetcher's first argument is a `FetchCtx` (signal + deps); positional
+ * cache args come after. This shape lets module-scoped queries read
+ * `ctx.deps.api` etc. — no `setApiForQuery(api)` module-level capture needed.
+ */
 export type QuerySpec<Args extends unknown[], T> = {
   key: (...args: Args) => unknown[]
   fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>

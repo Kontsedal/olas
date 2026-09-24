@@ -61,7 +61,7 @@ function isStructurallyEqual(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Hook attached by `createForm` (or `createForm`) so a Field can publish
+ * Hook attached by `createField` and `createForm` so a Field can publish
  * `field:validated` devtools events with its owning controller path + the
  * field's name within the form schema. See devtools §20.9 and FieldImpl.bind.
  */

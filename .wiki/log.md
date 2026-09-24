@@ -1480,3 +1480,24 @@ corrected: `Query.invalidate`'s docstring, the rebase comment in `Entry.setData`
 Verified: `pnpm test` (951 tests in 65 files, 14 of them new), `pnpm test:coverage` against its
 thresholds, `pnpm typecheck`, `pnpm lint`, `pnpm build`, `pnpm publint`, `pnpm attw`,
 `pnpm smoke:dist`, `pnpm wiki:lint` (0 errors), `pnpm prose:lint`.
+
+## [2026-09-24 14:00] ingest | 1.0 review, W0: infinite self-abort, keepDataWhileDisabled, isSelected identity
+
+This opens the 1.0 work. The review and the approved plan live outside the repo (the session plan file). The decisions it records are:
+- a separate root handle (`root.api`);
+- plugin host v2;
+- a required `id` on shared queries and defined mutations;
+- ESM-only.
+
+The later ingests cite them as they land.
+
+**`InfiniteEntry` had `Entry`'s fetcher-originated `AbortError` wedge**, filed to BACKLOG in the previous ingest. The fix is the `Entry` split, applied in both loops. A superseded or disposed request rethrows and writes nothing. An abort from a request that is still current comes from the fetcher, so it settles inline as a failure and skips the retry policy. The BACKLOG item is removed, and `entities/entry.md` now covers `query/infinite.ts` and records the split.
+
+**`keepDataWhileDisabled` was a silent no-op on infinite queries.** `createInfiniteUse` accepted the option and never read it. Retained pages now cover both transitions, a key change and a disable. `flat` flattens the retained pages through the spec's `itemsOf`. Before this change, `flat` read the new entry and went empty under `keepPreviousData` while `pages` still showed the old key.
+
+**`selection().isSelected(id)` minted a computed per call.** A `use(sel.isSelected(id))` in a row's render therefore re-subscribed every render. The computeds are now cached per id behind a `WeakRef`, with a `FinalizationRegistry` dropping the dead keys.
+
+**Hover docs.** Three kinds of fix:
+- The botched "Was `createQuery(ctx, …)`" migration sentences (a find-and-replace ate `ctx.use` and friends) are deleted from `query/bind.ts` and `forms/bind.ts`. Migration history belongs in MIGRATING, not in hover text.
+- Four JSDoc blocks sat on the wrong symbol: `QuerySpec`, `InfiniteQuerySpec`, `Mutation` and `formFromZod`. Each is moved onto its own declaration.
+- An orphan doc line in realtime is removed.

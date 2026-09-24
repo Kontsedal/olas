@@ -26,6 +26,17 @@ describe('selection — basics', () => {
     stop()
   })
 
+  test('isSelected returns the same signal for the same id', () => {
+    // A view calling `use(sel.isSelected(id))` on every render must get a
+    // stable handle, or the hook re-subscribes each render.
+    const s = selection<string>()
+    const first = s.isSelected('x')
+    expect(s.isSelected('x')).toBe(first)
+    expect(s.isSelected('y')).not.toBe(first)
+    s.select('x')
+    expect(first.value).toBe(true)
+  })
+
   test('size is reactive', () => {
     const s = selection<string>()
     const observed: number[] = []

@@ -296,34 +296,42 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   readonly isFetchingNextPage: ReadSignal<boolean>
   readonly isFetchingPreviousPage: ReadSignal<boolean>
 
-  constructor(private readonly keepPreviousData: boolean) {
-    this.pages = computed(() => {
-      const cur = this.current$.value
-      const ps = cur?.entry.pages.value
-      if (ps && ps.length > 0) return ps
-      if (keepPreviousData) return this.previousPages$.value ?? []
-      return ps ?? []
+  constructor(
+    private readonly keepPreviousData: boolean,
+    keepDataWhileDisabled = false,
+    itemsOf?: (page: TPage) => TItem[],
+  ) {
+    // Retained pages cover both transitions that keep the last good value: a
+    // key change (`keepPreviousData`) and a disable (`keepDataWhileDisabled`).
+    // `previousPages$` is only populated when one of them is on.
+    const retains = keepPreviousData || keepDataWhileDisabled
+    const retained = computed<TPage[] | undefined>(() => {
+      const ps = this.current$.value?.entry.pages.value
+      if (ps && ps.length > 0) return undefined
+      if (!retains) return undefined
+      const prev = this.previousPages$.value
+      return prev && prev.length > 0 ? prev : undefined
     })
+    this.pages = computed(() => retained.value ?? this.current$.value?.entry.pages.value ?? [])
     this.data = computed(() => {
-      const cur = this.current$.value
-      const ps = cur?.entry.pages.value
-      if (ps && ps.length > 0) return ps
-      if (keepPreviousData) {
-        const prev = this.previousPages$.value
-        if (prev && prev.length > 0) return prev
-      }
-      return undefined
+      const kept = retained.value
+      if (kept !== undefined) return kept
+      const ps = this.current$.value?.entry.pages.value
+      return ps && ps.length > 0 ? ps : undefined
     })
-    this.flat = computed(() => this.current$.value?.entry.flat.value ?? [])
+    // `flat` follows `pages`: while retained pages are showing, it flattens
+    // those, so the two never disagree about what is on screen.
+    this.flat = computed(() => {
+      const kept = retained.value
+      if (kept !== undefined) return itemsOf ? kept.flatMap(itemsOf) : []
+      return this.current$.value?.entry.flat.value ?? []
+    })
     this.error = computed(() => this.current$.value?.entry.error.value)
     this.status = computed<AsyncStatus>(() => this.current$.value?.entry.status.value ?? 'idle')
     this.isLoading = computed(() => {
       const cur = this.current$.value
       if (!cur) return false
-      if (keepPreviousData) {
-        const prev = this.previousPages$.value
-        if (prev && prev.length > 0) return false
-      }
+      if (retained.value !== undefined) return false
       return cur.entry.isLoading.value
     })
     this.isFetching = computed(() => this.current$.value?.entry.isFetching.value ?? false)
@@ -353,7 +361,13 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     this.current$.set(entry)
   }
 
-  detach(): void {
+  detach(retainData = false): void {
+    // A disable with `keepDataWhileDisabled` snapshots the current pages
+    // before unbinding. Not done on dispose, since the subscription is gone.
+    if (retainData) {
+      const ps = this.current$.peek()?.entry.pages.peek()
+      if (ps !== undefined && ps.length > 0) this.previousPages$.set(ps)
+    }
     this.current$.set(null)
   }
 
@@ -415,8 +429,16 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
   const keyFn = typeof keyOrOptions === 'function' ? keyOrOptions : keyOrOptions?.key
   const enabledFn =
     typeof keyOrOptions === 'object' && keyOrOptions !== null ? keyOrOptions.enabled : undefined
+  const keepDataWhileDisabled =
+    typeof keyOrOptions === 'object' && keyOrOptions !== null
+      ? (keyOrOptions.keepDataWhileDisabled ?? false)
+      : false
 
-  const sub = new InfiniteSubscriptionImpl<TPage, TItem>(keepPreviousData)
+  const sub = new InfiniteSubscriptionImpl<TPage, TItem>(
+    keepPreviousData,
+    keepDataWhileDisabled,
+    spec.itemsOf,
+  )
   let currentEntry: InfiniteClientEntry<TPage, TItem, unknown> | null = null
   let suspended = false
 
@@ -436,7 +458,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
           currentEntry.release()
           currentEntry = null
         }
-        sub.detach()
+        sub.detach(keepDataWhileDisabled)
       })
       return
     }

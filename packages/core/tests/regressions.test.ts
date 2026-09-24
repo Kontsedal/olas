@@ -2125,3 +2125,61 @@ describe('regression: a fetcher-originated AbortError settles the entry', () => 
     root.dispose()
   })
 })
+
+describe('regression: a fetcher-originated AbortError settles an infinite entry', () => {
+  type Page = { n: number; next: number | null }
+  const selfAbort = () => new DOMException('timeout', 'AbortError')
+
+  test('initial fetch: flags clear, error surfaces, retry is not consulted', async () => {
+    const retry = vi.fn(() => true)
+    const q = defineInfiniteQuery({
+      key: () => ['infinite-self-abort-initial'],
+      fetcher: (): Promise<Page> => Promise.reject(selfAbort()),
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+      retry,
+    })
+    const def = defineController((ctx) => ({ list: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.list.status.value).toBe('error'))
+    expect(isAbortError(root.list.error.value)).toBe(true)
+    expect(root.list.isFetching.value).toBe(false)
+    expect(root.list.isLoading.value).toBe(false)
+    expect(retry).not.toHaveBeenCalled()
+    const outcome = await Promise.race([
+      root.waitForIdle().then(() => 'idle'),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve('still fetching'), 100)
+      }),
+    ])
+    expect(outcome).toBe('idle')
+    root.dispose()
+  })
+
+  test('fetchNextPage: the direction flag clears and loaded pages are kept', async () => {
+    let failNext = false
+    const q = defineInfiniteQuery({
+      key: () => ['infinite-self-abort-next'],
+      fetcher: ({ pageParam }: { pageParam: number }): Promise<Page> =>
+        failNext && pageParam > 0
+          ? Promise.reject(selfAbort())
+          : Promise.resolve({ n: pageParam, next: pageParam + 1 }),
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+    })
+    const def = defineController((ctx) => ({ list: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.list.status.value).toBe('success'))
+    failNext = true
+    const err = await root.list.fetchNextPage().then(
+      () => undefined,
+      (e) => e,
+    )
+    expect(isAbortError(err)).toBe(true)
+    expect(root.list.isFetchingNextPage.value).toBe(false)
+    expect(root.list.isFetching.value).toBe(false)
+    expect(root.list.status.value).toBe('error')
+    expect(root.list.pages.value).toEqual([{ n: 0, next: 1 }])
+    root.dispose()
+  })
+})

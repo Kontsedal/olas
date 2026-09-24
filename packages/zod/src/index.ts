@@ -221,22 +221,6 @@ export type ZodToLeaf<S> =
       : Field<z.infer<UnwrapZod<S> & z.ZodType>>
 
 /**
- * Walk a Zod schema and emit the equivalent Olas Form / FieldArray / Field
- * tree, with validators auto-attached.
- *
- * - `z.object(...)` → `Form`
- * - `z.array(...)`  → `FieldArray` (recurses on the element)
- * - leaf schemas    → `Field` with `zodValidator(...)` attached
- *
- * Each leaf's initial value is the Zod default if present, otherwise an empty
- * value for that type (`''` for strings, `0` for numbers, etc.).
- *
- * The return type is structurally precise — `form.fields.title.value` is
- * `string` (not `string | boolean | …`), `form.fields.subtasks.add(...)`
- * accepts the exact item shape, etc. Consumers do not need to hand-write
- * a `CardForm = Form<{...}>` matching the schema.
- */
-/**
  * Per-leaf extra validators keyed by dotted path. Match the leaf field's
  * position inside the schema:
  *
@@ -267,6 +251,22 @@ export type FormFromZodOptions<T extends z.ZodObject<z.ZodRawShape>> = {
   extraValidators?: ExtraValidators
 }
 
+/**
+ * Walk a Zod schema and emit the equivalent Olas Form / FieldArray / Field
+ * tree, with validators auto-attached.
+ *
+ * - `z.object(...)` → `Form`
+ * - `z.array(...)`  → `FieldArray` (recurses on the element)
+ * - leaf schemas    → `Field` with `zodValidator(...)` attached
+ *
+ * Each leaf's initial value is the Zod default if present, otherwise an empty
+ * value for that type (`''` for strings, `0` for numbers, etc.).
+ *
+ * The return type is structurally precise — `form.fields.title.value` is
+ * `string` (not `string | boolean | …`), `form.fields.subtasks.add(...)`
+ * accepts the exact item shape, etc. Consumers do not need to hand-write
+ * a `CardForm = Form<{...}>` matching the schema.
+ */
 export function formFromZod<T extends z.ZodObject<z.ZodRawShape>>(
   ctx: Ctx,
   schema: T,

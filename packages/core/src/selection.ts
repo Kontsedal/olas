@@ -51,7 +51,23 @@ export function selection<T = unknown>(options?: { initial?: readonly string[] }
 
   const size = computed(() => ids.value.size)
 
-  const isSelected = (id: string): ReadSignal<boolean> => computed(() => ids.value.has(id))
+  // One computed per id, handed out again for as long as anything holds it.
+  // A row that renders `use(sel.isSelected(id))` therefore gets the same signal
+  // every render, instead of a fresh one that makes the hook unsubscribe and
+  // re-subscribe each time. The cache holds its computeds weakly. A 50k-row
+  // table scrolled end to end would otherwise pin one computed per row forever.
+  const selectedById = new Map<string, WeakRef<ReadSignal<boolean>>>()
+  const collected = new FinalizationRegistry<string>((id) => {
+    if (selectedById.get(id)?.deref() === undefined) selectedById.delete(id)
+  })
+  const isSelected = (id: string): ReadSignal<boolean> => {
+    const cached = selectedById.get(id)?.deref()
+    if (cached !== undefined) return cached
+    const created = computed(() => ids.value.has(id))
+    selectedById.set(id, new WeakRef(created))
+    collected.register(created, id)
+    return created
+  }
 
   const select = (id: string): void => {
     const prev = ids.peek()

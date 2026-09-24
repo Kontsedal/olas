@@ -54,8 +54,6 @@ export type RealtimeService = {
 
 export type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'
 
-/** Slice of `ctx.deps` needed by `useRealtimeConnection`. */
-
 /** Slice of `ctx.deps` consumed by this package. */
 export type RealtimeDeps = { realtime: RealtimeService }
 

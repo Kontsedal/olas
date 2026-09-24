@@ -15,13 +15,9 @@ import type {
 } from './types'
 
 /**
- * Configuration for `defineInfiniteQuery({ ... })`. Spec §5.7, §20.4.
- *
- * - `getNextPageParam(lastPage, allPages)` returns the param for the next
- *   page, or `null` when there's no more.
- * - `getPreviousPageParam` (optional) enables bidirectional infinite lists.
- * - `itemsOf(page)` (optional) flattens pages into items for the
- *   `subscription.flat` convenience signal.
+ * Per-fetch context for an infinite query: the page to fetch, the
+ * `AbortSignal` to honor, and the root's `deps`. See `FetchCtx` for the
+ * regular-query analogue.
  */
 export type InfiniteFetchCtx<PageParam> = {
   pageParam: PageParam
@@ -29,6 +25,15 @@ export type InfiniteFetchCtx<PageParam> = {
   deps: import('../controller/types').AmbientDeps
 }
 
+/**
+ * Configuration for `defineInfiniteQuery({ ... })`. Spec §5.11, §20.4.
+ *
+ * - `getNextPageParam(lastPage, allPages)` returns the param for the next
+ *   page, or `null` when there's no more.
+ * - `getPreviousPageParam` (optional) enables bidirectional infinite lists.
+ * - `itemsOf(page)` (optional) flattens pages into items for the
+ *   `subscription.flat` convenience signal.
+ */
 export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> = {
   key: (...args: Args) => unknown[]
   /**
@@ -308,9 +313,16 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             newParams.push(pageParam)
             break
           } catch (err) {
-            if (myId !== this.currentFetchId || this.disposed || isAbortError(err)) throw err
+            // Superseded or disposed: the newer request owns the entry's state.
+            if (myId !== this.currentFetchId || this.disposed) throw err
+            // Still the latest request, yet it aborted — so the fetcher aborted
+            // itself (its own timeout signal, a rethrown stale abort). Every
+            // engine-side abort bumps `currentFetchId` or sets `disposed` first.
+            // Nothing newer is coming to settle the entry, so it settles as a
+            // failure; aborts never go through the retry policy.
             const shouldRetry =
-              typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err)
+              !isAbortError(err) &&
+              (typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err))
             if (!shouldRetry) {
               batch(() => {
                 this.error.set(err)
@@ -483,11 +495,11 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           succeeded = true
           return page
         } catch (err) {
-          if (myId !== this.currentFetchId || this.disposed || isAbortError(err)) {
-            throw err
-          }
+          if (myId !== this.currentFetchId || this.disposed) throw err
+          // A self-inflicted abort settles as a failure — see `runRefetchAll`.
           const shouldRetry =
-            typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err)
+            !isAbortError(err) &&
+            (typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err))
           if (!shouldRetry) {
             batch(() => {
               this.error.set(err)

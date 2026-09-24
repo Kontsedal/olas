@@ -245,3 +245,50 @@ describe('infinite query: keepPreviousData', () => {
     root.dispose()
   })
 })
+
+describe('infinite createQuery — keepDataWhileDisabled', () => {
+  test('disabling keeps the loaded pages and their flattened items', async () => {
+    const fx = makeFixture()
+    const q = defineInfiniteQuery({
+      key: () => ['chat-keep-disabled'],
+      fetcher: fx.fetch,
+      initialPageParam: 0,
+      getNextPageParam: (page) => page.next,
+      itemsOf: (page) => page.items,
+    })
+    const enabled = signal(true)
+    const def = defineController((ctx) => ({
+      chat: createQuery(ctx, q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.chat.status.value).toBe('success'))
+    enabled.set(false)
+    expect(root.chat.status.value).toBe('idle')
+    expect(root.chat.pages.value).toEqual([fx.pages[0]])
+    expect(root.chat.data.value).toEqual([fx.pages[0]])
+    expect(root.chat.flat.value).toEqual(['a', 'b'])
+    root.dispose()
+  })
+
+  test('without the flag, disabling blanks the pages (spec default)', async () => {
+    const fx = makeFixture()
+    const q = defineInfiniteQuery({
+      key: () => ['chat-blank-disabled'],
+      fetcher: fx.fetch,
+      initialPageParam: 0,
+      getNextPageParam: (page) => page.next,
+      itemsOf: (page) => page.items,
+    })
+    const enabled = signal(true)
+    const def = defineController((ctx) => ({
+      chat: createQuery(ctx, q, { enabled: () => enabled.value }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.chat.status.value).toBe('success'))
+    enabled.set(false)
+    expect(root.chat.pages.value).toEqual([])
+    expect(root.chat.data.value).toBeUndefined()
+    expect(root.chat.flat.value).toEqual([])
+    root.dispose()
+  })
+})
