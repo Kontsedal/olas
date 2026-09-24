@@ -124,14 +124,14 @@ export const cardDetailController = defineController(
     ctx.effect(() => {
       const c = card.value
       if (c === null) {
-        if (lastCardId !== null) form.resetWithInitial(blankInitials)
+        if (lastCardId !== null) form.setAsInitial(blankInitials)
         lastCardId = null
         return
       }
       // Only re-anchor when the id changes — avoid stomping in-progress
       // edits whenever the cache writes back (e.g. cross-tab patch).
       if (c.id !== lastCardId) {
-        form.resetWithInitial(cardToFormInitials(c))
+        form.setAsInitial(cardToFormInitials(c))
         lastCardId = c.id
       }
     })
@@ -149,7 +149,7 @@ export const cardDetailController = defineController(
         if (!ok || titleAsyncError.peek() !== null) {
           throw new Error('Form has errors')
         }
-        const value = form.value.value as CardFormValue
+        const value = form.value as CardFormValue
         const input: SaveCardInput = {
           id,
           title: value.title,

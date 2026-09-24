@@ -6,7 +6,7 @@ export function AssigneesRow() {
   const app = useRoot<AppApi>()
   const users = useQuery(app.users)
   const array = app.cardDetail.form.fields.assigneeIds
-  const value = use(array.value) as readonly string[]
+  const value = use(array)
   const selectedSet = new Set(value)
 
   return (

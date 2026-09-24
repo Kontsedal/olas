@@ -7,7 +7,7 @@ export function LabelsRow() {
   const app = useRoot<AppApi>()
   const labels = useQuery(app.labels)
   const array = app.cardDetail.form.fields.labelIds
-  const value = use(array.value) as readonly string[]
+  const value = use(array)
   const selectedSet = new Set(value)
 
   return (

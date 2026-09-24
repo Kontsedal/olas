@@ -69,6 +69,8 @@ export type {
   FormValidator,
   FormValue,
   ItemInitial,
+  SubmitOptions,
+  SubmitResult,
 } from './forms/form-types'
 // Plugins (§13)
 export { definePlugin } from './plugin/host'

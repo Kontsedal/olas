@@ -71,17 +71,42 @@ export type FieldArrayOptions<I> = {
 }
 
 /**
- * A nested form. Created via `createForm(ctx, schema, options?)`. `value` aggregates
- * every leaf into the structurally-typed `FormValue<S>`; `errors` mirrors that
- * shape with `string[] | undefined`. `flatErrors` is a flattened view useful
- * for rendering a single error summary. Spec §8, §20.7.
- *
- * IMPORTANT: `Form.value` is a `ReadSignal<FormValue<S>>` while `Field.value`
- * is `T` directly — different shapes. See `.wiki/pitfalls/field-value-shape.md`.
+ * What `Form.submit` resolves with. `ok: true` carries the handler's result.
+ * `ok: false` names why the handler did not succeed:
+ *  - `'invalid'` — pre-submit validation failed; every leaf is marked touched.
+ *  - `'error'` — the handler threw; `error` is the thrown value.
+ *  - `'busy'` — a submission was already in flight, so this one did not start.
+ *  - `'disposed'` — the form was disposed.
  */
-export type Form<S extends FormSchema> = {
+export type SubmitResult<R> =
+  | { readonly ok: true; readonly data: R }
+  | { readonly ok: false; readonly reason: 'invalid' | 'busy' | 'disposed' }
+  | { readonly ok: false; readonly reason: 'error'; readonly error: unknown }
+
+/** Options for `Form.submit`. */
+export type SubmitOptions = {
+  /** Run `validate()` first and skip the handler when invalid. Default `true`. */
+  validateBeforeSubmit?: boolean
+  /** Call `reset()` after the handler resolves. Default `false`. */
+  resetOnSuccess?: boolean
+  /**
+   * `'capture'` (default) resolves `{ ok: false, reason: 'error' }` when the
+   * handler throws. `'rethrow'` rejects with the thrown value instead.
+   */
+  onError?: 'rethrow' | 'capture'
+}
+
+/**
+ * A nested form. Created via `createForm(ctx, schema, options?)`. Spec §8, §20.7.
+ *
+ * A form is a `ReadSignal` of its aggregate value, like a `Field`: `form.value`
+ * is the structurally-typed `FormValue<S>`, and `form.subscribe` fires when
+ * any leaf changes. `errors` mirrors the value's shape with
+ * `string[] | undefined`. `flatErrors` is a flattened view for rendering a
+ * single error summary.
+ */
+export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
   readonly fields: { [K in keyof S]: S[K] }
-  readonly value: ReadSignal<FormValue<S>>
   readonly errors: ReadSignal<FormErrors<S>>
   readonly topLevelErrors: ReadSignal<string[]>
   readonly flatErrors: ReadSignal<Array<{ path: string; errors: string[] }>>
@@ -108,19 +133,18 @@ export type Form<S extends FormSchema> = {
    * Cleared at the start of each new `submit(...)` call and on `reset()`.
    * Note that a validation failure ("submit blocked because the form is
    * invalid") is NOT a thrown error — `submitError` stays whatever it
-   * was, and the returned promise resolves with `{ ok: false }`.
+   * was, and the returned promise resolves with `{ ok: false, reason: 'invalid' }`.
    */
   readonly submitError: ReadSignal<unknown>
 
   /** Deep-merge a partial value into the form, batched. */
   set(partial: DeepPartial<FormValue<S>>): void
   /**
-   * Re-seat the form's leaves from `partial` as their new initials —
-   * each leaf calls `setAsInitial(value)`, so `isDirty` stays false and a
-   * subsequent `reset()` returns *here*. Internal-ish but exported for
-   * `Form`-traversal code (nested-form initial application).
+   * Load `partial` as the form's new baseline — the form-level
+   * `Field.setAsInitial`. Every leaf `partial` names takes the value as its
+   * initial, so `isDirty` stays false and a later `reset()` returns here.
    */
-  resetWithInitial(partial: DeepPartial<FormValue<S>>): void
+  setAsInitial(partial: DeepPartial<FormValue<S>>): void
   /** Reset every leaf to its initial value. */
   reset(): void
   /**
@@ -137,17 +161,13 @@ export type Form<S extends FormSchema> = {
   /**
    * Run a submission. Pre-validates the form (unless `validateBeforeSubmit: false`),
    * then calls `handler(value)`. Maintains `isSubmitting` / `submitCount` /
-   * `submitError`. Returns `{ ok, data?, error? }` — see `FormImpl.submit`
-   * for the full contract.
+   * `submitError`. Resolves with a `SubmitResult`: switch on `ok`, then on
+   * `reason`.
    */
   submit<R = unknown>(
     handler: (value: FormValue<S>) => R | Promise<R>,
-    options?: {
-      validateBeforeSubmit?: boolean
-      resetOnSuccess?: boolean
-      onError?: 'rethrow' | 'capture'
-    },
-  ): Promise<{ ok: boolean; data?: Awaited<R>; error?: unknown }>
+    options?: SubmitOptions,
+  ): Promise<SubmitResult<Awaited<R>>>
   /**
    * Pin externally-sourced errors on specific fields. Keys are dot-separated
    * paths through nested forms / field arrays (numeric segments are array
@@ -163,10 +183,12 @@ export type Form<S extends FormSchema> = {
  * A dynamically-sized list of `Field` or `Form` items. Created via
  * `createFieldArray(ctx, itemFactory, options?)`. The factory is invoked per
  * insertion. Spec §8, §20.7.
+ *
+ * A field array is a `ReadSignal` of its items' values, like a `Field`:
+ * `array.value` is `FieldArrayValue<I>`. `items` holds the item nodes.
  */
-export type FieldArray<I extends Field<any> | Form<any>> = {
+export type FieldArray<I extends Field<any> | Form<any>> = ReadSignal<FieldArrayValue<I>> & {
   readonly items: ReadSignal<ReadonlyArray<I>>
-  readonly value: ReadSignal<FieldArrayValue<I>>
   readonly errors: ReadSignal<Array<FieldArrayItemErrors<I> | undefined>>
   readonly topLevelErrors: ReadSignal<string[]>
   readonly isValid: ReadSignal<boolean>
@@ -182,6 +204,18 @@ export type FieldArray<I extends Field<any> | Form<any>> = {
   at(index: number): I | undefined
   clear(): void
 
+  /**
+   * Write `values` into the array. Items at overlapping indices keep their
+   * identity and take the value through their own `set`, so touched state and
+   * in-flight validators survive. Extra values are appended; extra items are
+   * removed.
+   */
+  set(values: ReadonlyArray<ItemInitial<I>>): void
+  /**
+   * Load `values` as the array's new baseline: the items are rebuilt from
+   * them, `isDirty` stays false, and a later `reset()` returns here.
+   */
+  setAsInitial(values: ReadonlyArray<ItemInitial<I>>): void
   reset(): void
   markAllTouched(): void
   validate(): Promise<boolean>

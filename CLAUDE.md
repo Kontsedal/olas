@@ -234,7 +234,6 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 # Codebase-specific gotchas (the quick list — full details in `.wiki/pitfalls/`)
 
 - **`callArgs` vs `keyArgs` in `ClientEntry`** — original args go to the fetcher; `spec.key(...)` output goes to the hash. They are not the same. See `.wiki/pitfalls/callargs-vs-keyargs.md`.
-- **`Field<T>.value` returns `T`, but `Form.value` and `FieldArray.value` are `ReadSignal<...>`.** Form traversal code branches on this. See `.wiki/pitfalls/field-value-shape.md`.
 - **`latest-wins` mutations roll back the previous snapshot synchronously before calling the new `onMutate`** — not on the previous run's catch. Doing it later stacks snapshots wrong. See `.wiki/pitfalls/latest-wins-rollback-order.md`.
 - **`isStale` cannot be a `Date.now()` computed** — its deps don't change as time passes. Must be timer-driven. See `.wiki/pitfalls/isstale-needs-timer.md`.
 - **Mutations race against their abort signal** so misbehaving mutate fns can't block forever. See `.wiki/pitfalls/raceabort-for-misbehaving-mutate.md`.

@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, expectTypeOf, test, vi } from 'vitest'
 import { createField, createFieldArray, createForm } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { required } from '../src/forms'
@@ -25,8 +25,7 @@ describe('form.submit lifecycle', () => {
     expect(root.api.form.isSubmitting.value).toBe(true)
 
     const result = await promise
-    expect(result.ok).toBe(true)
-    expect(result.data).toEqual({ id: 'srv-1', name: 'Alice' })
+    expect(result).toEqual({ ok: true, data: { id: 'srv-1', name: 'Alice' } })
     expect(handler).toHaveBeenCalledWith({ name: 'Alice' })
     expect(root.api.form.isSubmitting.value).toBe(false)
     expect(root.api.form.submitError.value).toBeUndefined()
@@ -45,7 +44,7 @@ describe('form.submit lifecycle', () => {
 
     expect(root.api.form.fields.name.touched.value).toBe(false)
     const result = await root.api.form.submit(handler)
-    expect(result.ok).toBe(false)
+    expect(result).toEqual({ ok: false, reason: 'invalid' })
     expect(handler).not.toHaveBeenCalled()
     expect(root.api.form.fields.name.touched.value).toBe(true)
     expect(root.api.form.submitCount.value).toBe(1)
@@ -81,8 +80,7 @@ describe('form.submit lifecycle', () => {
     const result = await root.api.form.submit(async () => {
       throw boom
     })
-    expect(result.ok).toBe(false)
-    expect(result.error).toBe(boom)
+    expect(result).toEqual({ ok: false, reason: 'error', error: boom })
     expect(root.api.form.submitError.value).toBe(boom)
     expect(root.api.form.isSubmitting.value).toBe(false)
 
@@ -129,7 +127,7 @@ describe('form.submit lifecycle', () => {
     root.dispose()
   })
 
-  test('double-submit guard: parallel submit() returns ok:false with an error', async () => {
+  test("double-submit guard: parallel submit() resolves ok:false with reason 'busy'", async () => {
     let releaseFirst!: () => void
     const def = defineController((ctx) => ({
       form: createForm(ctx, { name: createField<string>(ctx, 'Alice') }),
@@ -151,9 +149,7 @@ describe('form.submit lifecycle', () => {
     await Promise.resolve()
     expect(root.api.form.isSubmitting.value).toBe(true)
     const second = await root.api.form.submit(async () => 'ignored')
-    expect(second.ok).toBe(false)
-    expect(second.error).toBeInstanceOf(Error)
-    expect((second.error as Error).message).toMatch(/already in progress/)
+    expect(second).toEqual({ ok: false, reason: 'busy' })
     releaseFirst()
     await first
     expect(root.api.form.isSubmitting.value).toBe(false)
@@ -287,6 +283,37 @@ describe('form.setErrors / field.setErrors', () => {
     root.api.name.reset()
     expect(root.api.name.errors.value).toEqual([])
 
+    root.dispose()
+  })
+})
+
+describe('Form.submit — the result narrows on ok, then on reason', () => {
+  test('a disposed form resolves disposed without running the handler', async () => {
+    const handler = vi.fn()
+    const def = defineController((ctx) => ({
+      form: createForm(ctx, { name: createField<string>(ctx, 'x') }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const form = root.api.form
+    root.dispose()
+    expect(await form.submit(handler)).toEqual({ ok: false, reason: 'disposed' })
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  test('the union narrows: data only on ok, error only on reason error', async () => {
+    const def = defineController((ctx) => ({
+      form: createForm(ctx, { name: createField<string>(ctx, 'x') }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const result = await root.api.form.submit(() => 42)
+    if (result.ok) {
+      expectTypeOf(result.data).toEqualTypeOf<number>()
+    } else if (result.reason === 'error') {
+      expectTypeOf(result.error).toBeUnknown()
+    } else {
+      expectTypeOf(result.reason).toEqualTypeOf<'invalid' | 'busy' | 'disposed'>()
+    }
+    expect(result).toEqual({ ok: true, data: 42 })
     root.dispose()
   })
 })

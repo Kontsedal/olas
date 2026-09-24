@@ -21,6 +21,8 @@ import type {
   FormValidator,
   FormValue,
   ItemInitial,
+  SubmitOptions,
+  SubmitResult,
 } from './form-types'
 import type { FormIssue, ValidatorResult } from './types'
 
@@ -121,7 +123,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   readonly [FORM_BRAND] = true
 
   readonly fields: S
-  readonly value: ReadSignal<FormValue<S>>
+  private readonly value$: ReadSignal<FormValue<S>>
   readonly errors: ReadSignal<FormErrors<S>>
   readonly isValid: ReadSignal<boolean>
   readonly isDirty: ReadSignal<boolean>
@@ -223,7 +225,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       }
     }
 
-    this.value = computed(() => this.computeValue())
+    this.value$ = computed(() => this.computeValue())
     this.errors = computed(() => this.computeErrors())
     this.isDirty = computed(() => this.computeBool('isDirty'))
     this.touched = computed(() => this.computeBool('touched'))
@@ -256,15 +258,27 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     }
   }
 
+  get value(): FormValue<S> {
+    return this.value$.value
+  }
+
+  peek(): FormValue<S> {
+    return this.value$.peek()
+  }
+
+  subscribe(handler: (value: FormValue<S>) => void): () => void {
+    return this.value$.subscribe(handler)
+  }
+
+  subscribeChanges(handler: (value: FormValue<S>) => void): () => void {
+    return this.value$.subscribeChanges(handler)
+  }
+
   private computeValue(): FormValue<S> {
     const out: Record<string, unknown> = {}
+    // Every child — Field, Form or FieldArray — is a ReadSignal of its value.
     for (const [k, child] of Object.entries(this.fields)) {
-      if (isForm(child) || isFieldArray(child)) {
-        out[k] = (child as { value: ReadSignal<unknown> }).value.value
-      } else {
-        // Field<T> is itself a ReadSignal<T>; .value returns T (tracked).
-        out[k] = (child as Field<unknown>).value
-      }
+      out[k] = (child as ReadSignal<unknown>).value
     }
     return out as FormValue<S>
   }
@@ -313,63 +327,15 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       // alone", not "reset it with undefined" — which would crash on
       // `Object.entries(undefined)`.
       if (val === undefined) continue
-      if (isForm(child)) {
-        // Nested form: recurse via its own `set` (user) or rebuild via reset
-        // through the same `applyPartial`-with-`asInitial` flag (initial).
-        if (asInitial) {
-          ;(child as Form<FormSchema>).resetWithInitial(val as DeepPartial<FormValue<FormSchema>>)
-        } else {
-          child.set(val as DeepPartial<FormValue<FormSchema>>)
-        }
-      } else if (isFieldArray(child)) {
-        const arr = child
-        const newValues = val as unknown[]
-        if (asInitial) {
-          // Reset-style application: replace items wholesale and re-anchor
-          // them as the new initial so a later `reset()` returns here.
-          arr.clear()
-          for (const itemVal of newValues) {
-            arr.add(itemVal as ItemInitial<Field<unknown>>)
-          }
-          // Internal: re-anchor the initialItems list. `replaceInitialItems`
-          // is only exposed for this exact use case.
-          ;(
-            arr as unknown as {
-              replaceInitialItems: (items: ReadonlyArray<unknown>) => void
-            }
-          ).replaceInitialItems(newValues)
-        } else {
-          // User-driven patch: preserve item identity where the lengths
-          // overlap so touched / dirty / in-flight validators on existing
-          // items survive. Tail diff handles grow / shrink.
-          const current = arr.items.peek() as ReadonlyArray<Field<unknown> | Form<FormSchema>>
-          const overlap = Math.min(current.length, newValues.length)
-          for (let i = 0; i < overlap; i++) {
-            const item = current[i]
-            const v = newValues[i]
-            if (isForm(item)) {
-              item.set(v as DeepPartial<FormValue<FormSchema>>)
-            } else {
-              ;(item as Field<unknown>).set(v)
-            }
-          }
-          for (let i = current.length; i < newValues.length; i++) {
-            arr.add(newValues[i] as ItemInitial<Field<unknown>>)
-          }
-          for (let i = current.length - 1; i >= newValues.length; i--) {
-            arr.remove(i)
-          }
-        }
-      } else {
-        const f = child as Field<unknown>
-        if (asInitial) f.setAsInitial(val)
-        else f.set(val)
-      }
+      // Field, Form and FieldArray share `set` and `setAsInitial`, each
+      // taking its own value shape.
+      const node = child as { set(v: unknown): void; setAsInitial(v: unknown): void }
+      if (asInitial) node.setAsInitial(val)
+      else node.set(val)
     }
   }
 
-  /** Internal: re-seat this form's leaves from `partial` as their new initial. */
-  resetWithInitial(partial: DeepPartial<FormValue<S>>): void {
+  setAsInitial(partial: DeepPartial<FormValue<S>>): void {
     if (this.disposed) return
     batch(() => this.applyPartial(partial, true))
   }
@@ -452,30 +418,26 @@ class FormImpl<S extends FormSchema> implements Form<S> {
    * - `submitError` set to the throw, if any.
    * - Optional pre-submit `validate()` (default true). When invalid every
    *   field is marked touched and the handler is skipped — the returned
-   *   promise resolves with `{ ok: false }` and `submitError` is left
-   *   untouched (validation failure is not a thrown error).
+   *   promise resolves with `{ ok: false, reason: 'invalid' }` and
+   *   `submitError` is left untouched (validation failure is not a thrown
+   *   error).
    *
    * The handler may return a value (synchronously or via Promise); it's
-   * captured in the resolved object's `data` field. Throws are captured
-   * unless `onError: 'rethrow'`. A `resetOnSuccess: true` option calls
-   * `reset()` after the handler resolves successfully.
+   * captured in the resolved object's `data` field. Throws resolve
+   * `{ ok: false, reason: 'error', error }` unless `onError: 'rethrow'`. A
+   * `resetOnSuccess: true` option calls `reset()` after the handler resolves
+   * successfully.
    */
   async submit<R = unknown>(
     handler: (value: FormValue<S>) => R | Promise<R>,
-    options?: {
-      validateBeforeSubmit?: boolean
-      resetOnSuccess?: boolean
-      onError?: 'rethrow' | 'capture'
-    },
-  ): Promise<{ ok: boolean; data?: Awaited<R>; error?: unknown }> {
-    if (this.disposed) return { ok: false, error: new Error('form is disposed') }
+    options?: SubmitOptions,
+  ): Promise<SubmitResult<Awaited<R>>> {
+    if (this.disposed) return { ok: false, reason: 'disposed' }
 
     // Double-submit guard — refusing to start a second submission while one
     // is in flight matches RHF / TanStack-Form. Consumers wanting parallel
     // submits should run them off the form directly.
-    if (this.isSubmitting$.peek()) {
-      return { ok: false, error: new Error('submit already in progress') }
-    }
+    if (this.isSubmitting$.peek()) return { ok: false, reason: 'busy' }
 
     const validateFirst = options?.validateBeforeSubmit ?? true
     const onErrorMode = options?.onError ?? 'capture'
@@ -492,10 +454,10 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         if (!ok) {
           this.markAllTouched()
           this.isSubmitting$.set(false)
-          return { ok: false }
+          return { ok: false, reason: 'invalid' }
         }
       }
-      const result = (await handler(this.value.peek())) as Awaited<R>
+      const result = (await handler(this.value$.peek())) as Awaited<R>
       if (options?.resetOnSuccess) this.reset()
       this.isSubmitting$.set(false)
       return { ok: true, data: result }
@@ -505,7 +467,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         this.isSubmitting$.set(false)
       })
       if (onErrorMode === 'rethrow') throw err
-      return { ok: false, error: err }
+      return { ok: false, reason: 'error', error: err }
     }
   }
 
@@ -604,7 +566,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   private runTopLevelValidators(): void {
     if (this.disposed) return
-    const value = this.value.value
+    const value = this.value$.value
     this.currentValidatorAbort?.abort()
     const abort = new AbortController()
     this.currentValidatorAbort = abort
@@ -787,7 +749,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   readonly [FIELD_ARRAY_BRAND] = true
 
   readonly items: ReadSignal<ReadonlyArray<I>>
-  readonly value: ReadSignal<FieldArrayValue<I>>
+  private readonly value$: ReadSignal<FieldArrayValue<I>>
   readonly errors: ReadSignal<Array<FieldArrayItemErrors<I> | undefined>>
   readonly size: ReadSignal<number>
   readonly isValid: ReadSignal<boolean>
@@ -853,13 +815,10 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
     this.items = this.items$
     this.size = computed(() => this.items$.value.length)
-    this.value = computed(
+    // Every item — Field or Form — is a ReadSignal of its value.
+    this.value$ = computed(
       () =>
-        this.items$.value.map((item) => {
-          if (isForm(item)) return item.value.value
-          // Field is a ReadSignal — `.value` is the actual value.
-          return (item as Field<unknown>).value
-        }) as FieldArrayValue<I>,
+        this.items$.value.map((item) => (item as ReadSignal<unknown>).value) as FieldArrayValue<I>,
     )
     this.errors = computed(() =>
       this.items$.value.map((item) => {
@@ -902,6 +861,22 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     if (this.validators.length > 0) {
       this.validatorDispose = effect(() => this.runTopLevelValidators())
     }
+  }
+
+  get value(): FieldArrayValue<I> {
+    return this.value$.value
+  }
+
+  peek(): FieldArrayValue<I> {
+    return this.value$.peek()
+  }
+
+  subscribe(handler: (value: FieldArrayValue<I>) => void): () => void {
+    return this.value$.subscribe(handler)
+  }
+
+  subscribeChanges(handler: (value: FieldArrayValue<I>) => void): () => void {
+    return this.value$.subscribeChanges(handler)
   }
 
   at(index: number): I | undefined {
@@ -963,18 +938,34 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     this.structurallyDirty$.set(true)
   }
 
-  /**
-   * Internal — used by `Form.resetWithInitial` to re-anchor the array's
-   * initial items after a parent-driven `applyPartial(..., asInitial: true)`.
-   * Without this, a subsequent `reset()` would revert to the construction-
-   * time initials rather than the most-recently-applied ones.
-   */
-  replaceInitialItems(items: ReadonlyArray<ItemInitial<I>>): void {
-    this.initialItems = [...items]
-    // The array was just re-seated from `initial` (reactive-initial re-apply or
-    // `resetWithInitial`) — this is the new clean baseline, so the clear()/add()
-    // that drove it must not leave the array structurally dirty (T5.1).
-    this.structurallyDirty$.set(false)
+  set(values: ReadonlyArray<ItemInitial<I>>): void {
+    if (this.disposed) return
+    batch(() => {
+      // Preserve item identity where the lengths overlap, so touched / dirty /
+      // in-flight validators on existing items survive. The tail diff handles
+      // grow and shrink.
+      const current = this.items$.peek()
+      const overlap = Math.min(current.length, values.length)
+      for (let i = 0; i < overlap; i++) {
+        ;(current[i] as { set(v: unknown): void }).set(values[i])
+      }
+      for (let i = current.length; i < values.length; i++) this.add(values[i])
+      for (let i = current.length - 1; i >= values.length; i--) this.remove(i)
+    })
+  }
+
+  setAsInitial(values: ReadonlyArray<ItemInitial<I>>): void {
+    if (this.disposed) return
+    batch(() => {
+      // Rebuild the items wholesale and re-anchor them as the initial, so a
+      // later `reset()` returns here rather than to the construction initials.
+      this.clear()
+      for (const v of values) this.add(v)
+      this.initialItems = [...values]
+      // This is the new clean baseline: the clear()/add() that drove it must
+      // not leave the array structurally dirty (T5.1).
+      this.structurallyDirty$.set(false)
+    })
   }
 
   reset(): void {
@@ -1036,7 +1027,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   private runTopLevelValidators(): void {
     if (this.disposed) return
-    const value = this.value.value
+    const value = this.value$.value
     this.currentValidatorAbort?.abort()
     const abort = new AbortController()
     this.currentValidatorAbort = abort

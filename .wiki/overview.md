@@ -81,7 +81,7 @@ See `modules/*.md` for per-directory details.
 
 **Mutations dispatch by concurrency mode.** `parallel`, `latest-wins` and `serial`. Optimistic updates use a per-entry snapshot stack with positional rollback semantics (§6.4). See `flows/mutation-concurrency.md`.
 
-**Forms aggregate via computed.** `Form.value`, `errors`, `isValid`, etc. are computeds that traverse the schema. Children can be `Field` (a `ReadSignal<T>` plus form metadata), nested `Form`, or `FieldArray`. Brand markers distinguish them at runtime. See `pitfalls/field-value-shape.md`.
+**Forms aggregate via computed.** `Form.value`, `errors`, `isValid`, etc. are computeds that traverse the schema. Children can be `Field`, nested `Form`, or `FieldArray`, and each is a `ReadSignal` of its value. Brand markers distinguish them at runtime where they differ. See `decisions/forms-are-read-signals.md`.
 
 **SSR is dehydrate and hydrate of the query cache only.** Controller state isn't serialized — controllers reconstruct from props on the client. `waitForIdle()` waits on per-entry `isFetching` signals plus a `mutationsInflight$` counter on the QueryClient.
 
@@ -89,7 +89,7 @@ See `modules/*.md` for per-directory details.
 
 - [pitfalls/callargs-vs-keyargs.md](pitfalls/callargs-vs-keyargs.md) — the two-args distinction inside `ClientEntry`
 - [pitfalls/latest-wins-rollback-order.md](pitfalls/latest-wins-rollback-order.md) — order matters for stacked optimistic updates
-- [pitfalls/field-value-shape.md](pitfalls/field-value-shape.md) — `Field.value` and `Form.value` are differently shaped
+- [decisions/forms-are-read-signals.md](decisions/forms-are-read-signals.md) — every form node is a `ReadSignal` of its value
 
 ## Build & verify
 

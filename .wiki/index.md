@@ -59,6 +59,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/no-vanilla-adapter.md](decisions/no-vanilla-adapter.md) — why olas ships no vanilla DOM adapter: one was built, measured and dropped
 - [decisions/ctx-primitives-are-free-functions.md](decisions/ctx-primitives-are-free-functions.md) — why `createField`/`createQuery` take `ctx` instead of hanging off it, and why `createRoot` takes an explicit query engine
 - [decisions/root-handle-separate.md](decisions/root-handle-separate.md) — why `createRoot` returns a handle with the app api on `.api` instead of the api with root controls mixed in
+- [decisions/forms-are-read-signals.md](decisions/forms-are-read-signals.md) — why `Form` and `FieldArray` are `ReadSignal`s of their value, like `Field`, and why `submit` resolves a union
 - [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`
 - [decisions/plugin-host-v2.md](decisions/plugin-host-v2.md) — plugins as per-root `setup(host)` definitions: the host, the write vocabulary and origins, middleware, services via scopes, and what the old `QueryClientPlugin` got wrong
 - [decisions/prose-rules.md](decisions/prose-rules.md) — the writing rules every `.md` follows, what `pnpm prose:lint` enforces, and what it flags that we leave alone
@@ -67,7 +68,6 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 ## Pitfalls
 
 - [pitfalls/callargs-vs-keyargs.md](pitfalls/callargs-vs-keyargs.md) — two args arrays in `ClientEntry`
-- [pitfalls/field-value-shape.md](pitfalls/field-value-shape.md) — `Field.value` ≠ `Form.value`
 - [pitfalls/latest-wins-rollback-order.md](pitfalls/latest-wins-rollback-order.md) — rollback BEFORE new `onMutate`
 - [pitfalls/isstale-needs-timer.md](pitfalls/isstale-needs-timer.md) — `Date.now()` doesn't trigger re-derivation
 - [pitfalls/raceabort-for-misbehaving-mutate.md](pitfalls/raceabort-for-misbehaving-mutate.md) — wrap mutate in `raceAbort`

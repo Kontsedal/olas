@@ -24,9 +24,9 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({ name: 'Alice', age: 30 })
+    expect(root.api.form.value).toEqual({ name: 'Alice', age: 30 })
     root.api.form.fields.name.set('Bob')
-    expect(root.api.form.value.value).toEqual({ name: 'Bob', age: 30 })
+    expect(root.api.form.value).toEqual({ name: 'Bob', age: 30 })
     root.dispose()
   })
 
@@ -41,12 +41,12 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({
+    expect(root.api.form.value).toEqual({
       name: 'Alice',
       address: { street: 'Main', city: 'Springfield' },
     })
     root.api.form.fields.address.fields.city.set('NYC')
-    expect(root.api.form.value.value).toEqual({
+    expect(root.api.form.value).toEqual({
       name: 'Alice',
       address: { street: 'Main', city: 'NYC' },
     })
@@ -79,7 +79,7 @@ describe('ctx.form — basic aggregation', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.api.form.set({ name: 'B', nested: { x: 10 } })
-    expect(root.api.form.value.value).toEqual({ name: 'B', nested: { x: 10, y: 2 } })
+    expect(root.api.form.value).toEqual({ name: 'B', nested: { x: 10, y: 2 } })
     root.dispose()
   })
 
@@ -239,20 +239,20 @@ describe('ctx.fieldArray', () => {
     root.api.tags.add('a')
     root.api.tags.add('b')
     root.api.tags.add('c')
-    expect(root.api.tags.value.value).toEqual(['a', 'b', 'c'])
+    expect(root.api.tags.value).toEqual(['a', 'b', 'c'])
     expect(root.api.tags.size.value).toBe(3)
 
     root.api.tags.insert(1, 'x')
-    expect(root.api.tags.value.value).toEqual(['a', 'x', 'b', 'c'])
+    expect(root.api.tags.value).toEqual(['a', 'x', 'b', 'c'])
 
     root.api.tags.remove(2)
-    expect(root.api.tags.value.value).toEqual(['a', 'x', 'c'])
+    expect(root.api.tags.value).toEqual(['a', 'x', 'c'])
 
     root.api.tags.move(0, 2)
-    expect(root.api.tags.value.value).toEqual(['x', 'c', 'a'])
+    expect(root.api.tags.value).toEqual(['x', 'c', 'a'])
 
     root.api.tags.clear()
-    expect(root.api.tags.value.value).toEqual([])
+    expect(root.api.tags.value).toEqual([])
     root.dispose()
   })
 
@@ -272,7 +272,7 @@ describe('ctx.fieldArray', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.api.items.add({ sku: 'A', qty: 2 })
     root.api.items.add({ sku: '', qty: 5 })
-    expect(root.api.items.value.value).toEqual([
+    expect(root.api.items.value).toEqual([
       { sku: 'A', qty: 2 },
       { sku: '', qty: 5 },
     ])
@@ -309,10 +309,10 @@ describe('ctx.fieldArray', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.tags.value.value).toEqual(['x', 'y'])
+    expect(root.api.tags.value).toEqual(['x', 'y'])
     root.api.tags.add('z')
     root.api.tags.reset()
-    expect(root.api.tags.value.value).toEqual(['x', 'y'])
+    expect(root.api.tags.value).toEqual(['x', 'y'])
     root.dispose()
   })
 
@@ -367,7 +367,7 @@ describe('ctx.fieldArray', () => {
     root.api.form.fields.tags.add('x')
     root.api.form.fields.tags.add('y')
     root.api.form.set({ name: 'B', tags: ['p', 'q', 'r'] })
-    expect(root.api.form.value.value).toEqual({ name: 'B', tags: ['p', 'q', 'r'] })
+    expect(root.api.form.value).toEqual({ name: 'B', tags: ['p', 'q', 'r'] })
     root.dispose()
   })
 
@@ -408,7 +408,7 @@ describe('ctx.fieldArray', () => {
     expect(afterThird).not.toBe(beforeFirst)
 
     // Values reflect the patch.
-    expect(root.api.form.value.value).toEqual({ tags: ['x-edited', 'y-new', 'z'] })
+    expect(root.api.form.value).toEqual({ tags: ['x-edited', 'y-new', 'z'] })
     root.dispose()
   })
 
@@ -432,23 +432,23 @@ describe('ctx.fieldArray', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({ tags: ['a', 'b'] })
+    expect(root.api.form.value).toEqual({ tags: ['a', 'b'] })
 
     // "Server reloaded" — apply via resetWithInitial path. We trigger it by
     // mutating the source and calling reset() (which re-applies `initial`).
     serverData = { tags: ['x', 'y', 'z'] }
     root.api.form.reset()
-    expect(root.api.form.value.value).toEqual({ tags: ['x', 'y', 'z'] })
+    expect(root.api.form.value).toEqual({ tags: ['x', 'y', 'z'] })
 
     // User edits — then reset should revert to the most-recently-applied
     // initial, NOT the construction-time initial ['a','b'].
     root.api.form.fields.tags.add('w')
-    expect(root.api.form.value.value.tags).toEqual(['x', 'y', 'z', 'w'])
+    expect(root.api.form.value.tags).toEqual(['x', 'y', 'z', 'w'])
     // `reset()` re-applies the form's `initial` (which now returns
     // ['x','y','z']) — so it'll go back there regardless. To exercise the
     // initialItems-anchor path we call the FieldArray's own reset:
     root.api.form.fields.tags.reset()
-    expect(root.api.form.value.value.tags).toEqual(['x', 'y', 'z'])
+    expect(root.api.form.value.tags).toEqual(['x', 'y', 'z'])
     root.dispose()
   })
 })
@@ -767,6 +767,103 @@ describe('Form.reset batching (T5.3)', () => {
     unsub()
     expect(root.api.form.fields.name.value).toBe('b')
     expect(seen).toEqual(['b'])
+    root.dispose()
+  })
+})
+
+describe('Form and FieldArray are ReadSignals of their value, like Field', () => {
+  test('value, peek, subscribe and subscribeChanges read the aggregate', () => {
+    const def = defineController((ctx) => ({
+      form: createForm(ctx, {
+        name: createField<string>(ctx, 'a'),
+        tags: createFieldArray(ctx, (t?: string) => createField<string>(ctx, t ?? ''), {
+          initial: ['x'],
+        }),
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const { form } = root.api
+    expect(form.value).toEqual({ name: 'a', tags: ['x'] })
+    expect(form.peek()).toEqual({ name: 'a', tags: ['x'] })
+    expect(form.fields.tags.value).toEqual(['x'])
+
+    const all: unknown[] = []
+    const changes: unknown[] = []
+    const tagValues: unknown[] = []
+    const offAll = form.subscribe((v) => all.push(v))
+    const offChanges = form.subscribeChanges((v) => changes.push(v))
+    const offTags = form.fields.tags.subscribeChanges((v) => tagValues.push(v))
+    form.fields.name.set('b')
+    form.fields.tags.add('y')
+    expect(all).toEqual([
+      { name: 'a', tags: ['x'] },
+      { name: 'b', tags: ['x'] },
+      { name: 'b', tags: ['x', 'y'] },
+    ])
+    expect(changes).toEqual(all.slice(1))
+    expect(tagValues).toEqual([['x', 'y']])
+    offAll()
+    offChanges()
+    offTags()
+    root.dispose()
+  })
+
+  test('FieldArray.set keeps overlapping items and diffs the tail', () => {
+    const def = defineController((ctx) => ({
+      tags: createFieldArray(ctx, (t?: string) => createField<string>(ctx, t ?? ''), {
+        initial: ['a', 'b', 'c'],
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const { tags } = root.api
+    const first = tags.at(0)
+    first?.markTouched()
+    tags.set(['A', 'B'])
+    expect(tags.value).toEqual(['A', 'B'])
+    expect(tags.at(0)).toBe(first) // identity kept, so touched state survives
+    expect(tags.at(0)?.touched.value).toBe(true)
+    tags.set(['A', 'B', 'C', 'D'])
+    expect(tags.value).toEqual(['A', 'B', 'C', 'D'])
+    expect(tags.isDirty.value).toBe(true)
+    root.dispose()
+  })
+
+  test('FieldArray.setAsInitial rebuilds a clean baseline that reset() returns to', () => {
+    const def = defineController((ctx) => ({
+      tags: createFieldArray(ctx, (t?: string) => createField<string>(ctx, t ?? ''), {
+        initial: ['a'],
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const { tags } = root.api
+    tags.setAsInitial(['p', 'q'])
+    expect(tags.value).toEqual(['p', 'q'])
+    expect(tags.isDirty.value).toBe(false)
+    tags.add('r')
+    tags.at(0)?.set('P')
+    expect(tags.isDirty.value).toBe(true)
+    tags.reset()
+    expect(tags.value).toEqual(['p', 'q'])
+    expect(tags.isDirty.value).toBe(false)
+    root.dispose()
+  })
+
+  test('Form.setAsInitial loads a clean baseline through nested forms and arrays', () => {
+    const def = defineController((ctx) => ({
+      form: createForm(ctx, {
+        name: createField<string>(ctx, ''),
+        address: createForm(ctx, { city: createField<string>(ctx, '') }),
+        tags: createFieldArray(ctx, (t?: string) => createField<string>(ctx, t ?? '')),
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const { form } = root.api
+    form.setAsInitial({ name: 'Ada', address: { city: 'London' }, tags: ['math'] })
+    expect(form.value).toEqual({ name: 'Ada', address: { city: 'London' }, tags: ['math'] })
+    expect(form.isDirty.value).toBe(false)
+    form.set({ address: { city: 'Paris' } })
+    form.reset()
+    expect(form.value).toEqual({ name: 'Ada', address: { city: 'London' }, tags: ['math'] })
     root.dispose()
   })
 })

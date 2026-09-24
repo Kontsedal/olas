@@ -1619,3 +1619,15 @@ Wiki pages whose `covers:` changed and still describe `QueryClientPlugin` get re
 BACKLOG: the `[planned]` "The mutation queue can persist before `mutate` runs" item is removed; it landed here.
 
 CI chain green.
+
+## [2026-09-24 21:40] ingest | 1.0 W4a: every form node is a ReadSignal; `submit` resolves a union
+
+- **`Form<S>` and `FieldArray<I>` are `ReadSignal`s of their value** (`packages/core/src/forms/form-types.ts:108`, `:190`). `FormImpl` and `FieldArrayImpl` hold a private `value$` computed and delegate `value`, `peek`, `subscribe` and `subscribeChanges` to it, as `FieldImpl` does. The aggregate `computeValue` lost its brand branch.
+- **`Form.resetWithInitial` is renamed `setAsInitial`.** `FieldArray` gains `set` and `setAsInitial`. The array branch of `FormImpl.applyPartial`, which cast to reach the internal `replaceInitialItems`, moved into those two methods.
+- **`Form.submit` resolves `SubmitResult<R>`**, tagged `ok` then `reason` (`'invalid' | 'error' | 'busy' | 'disposed'`). `SubmitResult` and `SubmitOptions` are exported.
+
+Wiki: new `decisions/forms-are-read-signals.md`. `pitfalls/field-value-shape.md` is deleted, because the trap it described no longer exists. `modules/forms.md`, `overview.md`, `index.md`, `pitfalls/fieldarray-factory-uses-initial.md` and the CLAUDE.md gotcha list are updated.
+
+Tests: the `.value.value` sites in core, zod and kanban were collapsed at their tsc error sites. New tests cover the node-as-signal surface, `FieldArray.set` / `setAsInitial`, `Form.setAsInitial` through nested nodes, and the `SubmitResult` narrowing. 978 tests, CI green.
+
+For the W6 docs pass: README, API.md (`:832`, `:905-915`), RECIPES, SPEC (`:846` cites the deleted pitfall) and the zod README still show `form.value.value`, `resetWithInitial` or `{ ok, data?, error? }`.

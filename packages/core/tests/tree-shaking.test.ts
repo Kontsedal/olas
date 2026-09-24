@@ -109,7 +109,7 @@ describe('a root without a query engine', () => {
     })
     const root = createRoot(def, noDeps)
     expect(root.api.name.value).toBe('ada')
-    expect(root.api.form.value.value).toEqual({ name: 'ada' })
+    expect(root.api.form.value).toEqual({ name: 'ada' })
     root.dispose()
   })
 

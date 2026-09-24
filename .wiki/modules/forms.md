@@ -15,9 +15,9 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/validators.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../decisions/brand-markers-not-classes.md }
-  - { type: related, target: ../pitfalls/field-value-shape.md }
+  - { type: related, target: ../decisions/forms-are-read-signals.md }
   - { type: related, target: ../pitfalls/fieldarray-factory-uses-initial.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -53,13 +53,12 @@ Used everywhere `Form`/`FieldArray`/`Field` are mixed in a child slot. We prefer
 
 ## Aggregate computeds — the traversal pattern
 
-`Form.value`, `errors`, `isValid`, `isDirty`, `touched`, `isValidating` are all `computed(() => ...)`. They iterate `Object.values(this.fields)` and **branch on the child's brand**:
+`Form.value`, `errors`, `isValid`, `isDirty`, `touched`, `isValidating` are all `computed(() => ...)`. They iterate `Object.values(this.fields)`.
 
-- `isForm(child)` → recurse into `child.value.value` (Form/FieldArray expose `.value` as a `ReadSignal`).
-- `isFieldArray(child)` → same.
-- else, for a Field, read `(child as Field<unknown>).value` directly. Field IS a ReadSignal, so `.value` is the typed value rather than a signal wrapper.
+- **`value`** reads `child.value` for every child with no branch. `Field`, `Form` and `FieldArray` are each a `ReadSignal` of their value (`form.ts:277-284`). See `../decisions/forms-are-read-signals.md`.
+- **`errors`, touched, validation and path resolution** branch on the child's brand, because the node kinds differ there: a `Form` has `fields`, a `FieldArray` has `items`, and a `Field` has neither.
 
-This asymmetry is per spec §20.7 — see `../pitfalls/field-value-shape.md` for the long version.
+`applyPartial` (behind `set` and `setAsInitial`) calls the child's own `set` or `setAsInitial`, which all three kinds share.
 
 ## Validator runner (in FieldImpl)
 

@@ -21,7 +21,7 @@ Spec §8.5 example reads naturally:
 ```ts
 const tags = createFieldArray(ctx, () => createField(ctx, '', [required()]))
 tags.add('hello')
-tags.value.value   // string[]
+tags.value         // string[]
 ```
 
 If you write the factory as `() => createField(ctx, '')`, the factory ignores its `initial` parameter — every `add(x)` call creates a field initialized to `''`, regardless of `x`. The array's `value` ends up `['', '', '']`, not `['hello', 'world', ...]`.
@@ -65,10 +65,10 @@ The spec's own example (cited above) is misleading about this — it shows the f
 
 ## Diagnostic
 
-If `fieldArray.value.value` doesn't reflect what you passed to `add(...)`, check the factory. Symptoms:
+If `fieldArray.value` doesn't reflect what you passed to `add(...)`, check the factory. Symptoms:
 
-- `add('hello')` then `value.value === ['']` (empty).
-- `add({ sku: 'A' })` then `value.value === [{ sku: '', qty: 1 }]`.
+- `add('hello')` then `value === ['']` (empty).
+- `add({ sku: 'A' })` then `value === [{ sku: '', qty: 1 }]`.
 
 In both cases, the factory wasn't threading `initial` through to the leaf primitive.
 

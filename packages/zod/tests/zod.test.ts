@@ -49,7 +49,7 @@ describe('createZodForm', () => {
       form: createZodForm(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({ name: 'Alice', age: 0 })
+    expect(root.api.form.value).toEqual({ name: 'Alice', age: 0 })
     root.dispose()
   })
 
@@ -70,7 +70,7 @@ describe('createZodForm', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({
+    expect(root.api.form.value).toEqual({
       name: 'Bob',
       address: { street: 'Main', city: 'Springfield' },
     })
@@ -85,7 +85,7 @@ describe('createZodForm', () => {
       form: createZodForm(ctx, schema, { initial: { tags: ['hello', 'world'] } }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({ tags: ['hello', 'world'] })
+    expect(root.api.form.value).toEqual({ tags: ['hello', 'world'] })
     expect(root.api.form.isValid.value).toBe(true)
     root.dispose()
   })
@@ -235,7 +235,7 @@ describe('createZodForm', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // optional/nullable have no Zod default → defaultInitial returns ''
     // for the inner string, 0 for the inner number.
-    expect(root.api.form.value.value).toEqual({ maybe: '', nullable: 0 })
+    expect(root.api.form.value).toEqual({ maybe: '', nullable: 0 })
     root.dispose()
   })
 
@@ -249,7 +249,7 @@ describe('createZodForm', () => {
       form: createZodForm(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({ flag: false, tags: [], kind: 'a' })
+    expect(root.api.form.value).toEqual({ flag: false, tags: [], kind: 'a' })
     root.dispose()
   })
 
@@ -261,7 +261,7 @@ describe('createZodForm', () => {
       form: createZodForm(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.api.form.value.value).toEqual({ now: 42 })
+    expect(root.api.form.value).toEqual({ now: 42 })
     root.dispose()
   })
 })
@@ -341,9 +341,9 @@ describe('createZodForm — a function initial is tracked', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // No source value yet: every leaf starts at its Zod default or empty value.
-    expect(root.api.form.value.value).toEqual({ name: 'anon', address: { city: '' } })
+    expect(root.api.form.value).toEqual({ name: 'anon', address: { city: '' } })
     seed.set({ name: 'Ada', address: { city: 'London' } })
-    expect(root.api.form.value.value).toEqual({ name: 'Ada', address: { city: 'London' } })
+    expect(root.api.form.value).toEqual({ name: 'Ada', address: { city: 'London' } })
     expect(root.api.form.isDirty.value).toBe(false)
     root.dispose()
   })
