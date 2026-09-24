@@ -33,6 +33,8 @@ export function AppShell() {
 
 `import.meta.env.DEV` is Vite's development flag; use your bundler's equivalent. The package declares no side effects, so a production build where the flag is `false` drops the panel.
 
+The panel reads the events that `@kontsedal/olas-core` emits only in its development build. Core's `development` export condition points at that build, and Vite's dev server, webpack and Rspack in development mode, and Next.js in dev resolve it without configuration. With esbuild or Rollup, add `conditions: ['development']` to the dev config. Against core's default build, the panel shows the cache but no controller tree or timeline (SPEC §23).
+
 `DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open and minimized state persist to `localStorage`.
 
 If you'd rather host the panel yourself (e.g., fixed sidebar in a layout), import `DevtoolsPanel` directly and size it however you like. Styles are scoped to the `.olas-devtools-*` class prefix; no CSS imports needed.

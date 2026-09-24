@@ -2107,3 +2107,28 @@ API.md stays. The plan had the generated reference replacing its reference secti
 **BACKLOG.** New: the reference's case collision (`validator` / `Validator`), the `deps` check, and `waitForIdle` for local caches.
 
 Before W7, the open questions for the user: enabling Pages and the first deploy, devtools against the npm core, and the peer ranges.
+
+## [2026-09-25 14:30] ingest | development builds behind a `development` export condition; the docs site goes live
+
+The user's decisions after W14: deploy the docs now, fix devtools against the npm core, and stop before the release.
+
+**Devtools against the published core.** The release build inlined `__DEV__ = false`, so the npm core emitted no devtools events. `@kontsedal/olas-devtools` showed an empty tree against it, in 0.8 too, and the dev-only warnings never fired in an app.
+
+Core, entities, persist, react and zod each now ship two builds from one `tsdown.config.ts` array:
+- `dist/`, the default, with `__DEV__: 'false'`;
+- `dist/dev/`, behind a `development` condition, with `__DEV__: 'true'`.
+
+Neither build depends on `NODE_ENV` any more, so the root `build:dev` script is gone.
+
+The user first chose an unguarded-`NODE_ENV` shape. Working it through showed that a `typeof process` guard defeats Vite's dev server, so they chose the condition instead (`decisions/esm-only-build.md`).
+
+Checked:
+- Vite 8's dev server resolves `dist/dev/index.js`, and `vite build` resolves `dist/index.js`.
+- Node resolves the dev build under `--conditions=development` only.
+- publint and attw are clean, and the size budgets are unchanged.
+
+`pnpm smoke:dist` adds two checks. Every `development` target must load and export the same names as the default. Core must have the condition, its default build must emit no devtools events, and its dev build must emit some. Against the old code, the check fails with "core: no `development` export condition". A dev build built with `__DEV__: 'false'` fails with "the development build emitted no devtools events".
+
+Docs: SPEC §23 "Devtools and production builds" is rewritten, and the devtools README and `modules/devtools.md` say which build the panel needs. New changeset `development-builds.md` (minor for the five packages). The BACKLOG item is removed.
+
+**The docs site is live** at https://kontsedal.github.io/olas/. Pages was enabled (`gh api -X POST …/pages`), but `docs.yml` could not deploy: GitHub dispatches only workflows on the default branch, and the `github-pages` environment allows only `main`. With the user's choice, the built site went to a new `gh-pages` branch, Pages was switched to "Deploy from a branch", and a build was requested. The home page, a guide, a reference page and an adapter page load with no errors. BACKLOG has the `[planned]` switch back to the Actions deploy once `release/1.0` is on `main`. `decisions/docs-site.md` and `docs/README.md` say where the site is served from.

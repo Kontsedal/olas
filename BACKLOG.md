@@ -238,14 +238,6 @@ it needs the subscriber's controller path threaded through `createQuery` → `Cl
 (and a matching `cache:unsubscribed` on `release` 1→0). Feeds per-entry subscriber counts
 in the inspector and "who's watching this" in the timeline. Part of overhaul T8.5.
 
-### [idea] Devtools against the published core shows an empty tree
-
-[from W6] `pnpm build` runs with `NODE_ENV=production`, and core's tsdown config inlines `__DEV__` from it (`packages/core/tsdown.config.ts`). So the core on npm has every `emit(...)` site stripped. SPEC §23 says so, and that was also true of 0.8. The consequence is that `@kontsedal/olas-devtools`, installed next to the npm core, shows an empty controller tree and timeline; only the cache inspector (`root.debug.queryEntries()`) works. The two usual shapes:
-- a `development` export condition pointing at a dev build, which Vite, webpack and Node's `--conditions` pick up;
-- leaving `process.env.NODE_ENV !== 'production'` in the output for the app's bundler to replace, with a `typeof process` guard for no-bundler use.
-
-Either changes the dist, the smoke checks and the size budgets. Decide before the 1.0 publish, since devtools ships at 1.0.
-
 ### [idea] Three devtools event gaps found by the docs pass
 
 [from W6]
@@ -337,6 +329,10 @@ Verified against this tree with throwaway changesets. An in-range bump, core 0.8
 **What remains.** On that cascade `changeset version` rewrites `>=0.3.0 <1.0.0` to `>=1.0.0`, dropping the ceiling again: it manages the floor and discards the rest of the range. So the ceiling survives normal operation but is stripped exactly when a major lands. This is tolerable now that publishing is manual. The rewrite shows up in the "Version Packages" PR diff, which a human reviews before merging, and again before running the publish workflow. If it starts being missed, the fix is a post-`version` script that re-applies ceilings, run as part of `changeset version`.
 
 **For the 1.0 release.** Core's major cascades to every package, so the 1.0 Version Packages PR is where the ceiling goes. That PR hand-sets every internal peer to `^1.0.0` before merge. The new vue and svelte packages carry `>=0.3.0 <1.0.0` on core today, like the rest. eslint-plugin and codemod have no core peer.
+
+### [planned] Move the docs site to the Actions deploy once release/1.0 is on main
+
+[from W14] The site is live at https://kontsedal.github.io/olas/, served from the `gh-pages` branch ("Deploy from a branch"). `docs.yml` could not deploy it: GitHub dispatches only workflows that exist on the default branch, and the `github-pages` environment allows only `main`. Once `docs.yml` is on `main`, switch Pages to GitHub Actions (`gh api -X PUT repos/Kontsedal/olas/pages -f build_type=workflow`), run the Docs workflow with `deploy` ticked, and delete the `gh-pages` branch. Until then, a docs change goes live only by rebuilding the site and pushing it to `gh-pages` by hand.
 
 ### [planned] CI releases cannot complete without two repo-settings changes
 

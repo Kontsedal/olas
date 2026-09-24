@@ -4369,30 +4369,20 @@ Recommendation in §5.7: use Immer for any non-trivial nested update.
 
 ### Devtools and production builds
 
-`@kontsedal/olas-core`'s build is gated by `process.env.NODE_ENV` at bundle time.
-In the production build, every `bus.emit(...)` site inside core is removed
-(tsdown `define: { __DEV__: 'false' }` + dead-code elimination). The
-substitution covers the sibling packages too, though emission lives only in
-core and in `host.debug`.
+The packages with dev-only code (core, entities, persist, react and zod) each ship two builds from one source, behind export conditions:
 
-What this means for consumers:
+| Condition | File | `__DEV__` |
+|---|---|---|
+| `default` | `dist/index.js` | `false`: every `if (__DEV__)` branch is stripped at build time |
+| `development` | `dist/dev/index.js` | `true`: devtools events and dev-only warnings are kept |
 
-- `root.debug.subscribe(handler)` still exists and accepts the handler, but
-  the handler will never be called in a production build. The snapshot replay
-  (live controllers at subscribe time) is also empty, because the
-  `controller:constructed` and `controller:suspended/resumed/disposed`
-  emission sites that feed the `DevtoolsEmitter`'s `liveControllers` map are
-  inside the same guard — the bus's internal snapshot machinery is inert.
-  `ctx.debug(...)` and a plugin's `host.debug(...)` are no-ops.
-- `root.debug.queryEntries()` still returns the live cache inspector
-  snapshot — that data path doesn't depend on emission and remains useful for
-  in-prod cache introspection.
-- `@kontsedal/olas-devtools` is a dev-time tool. Mounting `DevtoolsPanel` against a
-  production build of core renders an empty tree.
+`__DEV__` is fixed per build in each package's `tsdown.config.ts`, so neither build depends on the environment it was built in. The types are the same for both, and only the default build emits declarations.
 
-The substitution is keyed on `process.env.NODE_ENV !== 'production'` at the
-moment tsdown runs. Consumers do not need to define `__DEV__` themselves — it
-is already inlined into the published `.js` files, and `pnpm smoke:dist` fails
-a build that leaves a `__DEV__` reference in code. The root `build` script sets
-`NODE_ENV=production`; to produce a dev-flavoured build of the workspace, use
-the root `build:dev` script instead.
+**Which build an app gets.** A bundler that resolves the `development` condition in dev gets the dev build: Vite's dev server, webpack and Rspack in development mode, and Next.js in dev. `vite build` and a webpack production build resolve the default. esbuild and Rollup resolve `development` only when told to (`conditions: ['development']`), and Node with `--conditions=development`. A browser with no bundler, or a CDN, gets the default build.
+
+What each build means for the devtools:
+
+- **Development build.** `root.debug.subscribe(handler)` receives every event (§14). `ctx.debug(...)` and a plugin's `host.debug(...)` reach the panel. `@kontsedal/olas-devtools` shows the controller tree, the timeline and every lane.
+- **Default build.** `root.debug.subscribe(handler)` still exists and accepts the handler, but it is never called. The snapshot replay (live controllers at subscribe time) is empty too, because the `controller:constructed` and `controller:suspended/resumed/disposed` emission sites that feed the `DevtoolsEmitter`'s `liveControllers` map are inside the same guard. `ctx.debug(...)` and `host.debug(...)` are no-ops. `root.debug.queryEntries()` still returns the live cache snapshot, since that path does not depend on emission.
+
+Consumers never define `__DEV__` themselves: both builds have it inlined. `pnpm smoke:dist` fails a build that leaves a `__DEV__` reference in code. It also fails when core has no `development` condition, when the default build emits a devtools event, or when the development build emits none.

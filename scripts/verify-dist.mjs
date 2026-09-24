@@ -13,6 +13,9 @@
 //      statement-level dead-code elimination, which one computed class-field
 //      key was once enough to defeat. A positive control proves the check sees
 //      both subsystems when they are imported.
+//   5. every `development` export condition points at a build that loads and
+//      exports the same names, and core's two builds differ where they must:
+//      the production build emits no devtools events, the development build does.
 // Exits non-zero on any failure. Pairs with publint + attw (which check the
 // packaging metadata) — this checks the artifacts actually run.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -150,6 +153,64 @@ for (const name of readdirSync(join(root, 'packages'))) {
     } catch (err) {
       failures.push(`${pkg.name}: require() of the ESM entry failed — ${err?.message ?? err}`)
     }
+  }
+
+  // 5. The `development` condition's build: it exists, loads, and exports the
+  // same names as the default entry, so a bundler that picks it in dev sees
+  // the same module shape it gets in production.
+  for (const [sub, target] of Object.entries(pkg.exports ?? {})) {
+    if (typeof target !== 'object' || target.development === undefined) continue
+    const devPath = resolve(dir, target.development)
+    const prodPath = resolve(dir, target.default)
+    if (!existsSync(devPath)) {
+      failures.push(`${pkg.name} ${sub}: the development build ${target.development} is missing`)
+      continue
+    }
+    try {
+      const dev = Object.keys(await import(pathToFileURL(devPath).href))
+        .sort()
+        .join()
+      const prod = Object.keys(await import(pathToFileURL(prodPath).href))
+        .sort()
+        .join()
+      if (dev !== prod)
+        failures.push(`${pkg.name} ${sub}: the development build exports different names`)
+    } catch (err) {
+      failures.push(
+        `${pkg.name} ${sub}: the development build failed to load — ${err?.message ?? err}`,
+      )
+    }
+  }
+}
+
+// 5b. The two core builds differ where they should: the production build
+// emits no devtools events, and the development build does. Without the second
+// half, `@kontsedal/olas-devtools` would show an empty tree against the
+// published package.
+{
+  const probe = async (rel) => {
+    const core = await import(pathToFileURL(join(root, 'packages', 'core', 'dist', rel)).href)
+    const events = []
+    const r = core.createRoot(
+      core.defineController(() => ({})),
+      { deps: {} },
+    )
+    const unsubscribe = r.debug.subscribe((e) => events.push(e.type))
+    r.dispose()
+    unsubscribe()
+    return events.length
+  }
+  const corePkg = JSON.parse(readFileSync(join(root, 'packages', 'core', 'package.json'), 'utf8'))
+  if (corePkg.exports?.['.']?.development === undefined) {
+    failures.push(
+      'core: no `development` export condition, so devtools get no events from the published package',
+    )
+  } else if (existsSync(join(root, 'packages', 'core', 'dist', 'dev', 'index.js'))) {
+    const prodEvents = await probe('index.js')
+    const devEvents = await probe('dev/index.js')
+    if (prodEvents !== 0)
+      failures.push(`core: the production build emitted ${prodEvents} devtools event(s)`)
+    if (devEvents === 0) failures.push('core: the development build emitted no devtools events')
   }
 }
 

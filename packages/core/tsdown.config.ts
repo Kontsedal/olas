@@ -1,18 +1,23 @@
-import { defineConfig } from 'tsdown'
+import { defineConfig, type UserConfig } from 'tsdown'
 
-export default defineConfig({
+const shared: UserConfig = {
   entry: {
     index: 'src/index.ts',
     testing: 'src/testing.ts',
   },
   format: ['esm'],
-  dts: true,
   sourcemap: true,
-  clean: true,
   treeshake: true,
   target: 'es2022',
-  define: {
-    __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
-  },
   outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
-})
+}
+
+// Two builds from one source. `dist/` is the default export condition: a
+// production build, with every `if (__DEV__)` branch (devtools events, dev
+// warnings) stripped. `dist/dev/` is the `development` condition, which
+// Vite, webpack, Next and Rspack resolve in dev, so the devtools see events
+// against the published package. tsdown cleans once, before both builds.
+export default defineConfig([
+  { ...shared, dts: true, clean: true, define: { __DEV__: 'false' } },
+  { ...shared, outDir: 'dist/dev', dts: false, clean: false, define: { __DEV__: 'true' } },
+])

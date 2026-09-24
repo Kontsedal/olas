@@ -58,4 +58,8 @@ API.md stays. The plan named the generated reference as a replacement for its re
 
 ## Why deploying is manual
 
-`.github/workflows/docs.yml` builds the site on every pull request. It deploys to GitHub Pages only when someone runs it by hand with `deploy` ticked. Publishing a site is outward-facing, and the first deploy also needs Pages enabled in the repository settings, so neither happens by merge. The site is served under `/olas/` (`base` in the config).
+`.github/workflows/docs.yml` builds the site on every pull request. It deploys to GitHub Pages only when someone runs it by hand with `deploy` ticked. Publishing a site is outward-facing, so it does not happen by merge. The site is served under `/olas/` (`base` in the config).
+
+## Where the site is served from today
+
+The site went live on 2026-09-25 at https://kontsedal.github.io/olas/, from the `gh-pages` branch ("Deploy from a branch"). The Actions route could not work yet: GitHub dispatches only a workflow that exists on the default branch, `docs.yml` is only on `release/1.0`, and the `github-pages` environment lets only `main` deploy. `gh-pages` holds the output of `pnpm docs:build` plus a `.nojekyll`. BACKLOG has the switch back to the Actions deploy once `docs.yml` reaches `main`.

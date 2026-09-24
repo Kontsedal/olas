@@ -40,8 +40,11 @@ One per root, built by `createRootWithProps` (`controller/root.ts:24`). Held ins
 - `subscribe(handler)` — replays the live-controller snapshot (each event `stamp`ed, plus a `controller:suspended` for a suspended controller), then fires on every event; returns unsub. Exposed publicly as `root.debug.subscribe(...)`, next to `root.debug.queryEntries()`, which returns `QueryClient.queryEntriesSnapshot()` (`controller/root.ts:202-205`). `root.debug` is typed `DebugBus` (`devtools.ts:149-152`).
 - Handler exceptions are caught — a buggy devtools handler must not break the program.
 - Iterates over a snapshot, like `Emitter`.
-- **Production builds** strip every `emit(...)` call site via tsdown's
-  `define: { __DEV__: 'false' }` substitution. The bus itself remains:
+- **The default build** strips every `emit(...)` call site via tsdown's
+  `define: { __DEV__: 'false' }` substitution. Core also ships a development
+  build (`dist/dev/`, `__DEV__: 'true'`) behind a `development` export
+  condition, which Vite, webpack, Next and Rspack resolve in dev, so the
+  devtools see events against the published package (SPEC §23). The bus itself remains:
   `root.debug.subscribe(handler)` still accepts the handler and returns an
   unsubscribe, so consumer code doesn't need a build flag. No events ever
   arrive. The four `controller:*` lifecycle hooks that feed

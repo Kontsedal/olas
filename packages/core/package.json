@@ -34,10 +34,12 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "development": "./dist/dev/index.js",
       "default": "./dist/index.js"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",
+      "development": "./dist/dev/testing.js",
       "default": "./dist/testing.js"
     }
   },

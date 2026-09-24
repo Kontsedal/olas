@@ -23,7 +23,7 @@ pnpm exec biome check --write .                    # auto-fix lint + format
 pnpm test                                          # vitest run (all packages)
 pnpm test:watch                                    # vitest watch
 pnpm build                                         # tsdown per package → dist/{js,d.ts} (ESM only)
-pnpm smoke:dist                                    # after build: dist imports, require()s, tree-shakes
+pnpm smoke:dist                                    # after build: dist imports, require()s, tree-shakes; dev builds emit devtools events
 pnpm check:public-types                            # after build: every type in a public signature is exported
 pnpm size                                          # after build: bundle-size budgets (.size-limit.json)
 pnpm api:check                                     # after build: packages/*/etc/*.api.md match the built .d.ts
