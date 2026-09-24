@@ -174,8 +174,8 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabA as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
+    expect((tabs.tabA.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
@@ -207,10 +207,10 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabA as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
+    expect((tabs.tabA.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
     // queryB.__clients only has tabB, queryA.setData('1', ...) wrote to
     // queryA.__clients (only tabA) — tabB is untouched. No outbound msg.
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
     expect(getBus('iso').postCount).toBe(0)
 
     tabs.tabA.dispose()
@@ -267,13 +267,13 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'pre' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'pre' })
 
     // Invalidate via tabA. Tab B applies the invalidation remotely and
     // refetches (fetcher returns `{ id: '1', name: 'fetcher' }`).
     queryA.invalidate('1')
     await settle()
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
@@ -340,9 +340,9 @@ describe('crossTabPlugin', () => {
 
     // Sender cache: write succeeded locally (the setData ran BEFORE the
     // broadcast; the throw on postMessage is caught + warned).
-    expect((tabA as unknown as Sub).user.data.peek()?.name).toBe('with-fn')
+    expect((tabA.api as unknown as Sub).user.data.peek()?.name).toBe('with-fn')
     // Receiver: never got a message (postMessage threw and was caught).
-    expect((tabB as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
+    expect((tabB.api as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
     expect(onWarnA).toHaveBeenCalled()
     expect(onWarnA.mock.calls[0]![0]).toContain('not structured-cloneable')
 
@@ -393,7 +393,7 @@ describe('crossTabPlugin', () => {
     queryB.setData('1', () => ({ id: '1', name: 'after-a-gone' }))
     await settle()
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((b as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'after-a-gone' })
+    expect((b.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'after-a-gone' })
 
     b.dispose()
   })
@@ -413,8 +413,8 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabA as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    expect((tabs.tabA.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
@@ -454,7 +454,7 @@ describe('crossTabPlugin', () => {
 
     // Need a local entry to apply to — the initial fetch creates one.
     type Sub = { user: { data: { peek(): unknown } } }
-    const peek = () => (root as unknown as Sub).user.data.peek()
+    const peek = () => (root.api as unknown as Sub).user.data.peek()
 
     const peer = 'remote-peer-1'
     const mk = (msgId: number, name: string): Message => ({
@@ -597,7 +597,7 @@ describe('crossTabPlugin', () => {
     type Sub = { user: { data: { peek(): { name: string } | undefined } } }
     // crossTab:false locally → the inbound write is dropped; the entry keeps
     // its fetched value.
-    expect((tab as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
+    expect((tab.api as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
 
     tab.dispose()
   })

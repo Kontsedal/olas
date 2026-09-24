@@ -301,17 +301,17 @@ describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // The initial fetch throws a network error while offline → parked, not errored.
-    await vi.waitFor(() => expect(root.x.isPaused.value).toBe(true))
-    expect(root.x.status.value).toBe('idle')
-    expect(root.x.error.value).toBeUndefined()
-    expect(root.x.isFetching.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.x.isPaused.value).toBe(true))
+    expect(root.api.x.status.value).toBe('idle')
+    expect(root.api.x.error.value).toBeUndefined()
+    expect(root.api.x.isFetching.value).toBe(false)
 
     // Reconnect → retry → success; isPaused clears.
     setOnline(true)
     window.dispatchEvent(new Event('online'))
-    await vi.waitFor(() => expect(root.x.data.value).toBe(42))
-    expect(root.x.status.value).toBe('success')
-    expect(root.x.isPaused.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(42))
+    expect(root.api.x.status.value).toBe('success')
+    expect(root.api.x.isPaused.value).toBe(false)
 
     root.dispose()
   })
@@ -327,14 +327,14 @@ describe('networkMode: offlineFirst + isPaused (R-Q3.5)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // Deferred while offline: the fetcher never ran, entry parked at idle.
-    await vi.waitFor(() => expect(root.x.isPaused.value).toBe(true))
-    expect(root.x.status.value).toBe('idle')
+    await vi.waitFor(() => expect(root.api.x.isPaused.value).toBe(true))
+    expect(root.api.x.status.value).toBe('idle')
     expect(count).toBe(0)
 
     setOnline(true)
     window.dispatchEvent(new Event('online'))
-    await vi.waitFor(() => expect(root.x.data.value).toBe(1))
-    expect(root.x.isPaused.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
+    expect(root.api.x.isPaused.value).toBe(false)
 
     root.dispose()
   })

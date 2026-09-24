@@ -22,7 +22,6 @@ import {
   type DehydratedState,
   defineController,
   defineQuery,
-  type Mutation,
   type QuerySubscription,
   queryEngine,
 } from '@kontsedal/olas-core'
@@ -79,7 +78,7 @@ describe('integration: SSR roundtrip', () => {
     const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: onWire })
     await settle()
     type Api = { user: QuerySubscription<{ id: string; name: string }> }
-    const c = client as unknown as Api & { dispose: () => void }
+    const c = { ...(client.api as unknown as Api), dispose: client.dispose }
     expect(c.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
     // staleTime: 60s — no refetch needed.
     expect(fetchSpy).toHaveBeenCalledTimes(1)
@@ -87,7 +86,7 @@ describe('integration: SSR roundtrip', () => {
   })
 
   test('entities plugin populates from hydrated data and supports backprop', async () => {
-    const feedQuery = defineQuery({
+    const feedQuery = defineQuery<[], { posts: Post[]; pinned: Post }>({
       queryId: 'int/ssr/feed-hydrate',
       key: () => [],
       fetcher: async () => {
@@ -123,23 +122,22 @@ describe('integration: SSR roundtrip', () => {
     const def = defineController((ctx) => ({
       feed: createQuery(ctx, feedQuery, () => []),
     }))
-    type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
     const client = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
       hydrate: dehydrated,
-    }) as unknown as Api & { dispose: () => void }
+    })
 
     // First paint — entity store already populated from the hydrated data.
-    expect(client.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(client.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
     expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
     expect(plugin.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
 
     // Backprop reaches both paths the hydrated value covers (posts.0 + pinned).
     plugin.update(Post, 'p1', { likes: 7 })
-    expect(client.feed.data.peek()?.posts[0]?.likes).toBe(7)
-    expect(client.feed.data.peek()?.pinned?.likes).toBe(7)
+    expect(client.api.feed.data.peek()?.posts[0]?.likes).toBe(7)
+    expect(client.api.feed.data.peek()?.pinned?.likes).toBe(7)
 
     client.dispose()
   })
@@ -169,7 +167,7 @@ describe('integration: SSR roundtrip', () => {
     const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: dehydrated })
     await settle()
     type Api = { flaky: QuerySubscription<{ ok: boolean }> }
-    const c = client as unknown as Api & { dispose: () => void }
+    const c = { ...(client.api as unknown as Api), dispose: client.dispose }
     expect(c.flaky.data.value).toEqual({ ok: true })
     expect(fetches).toBe(2)
     c.dispose()
@@ -216,24 +214,17 @@ describe('integration: SSR roundtrip', () => {
       })
       return { cards, like }
     })
-
-    type Api = {
-      cards: QuerySubscription<Array<{ id: string; title: string; likes: number }>>
-      like: Mutation<string, void>
-    }
     const client = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       hydrate: dehydrated,
-    }) as unknown as Api & {
-      dispose: () => void
-    }
+    })
 
-    expect(client.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 0 })
+    expect(client.api.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 0 })
 
-    await client.like.run('c1')
-    expect(client.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 1 })
-    expect(client.cards.data.peek()?.[1]).toEqual({ id: 'c2', title: 'Second', likes: 0 })
+    await client.api.like.run('c1')
+    expect(client.api.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 1 })
+    expect(client.api.cards.data.peek()?.[1]).toEqual({ id: 'c2', title: 'Second', likes: 0 })
 
     client.dispose()
   })

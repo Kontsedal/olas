@@ -67,8 +67,8 @@ describe('react integration: card list', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function CardList() {
-      const { data, isLoading } = useQuery(root.cards)
-      const m = useMutation(root.like)
+      const { data, isLoading } = useQuery(root.api.cards)
+      const m = useMutation(root.api.like)
       if (isLoading) return <div data-testid="status">loading</div>
       return (
         <div>
@@ -129,7 +129,7 @@ describe('react integration: card list', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function SlowView() {
-      const { data } = useSuspenseQuery(root.slow)
+      const { data } = useSuspenseQuery(root.api.slow)
       return <span data-testid="who">{data.who}</span>
     }
 
@@ -145,7 +145,7 @@ describe('react integration: card list', () => {
 
     await act(async () => {
       resolveFetch?.({ who: 'world' })
-      await root.slow.firstValue()
+      await root.api.slow.firstValue()
     })
     expect(screen.queryByTestId('fallback')).toBeNull()
     expect(screen.getByTestId('who').textContent).toBe('world')
@@ -160,7 +160,7 @@ describe('react integration: card list', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function NameInput() {
-      const { value, set, isDirty } = useField(root.name)
+      const { value, set, isDirty } = useField(root.api.name)
       return (
         <div>
           <input data-testid="name" value={value} onChange={(e) => set(e.target.value)} />
@@ -181,7 +181,7 @@ describe('react integration: card list', () => {
     })
     expect((screen.getByTestId('name') as HTMLInputElement).value).toBe('Alice')
     expect(screen.getByTestId('dirty').textContent).toBe('yes')
-    expect(root.name.peek()).toBe('Alice')
+    expect(root.api.name.peek()).toBe('Alice')
 
     root.dispose()
   })
@@ -197,7 +197,7 @@ describe('react integration: card list', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
     function SaveButton() {
-      const m = useMutation(root.save)
+      const m = useMutation(root.api.save)
       return (
         <div>
           <button

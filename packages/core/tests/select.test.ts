@@ -3,7 +3,6 @@ import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
 import { queryEngine } from '../src/query/engine'
-import type { QuerySubscription } from '../src/query/types'
 
 const emptyDeps = {}
 
@@ -27,12 +26,9 @@ describe('createQuery(ctx, query, { select })', () => {
         select: (u) => u.name,
       }),
     }))
-    type Api = { name: QuerySubscription<string> }
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
-      dispose(): void
-    }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
-    await vi.waitFor(() => expect(root.name.data.value).toBe('Alice'))
+    await vi.waitFor(() => expect(root.api.name.data.value).toBe('Alice'))
     root.dispose()
   })
 
@@ -55,13 +51,10 @@ describe('createQuery(ctx, query, { select })', () => {
         select: (u) => u.tags,
       }),
     }))
-    type Api = { tags: QuerySubscription<readonly string[]> }
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
-      dispose(): void
-    }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     await vi.waitFor(() => expect(calls).toBe(1))
-    const firstRef = root.tags.data.peek()
+    const firstRef = root.api.tags.data.peek()
     expect(firstRef).toEqual(['admin', 'editor'])
 
     // Force a refetch by invalidating; structural sharing on the entry keeps
@@ -69,7 +62,7 @@ describe('createQuery(ctx, query, { select })', () => {
     // projection's output stays === to `firstRef`.
     userQuery.invalidateAll()
     await vi.waitFor(() => expect(calls).toBe(2))
-    expect(root.tags.data.peek()).toBe(firstRef)
+    expect(root.api.tags.data.peek()).toBe(firstRef)
 
     root.dispose()
   })
@@ -89,21 +82,18 @@ describe('createQuery(ctx, query, { select })', () => {
       // computed result NEVER changes regardless of how many refetches we run.
       label: createQuery(ctx, rowQuery, { select: (_r) => 'static' as const }),
     }))
-    type Api = { label: QuerySubscription<'static'> }
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
-      dispose(): void
-    }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
-    await vi.waitFor(() => expect(root.label.data.value).toBe('static'))
+    await vi.waitFor(() => expect(root.api.label.data.value).toBe('static'))
 
     const fires = vi.fn()
-    const unsub = root.label.data.subscribe(fires)
+    const unsub = root.api.label.data.subscribe(fires)
     fires.mockClear()
 
     counter = 1
     rowQuery.invalidateAll()
     // Wait for the fetch to land.
-    await vi.waitFor(() => expect(root.label.data.peek()).toBe('static'))
+    await vi.waitFor(() => expect(root.api.label.data.peek()).toBe('static'))
 
     expect(fires).not.toHaveBeenCalled()
     unsub()
@@ -129,16 +119,13 @@ describe('createQuery(ctx, query, { select })', () => {
         select: (p) => p.items.map((i) => i.id),
       }),
     }))
-    type Api = { itemIds: QuerySubscription<string[]> }
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
-      dispose(): void
-    }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
-    await vi.waitFor(() => expect(root.itemIds.data.value).toEqual(['a', 'b']))
+    await vi.waitFor(() => expect(root.api.itemIds.data.value).toEqual(['a', 'b']))
 
     payloadQuery.invalidateAll()
     await vi.waitFor(() => {
-      const v = root.itemIds.data.peek()
+      const v = root.api.itemIds.data.peek()
       // Wait until a refetch has happened (still equal content).
       expect(v).toEqual(['a', 'b'])
     })
@@ -149,7 +136,7 @@ describe('createQuery(ctx, query, { select })', () => {
     // refetch. The dedupe story belongs in (a) consumer-supplied stable
     // select OR (b) downstream `Object.is` in computed. Test pins the
     // documented contract: select fires per refetch.
-    expect(root.itemIds.data.peek()).toEqual(['a', 'b'])
+    expect(root.api.itemIds.data.peek()).toEqual(['a', 'b'])
 
     root.dispose()
   })
@@ -171,20 +158,17 @@ describe('createQuery(ctx, query, { select })', () => {
     const def = defineController((ctx) => ({
       sub: createQuery(ctx, rowQuery, { select: (r) => r.id }),
     }))
-    type Api = { sub: QuerySubscription<string> }
-    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps }) as unknown as Api & {
-      dispose(): void
-    }
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
-    await vi.waitFor(() => expect(root.sub.status.value).toBe('error'))
-    expect(root.sub.error.value).toBeInstanceOf(Error)
-    expect(root.sub.data.value).toBeUndefined()
-    expect(root.sub.isLoading.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.sub.status.value).toBe('error'))
+    expect(root.api.sub.error.value).toBeInstanceOf(Error)
+    expect(root.api.sub.data.value).toBeUndefined()
+    expect(root.api.sub.isLoading.value).toBe(false)
 
     throwNext = false
-    await root.sub.refetch()
-    expect(root.sub.data.value).toBe('r1')
-    expect(root.sub.status.value).toBe('success')
+    await root.api.sub.refetch()
+    expect(root.api.sub.data.value).toBe('r1')
+    expect(root.api.sub.status.value).toBe('success')
 
     root.dispose()
   })

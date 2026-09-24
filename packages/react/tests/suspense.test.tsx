@@ -69,7 +69,7 @@ describe('useQuery({ suspense: true })', () => {
 
     function UserView() {
       // With suspense: true, `data` is narrowed to T (string).
-      const { data } = useQuery(root.user, { suspense: true })
+      const { data } = useQuery(root.api.user, { suspense: true })
       return <span data-testid="user">{data}</span>
     }
 
@@ -86,7 +86,7 @@ describe('useQuery({ suspense: true })', () => {
 
     await act(async () => {
       resolveFetcher('Alice')
-      await root.user.firstValue()
+      await root.api.user.firstValue()
     })
 
     // After settle, the actual view renders with data.
@@ -115,7 +115,7 @@ describe('useQuery({ suspense: true })', () => {
       const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
       function UserView() {
-        const { data } = useQuery(root.user, { suspense: true })
+        const { data } = useQuery(root.api.user, { suspense: true })
         return <span data-testid="user">{data}</span>
       }
 
@@ -132,7 +132,7 @@ describe('useQuery({ suspense: true })', () => {
       )
 
       await act(async () => {
-        await root.user.firstValue().catch(() => {})
+        await root.api.user.firstValue().catch(() => {})
       })
 
       // ErrorBoundary catches the throw, Suspense does not.
@@ -161,7 +161,7 @@ describe('useQuery({ suspense: true })', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function View() {
-      const { data } = useQuery(root.greeting, { suspense: true })
+      const { data } = useQuery(root.api.greeting, { suspense: true })
       return <span data-testid="g">{data}</span>
     }
 
@@ -174,7 +174,7 @@ describe('useQuery({ suspense: true })', () => {
     )
 
     await act(async () => {
-      await root.greeting.firstValue()
+      await root.api.greeting.firstValue()
     })
     expect(screen.getByTestId('g').textContent).toBe('first')
 
@@ -182,7 +182,7 @@ describe('useQuery({ suspense: true })', () => {
     // the hook returns normally — no fallback.
     value = 'second'
     await act(async () => {
-      await root.greeting.refetch()
+      await root.api.greeting.refetch()
     })
     expect(screen.queryByTestId('fallback')).toBeNull()
     expect(screen.getByTestId('g').textContent).toBe('second')
@@ -211,7 +211,7 @@ describe('useQuery({ suspense: true })', () => {
       const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
       function View() {
-        const { data } = useQuery(root.g, { suspense: true })
+        const { data } = useQuery(root.api.g, { suspense: true })
         return <span data-testid="g">{data}</span>
       }
       render(
@@ -227,7 +227,7 @@ describe('useQuery({ suspense: true })', () => {
       )
 
       await act(async () => {
-        await root.g.firstValue()
+        await root.api.g.firstValue()
       })
       expect(screen.getByTestId('g').textContent).toBe('good')
 
@@ -235,7 +235,7 @@ describe('useQuery({ suspense: true })', () => {
       // must NOT throw (data exists) — the subtree keeps showing the stale value.
       shouldFail = true
       await act(async () => {
-        await root.g.refetch().catch(() => {})
+        await root.api.g.refetch().catch(() => {})
       })
 
       expect(screen.queryByTestId('err')).toBeNull()
@@ -268,7 +268,7 @@ describe('useQuery({ suspense: true })', () => {
 
     let observed: string | undefined = 'never-set'
     function View() {
-      const { data, isLoading } = useQuery(root.greeting)
+      const { data, isLoading } = useQuery(root.api.greeting)
       observed = data
       return <span data-testid="g">{isLoading ? 'L' : (data ?? '-')}</span>
     }
@@ -284,7 +284,7 @@ describe('useQuery({ suspense: true })', () => {
     expect(screen.getByTestId('g').textContent).toBe('L')
 
     await act(async () => {
-      await root.greeting.firstValue()
+      await root.api.greeting.firstValue()
     })
     expect(screen.getByTestId('g').textContent).toBe('hi')
 
@@ -303,7 +303,7 @@ describe('subscription.promise()', () => {
     const def = defineController((ctx) => ({ sub: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
-    const value = await root.sub.promise()
+    const value = await root.api.sub.promise()
     expect(value).toEqual({ id: 1 })
     root.dispose()
   })
@@ -322,7 +322,7 @@ describe('subscription.promise()', () => {
     const def = defineController((ctx) => ({ sub: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
-    await expect(root.sub.promise()).rejects.toBe(boom)
+    await expect(root.api.sub.promise()).rejects.toBe(boom)
     root.dispose()
   })
 })

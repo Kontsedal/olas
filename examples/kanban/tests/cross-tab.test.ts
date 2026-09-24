@@ -14,14 +14,14 @@ describe('cross-tab + realtime convergence', () => {
     const a = createKanbanRoot({ channelFactory: bus.factory, tabId: 'tabA' })
     const b = createKanbanRoot({ channelFactory: bus.factory, tabId: 'tabB' })
     try {
-      await a.root.board.board.firstValue()
-      await b.root.board.board.firstValue()
+      await a.root.api.board.board.firstValue()
+      await b.root.api.board.board.firstValue()
 
-      const board = a.root.board.board.data.peek()!
+      const board = a.root.api.board.board.data.peek()!
       const todo = board.columns.find((c) => c.id === 'b1_todo')!
       const cardId = todo.cardIds[0]!
 
-      await a.root.board.moveCard.run({
+      await a.root.api.board.moveCard.run({
         cardId,
         fromColumnId: todo.id,
         toColumnId: 'b1_done',
@@ -30,7 +30,7 @@ describe('cross-tab + realtime convergence', () => {
       await flush()
       await new Promise((r) => setTimeout(r, 100))
 
-      const activityB = b.root.activity.events.peek()
+      const activityB = b.root.api.activity.events.peek()
       const hasRemote = activityB.some((e) => e.isRemote === true)
       expect(hasRemote).toBe(true)
     } finally {

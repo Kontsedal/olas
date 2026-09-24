@@ -92,10 +92,10 @@ describe('defineQuery + ctx.use', () => {
       user: createQuery(ctx, userQuery, () => ['u1']),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.user.isLoading.value).toBe(true)
+    expect(root.api.user.isLoading.value).toBe(true)
     await flush()
-    expect(root.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
-    expect(root.user.status.value).toBe('success')
+    expect(root.api.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
+    expect(root.api.user.status.value).toBe('success')
     root.dispose()
   })
 
@@ -117,8 +117,8 @@ describe('defineQuery + ctx.use', () => {
     const r = createRoot(root, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetchCount).toBe(1)
-    expect(r.a.list.data.value).toEqual(['a', 'b', 'c'])
-    expect(r.b.list.data.value).toEqual(['a', 'b', 'c'])
+    expect(r.api.a.list.data.value).toEqual(['a', 'b', 'c'])
+    expect(r.api.b.list.data.value).toEqual(['a', 'b', 'c'])
     r.dispose()
   })
 
@@ -137,11 +137,11 @@ describe('defineQuery + ctx.use', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.user.data.value).toEqual({ id: 'a', name: 'a' })
+    expect(root.api.user.data.value).toEqual({ id: 'a', name: 'a' })
 
     id.set('b')
     await flush()
-    expect(root.user.data.value).toEqual({ id: 'b', name: 'b' })
+    expect(root.api.user.data.value).toEqual({ id: 'b', name: 'b' })
     expect(fetchedFor).toEqual(['a', 'b'])
     root.dispose()
   })
@@ -155,11 +155,11 @@ describe('defineQuery + ctx.use', () => {
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     q.invalidate()
     await flush()
-    expect(root.x.data.value).toBe(2)
+    expect(root.api.x.data.value).toBe(2)
     root.dispose()
   })
 
@@ -177,7 +177,7 @@ describe('defineQuery + ctx.use', () => {
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     let resolved = false
     const p = q.invalidate().then(() => {
@@ -188,12 +188,12 @@ describe('defineQuery + ctx.use', () => {
     // resolved yet, and the data must not have advanced. This is exactly what the
     // old `void` return could not express.
     expect(resolved).toBe(false)
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     gate.resolve()
     await p
     expect(resolved).toBe(true)
-    expect(root.x.data.value).toBe(2)
+    expect(root.api.x.data.value).toBe(2)
     root.dispose()
   })
 
@@ -261,7 +261,7 @@ describe('defineQuery + ctx.use', () => {
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, onError })
     await flush()
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     await expect(q.invalidate()).resolves.toBeUndefined()
     expect(onError).toHaveBeenCalledTimes(1)
@@ -273,10 +273,10 @@ describe('defineQuery + ctx.use', () => {
     const def = defineController((ctx) => ({ c: createCache(ctx, async () => ++counter) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.c.data.value).toBe(1)
+    expect(root.api.c.data.value).toBe(1)
 
-    await root.c.invalidate() // awaitable now (was void)
-    expect(root.c.data.value).toBe(2)
+    await root.api.c.invalidate() // awaitable now (was void)
+    expect(root.api.c.data.value).toBe(2)
     root.dispose()
   })
 
@@ -289,15 +289,15 @@ describe('defineQuery + ctx.use', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     enabled.set(false) // disable
     await flush()
     // Default would blank to undefined; keepDataWhileDisabled keeps the last value.
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
     // The entry is still released, so status/loading follow the spec's disabled shape.
-    expect(root.x.status.value).toBe('idle')
-    expect(root.x.isLoading.value).toBe(false)
+    expect(root.api.x.status.value).toBe('idle')
+    expect(root.api.x.isLoading.value).toBe(false)
     root.dispose()
   })
 
@@ -310,11 +310,11 @@ describe('defineQuery + ctx.use', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     enabled.set(false)
     await flush()
-    expect(root.x.data.value).toBeUndefined()
+    expect(root.api.x.data.value).toBeUndefined()
     root.dispose()
   })
 
@@ -327,15 +327,15 @@ describe('defineQuery + ctx.use', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     enabled.set(false)
     await flush()
-    expect(root.x.data.value).toBe(1) // retained snapshot
+    expect(root.api.x.data.value).toBe(1) // retained snapshot
 
     enabled.set(true) // re-enable → stale (staleTime 0) → refetch
     await flush()
-    expect(root.x.data.value).toBe(2) // live entry data replaces the snapshot
+    expect(root.api.x.data.value).toBe(2) // live entry data replaces the snapshot
     root.dispose()
   })
 
@@ -356,8 +356,8 @@ describe('defineQuery + ctx.use', () => {
     await flush()
 
     // Each root has its own cache entry; both calls happened.
-    expect(typeof a.x.data.value).toBe('string')
-    expect(typeof b.x.data.value).toBe('string')
+    expect(typeof a.api.x.data.value).toBe('string')
+    expect(typeof b.api.x.data.value).toBe('string')
 
     a.dispose()
     b.dispose()
@@ -371,15 +371,15 @@ describe('defineQuery + ctx.use', () => {
     const def = defineController((ctx) => ({ n: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.n.data.value).toBe(1)
+    expect(root.api.n.data.value).toBe(1)
 
     const snap = q.setData((prev) => (prev ?? 0) + 10)
-    expect(root.n.data.value).toBe(11)
-    expect(root.n.hasPendingMutations.value).toBe(true)
+    expect(root.api.n.data.value).toBe(11)
+    expect(root.api.n.hasPendingMutations.value).toBe(true)
 
     snap.rollback()
-    expect(root.n.data.value).toBe(1)
-    expect(root.n.hasPendingMutations.value).toBe(false)
+    expect(root.api.n.data.value).toBe(1)
+    expect(root.api.n.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
@@ -398,7 +398,7 @@ describe('defineQuery + ctx.use', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetchCount).toBe(1)
-    expect(root.x.data.value).toBe('value')
+    expect(root.api.x.data.value).toBe('value')
 
     // Prefetch within staleTime is a no-op (cache hit).
     await q.prefetch()
@@ -425,12 +425,12 @@ describe('defineQuery + ctx.use', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetchCount).toBe(0)
-    expect(root.feed.status.value).toBe('idle')
+    expect(root.api.feed.status.value).toBe('idle')
 
     session.set({ id: 'u1' })
     await flush()
     expect(fetchCount).toBe(1)
-    expect(root.feed.data.value).toBe('feed-u1')
+    expect(root.api.feed.data.value).toBe('feed-u1')
     root.dispose()
   })
 })
@@ -503,16 +503,16 @@ describe('gc — entries are dropped after gcTime expires with no subscribers', 
     const def = defineController((ctx) => ({ live: createQuery(ctx, q, () => ['live']) }))
     const root = createTestController(def, { deps: emptyDeps, props: undefined })
     await vi.advanceTimersByTimeAsync(0)
-    expect(root.__debug.queryEntries().length).toBe(1)
+    expect(root.debug.queryEntries().length).toBe(1)
 
     // Prefetch a *different* key; that entry has no subscriber.
     await q.prefetch('orphan')
     await vi.advanceTimersByTimeAsync(0)
-    expect(root.__debug.queryEntries().length).toBe(2)
+    expect(root.debug.queryEntries().length).toBe(2)
 
     // The orphaned entry drops after gcTime; the subscribed one stays.
     await vi.advanceTimersByTimeAsync(1001)
-    expect(root.__debug.queryEntries().length).toBe(1)
+    expect(root.debug.queryEntries().length).toBe(1)
     root.dispose()
   })
 
@@ -529,9 +529,9 @@ describe('gc — entries are dropped after gcTime expires with no subscribers', 
     await vi.advanceTimersByTimeAsync(0)
 
     q.setData('orphan', () => 99)
-    expect(root.__debug.queryEntries().length).toBe(2)
+    expect(root.debug.queryEntries().length).toBe(2)
     await vi.advanceTimersByTimeAsync(1001)
-    expect(root.__debug.queryEntries().length).toBe(1)
+    expect(root.debug.queryEntries().length).toBe(1)
     root.dispose()
   })
 })
@@ -555,18 +555,18 @@ describe('keepPreviousData (§5.2)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     fetchers[0]!.resolve('A')
     await flush()
-    expect(root.x.data.value).toBe('A')
+    expect(root.api.x.data.value).toBe('A')
 
     id.set('b')
     await flush()
     // While B is in flight, data should still be 'A'.
-    expect(root.x.data.value).toBe('A')
-    expect(root.x.isFetching.value).toBe(true)
-    expect(root.x.isLoading.value).toBe(false)
+    expect(root.api.x.data.value).toBe('A')
+    expect(root.api.x.isFetching.value).toBe(true)
+    expect(root.api.x.isLoading.value).toBe(false)
 
     fetchers[1]!.resolve('B')
     await flush()
-    expect(root.x.data.value).toBe('B')
+    expect(root.api.x.data.value).toBe('B')
     root.dispose()
   })
 })
@@ -593,8 +593,8 @@ describe('retry (§5.2)', () => {
     await vi.advanceTimersByTimeAsync(10)
     await vi.advanceTimersByTimeAsync(10)
     expect(attempts).toBe(3)
-    expect(root.r.status.value).toBe('error')
-    expect((root.r.error.value as Error).message).toBe('fail-3')
+    expect(root.api.r.status.value).toBe('error')
+    expect((root.api.r.error.value as Error).message).toBe('fail-3')
     root.dispose()
   })
 
@@ -714,7 +714,7 @@ describe('refetchInterval', () => {
 
     // Armed by the first subscriber — the initial fetch is in flight, so there
     // is no data to hand the thunk yet.
-    expect(root.x.data.value).toBeUndefined()
+    expect(root.api.x.data.value).toBeUndefined()
     expect(seen).toEqual([undefined])
 
     await vi.advanceTimersByTimeAsync(0)
@@ -848,17 +848,17 @@ describe('refetchInterval', () => {
     })
     const root = createRoot(openCloseRoot(q), { queries: queryEngine(), deps: emptyDeps })
 
-    root.open()
+    root.api.open()
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
     await vi.advanceTimersByTimeAsync(1000)
     expect(count).toBe(2)
 
-    root.close()
+    root.api.close()
     await vi.advanceTimersByTimeAsync(10_000)
     expect(count).toBe(2)
 
-    root.open()
+    root.api.open()
     await vi.advanceTimersByTimeAsync(1000)
     expect(count).toBe(3)
 
@@ -924,11 +924,11 @@ describe('q.peek — synchronous, non-creating cache read (§5.5)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
     expect(fetches).toBe(1)
-    expect(root.__debug.queryEntries().length).toBe(1)
+    expect(root.debug.queryEntries().length).toBe(1)
 
     expect(q.peek('never-touched')).toBeUndefined()
     expect(fetches).toBe(1)
-    expect(root.__debug.queryEntries().length).toBe(1)
+    expect(root.debug.queryEntries().length).toBe(1)
     root.dispose()
   })
 
@@ -951,7 +951,7 @@ describe('q.peek — synchronous, non-creating cache read (§5.5)', () => {
 
     // A write the computed would have tracked had peek subscribed.
     q.write(() => 42)
-    expect(root.n.data.value).toBe(42)
+    expect(root.api.n.data.value).toBe(42)
     expect(derived.value).toBe(1) // cached — no dependency, so no invalidation
     expect(recomputes).toBe(1)
     root.dispose()
@@ -991,12 +991,12 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const def = defineController((ctx) => ({ n: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.n.data.value).toBe(1)
+    expect(root.api.n.data.value).toBe(1)
 
     q.write((prev) => (prev ?? 0) + 10)
-    expect(root.n.data.value).toBe(11)
+    expect(root.api.n.data.value).toBe(11)
     // The whole point: no optimistic layer, so nothing is "pending".
-    expect(root.n.hasPendingMutations.value).toBe(false)
+    expect(root.api.n.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
@@ -1010,14 +1010,14 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     await flush()
 
     for (let i = 1; i <= 5; i++) q.write(() => i)
-    expect(root.n.data.value).toBe(5)
-    expect(root.n.hasPendingMutations.value).toBe(false)
+    expect(root.api.n.data.value).toBe(5)
+    expect(root.api.n.hasPendingMutations.value).toBe(false)
 
     // Contrast — the reason `write` exists: a fire-and-forget `setData` (whose
     // Snapshot nobody settles, because there is no mutation to settle it)
     // wedges `hasPendingMutations` at true and keeps every layer alive.
     q.setData(() => 6)
-    expect(root.n.hasPendingMutations.value).toBe(true)
+    expect(root.api.n.hasPendingMutations.value).toBe(true)
     root.dispose()
   })
 
@@ -1029,10 +1029,10 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const def = defineController((ctx) => ({ live: createQuery(ctx, q, () => ['live']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.__debug.queryEntries().length).toBe(1)
+    expect(root.debug.queryEntries().length).toBe(1)
 
     q.write('other', () => 'written')
-    expect(root.__debug.queryEntries().length).toBe(2)
+    expect(root.debug.queryEntries().length).toBe(2)
     expect(q.peek('other')).toBe('written')
     root.dispose()
   })
@@ -1078,21 +1078,21 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
 
     answers[0]!.resolve('v1')
     await flush()
-    expect(root.r.data.value).toBe('v1')
+    expect(root.api.r.data.value).toBe('v1')
 
     // Something invalidates, so a second fetch is outstanding...
     void q.invalidate()
     await flush()
-    expect(root.r.isFetching.value).toBe(true)
+    expect(root.api.r.isFetching.value).toBe(true)
 
     // ...and a push lands while it is in flight.
     q.replace('from the push')
-    expect(root.r.data.value).toBe('from the push')
-    expect(root.r.isFetching.value).toBe(false)
+    expect(root.api.r.data.value).toBe('from the push')
+    expect(root.api.r.isFetching.value).toBe(false)
 
     answers[1]!.resolve('answer from before the push')
     await flush()
-    expect(root.r.data.value).toBe('from the push')
+    expect(root.api.r.data.value).toBe('from the push')
     // Pin the fetch count: an unexpected third fetch would index past `answers`, throw inside
     // the fetcher, and leave `data` untouched — which the assertion above would read as a pass.
     expect(call).toBe(2)
@@ -1110,16 +1110,16 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.r.isFetching.value).toBe(true)
+    expect(root.api.r.isFetching.value).toBe(true)
 
     q.replace('local')
-    expect(root.r.data.value).toBe('local')
-    expect(root.r.isFetching.value).toBe(false)
+    expect(root.api.r.data.value).toBe('local')
+    expect(root.api.r.isFetching.value).toBe(false)
 
     d.resolve('from server')
     await flush()
-    expect(root.r.data.value).toBe('local')
-    expect(root.r.status.value).toBe('success')
+    expect(root.api.r.data.value).toBe('local')
+    expect(root.api.r.status.value).toBe('success')
 
     root.dispose()
   })
@@ -1133,16 +1133,16 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.r.isFetching.value).toBe(true)
+    expect(root.api.r.isFetching.value).toBe(true)
 
     q.replace(undefined as unknown as string)
-    expect(root.r.data.value).toBe(undefined)
-    expect(root.r.isFetching.value).toBe(true)
+    expect(root.api.r.data.value).toBe(undefined)
+    expect(root.api.r.isFetching.value).toBe(true)
 
     d.resolve('from server')
     await flush()
-    expect(root.r.data.value).toBe('from server')
-    expect(root.r.status.value).toBe('success')
+    expect(root.api.r.data.value).toBe('from server')
+    expect(root.api.r.status.value).toBe('success')
 
     root.dispose()
   })
@@ -1159,7 +1159,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     const def = defineController((ctx) => ({ r: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.r.isFetching.value).toBe(true)
+    expect(root.api.r.isFetching.value).toBe(true)
 
     const snap = q.setData(() => 'guess')
     q.replace('push')
@@ -1168,8 +1168,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     d.resolve('server')
     await flush()
 
-    expect(root.r.data.value).toBe('push')
-    expect(root.r.status.value).toBe('success')
+    expect(root.api.r.data.value).toBe('push')
+    expect(root.api.r.status.value).toBe('success')
     root.dispose()
   })
 
@@ -1194,8 +1194,8 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     await flush()
 
     snap.rollback()
-    expect(root.r.data.value).toBe('push')
-    expect(root.r.hasPendingMutations.value).toBe(false)
+    expect(root.api.r.data.value).toBe('push')
+    expect(root.api.r.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
@@ -1245,16 +1245,16 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
 
     void q.invalidate()
     await flush()
-    expect(root.r.isFetching.value).toBe(true)
+    expect(root.api.r.isFetching.value).toBe(true)
 
     // A push carrying ONLY the title lands mid-flight.
     q.write((prev) => ({ ...(prev ?? {}), title: 'pushed' }))
-    expect(root.r.isFetching.value).toBe(true)
+    expect(root.api.r.isFetching.value).toBe(true)
 
     // The refetch still lands, and the code it was carrying survives.
     answers[1]!.resolve({ title: 'pushed', code: 'new' })
     await flush()
-    expect(root.r.data.value).toEqual({ title: 'pushed', code: 'new' })
+    expect(root.api.r.data.value).toEqual({ title: 'pushed', code: 'new' })
 
     root.dispose()
   })
@@ -1270,7 +1270,7 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     q.write(() => 'local')
     d.resolve('from server')
     await flush()
-    expect(root.r.data.value).toBe('local')
+    expect(root.api.r.data.value).toBe('local')
 
     root.dispose()
   })

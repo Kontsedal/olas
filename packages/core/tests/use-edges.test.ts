@@ -22,8 +22,8 @@ describe('subscription.refetch / firstValue when not yet bound', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    await expect(root.x.refetch()).rejects.toThrow(/no active subscription/)
-    await expect(root.x.firstValue()).rejects.toThrow(/no active subscription/)
+    await expect(root.api.x.refetch()).rejects.toThrow(/no active subscription/)
+    await expect(root.api.x.firstValue()).rejects.toThrow(/no active subscription/)
     root.dispose()
   })
 
@@ -39,11 +39,11 @@ describe('subscription.refetch / firstValue when not yet bound', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    await expect(root.x.refetch()).rejects.toThrow(/no active subscription/)
-    await expect(root.x.firstValue()).rejects.toThrow(/no active subscription/)
+    await expect(root.api.x.refetch()).rejects.toThrow(/no active subscription/)
+    await expect(root.api.x.firstValue()).rejects.toThrow(/no active subscription/)
     // fetchNextPage / fetchPreviousPage are silent no-ops without a current entry.
-    await expect(root.x.fetchNextPage()).resolves.toBeUndefined()
-    await expect(root.x.fetchPreviousPage()).resolves.toBeUndefined()
+    await expect(root.api.x.fetchNextPage()).resolves.toBeUndefined()
+    await expect(root.api.x.fetchPreviousPage()).resolves.toBeUndefined()
     root.dispose()
   })
 })
@@ -60,14 +60,14 @@ describe('enabled gate flip causes detach + attach', () => {
       x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.x.data.value).toBe(1))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
 
     enabled.set(false)
     await flush()
-    expect(root.x.status.value).toBe('idle')
+    expect(root.api.x.status.value).toBe('idle')
 
     enabled.set(true)
-    await vi.waitFor(() => expect(root.x.data.value).toBe(2))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(2))
     root.dispose()
   })
 
@@ -83,14 +83,14 @@ describe('enabled gate flip causes detach + attach', () => {
       x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
 
     enabled.set(false)
     await flush()
     // After detach the subscription's pages signal still returns the default
     // empty array (no current entry).
-    expect(root.x.pages.value).toEqual([])
-    expect(root.x.status.value).toBe('idle')
+    expect(root.api.x.pages.value).toEqual([])
+    expect(root.api.x.status.value).toBe('idle')
     root.dispose()
   })
 })

@@ -22,7 +22,7 @@ describe('SubtasksRow keys', () => {
   test('removing a row keeps every survivor on its own DOM node', async () => {
     const { root, dispose } = createKanbanRoot()
     try {
-      const array = root.cardDetail.form.fields.subtasks
+      const array = root.api.cardDetail.form.fields.subtasks
       act(() => {
         array.add({ text: 'first', done: false })
         array.add({ text: 'second', done: false })

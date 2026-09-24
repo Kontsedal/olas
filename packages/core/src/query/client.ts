@@ -1014,7 +1014,7 @@ export class QueryClient {
 
   /**
    * Snapshot every live cache entry (regular + infinite) as a flat list of
-   * `DebugCacheEntry`. Exposed via `root.__debug.queryEntries()` for the
+   * `DebugCacheEntry`. Exposed via `root.debug.queryEntries()` for the
    * devtools cache inspector — shows current data and state, not past
    * fetch events. Spec §20.9.
    */

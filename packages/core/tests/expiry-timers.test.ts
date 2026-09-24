@@ -54,7 +54,7 @@ describe('stale timers', () => {
       await root.waitForIdle()
       expect(vi.getTimerCount()).toBe(0)
       await vi.advanceTimersByTimeAsync(60_000)
-      expect(root.sub.isStale.peek()).toBe(false)
+      expect(root.api.sub.isStale.peek()).toBe(false)
       await root.bindQuery(q).invalidate()
       expect(fetcher).toHaveBeenCalledTimes(2)
     } finally {

@@ -302,7 +302,7 @@ export type Ctx<TDeps = AmbientDeps> = {
    * snapshot. Names come from the object keys; call it more than once to merge.
    *
    * Dev-only: a no-op in production builds (stripped like the rest of the
-   * `__debug` bus), so it costs nothing and retains nothing there.
+   * debug bus), so it costs nothing and retains nothing there.
    *
    * ```ts
    * const count = signal(0)
@@ -398,37 +398,49 @@ export type RootOptions<TDeps> = {
 }
 
 /**
- * The root's public surface: the controller's `Api` plus lifecycle controls
- * (`dispose`, `suspend`, `resume`), SSR (`dehydrate`, `waitForIdle`), and
- * devtools (`__debug`). Spec §20.8.
+ * The handle `createRoot(...)` returns. The root controller's public api lives
+ * on `api`; everything else is the root's own surface — lifecycle, SSR, scope
+ * lookup, imperative query operations and the devtools bus. Keeping the two
+ * apart means a controller may return anything, including members named
+ * `dispose` or `suspend`, and the root can grow new controls without taking a
+ * name from anyone's api. Spec §20.8.
  */
-export type Root<Api> = Api & {
+export type Root<Api> = {
+  /** What the root controller's factory returned. */
+  readonly api: Api
   /** Bind imperative query operations to this root without subscribing or fetching. */
   bindQuery<Args extends unknown[], T>(query: Query<Args, T>): QueryActions<Args, T>
   bindQuery<Args extends unknown[], TPage, TItem>(
     query: InfiniteQuery<Args, TPage, TItem>,
   ): InfiniteQueryActions<Args, TPage, TItem>
-  dispose(): void
-  suspend(options?: { maxIdle?: number }): void
-  resume(): void
-  dehydrate(): DehydratedState
-  waitForIdle(): Promise<void>
   /**
-   * Apply a single dehydrated query entry to this root's cache. Idempotent
-   * across pre-bind / post-bind: if a `ClientEntry` for `queryId + keyArgs`
-   * already exists, the data is written through and supersedes any inflight
-   * fetch; otherwise it's buffered for the next `bindEntry`.
-   *
-   * Designed for streaming SSR — each `<Suspense>` boundary that resolves
-   * on the server can push its entry into the live client root as the
-   * bootstrap script executes. Also useful for `localStorage` warm-starts
-   * and similar "I have fresh data from elsewhere, inject it" patterns.
+   * Resolve a scope as the root controller would through `ctx.inject(...)`:
+   * a value it provided, a value seeded through `RootOptions.scopes` or a
+   * plugin, else the scope's default. Throws when none exists.
    */
-  applyDehydratedEntry(
-    queryId: string,
-    keyArgs: readonly unknown[],
-    data: unknown,
-    lastUpdatedAt: number,
-  ): void
-  readonly __debug: DebugBus
+  inject<T>(scope: Scope<T>): T
+  /** Tear down the whole tree and the query client. Idempotent. */
+  dispose(): void
+  /**
+   * Freeze the tree: effects stop, subscriptions release their entries,
+   * `onSuspend` handlers run. With `maxIdle`, the root disposes itself if it
+   * is not resumed within that many milliseconds. Spec §4.1, §4.3.
+   */
+  suspend(options?: { maxIdle?: number }): void
+  /** Thaw a suspended tree: effects re-run, stale entries refetch. */
+  resume(): void
+  /** Serialize the query cache for SSR. Spec §15. */
+  dehydrate(): DehydratedState
+  /**
+   * Apply dehydrated entries to this root's cache. An entry whose key is
+   * already bound is written through and supersedes any inflight fetch; the
+   * rest are buffered until a subscription binds that key. Used by streaming
+   * SSR, where each resolved `<Suspense>` boundary pushes its entries into
+   * the live client root, and by warm starts from storage. Idempotent.
+   */
+  hydrate(state: DehydratedState): void
+  /** Resolves when no fetch and no mutation is in flight. Spec §15. */
+  waitForIdle(): Promise<void>
+  /** The devtools event bus. Dev-only events; see spec §14. */
+  readonly debug: DebugBus
 }

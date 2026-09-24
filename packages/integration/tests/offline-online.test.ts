@@ -82,16 +82,14 @@ describe('integration: offline → online sync', () => {
         retry: 0,
       }) as Mutation<OrderVars, OrderResult>,
     }))
-
-    type Api = { create: Mutation<OrderVars, OrderResult> }
     const root1 = createRoot(def1, {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
-    }) as unknown as Api & { dispose: () => void }
+    })
 
-    await expect(root1.create.run({ sku: 'A-1', qty: 2 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'A-1', qty: 2 })).rejects.toThrow(/offline/)
     await settle()
 
     // Entry persisted; storage is non-empty.
@@ -155,19 +153,17 @@ describe('integration: offline → online sync', () => {
         retry: 0,
       }) as Mutation<OrderVars, OrderResult>,
     }))
-
-    type Api = { create: Mutation<OrderVars, OrderResult> }
     const root1 = createRoot(def1, {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 })],
-    }) as unknown as Api & { dispose: () => void }
+    })
 
     // Three offline writes — each persists.
-    await expect(root1.create.run({ sku: 'A', qty: 1 })).rejects.toThrow(/offline/)
-    await expect(root1.create.run({ sku: 'B', qty: 2 })).rejects.toThrow(/offline/)
-    await expect(root1.create.run({ sku: 'C', qty: 3 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'A', qty: 1 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'B', qty: 2 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'C', qty: 3 })).rejects.toThrow(/offline/)
     await settle()
 
     expect(adapter.store.size).toBe(3)

@@ -124,18 +124,18 @@ describe('ctx.collection — homogeneous', () => {
       }),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    expect(root.c.size.value).toBe(2)
-    expect(root.c.items.value.map((x) => x.key)).toEqual(['a', 'b'])
-    expect(root.c.has('a')).toBe(true)
-    expect(root.c.get('a')?.id).toBe('a')
+    expect(root.api.c.size.value).toBe(2)
+    expect(root.api.c.items.value.map((x) => x.key)).toEqual(['a', 'b'])
+    expect(root.api.c.has('a')).toBe(true)
+    expect(root.api.c.get('a')?.id).toBe('a')
 
     source.set([
       { id: 'b', name: 'B' },
       { id: 'c', name: 'C' },
       { id: 'a', name: 'A' },
     ])
-    expect(root.c.items.value.map((x) => x.key)).toEqual(['b', 'c', 'a'])
-    expect(root.c.size.value).toBe(3)
+    expect(root.api.c.items.value.map((x) => x.key)).toEqual(['b', 'c', 'a'])
+    expect(root.api.c.size.value).toBe(3)
     root.dispose()
   })
 
@@ -263,7 +263,7 @@ describe('ctx.collection — homogeneous', () => {
     )
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError.mock.calls[0]![1].kind).toBe('construction')
-    expect(root.c.items.value.map((x) => x.key)).toEqual(['good', 'also-good'])
+    expect(root.api.c.items.value.map((x) => x.key)).toEqual(['good', 'also-good'])
     root.dispose()
   })
 })

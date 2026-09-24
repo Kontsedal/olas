@@ -25,10 +25,10 @@ describe('infinite query: error / retry paths', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.status.value).toBe('error'))
-    expect((root.x.error.value as Error).message).toBe('boom')
-    expect(root.x.isFetching.value).toBe(false)
-    expect(root.x.isLoading.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.x.status.value).toBe('error'))
+    expect((root.api.x.error.value as Error).message).toBe('boom')
+    expect(root.api.x.isFetching.value).toBe(false)
+    expect(root.api.x.isLoading.value).toBe(false)
     root.dispose()
   })
 
@@ -49,7 +49,7 @@ describe('infinite query: error / retry paths', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.status.value).toBe('error'), { timeout: 2000 })
+    await vi.waitFor(() => expect(root.api.x.status.value).toBe('error'), { timeout: 2000 })
     expect(calls).toBe(3) // initial + 2 retries
     root.dispose()
   })
@@ -71,7 +71,7 @@ describe('infinite query: error / retry paths', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.status.value).toBe('error'), { timeout: 2000 })
+    await vi.waitFor(() => expect(root.api.x.status.value).toBe('error'), { timeout: 2000 })
     expect(calls).toBe(2)
     root.dispose()
   })
@@ -94,12 +94,12 @@ describe('infinite query: error / retry paths', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
 
-    await expect(root.x.fetchNextPage()).rejects.toThrow('next-fails')
-    expect(root.x.isFetchingNextPage.value).toBe(false)
-    expect(root.x.isFetching.value).toBe(false)
-    expect(root.x.status.value).toBe('error')
+    await expect(root.api.x.fetchNextPage()).rejects.toThrow('next-fails')
+    expect(root.api.x.isFetchingNextPage.value).toBe(false)
+    expect(root.api.x.isFetching.value).toBe(false)
+    expect(root.api.x.status.value).toBe('error')
     root.dispose()
   })
 
@@ -123,11 +123,11 @@ describe('infinite query: error / retry paths', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['mid']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['mid']))
 
-    await expect(root.x.fetchPreviousPage()).rejects.toThrow('prev-fails')
-    expect(root.x.isFetchingPreviousPage.value).toBe(false)
-    expect(root.x.status.value).toBe('error')
+    await expect(root.api.x.fetchPreviousPage()).rejects.toThrow('prev-fails')
+    expect(root.api.x.isFetchingPreviousPage.value).toBe(false)
+    expect(root.api.x.status.value).toBe('error')
     root.dispose()
   })
 })
@@ -148,11 +148,11 @@ describe('infinite query: short-circuit branches', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
     const before = calls
-    await root.x.fetchPreviousPage()
+    await root.api.x.fetchPreviousPage()
     expect(calls).toBe(before)
-    expect(root.x.hasPreviousPage.value).toBe(false)
+    expect(root.api.x.hasPreviousPage.value).toBe(false)
     root.dispose()
   })
 
@@ -171,9 +171,9 @@ describe('infinite query: short-circuit branches', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
     const before = calls
-    await root.x.fetchNextPage()
+    await root.api.x.fetchNextPage()
     expect(calls).toBe(before)
     root.dispose()
   })
@@ -195,9 +195,9 @@ describe('infinite query: short-circuit branches', () => {
       { queries: queryEngine(), deps: emptyDeps },
     )
     await flush()
-    expect(root.x.pages.value).toEqual([])
+    expect(root.api.x.pages.value).toEqual([])
     enabled.set(true)
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
     root.dispose()
   })
 
@@ -220,18 +220,18 @@ describe('infinite query: short-circuit branches', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
     const callsBefore = calls
 
-    const p1 = root.x.fetchNextPage()
-    expect(root.x.isFetchingNextPage.value).toBe(true)
+    const p1 = root.api.x.fetchNextPage()
+    expect(root.api.x.isFetchingNextPage.value).toBe(true)
     // Second call short-circuits: returns immediately, no new fetch.
-    await root.x.fetchNextPage()
+    await root.api.x.fetchNextPage()
     expect(calls).toBe(callsBefore + 1)
 
     resolveNext('p1')
     await p1
-    expect(root.x.pages.value).toEqual(['p0', 'p1'])
+    expect(root.api.x.pages.value).toEqual(['p0', 'p1'])
     root.dispose()
   })
 })
@@ -250,14 +250,14 @@ describe('infinite query: reset / firstValue', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.status.value).toBe('error'))
-    root.x.reset()
-    expect(root.x.error.value).toBeUndefined()
+    await vi.waitFor(() => expect(root.api.x.status.value).toBe('error'))
+    root.api.x.reset()
+    expect(root.api.x.error.value).toBeUndefined()
     // No pages means reset() parks status at 'idle'. After reset the
     // subscriber's effect re-evaluates via the entry's status signal and a new
     // fetch may be scheduled — but synchronously, before the next microtask,
     // status is idle.
-    expect(['idle', 'pending']).toContain(root.x.status.value)
+    expect(['idle', 'pending']).toContain(root.api.x.status.value)
     root.dispose()
   })
 
@@ -276,15 +276,15 @@ describe('infinite query: reset / firstValue', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
     mode = 'fail'
-    await expect(root.x.fetchNextPage()).rejects.toThrow('flaky')
-    expect(root.x.status.value).toBe('error')
-    expect(root.x.pages.value).toEqual(['p0'])
+    await expect(root.api.x.fetchNextPage()).rejects.toThrow('flaky')
+    expect(root.api.x.status.value).toBe('error')
+    expect(root.api.x.pages.value).toEqual(['p0'])
 
-    root.x.reset()
-    expect(root.x.error.value).toBeUndefined()
-    expect(root.x.pages.value).toEqual(['p0'])
+    root.api.x.reset()
+    expect(root.api.x.error.value).toBeUndefined()
+    expect(root.api.x.pages.value).toEqual(['p0'])
     root.dispose()
   })
 
@@ -299,8 +299,8 @@ describe('infinite query: reset / firstValue', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
-    await expect(root.x.firstValue()).resolves.toEqual(['p0'])
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
+    await expect(root.api.x.firstValue()).resolves.toEqual(['p0'])
     root.dispose()
   })
 
@@ -317,8 +317,8 @@ describe('infinite query: reset / firstValue', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.status.value).toBe('error'))
-    await expect(root.x.firstValue()).rejects.toThrow('die')
+    await vi.waitFor(() => expect(root.api.x.status.value).toBe('error'))
+    await expect(root.api.x.firstValue()).rejects.toThrow('die')
     root.dispose()
   })
 
@@ -338,7 +338,7 @@ describe('infinite query: reset / firstValue', () => {
       { queries: queryEngine(), deps: emptyDeps },
     )
     await flush()
-    const promise = root.x.firstValue()
+    const promise = root.api.x.firstValue()
     resolveIt('page-late')
     await expect(promise).resolves.toEqual(['page-late'])
     root.dispose()
@@ -360,7 +360,7 @@ describe('infinite query: reset / firstValue', () => {
       { queries: queryEngine(), deps: emptyDeps },
     )
     await flush()
-    const promise = root.x.firstValue()
+    const promise = root.api.x.firstValue()
     rejectIt(new Error('blew up'))
     await expect(promise).rejects.toThrow('blew up')
     root.dispose()
@@ -389,21 +389,21 @@ describe('infinite query: staleTime + invalidate', () => {
     )
     await vi.advanceTimersByTimeAsync(0)
     expect(calls).toBe(1)
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.isStale.value).toBe(false)
 
     // Half the staleTime — still fresh.
     await vi.advanceTimersByTimeAsync(500)
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.isStale.value).toBe(false)
 
     // Invalidate kicks an immediate refetch; the new entry resets the timer.
     q.invalidate()
     await vi.advanceTimersByTimeAsync(0)
     expect(calls).toBe(2)
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.isStale.value).toBe(false)
 
     // After staleTime since the new fetch, isStale becomes true.
     await vi.advanceTimersByTimeAsync(1001)
-    expect(root.x.isStale.value).toBe(true)
+    expect(root.api.x.isStale.value).toBe(true)
     root.dispose()
   })
 })

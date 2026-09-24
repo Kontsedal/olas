@@ -17,8 +17,8 @@ import { DEVTOOLS_CSS } from './styles'
 export type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
 
 export type DevtoolsPanelProps = {
-  /** The root to inspect. The panel subscribes to `root.__debug` on mount. */
-  root: Pick<Root<unknown>, '__debug'>
+  /** The root to inspect. The panel subscribes to `root.debug` on mount. */
+  root: Pick<Root<unknown>, 'debug'>
   /** Initial tab. Default: `'timeline'`. */
   defaultTab?: DevtoolsTab
   /** Cap on each event log. Default: 100. */
@@ -30,7 +30,7 @@ export type DevtoolsPanelProps = {
   urlHashKey?: string
   /**
    * @deprecated Ignored. The cache inspector is now event-driven — it refreshes
-   * from `root.__debug.queryEntries()` whenever a cache event arrives, so there
+   * from `root.debug.queryEntries()` whenever a cache event arrives, so there
    * is no polling interval to configure. Kept for back-compat; will be removed.
    */
   inspectorPollMs?: number
@@ -97,7 +97,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const liveFields = use(store.fields$)
   const liveEvents = use(store.events$)
   // The cache inspector is event-driven: the store seeds this from
-  // `root.__debug.queryEntries()` on attach and refreshes it whenever a cache
+  // `root.debug.queryEntries()` on attach and refreshes it whenever a cache
   // event lands — no polling interval (the old 800ms poll is gone).
   const liveCacheState = use(store.cacheState$)
 

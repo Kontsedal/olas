@@ -156,8 +156,8 @@ describe('installStreamingIntake (client side)', () => {
     const uninstall = installStreamingIntake(root)
 
     // Now subscribe (mimics a component mounting after the intake drain).
-    const sub = (root as { users: { data: { peek: () => unknown[] | undefined } } }).users
-    // Wait a microtask for the intake's `applyDehydratedEntry` to settle
+    const sub = (root.api as { users: { data: { peek: () => unknown[] | undefined } } }).users
+    // Wait a microtask for the intake's `root.hydrate` to settle
     // any buffered hydratedData slot — bind is synchronous here so peek
     // returns the preloaded value.
     await Promise.resolve()
@@ -205,7 +205,7 @@ describe('installStreamingIntake (client side)', () => {
       },
     }
     const uninstall = installStreamingIntake(root)
-    const sub = root as {
+    const sub = root.api as {
       a: { data: { value: unknown; peek: () => unknown } }
       b: { data: { value: unknown; peek: () => unknown } }
     }

@@ -1501,3 +1501,21 @@ The later ingests cite them as they land.
 - The botched "Was `createQuery(ctx, …)`" migration sentences (a find-and-replace ate `ctx.use` and friends) are deleted from `query/bind.ts` and `forms/bind.ts`. Migration history belongs in MIGRATING, not in hover text.
 - Four JSDoc blocks sat on the wrong symbol: `QuerySpec`, `InfiniteQuerySpec`, `Mutation` and `formFromZod`. Each is moved onto its own declaration.
 - An orphan doc line in realtime is removed.
+
+## [2026-09-24 15:30] ingest | 1.0 W1a: the root handle
+
+`createRoot` returns `{ api, bindQuery, inject, dispose, suspend, resume, dehydrate, hydrate, waitForIdle, debug }`, frozen. Removed:
+- `ROOT_METHODS`
+- the conflict check
+- the `{ value: api }` wrapper for primitive apis
+- `applyDehydratedEntry`, replaced by `hydrate(state)`
+- `__debug`, now `debug`
+- react `useController`
+
+The reasoning is in the new page `decisions/root-handle-separate.md`.
+
+`ControllerInstance.resolveScope(scope, caller)` now backs both `ctx.inject` and the new `root.inject`, so the scope walk and its memo live in one place. `createTestController` takes the new `TestControllerOptions`: `props` is optional for a `void` controller, and `plugins`, `scopes` and `hydrate` pass through.
+
+1,238 call sites were rewritten by `scripts/codemods/root-api.ts`, a ts-morph codemod driven by the type checker. It runs in two modes. The first detects the 0.x root type (it has `__debug` and `applyDehydratedEntry`). The `--after` mode catches accesses that the first pass saw only through `as unknown as Api & { dispose(): void }` casts. Those casts were stripped first so the real type flowed. The regression test "root-controls conflict disposes the tree (R-L2.5)" is deleted, because the conflict can no longer occur. The controller test that asserted reserved names throw now asserts the opposite.
+
+Wiki pages that still describe the intersection get rewritten in the W6 docs pass: `flows/use-root.md`, `modules/controller.md`, `modules/react.md` and `entities/controller-instance.md`.

@@ -26,8 +26,8 @@ describe('type pitfall: literal-type-narrowing', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // Explicit annotation widens — `.set('anything')` is valid.
-    expectTypeOf(root.name.value).toEqualTypeOf<string>()
-    root.name.set('anything')
+    expectTypeOf(root.api.name.value).toEqualTypeOf<string>()
+    root.api.name.set('anything')
     root.dispose()
   })
 
@@ -40,9 +40,9 @@ describe('type pitfall: literal-type-narrowing', () => {
     // This is the documented pitfall (`.wiki/pitfalls/literal-type-narrowing.md`):
     // the assertion exists so a future change that *auto-widens* literals
     // shows up as a typecheck failure (then update the test).
-    expectTypeOf(root.narrow.value).toMatchTypeOf<string>()
+    expectTypeOf(root.api.narrow.value).toMatchTypeOf<string>()
     // Empty-string is a valid value.
-    root.narrow.set('')
+    root.api.narrow.set('')
     root.dispose()
   })
 })

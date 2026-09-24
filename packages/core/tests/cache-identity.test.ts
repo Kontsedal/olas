@@ -64,8 +64,8 @@ describe('cache key identities', () => {
       ),
     )
     await root.waitForIdle()
-    expect(root.absent.data.peek()).toBe('undefined')
-    expect(root.text.data.peek()).toBe('string')
+    expect(root.api.absent.data.peek()).toBe('undefined')
+    expect(root.api.text.data.peek()).toBe('string')
   })
 })
 
@@ -114,8 +114,8 @@ describe('SSR identity across separately evaluated bundles', () => {
       ),
     )
     await client.waitForIdle()
-    expect(client.users.data.peek()).toBe('users')
-    expect(client.settings.data.peek()).toBe('settings')
+    expect(client.api.users.data.peek()).toBe('users')
+    expect(client.api.settings.data.peek()).toBe('settings')
     expect(usersFetch).toHaveBeenCalledTimes(explicit ? 0 : 1)
     expect(settingsFetch).toHaveBeenCalledTimes(explicit ? 0 : 1)
   })
@@ -187,8 +187,8 @@ describe('SSR identity across separately evaluated bundles', () => {
         },
       ),
     )
-    expect(root.sub.data.peek()).toBeUndefined()
+    expect(root.api.sub.data.peek()).toBeUndefined()
     await root.waitForIdle()
-    expect(root.sub.data.peek()).toBe('own data')
+    expect(root.api.sub.data.peek()).toBe('own data')
   })
 })

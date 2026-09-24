@@ -68,8 +68,8 @@ describe('useLiveStream', () => {
       realtime.emit('logs', ch)
     }
 
-    expect(root.stream.events.value).toEqual(['c', 'd', 'e'])
-    expect(root.stream.events.value.length).toBe(3)
+    expect(root.api.stream.events.value).toEqual(['c', 'd', 'e'])
+    expect(root.api.stream.events.value.length).toBe(3)
 
     root.dispose()
   })
@@ -97,7 +97,7 @@ describe('useLiveStream', () => {
       let writes = 0
       const dispose = effect(() => {
         // Tracked read.
-        void root.stream.events.value
+        void root.api.stream.events.value
         writes++
       })
       // The initial run counts as one write — reset so we count only flushes.
@@ -109,7 +109,7 @@ describe('useLiveStream', () => {
 
       vi.advanceTimersByTime(16)
       expect(writes - baseline).toBe(1)
-      expect(root.stream.events.value).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+      expect(root.api.stream.events.value).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 
       dispose()
       root.dispose()
@@ -132,18 +132,18 @@ describe('useLiveStream', () => {
       realtime.emit('logs', 'queued')
       // Pause BEFORE flushMs elapses — the trailing timer is canceled.
       vi.advanceTimersByTime(10)
-      expect(root.stream.events.value).toEqual([])
-      root.stream.pause()
+      expect(root.api.stream.events.value).toEqual([])
+      root.api.stream.pause()
 
       // While paused: time advances; the stranded event would never appear in
       // the original buggy implementation.
       vi.advanceTimersByTime(1000)
-      expect(root.stream.events.value).toEqual([])
+      expect(root.api.stream.events.value).toEqual([])
 
       // Resume — the effect re-runs and reschedules the flush.
-      root.stream.resume()
+      root.api.stream.resume()
       vi.advanceTimersByTime(50)
-      expect(root.stream.events.value).toEqual(['queued'])
+      expect(root.api.stream.events.value).toEqual(['queued'])
       root.dispose()
     })
 
@@ -160,20 +160,20 @@ describe('useLiveStream', () => {
 
       realtime.emit('logs', 'a')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a'])
+      expect(root.api.stream.events.value).toEqual(['a'])
 
-      root.stream.pause()
-      expect(root.stream.isPaused.value).toBe(true)
+      root.api.stream.pause()
+      expect(root.api.stream.isPaused.value).toBe(true)
       // Subscription should be gone — emit lands nowhere.
       realtime.emit('logs', 'b')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a'])
+      expect(root.api.stream.events.value).toEqual(['a'])
 
-      root.stream.resume()
-      expect(root.stream.isPaused.value).toBe(false)
+      root.api.stream.resume()
+      expect(root.api.stream.isPaused.value).toBe(false)
       realtime.emit('logs', 'c')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a', 'c'])
+      expect(root.api.stream.events.value).toEqual(['a', 'c'])
 
       root.dispose()
     })
@@ -191,10 +191,10 @@ describe('useLiveStream', () => {
 
       realtime.emit('logs', 'a')
       // Pending flush scheduled but not yet fired.
-      expect(root.stream.events.value).toEqual([])
+      expect(root.api.stream.events.value).toEqual([])
 
       // Snapshot the events read BEFORE dispose so we can compare after.
-      const before = root.stream.events.value
+      const before = root.api.stream.events.value
 
       root.dispose()
       // Subscriber gone.
@@ -202,8 +202,8 @@ describe('useLiveStream', () => {
 
       // Advance past the original flush deadline — no late write should land.
       vi.advanceTimersByTime(200)
-      expect(root.stream.events.value).toBe(before)
-      expect(root.stream.events.value).toEqual([])
+      expect(root.api.stream.events.value).toBe(before)
+      expect(root.api.stream.events.value).toEqual([])
     })
 
     test('clear() empties without killing the subscription', () => {
@@ -219,16 +219,16 @@ describe('useLiveStream', () => {
 
       realtime.emit('logs', 'a')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a'])
+      expect(root.api.stream.events.value).toEqual(['a'])
 
-      root.stream.clear()
-      expect(root.stream.events.value).toEqual([])
+      root.api.stream.clear()
+      expect(root.api.stream.events.value).toEqual([])
       // Subscription preserved.
       expect(realtime.subscriberCount('logs')).toBe(1)
 
       realtime.emit('logs', 'b')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['b'])
+      expect(root.api.stream.events.value).toEqual(['b'])
 
       root.dispose()
     })
@@ -242,7 +242,7 @@ describe('useRealtimeConnection (T6.7)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     // Old behavior lied with 'connected'; a transport with no
     // onConnectionChange genuinely can't know → 'unknown'.
-    expect(root.conn.value).toBe('unknown')
+    expect(root.api.conn.value).toBe('unknown')
     root.dispose()
   })
 
@@ -261,9 +261,9 @@ describe('useRealtimeConnection (T6.7)', () => {
     }
     const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
     const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
-    expect(root.conn.value).toBe('connected') // optimistic initial (has a reporter)
+    expect(root.api.conn.value).toBe('connected') // optimistic initial (has a reporter)
     conn.handler?.('offline')
-    expect(root.conn.value).toBe('offline')
+    expect(root.api.conn.value).toBe('offline')
     root.dispose()
   })
 })

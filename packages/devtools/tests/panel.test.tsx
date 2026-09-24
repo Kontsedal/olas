@@ -39,7 +39,7 @@ describe('<DevtoolsPanel>', () => {
     expect(screen.getByRole('tabpanel').textContent).toContain('root')
 
     await act(async () => {
-      root.addLeaf()
+      root.api.addLeaf()
     })
     const treePanel = await screen.findByRole('tabpanel')
     expect(treePanel.textContent).toMatch(/leaf/)
@@ -60,7 +60,7 @@ describe('<DevtoolsPanel>', () => {
     // The initial fetch fired before the panel subscribed, so trigger a fresh
     // cycle to exercise the live-event path.
     await act(async () => {
-      await root.users.refetch()
+      await root.api.users.refetch()
     })
 
     // Panel uses rAF-coalesced writes — wait one frame for the pending
@@ -87,7 +87,7 @@ describe('<DevtoolsPanel>', () => {
     render(<DevtoolsPanel root={root} defaultTab="cache" />)
 
     await act(async () => {
-      await root.x.refetch()
+      await root.api.x.refetch()
     })
     // Panel coalesces via rAF — wait one frame so the pending events land.
     await act(
@@ -149,7 +149,7 @@ describe('<DevtoolsPanel>', () => {
 
     render(<DevtoolsPanel root={root} defaultTab="tree" />)
     act(() => {
-      root.addLeaf()
+      root.api.addLeaf()
     })
     const panel = screen.getByRole('tabpanel')
     expect(panel.textContent).toMatch(/active/)
@@ -170,7 +170,7 @@ describe('<DevtoolsPanel>', () => {
 
     render(<DevtoolsPanel root={root} defaultTab="cache" />)
     await act(async () => {
-      await root.x.refetch()
+      await root.api.x.refetch()
     })
     await raf()
     expect(screen.getByRole('tabpanel').textContent).toContain('fetch-success')
@@ -219,13 +219,13 @@ describe('<DevtoolsPanel>', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
     await act(async () => {
-      await root.cur.firstValue()
+      await root.api.cur.firstValue()
     })
 
     render(<DevtoolsPanel root={root} />) // Timeline is the default tab
 
     await act(async () => {
-      await root.save.run(undefined as void).catch(() => undefined)
+      await root.api.save.run(undefined as void).catch(() => undefined)
     })
     await raf()
 
@@ -255,12 +255,12 @@ describe('<DevtoolsPanel>', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await act(async () => {
-      await root.cur.firstValue()
+      await root.api.cur.firstValue()
     })
 
     render(<DevtoolsPanel root={root} />)
     await act(async () => {
-      await root.bump.run(undefined as void)
+      await root.api.bump.run(undefined as void)
     })
     await raf()
 
@@ -290,7 +290,7 @@ describe('<DevtoolsPanel>', () => {
     expect(panel.textContent).toContain('0') // live value
 
     await act(async () => {
-      root.inc()
+      root.api.inc()
     })
     expect(panel.textContent).toContain('1') // updated reactively — no poll
 
@@ -304,7 +304,7 @@ describe('<DevtoolsPanel>', () => {
 
     render(<DevtoolsPanel root={root} defaultTab="inspector" />)
     await act(async () => {
-      await root.x.refetch()
+      await root.api.x.refetch()
     })
     await raf()
 

@@ -15,9 +15,9 @@ describe('runtime devtools events', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['1']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.x.refetch()
+    await root.api.x.refetch()
 
     const kinds = events.map((e) => e.type)
     expect(kinds).toContain('cache:fetch-start')
@@ -44,9 +44,9 @@ describe('runtime devtools events', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.x.refetch().catch(() => undefined)
+    await root.api.x.refetch().catch(() => undefined)
 
     expect(events.some((e) => e.type === 'cache:fetch-error')).toBe(true)
     root.dispose()
@@ -57,8 +57,8 @@ describe('runtime devtools events', () => {
     const q = defineQuery({ key: (id: string) => [id], fetcher: async (_ctx, id) => id })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['k']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
-    await root.x.firstValue()
-    root.__debug.subscribe((ev) => events.push(ev))
+    await root.api.x.firstValue()
+    root.debug.subscribe((ev) => events.push(ev))
 
     q.invalidate('k')
 
@@ -72,9 +72,9 @@ describe('runtime devtools events', () => {
       save: createMutation(ctx, { mutate: async (v: number) => v * 2 }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.save.run(3)
+    await root.api.save.run(3)
 
     const kinds = events.map((e) => e.type)
     expect(kinds).toContain('mutation:run')
@@ -93,9 +93,9 @@ describe('runtime devtools events', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.save.run(undefined as void).catch(() => undefined)
+    await root.api.save.run(undefined as void).catch(() => undefined)
 
     expect(events.some((e) => e.type === 'mutation:error')).toBe(true)
     root.dispose()
@@ -118,10 +118,10 @@ describe('runtime devtools events', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
-    await root.cur.firstValue()
-    root.__debug.subscribe((ev) => events.push(ev))
+    await root.api.cur.firstValue()
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.save.run(undefined as void).catch(() => undefined)
+    await root.api.save.run(undefined as void).catch(() => undefined)
 
     // The user's onError can call snapshot.rollback() — we test that the
     // wrapped snapshot emits the event whenever rollback is invoked. Here
@@ -154,10 +154,10 @@ describe('runtime devtools events', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    const first = root.save.run(1).catch(() => undefined)
-    const second = root.save.run(2)
+    const first = root.api.save.run(1).catch(() => undefined)
+    const second = root.api.save.run(2)
     await Promise.all([first, second])
 
     expect(events.some((e) => e.type === 'mutation:rollback')).toBe(true)
@@ -173,8 +173,8 @@ describe('runtime devtools events', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['1']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    await root.x.firstValue()
-    root.__debug.subscribe((ev) => events.push(ev))
+    await root.api.x.firstValue()
+    root.debug.subscribe((ev) => events.push(ev))
 
     root.dispose()
 
@@ -190,9 +190,9 @@ describe('runtime devtools events', () => {
     const q = defineQuery({ key: () => ['k'], fetcher: async () => 1 })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.x.refetch()
+    await root.api.x.refetch()
 
     expect(events.length).toBeGreaterThan(0)
     for (const e of events) {
@@ -212,9 +212,9 @@ describe('runtime devtools events', () => {
     })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['1']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.x.refetch()
+    await root.api.x.refetch()
 
     const success = events.find((e) => e.type === 'cache:fetch-success')
     const cause = success?.causeId
@@ -243,10 +243,10 @@ describe('runtime devtools events', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
-    await root.cur.firstValue()
-    root.__debug.subscribe((ev) => events.push(ev))
+    await root.api.cur.firstValue()
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.save.run(undefined as void).catch(() => undefined)
+    await root.api.save.run(undefined as void).catch(() => undefined)
 
     const run = events.find((e) => e.type === 'mutation:run')
     const cause = run?.causeId
@@ -279,10 +279,10 @@ describe('runtime devtools events', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    await root.cur.firstValue()
-    root.__debug.subscribe((ev) => events.push(ev))
+    await root.api.cur.firstValue()
+    root.debug.subscribe((ev) => events.push(ev))
 
-    await root.save.run(undefined as void)
+    await root.api.save.run(undefined as void)
 
     const run = events.find((e) => e.type === 'mutation:run')
     const cause = run?.causeId
@@ -299,8 +299,8 @@ describe('runtime devtools events', () => {
     const q = defineQuery({ key: (id: string) => [id], fetcher: async (_ctx, id) => id })
     const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['1']) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
-    await root.x.firstValue()
-    root.__debug.subscribe((ev) => events.push(ev))
+    await root.api.x.firstValue()
+    root.debug.subscribe((ev) => events.push(ev))
 
     q.setData('1', () => 'manual')
 
@@ -322,7 +322,7 @@ describe('runtime devtools events', () => {
     })
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     const events: DebugEvent[] = []
-    root.__debug.subscribe((ev) => events.push(ev)) // replay includes constructed
+    root.debug.subscribe((ev) => events.push(ev)) // replay includes constructed
 
     const constructed = events.find((e) => e.type === 'controller:constructed') as Extract<
       DebugEvent,
@@ -344,7 +344,7 @@ describe('runtime devtools events', () => {
     })
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     const events: DebugEvent[] = []
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
     const constructed = events.find((e) => e.type === 'controller:constructed') as Extract<
       DebugEvent,
@@ -362,9 +362,9 @@ describe('runtime devtools events', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     const events: DebugEvent[] = []
-    root.__debug.subscribe((ev) => events.push(ev))
+    root.debug.subscribe((ev) => events.push(ev))
 
-    root.expose()
+    root.api.expose()
 
     const debugEvent = events.find((e) => e.type === 'controller:debug') as Extract<
       DebugEvent,

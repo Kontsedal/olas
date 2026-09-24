@@ -2,20 +2,10 @@ import { DevtoolsEmitter } from '../devtools'
 import { scheduleExpiry } from '../expiry-timer'
 import type { QueryClient } from '../query/client'
 import { missingQueryEngine } from '../query/missing-engine'
+import type { DehydratedState } from '../query/types'
 import { getFactory } from './define'
 import { ControllerInstance, type RootShared } from './instance'
 import type { AmbientDeps, ControllerDef, Root, RootOptions } from './types'
-
-const ROOT_METHODS = [
-  'bindQuery',
-  'dispose',
-  'suspend',
-  'resume',
-  'dehydrate',
-  'waitForIdle',
-  'applyDehydratedEntry',
-  '__debug',
-] as const
 
 /**
  * Construct a root controller.
@@ -96,42 +86,10 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     throw err
   }
 
-  // Non-object apis get wrapped so root controls have somewhere to live.
-  let target = api
-  if (typeof api !== 'object' || api === null) {
-    // Allow primitive APIs in principle but root controls must live somewhere.
-    // Wrap in a holder. The declared `Root<Api>` type intersection lies in
-    // this branch — `(holder as Api).dispose` won't be present on the
-    // primitive itself. Dev-warn so the footgun is visible at first run
-    // instead of as a confusing "undefined.value" later.
-    if (__DEV__) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[olas] createRoot: controller returned a non-object api ' +
-          `(${api === null ? 'null' : typeof api}). ` +
-          'Wrapping as { value: api } so root controls (dispose / suspend / ...) ' +
-          "can be attached. Prefer returning an object from a root controller's factory.",
-      )
-    }
-    target = { value: api } as unknown as Api
-  }
-
-  // attachRootControls throws on a root-controls NAME CONFLICT (the api defines
-  // `dispose`/`suspend`/...) — AFTER the tree is fully constructed. Tear down
-  // the live instance + queryClient (effects, focus/online listeners, plugin
-  // transports) before rethrowing so the conflict doesn't leak the whole tree.
-  // The construct-throw path above rolls back via queryClient?.dispose(); this
-  // is the symmetric guard for the post-construction failure. (T2.5)
-  try {
-    return attachRootControls(target, instance, devtools, queryClient)
-  } catch (err) {
-    instance.dispose()
-    queryClient?.dispose()
-    throw err
-  }
+  return buildRootHandle(api, instance, devtools, queryClient)
 }
 
-function attachRootControls<Api>(
+function buildRootHandle<Api>(
   api: Api,
   instance: ControllerInstance,
   devtools: DevtoolsEmitter,
@@ -140,7 +98,7 @@ function attachRootControls<Api>(
   /** Cancellation closure from `scheduleExpiry`; `null` = no auto-dispose armed. */
   let suspendTimer: (() => void) | null = null
 
-  const dispose = () => {
+  const dispose = (): void => {
     if (suspendTimer != null) {
       suspendTimer()
       suspendTimer = null
@@ -149,7 +107,7 @@ function attachRootControls<Api>(
     queryClient?.dispose()
   }
 
-  const suspend = (opts?: { maxIdle?: number }) => {
+  const suspend = (opts?: { maxIdle?: number }): void => {
     instance.suspend()
     if (suspendTimer != null) {
       suspendTimer()
@@ -168,7 +126,7 @@ function attachRootControls<Api>(
     }
   }
 
-  const resume = () => {
+  const resume = (): void => {
     if (suspendTimer != null) {
       suspendTimer()
       suspendTimer = null
@@ -176,87 +134,57 @@ function attachRootControls<Api>(
     instance.resume()
   }
 
-  const debug = {
-    subscribe: (handler: Parameters<DevtoolsEmitter['subscribe']>[0]) =>
-      devtools.subscribe(handler),
-    queryEntries: () => queryClient?.queryEntriesSnapshot() ?? [],
-  }
-
-  const target = api as Record<string, unknown>
-  for (const method of ROOT_METHODS) {
-    // Use `in` rather than `Object.hasOwn` so class-based apis with
-    // prototype methods like `dispose()` still trigger the conflict
-    // detection instead of being silently overwritten by defineProperty.
-    if (method in target) {
-      throw new Error(
-        `[olas] Root controller api defines '${method}' which conflicts with the root controls.`,
-      )
-    }
-  }
-  // Lock root controls: writable:false + configurable:false so user code
-  // can't `delete api.dispose` (orphaning the root) or shadow them with a
-  // typo. The `in`-check above is the friendly preflight; this is the
-  // hard fence in case a consumer mutates the api after construction.
-  const lock = { enumerable: false, writable: false, configurable: false }
-  Object.defineProperty(target, 'bindQuery', {
-    value: (query: unknown) => {
-      if (queryClient === null) throw missingQueryEngine('root.bindQuery')
-      return queryClient.bindQuery(query as never)
-    },
-    ...lock,
-  })
-  Object.defineProperty(target, 'dispose', { value: dispose, ...lock })
-  Object.defineProperty(target, 'suspend', { value: suspend, ...lock })
-  Object.defineProperty(target, 'resume', { value: resume, ...lock })
-  Object.defineProperty(target, '__debug', { value: debug, ...lock })
-  Object.defineProperty(target, 'dehydrate', {
-    // No engine means no cache, so nothing to dehydrate. Returning an
-    // empty state beats throwing: an SSR render of a query-free root is
-    // legitimate, and the client hydrates the same nothing.
-    value: () => queryClient?.dehydrate() ?? { version: 1 as const, entries: [] },
-    ...lock,
-  })
-  Object.defineProperty(target, 'waitForIdle', {
-    value: () => queryClient?.waitForIdle() ?? Promise.resolve(),
-    ...lock,
-  })
-  // Streaming SSR pushes entries in through this before any controller has
-  // subscribed. Dropping them silently on an engine-less root would present as
-  // "hydration did nothing" with no symptom to chase. `root.bindQuery` already
-  // throws in the same situation; this cannot throw, because the intake runs
-  // from a script tag, so it warns.
-  const applyDehydrated = (
-    queryId: string,
-    keyArgs: readonly unknown[],
-    data: unknown,
-    lastUpdatedAt: number,
-  ): void => {
+  // Streaming SSR pushes entries in through `hydrate` before any controller
+  // has subscribed. Dropping them silently on an engine-less root would present
+  // as "hydration did nothing" with no symptom to chase. `bindQuery` throws in
+  // the same situation; this cannot, because the intake runs from a script
+  // tag, so it warns.
+  const hydrate = (state: DehydratedState): void => {
     if (queryClient === null) {
-      if (__DEV__) {
+      if (__DEV__ && state.entries.length > 0) {
+        const ids = state.entries.slice(0, 3).map((e) => `'${e.id}'`)
+        const more = state.entries.length > 3 ? ` and ${state.entries.length - 3} more` : ''
         console.warn(
-          `[olas] hydration payload for '${queryId}' discarded — this root has no query engine. ` +
-            'Pass `queries: queryEngine()` to createRoot.',
+          `[olas] hydration payload for ${ids.join(', ')}${more} discarded — this root has ` +
+            'no query engine. Pass `queries: queryEngine()` to createRoot.',
         )
       }
       return
     }
-    queryClient.applyDehydratedEntry(queryId, keyArgs, data, lastUpdatedAt)
+    for (const entry of state.entries) {
+      queryClient.applyDehydratedEntry(entry.id, entry.key, entry.data, entry.lastUpdatedAt)
+    }
   }
 
-  Object.defineProperty(target, 'applyDehydratedEntry', {
-    value: (queryId: string, keyArgs: readonly unknown[], data: unknown, lastUpdatedAt: number) =>
-      applyDehydrated(queryId, keyArgs, data, lastUpdatedAt),
-    ...lock,
-  })
-
-  return api as Root<Api>
+  const root: Root<Api> = {
+    api,
+    bindQuery: ((query: unknown) => {
+      if (queryClient === null) throw missingQueryEngine('root.bindQuery')
+      return queryClient.bindQuery(query as never)
+    }) as Root<Api>['bindQuery'],
+    inject: (scope) => instance.resolveScope(scope, 'root.inject'),
+    dispose,
+    suspend,
+    resume,
+    // No engine means no cache, so nothing to dehydrate. Returning an empty
+    // state beats throwing: an SSR render of a query-free root is legitimate,
+    // and the client hydrates the same nothing.
+    dehydrate: () => queryClient?.dehydrate() ?? { version: 1 as const, entries: [] },
+    hydrate,
+    waitForIdle: () => queryClient?.waitForIdle() ?? Promise.resolve(),
+    debug: {
+      subscribe: (handler) => devtools.subscribe(handler),
+      queryEntries: () => queryClient?.queryEntriesSnapshot() ?? [],
+    },
+  }
+  return Object.freeze(root)
 }
 
 /**
  * Construct a root controller. Root factories take no props — startup config
  * goes in `deps`.
  */
-export function createRoot<Api extends object, TDeps extends Record<string, unknown> = AmbientDeps>(
+export function createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>(
   def: ControllerDef<void, Api>,
   options: RootOptions<TDeps>,
 ): Root<Api> {

@@ -22,7 +22,6 @@ import {
   defineController,
   defineQuery,
   type Query,
-  type QuerySubscription,
   queryEngine,
 } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
@@ -94,22 +93,20 @@ describe('integration: realtime + multi-tab', () => {
         })
         return { feed }
       })
-
-    type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const tabA = createRoot(buildDef(queryA), {
       queries: queryEngine(),
       deps: { realtime },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
-    }) as unknown as Api & { dispose: () => void }
+    })
     const tabB = createRoot(buildDef(queryB), {
       queries: queryEngine(),
       deps: { realtime },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
-    }) as unknown as Api & { dispose: () => void }
+    })
 
     await settle()
-    expect(tabA.feed.data.peek()?.posts[0]?.likes).toBe(0)
-    expect(tabB.feed.data.peek()?.posts[0]?.likes).toBe(0)
+    expect(tabA.api.feed.data.peek()?.posts[0]?.likes).toBe(0)
+    expect(tabB.api.feed.data.peek()?.posts[0]?.likes).toBe(0)
 
     // Real-world note: BOTH tabs would receive the realtime event from
     // the server. In this test we deliver it only to tabA's subscriber
@@ -122,7 +119,7 @@ describe('integration: realtime + multi-tab', () => {
     // Simpler: directly setData on queryA. The realtime patcher coverage
     // lives in the other test below.
     queryA.setData(() => {
-      const prev = tabA.feed.data.peek()
+      const prev = tabA.api.feed.data.peek()
       if (!prev) return { posts: [] }
       return {
         posts: prev.posts.map((p) => (p.id === 'p1' ? { ...p, likes: 5 } : p)),
@@ -131,8 +128,8 @@ describe('integration: realtime + multi-tab', () => {
     await settle()
 
     // Both tabs see the new like-count.
-    expect(tabA.feed.data.peek()?.posts[0]?.likes).toBe(5)
-    expect(tabB.feed.data.peek()?.posts[0]?.likes).toBe(5)
+    expect(tabA.api.feed.data.peek()?.posts[0]?.likes).toBe(5)
+    expect(tabB.api.feed.data.peek()?.posts[0]?.likes).toBe(5)
 
     tabA.dispose()
     tabB.dispose()
@@ -167,18 +164,16 @@ describe('integration: realtime + multi-tab', () => {
         })
         return { feed }
       })
-
-    type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const tabA = createRoot(buildDef(queryA), {
       queries: queryEngine(),
       deps: { realtime: rtA },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
-    }) as unknown as Api & { dispose: () => void }
+    })
     const tabB = createRoot(buildDef(queryB), {
       queries: queryEngine(),
       deps: { realtime: rtB },
       plugins: [crossTabPlugin({ channelName, channelFactory: bus.factory })],
-    }) as unknown as Api & { dispose: () => void }
+    })
 
     await settle()
 
@@ -188,8 +183,8 @@ describe('integration: realtime + multi-tab', () => {
     await settle()
 
     // Tab A patched locally + broadcast. Tab B applied as remote setData.
-    expect(tabA.feed.data.peek()?.posts[0]?.likes).toBe(1)
-    expect(tabB.feed.data.peek()?.posts[0]?.likes).toBe(1)
+    expect(tabA.api.feed.data.peek()?.posts[0]?.likes).toBe(1)
+    expect(tabB.api.feed.data.peek()?.posts[0]?.likes).toBe(1)
 
     // Tab B's realtime transport was never used.
     expect(rtB.subscriberCount('feed')).toBe(1) // it subscribed

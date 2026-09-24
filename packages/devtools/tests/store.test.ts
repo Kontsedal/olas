@@ -191,7 +191,7 @@ describe('DevtoolsStore.handle', () => {
   test('attach() subscribes to a root.__debug bus', () => {
     let captured: ((ev: DebugEvent) => void) | undefined
     const fakeRoot = {
-      __debug: {
+      debug: {
         subscribe: (handler: (ev: DebugEvent) => void) => {
           captured = handler
           return () => {
@@ -376,7 +376,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     const snapshot = [entry()]
     const store = new DevtoolsStore({ now: fixedNow })
     store.attach({
-      __debug: {
+      debug: {
         subscribe: () => () => {},
         queryEntries: () => snapshot.slice(),
       },
@@ -388,7 +388,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     let handler: ((e: DebugEvent) => void) | undefined
     const store = new DevtoolsStore({ now: fixedNow })
     store.attach({
-      __debug: {
+      debug: {
         subscribe: (h: (e: DebugEvent) => void) => {
           handler = h
           return () => {}
@@ -408,7 +408,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     let handler: ((e: DebugEvent) => void) | undefined
     const store = new DevtoolsStore({ now: fixedNow })
     store.attach({
-      __debug: {
+      debug: {
         subscribe: (h: (e: DebugEvent) => void) => {
           handler = h
           return () => {}
@@ -427,7 +427,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     let handler: ((e: DebugEvent) => void) | undefined
     const store = new DevtoolsStore({ now: fixedNow })
     store.attach({
-      __debug: {
+      debug: {
         subscribe: (h: (e: DebugEvent) => void) => {
           handler = h
           return () => {}
@@ -447,7 +447,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     let handler: ((e: DebugEvent) => void) | undefined
     const store = new DevtoolsStore({ now: fixedNow })
     store.attach({
-      __debug: {
+      debug: {
         subscribe: (h: (e: DebugEvent) => void) => {
           handler = h
           return () => {}
@@ -469,7 +469,7 @@ describe('DevtoolsStore cacheState (event-driven inspector, no poll)', () => {
     let handler: ((e: DebugEvent) => void) | undefined
     const store = new DevtoolsStore({ now: fixedNow })
     store.attach({
-      __debug: {
+      debug: {
         subscribe: (h: (e: DebugEvent) => void) => {
           handler = h
           return () => {}

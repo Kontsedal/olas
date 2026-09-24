@@ -13,7 +13,7 @@ import {
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode, useEffect, useLayoutEffect } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { OlasProvider, use, useController, useField, useMutation, useQuery, useRoot } from '../src'
+import { OlasProvider, use, useField, useMutation, useQuery, useRoot } from '../src'
 
 afterEach(() => {
   cleanup()
@@ -28,7 +28,7 @@ describe('use(signal)', () => {
     const root = createRoot(counterDef, { queries: queryEngine(), deps: {} })
 
     function Counter() {
-      const value = use(root.count)
+      const value = use(root.api.count)
       return <span data-testid="count">{value}</span>
     }
 
@@ -39,10 +39,10 @@ describe('use(signal)', () => {
     )
 
     expect(screen.getByTestId('count').textContent).toBe('0')
-    act(() => root.inc())
+    act(() => root.api.inc())
     expect(screen.getByTestId('count').textContent).toBe('1')
-    act(() => root.inc())
-    act(() => root.inc())
+    act(() => root.api.inc())
+    act(() => root.api.inc())
     expect(screen.getByTestId('count').textContent).toBe('3')
 
     root.dispose()
@@ -79,20 +79,6 @@ describe('use(signal)', () => {
       console.error = prev
     }
   })
-
-  test('useController is a back-compat passthrough', () => {
-    const def = defineController(() => ({ greeting: 'hi' }))
-    const root = createRoot(def, { queries: queryEngine(), deps: {} })
-
-    function Greet() {
-      const api = useController(root)
-      return <span data-testid="hc">{api.greeting}</span>
-    }
-
-    render(<Greet />)
-    expect(screen.getByTestId('hc').textContent).toBe('hi')
-    root.dispose()
-  })
 })
 
 describe('useQuery(subscription)', () => {
@@ -113,7 +99,7 @@ describe('useQuery(subscription)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
     function GreetingView() {
-      const { data, isLoading } = useQuery(root.greeting)
+      const { data, isLoading } = useQuery(root.api.greeting)
       return <span data-testid="g">{isLoading ? 'loading' : (data ?? '')}</span>
     }
 
@@ -124,7 +110,7 @@ describe('useQuery(subscription)', () => {
     )
 
     await act(async () => {
-      await root.greeting.firstValue()
+      await root.api.greeting.firstValue()
     })
     expect(screen.getByTestId('g').textContent).toBe('first')
 
@@ -133,13 +119,13 @@ describe('useQuery(subscription)', () => {
       greetingQuery.invalidate()
       // invalidate marks the entry stale; the subscription auto-refetches.
       // Wait for the refetch to settle.
-      await root.greeting.firstValue()
+      await root.api.greeting.firstValue()
     })
     // firstValue resolves on the first cached value (still 'first' after the
     // first fetch). Wait one more microtask cycle and assert the visible
     // text matches the refetched data.
     await act(async () => {
-      await root.greeting.refetch()
+      await root.api.greeting.refetch()
     })
     expect(screen.getByTestId('g').textContent).toBe('second')
 
@@ -159,7 +145,7 @@ describe('StrictMode safety', () => {
     expect(constructions).toHaveBeenCalledTimes(1)
 
     function View() {
-      const v = use(root.count)
+      const v = use(root.api.count)
       // Track that React does mount/unmount per StrictMode
       useEffect(() => {
         // intentional empty — just exercise StrictMode's double-effect path
@@ -177,7 +163,7 @@ describe('StrictMode safety', () => {
 
     expect(constructions).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('v').textContent).toBe('0')
-    act(() => root.count.set(7))
+    act(() => root.api.count.set(7))
     expect(screen.getByTestId('v').textContent).toBe('7')
 
     root.dispose()
@@ -192,7 +178,7 @@ describe('useField <input> round-trip', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function NameInput() {
-      const { value, set, touched, markTouched } = useField(root.name)
+      const { value, set, touched, markTouched } = useField(root.api.name)
       return (
         <div>
           <input
@@ -220,7 +206,7 @@ describe('useField <input> round-trip', () => {
       fireEvent.change(input, { target: { value: 'edited' } })
     })
     expect(input.value).toBe('edited')
-    expect(root.name.peek()).toBe('edited')
+    expect(root.api.name.peek()).toBe('edited')
 
     act(() => {
       fireEvent.blur(input)
@@ -239,7 +225,7 @@ describe('useMutation status (R4.2)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function View() {
-      const m = useMutation(root.save)
+      const m = useMutation(root.api.save)
       return <span data-testid="s">{m.isSuccess ? 'success' : m.isIdle ? 'idle' : 'other'}</span>
     }
 
@@ -253,7 +239,7 @@ describe('useMutation status (R4.2)', () => {
     // A void mutation resolves `undefined`; only `status` changes. The hook must
     // subscribe to it and re-render with isSuccess=true (was stuck on 'idle').
     await act(async () => {
-      await root.save.run()
+      await root.api.save.run()
     })
     expect(screen.getByTestId('s').textContent).toBe('success')
 
@@ -308,7 +294,7 @@ describe('useSyncExternalStore consistency (R4.5)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function Reader() {
-      const { value } = useField(root.name)
+      const { value } = useField(root.api.name)
       return <span data-testid="v">{value}</span>
     }
     // Rendered AFTER Reader; its layout effect writes the field during commit —
@@ -318,7 +304,7 @@ describe('useSyncExternalStore consistency (R4.5)', () => {
     // the stale value. The computed snapshot reflects real store state (T4.5).
     function Writer() {
       useLayoutEffect(() => {
-        root.name.set('written')
+        root.api.name.set('written')
       }, [])
       return null
     }

@@ -10,42 +10,53 @@ import { computed, type ReadSignal, type Signal, signal } from './signals'
 export { _unregisterMutationById } from './query/plugin'
 
 /**
- * Construct an isolated root wrapping a single controller. The returned object
- * is the controller's api plus the standard Root lifecycle controls
- * (`dispose`, `suspend`, `resume`, `__debug`).
+ * Options for `createTestController`. Mirrors `RootOptions`, with two test
+ * conveniences: `props` may be omitted when the controller takes none, and
+ * the query engine defaults to a live one.
+ */
+export type TestControllerOptions<Props, TDeps> = {
+  deps: TDeps
+  onError?: RootOptions<TDeps>['onError']
+  /**
+   * Root-wide query defaults, same shape as `createRoot`'s. Exposed here so
+   * a controller whose behavior depends on them (staleTime-driven refetch,
+   * retry counts) can be tested without hand-rolling a root wrapper.
+   */
+  defaultQueryOptions?: RootOptions<TDeps>['defaultQueryOptions']
+  /**
+   * The query engine. Unlike `createRoot`, this defaults to a live one:
+   * a test controller exists to exercise a controller's behavior, and
+   * making every test opt in to the cache would be noise. Pass `null` to
+   * assert the no-engine path.
+   */
+  queries?: QueryEngine | null
+  plugins?: RootOptions<TDeps>['plugins']
+  scopes?: RootOptions<TDeps>['scopes']
+  hydrate?: RootOptions<TDeps>['hydrate']
+} & ([Props] extends [void] ? { props?: Props } : { props: Props })
+
+/**
+ * Construct an isolated root around one controller, for tests. Returns the
+ * same handle `createRoot` does, so the api is on `.api`:
  *
- * Equivalent to defining a tiny root wrapper, but ergonomic in tests.
+ * ```ts
+ * const { api, dispose } = createTestController(counter, { deps: {} })
+ * api.increment()
+ * ```
  */
 export function createTestController<
   Props,
   Api,
   TDeps extends Record<string, unknown> = Record<string, unknown>,
->(
-  def: ControllerDef<Props, Api>,
-  options: {
-    deps: TDeps
-    props: Props
-    onError?: RootOptions<TDeps>['onError']
-    /**
-     * Root-wide query defaults, same shape as `createRoot`'s. Exposed here so
-     * a controller whose behavior depends on them (staleTime-driven refetch,
-     * retry counts) can be tested without hand-rolling a root wrapper.
-     */
-    defaultQueryOptions?: RootOptions<TDeps>['defaultQueryOptions']
-    /**
-     * The query engine. Unlike `createRoot`, this defaults to a live one:
-     * a test controller exists to exercise a controller's behavior, and
-     * making every test opt in to the cache would be noise. Pass `null` to
-     * assert the no-engine path.
-     */
-    queries?: QueryEngine | null
-  },
-): Root<Api> {
-  return createRootWithProps<Props, Api, TDeps>(def, options.props, {
+>(def: ControllerDef<Props, Api>, options: TestControllerOptions<Props, TDeps>): Root<Api> {
+  return createRootWithProps<Props, Api, TDeps>(def, options.props as Props, {
     deps: options.deps,
     onError: options.onError,
     defaultQueryOptions: options.defaultQueryOptions,
     queries: options.queries === null ? undefined : (options.queries ?? queryEngine()),
+    plugins: options.plugins,
+    scopes: options.scopes,
+    hydrate: options.hydrate,
   })
 }
 

@@ -155,7 +155,7 @@ export type DevtoolsStoreOptions = {
 }
 
 /**
- * Subscribes to a root's `__debug` bus and maintains live state for the
+ * Subscribes to a root's `debug` bus and maintains live state for the
  * devtools panel. Exposes signals so the React layer can consume via
  * `@kontsedal/olas-react`'s `use()`.
  *
@@ -170,7 +170,7 @@ export class DevtoolsStore {
   readonly events$: Signal<TimelineEvent[]> = signal([])
   /**
    * Live cache-entry state for the inspector. Seeded from
-   * `root.__debug.queryEntries()` on `attach()`, then refreshed (coalesced) on
+   * `root.debug.queryEntries()` on `attach()`, then refreshed (coalesced) on
    * every cache / snapshot event — NO polling. Empty until attached.
    */
   readonly cacheState$: Signal<DebugCacheEntry[]> = signal([])
@@ -280,12 +280,12 @@ export class DevtoolsStore {
    * caller (typically the React component) is responsible for invoking it
    * on unmount.
    */
-  attach(root: Pick<Root<unknown>, '__debug'>): () => void {
-    const unsub = root.__debug.subscribe((event) => this.handle(event))
+  attach(root: Pick<Root<unknown>, 'debug'>): () => void {
+    const unsub = root.debug.subscribe((event) => this.handle(event))
     // Seed the live cache snapshot ONCE (no interval); it's refreshed from
     // events thereafter — see `refreshCacheState`. This is what lets the
     // inspector be event-driven instead of polling every 800ms.
-    this.queryEntries = () => root.__debug.queryEntries()
+    this.queryEntries = () => root.debug.queryEntries()
     this.refreshCacheState()
     // Seed the per-key diff baseline from current live data too, so the first
     // post-attach write to an ALREADY-cached key diffs against its real value

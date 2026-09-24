@@ -182,8 +182,8 @@ export class ControllerInstance {
 
   /**
    * Pre-seed scopes from outside the factory — used by `createRoot`'s
-   * `scopes:` option so an adapter (e.g. `@kontsedal/olas-router-tanstack`)
-   * can publish cross-cutting values without forcing the user to call
+   * `scopes:` option so an adapter (the router bridge, for one) can publish
+   * cross-cutting values without forcing the user to call
    * `ctx.provide(...)` in their root controller. Idempotent per scope id:
    * later calls override.
    */
@@ -193,6 +193,39 @@ export class ControllerInstance {
     for (const [scope, value] of bindings) {
       this.scopes.set(scope.__id, value)
     }
+  }
+
+  /**
+   * Resolve a scope from this instance up through its ancestors, falling back
+   * to the scope's default. Backs both `ctx.inject` and `root.inject`.
+   * Memoized per scope, invalidated tree-wide by any `provide`.
+   */
+  resolveScope<T>(scope: Scope<T>, caller: string): T {
+    const version = this.rootShared.scopesVersion.value
+    const cached = this.injectCache?.get(scope.__id)
+    if (cached !== undefined && cached.version === version) return cached.value as T
+    const remember = (value: unknown): void => {
+      if (this.injectCache === null) this.injectCache = new Map()
+      this.injectCache.set(scope.__id, { value, version })
+    }
+    let node: ControllerInstance | null = this
+    while (node !== null) {
+      const map = node.scopes
+      if (map?.has(scope.__id)) {
+        const value = map.get(scope.__id) as T
+        remember(value)
+        return value
+      }
+      node = node.parent
+    }
+    if (scope.hasDefault) {
+      remember(scope.default)
+      return scope.default as T
+    }
+    const label = scope.name ?? scope.__id.description ?? 'unnamed'
+    throw new Error(
+      `[olas] ${caller}(): no provider for scope '${label}' and no default. Provide it on an ancestor via ctx.provide(${label}, ...) or pass a default to defineScope.`,
+    )
   }
 
   constructor(
@@ -544,36 +577,7 @@ export class ControllerInstance {
       },
 
       inject<T>(scope: Scope<T>): T {
-        const version = self.rootShared.scopesVersion.value
-        const cache = self.injectCache
-        if (cache !== null) {
-          const cached = cache.get(scope.__id)
-          if (cached !== undefined && cached.version === version) {
-            return cached.value as T
-          }
-        }
-        const ensureMemo = (): Map<symbol, { value: unknown; version: number }> => {
-          if (self.injectCache === null) self.injectCache = new Map()
-          return self.injectCache
-        }
-        let node: ControllerInstance | null = self
-        while (node !== null) {
-          const map = node.scopes
-          if (map?.has(scope.__id)) {
-            const value = map.get(scope.__id) as T
-            ensureMemo().set(scope.__id, { value, version })
-            return value
-          }
-          node = node.parent
-        }
-        if (scope.hasDefault) {
-          ensureMemo().set(scope.__id, { value: scope.default, version })
-          return scope.default as T
-        }
-        const label = scope.name ?? scope.__id.description ?? 'unnamed'
-        throw new Error(
-          `[olas] ctx.inject(): no provider for scope '${label}' and no default. Provide it on an ancestor via ctx.provide(${label}, ...) or pass a default to defineScope.`,
-        )
+        return self.resolveScope(scope, 'ctx.inject')
       },
 
       on<T>(emitter: Emitter<T>, handler: (value: T) => void): void {

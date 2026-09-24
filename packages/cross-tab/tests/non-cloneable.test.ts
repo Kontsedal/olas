@@ -80,7 +80,7 @@ describe('crossTabPlugin non-cloneable data', () => {
     nonCloneableQuery.setData('1', () => ({ id: '1', cb: () => 'nope' }))
     // Sender cache: the write went through locally (no `postMessage`
     // failure stops the cache write — the plugin runs AFTER setData).
-    expect((a as unknown as Sub).q.data.peek()?.id).toBe('1')
+    expect((a.api as unknown as Sub).q.data.peek()?.id).toBe('1')
     // The warning was raised on the sender.
     expect(onWarnA).toHaveBeenCalled()
     expect(onWarnA.mock.calls[0]![0]).toContain('not structured-cloneable')

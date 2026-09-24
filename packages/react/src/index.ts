@@ -2,7 +2,6 @@ export {
   createOlasContext,
   HydrationBoundary,
   OlasProvider,
-  useController,
   useRoot,
 } from './context'
 export {

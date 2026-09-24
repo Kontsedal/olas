@@ -22,7 +22,4 @@ export function createAppRoot(api: Api, rowCount: number) {
 
 export type AppRoot = ReturnType<typeof createAppRoot>
 
-export type AppApi = Omit<
-  AppRoot,
-  'dispose' | 'suspend' | 'resume' | 'dehydrate' | 'waitForIdle' | '__debug'
->
+export type AppApi = AppRoot['api']

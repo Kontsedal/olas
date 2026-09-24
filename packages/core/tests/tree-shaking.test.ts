@@ -93,8 +93,8 @@ describe('a root without a query engine', () => {
       local: createCache(ctx, async () => 42),
     }))
     const root = createRoot(def, noDeps)
-    await root.local.invalidate()
-    expect(root.local.data.value).toBe(42)
+    await root.api.local.invalidate()
+    expect(root.api.local.data.value).toBe(42)
     root.dispose()
   })
 
@@ -104,8 +104,8 @@ describe('a root without a query engine', () => {
       return { name, form: createForm(ctx, { name }) }
     })
     const root = createRoot(def, noDeps)
-    expect(root.name.value).toBe('ada')
-    expect(root.form.value.value).toEqual({ name: 'ada' })
+    expect(root.api.name.value).toBe('ada')
+    expect(root.api.form.value.value).toEqual({ name: 'ada' })
     root.dispose()
   })
 
@@ -120,14 +120,14 @@ describe('a root without a query engine', () => {
     const state = root.dehydrate()
     expect(state).toEqual({ version: 1, entries: [] })
     await expect(root.waitForIdle()).resolves.toBeUndefined()
-    expect(root.__debug.queryEntries()).toEqual([])
+    expect(root.debug.queryEntries()).toEqual([])
     root.dispose()
 
     const client = createRoot(
       defineController(() => ({})),
       { ...noDeps, queries: queryEngine({ hydrate: state }) },
     )
-    expect(client.__debug.queryEntries()).toEqual([])
+    expect(client.debug.queryEntries()).toEqual([])
     client.dispose()
   })
 
@@ -153,7 +153,7 @@ describe('a root with a query engine behaves as before', () => {
     const def = defineController((ctx) => ({ sub: createQuery(ctx, yq) }))
     const root = createRoot(def, { ...noDeps, queries: queryEngine() })
     await root.waitForIdle()
-    expect(root.sub.data.value).toBe('v')
+    expect(root.api.sub.data.value).toBe('v')
     root.dispose()
   })
 
@@ -165,8 +165,8 @@ describe('a root with a query engine behaves as before', () => {
       ...noDeps,
       queries: queryEngine({ defaultQueryOptions: { staleTime: 300_000 } }),
     })
-    await root.local.invalidate()
-    expect(root.local.isStale.value).toBe(false)
+    await root.api.local.invalidate()
+    expect(root.api.local.isStale.value).toBe(false)
     root.dispose()
   })
 })
@@ -203,7 +203,10 @@ describe('streamed hydration on an engine-less root', () => {
       defineController(() => ({})),
       noDeps,
     )
-    root.applyDehydratedEntry('app/user/v1', ['me'], { id: 'me' }, Date.now())
+    root.hydrate({
+      version: 1,
+      entries: [{ id: 'app/user/v1', key: ['me'], data: { id: 'me' }, lastUpdatedAt: Date.now() }],
+    })
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('app/user/v1'))
     warn.mockRestore()
     root.dispose()

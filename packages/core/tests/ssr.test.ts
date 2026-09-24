@@ -39,7 +39,7 @@ describe('dehydrate / hydrate', () => {
     // Client side: hydrate before subscribing.
     const client = createRoot(def, { queries: queryEngine(), deps: emptyDeps, hydrate: state })
     await flush()
-    expect(client.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
+    expect(client.api.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
     // staleTime: 60_000 — no refetch.
     expect(fetchCount).toBe(1)
     client.dispose()
@@ -129,7 +129,7 @@ describe('waitForIdle', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const runPromise = root.save.run(undefined)
+    const runPromise = root.api.save.run(undefined)
     await flush()
     let idle = false
     const idlePromise = root.waitForIdle().then(() => {

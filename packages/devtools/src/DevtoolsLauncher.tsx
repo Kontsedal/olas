@@ -18,7 +18,7 @@ import { DevtoolsPanel, type DevtoolsTab } from './DevtoolsPanel'
 import { DEVTOOLS_CSS } from './styles'
 
 export type DevtoolsLauncherProps = {
-  root: Pick<Root<unknown>, '__debug'>
+  root: Pick<Root<unknown>, 'debug'>
   /** Default panel tab. */
   defaultTab?: DevtoolsTab
   /** Cap on each event log. */

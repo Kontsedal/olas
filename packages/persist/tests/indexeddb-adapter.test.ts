@@ -335,8 +335,8 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
     })
     const r1 = createRoot(defWrite, { queries: queryEngine(), deps: {} })
     await flush()
-    expect(r1.ready.value).toBe(true)
-    r1.s.set('saved-value')
+    expect(r1.api.ready.value).toBe(true)
+    r1.api.s.set('saved-value')
     await flush()
     r1.dispose()
 
@@ -352,8 +352,8 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
     })
     const r2 = createRoot(defRead, { queries: queryEngine(), deps: {} })
     await flush()
-    expect(r2.ready.value).toBe(true)
-    expect(r2.s.value).toBe('saved-value')
+    expect(r2.api.ready.value).toBe(true)
+    expect(r2.api.s.value).toBe('saved-value')
     r2.dispose()
   })
 
@@ -379,7 +379,7 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
 
     await tabA.set('k', JSON.stringify('hello-from-A'))
     await flush()
-    expect(root.s.value).toBe('hello-from-A')
+    expect(root.api.s.value).toBe('hello-from-A')
 
     root.dispose()
   })
@@ -415,7 +415,7 @@ describe('indexedDbAdapter — commit-ack + error routing (T6.1)', () => {
     })
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await flush()
-    root.s.set('will-fail')
+    root.api.s.set('will-fail')
     await flush()
     // Previously the adapter swallowed the rejection → onError never fired.
     expect(ops).toContain('write')

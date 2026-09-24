@@ -37,15 +37,7 @@ export function useRoot<Api = unknown>(): Api {
   if (root === null) {
     throw new Error('[olas] useRoot() called outside <OlasProvider>')
   }
-  return root as Api
-}
-
-/**
- * Back-compat alias for `useRoot()` — takes the root explicitly so it can be
- * called outside a provider (notably in tests). See spec §16, §20.10.
- */
-export function useController<Api>(root: Root<Api>): Api {
-  return root
+  return root.api as Api
 }
 
 /**
@@ -74,7 +66,6 @@ export function useController<Api>(root: Root<Api>): Api {
 export function createOlasContext<Api>(displayName?: string): {
   Provider: (props: { root: Root<Api>; children: ReactNode }) => ReactNode
   useRoot: () => Api
-  useController: (root: Root<Api>) => Api
   Context: Context<Root<Api> | null>
 } {
   const Context = createContext<Root<Api> | null>(null)
@@ -91,12 +82,10 @@ export function createOlasContext<Api>(displayName?: string): {
           ' Make sure the matching Provider wraps the tree.',
       )
     }
-    return root
+    return root.api
   }
 
-  const useTypedController = (root: Root<Api>): Api => root
-
-  return { Provider, useRoot: useTypedRoot, useController: useTypedController, Context }
+  return { Provider, useRoot: useTypedRoot, Context }
 }
 
 /**
@@ -134,7 +123,7 @@ export function createOlasContext<Api>(displayName?: string): {
  * a controller def + the dehydrated state and produces a root that
  * matches what the server rendered.
  */
-export function HydrationBoundary<Api extends object>(props: {
+export function HydrationBoundary<Api>(props: {
   def: import('@kontsedal/olas-core').ControllerDef<void, Api>
   options: RootOptions<Record<string, unknown>>
   /**

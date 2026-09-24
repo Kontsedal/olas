@@ -4,9 +4,7 @@ import {
   defineController,
   defineInfiniteQuery,
   defineQuery,
-  type InfiniteQuerySubscription,
   type Query,
-  type QuerySubscription,
   queryEngine,
 } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
@@ -144,20 +142,17 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
-    type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     plugin.update(Post, 'p1', { likes: 1 })
 
     expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 1 })
-    expect(root.feed.data.peek()).toEqual({ posts: [{ id: 'p1', title: 'A', likes: 1 }] })
+    expect(root.api.feed.data.peek()).toEqual({ posts: [{ id: 'p1', title: 'A', likes: 1 }] })
 
     root.dispose()
   })
@@ -189,32 +184,26 @@ describe('entitiesPlugin', () => {
       feed: createQuery(ctx, feedQuery, () => []),
       profile: createQuery(ctx, profileQuery, () => []),
     }))
-    type Api = {
-      feed: QuerySubscription<{ posts: Post[] }>
-      profile: QuerySubscription<{ user: User; latestPosts: Post[] }>
-    }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     plugin.update(Post, 'p1', { title: 'A!', likes: 42 })
 
     // Both queries see the same patch on the shared entity.
-    expect(root.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A!', likes: 42 })
-    expect(root.profile.data.peek()?.latestPosts[0]).toEqual({
+    expect(root.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A!', likes: 42 })
+    expect(root.api.profile.data.peek()?.latestPosts[0]).toEqual({
       id: 'p1',
       title: 'A!',
       likes: 42,
     })
     // Sibling entity unaffected.
-    expect(root.feed.data.peek()?.posts[1]).toEqual({ id: 'p2', title: 'B', likes: 0 })
+    expect(root.api.feed.data.peek()?.posts[1]).toEqual({ id: 'p2', title: 'B', likes: 0 })
     // User in the other query unaffected.
-    expect(root.profile.data.peek()?.user).toEqual({ id: 'u1', name: 'Alice' })
+    expect(root.api.profile.data.peek()?.user).toEqual({ id: 'u1', name: 'Alice' })
 
     root.dispose()
   })
@@ -236,19 +225,16 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
-    type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     plugin.update(Post, 'p1', { likes: 99 })
 
-    const after = root.feed.data.peek()
+    const after = root.api.feed.data.peek()
     expect(after?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 99 })
     expect(after?.pinned).toEqual({ id: 'p1', title: 'A', likes: 99 })
     // Same reference at both paths after the patch — internally setAtPath
@@ -316,17 +302,11 @@ describe('entitiesPlugin', () => {
       feed: createQuery(ctx, feedQuery, () => []),
       sidebar: createQuery(ctx, sidebarQuery, () => []),
     }))
-    type Api = {
-      feed: QuerySubscription<{ posts: Post[] }>
-      sidebar: QuerySubscription<{ recent: Post[] }>
-    }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     const feedFires = vi.fn()
@@ -335,8 +315,8 @@ describe('entitiesPlugin', () => {
     const sigFires = vi.fn()
     // subscribe fires synchronously with the current value (`once`),
     // so reset the call counts after attaching.
-    root.feed.data.subscribe(feedFires)
-    root.sidebar.data.subscribe(sidebarFires)
+    root.api.feed.data.subscribe(feedFires)
+    root.api.sidebar.data.subscribe(sidebarFires)
     sig.subscribe(sigFires)
     feedFires.mockClear()
     sidebarFires.mockClear()
@@ -393,14 +373,11 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
-    type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     // Now drop p1 from the feed.
@@ -412,7 +389,7 @@ describe('entitiesPlugin', () => {
     // backprop should not raise an error and should not touch the feed.
     plugin.update(Post, 'p1', { likes: 999 })
 
-    expect(root.feed.data.peek()?.posts).toEqual([{ id: 'p2', title: 'B', likes: 0 }])
+    expect(root.api.feed.data.peek()?.posts).toEqual([{ id: 'p2', title: 'B', likes: 0 }])
     // Store keeps the patched value (we updated it directly).
     expect(plugin.get(Post, 'p1')?.likes).toBe(999)
 
@@ -443,21 +420,18 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
-    type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     expect(plugin.get(Post, 'p1')).toBeDefined()
     plugin.invalidate(Post, 'p1')
     expect(plugin.get(Post, 'p1')).toBeUndefined()
     // Query data untouched — invalidate is store-only.
-    expect(root.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(root.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
 
     root.dispose()
   })
@@ -534,19 +508,16 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, sharedQuery, () => []) }))
-    type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     // Backprop must reach BOTH paths.
     plugin.update(Post, 'p1', { likes: 42 })
-    const after = root.feed.data.peek()
+    const after = root.api.feed.data.peek()
     expect(after?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 42 })
     expect(after?.pinned).toEqual({ id: 'p1', title: 'A', likes: 42 })
 
@@ -646,18 +617,15 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ daily: createQuery(ctx, dailyQuery, () => [t]) }))
-    type Api = { daily: QuerySubscription<WithDate> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     plugin.update(Post, 'p1', { likes: 9 })
-    expect(root.daily.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 9 })
+    expect(root.api.daily.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 9 })
 
     root.dispose()
   })
@@ -671,23 +639,20 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
-    type Api = { feed: QuerySubscription<{ posts: Post[] }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     plugin.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 5 }))
     expect(plugin.get(Post, 'p1')?.likes).toBe(5)
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(5)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(5)
 
     plugin.update(Post, 'p1', (prev) => ({ ...prev, likes: prev.likes + 10 }))
     expect(plugin.get(Post, 'p1')?.likes).toBe(15)
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(15)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(15)
 
     root.dispose()
   })
@@ -747,7 +712,7 @@ describe('entitiesPlugin', () => {
     // runs. Before the fix, `Entry.applySuccess` never fired for hydrated
     // entries → the entities plugin never saw the data → `entities.signal`
     // returned undefined on first paint.
-    const feedQuery = defineQuery({
+    const feedQuery = defineQuery<[], { posts: Post[]; pinned: Post }>({
       queryId: 'ent-test/hydrate',
       key: () => [],
       // Mark as if the test ever ran the fetcher we'd notice.
@@ -778,25 +743,22 @@ describe('entitiesPlugin', () => {
 
     const plugin = entitiesPlugin([Post])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
-    type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
       hydrate: hydrated,
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
 
     // First paint: hydrated data is already there and the entity store sees it.
-    expect(root.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(root.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
     expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
     expect(plugin.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
 
     // Backprop works: entities.update reaches the hydrated query immediately.
     plugin.update(Post, 'p1', { likes: 7 })
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(7)
-    expect(root.feed.data.peek()?.pinned?.likes).toBe(7)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(7)
+    expect(root.api.feed.data.peek()?.pinned?.likes).toBe(7)
 
     root.dispose()
   })
@@ -920,14 +882,11 @@ describe('entitiesPlugin', () => {
     })
     const plugin = entitiesPlugin([NestedPost])
     const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
-    type Api = { q: QuerySubscription<{ post: NestedPost }> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
 
     // Patch only `author.profile.verified` — the rest of `author.profile`
@@ -947,7 +906,7 @@ describe('entitiesPlugin', () => {
       tags: ['x', 'y'],
     })
     // Same in the query.
-    expect(root.q.data.peek()?.post.author.profile).toEqual({ bio: 'hi', verified: true })
+    expect(root.api.q.data.peek()?.post.author.profile).toEqual({ bio: 'hi', verified: true })
 
     root.dispose()
   })
@@ -1134,17 +1093,14 @@ describe('entitiesPlugin', () => {
 
     const plugin = entitiesPlugin([FeedItem])
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feed, () => []) }))
-    type Api = { feed: InfiniteQuerySubscription<FeedItem[], FeedItem> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
     await settle()
     // Load the second page so the walker has multiple pages to traverse.
-    await root.feed.fetchNextPage()
+    await root.api.feed.fetchNextPage()
     await settle()
 
     // Entities from both pages should be normalized into the store.
@@ -1159,7 +1115,7 @@ describe('entitiesPlugin', () => {
     // Backprop through update — reaches the page-internal slot.
     plugin.update(FeedItem, 'p3', { likes: 7 })
     expect(plugin.get(FeedItem, 'p3')).toEqual({ id: 'p3', title: 'C', likes: 7 })
-    expect(root.feed.pages.peek()[1]?.[0]).toEqual({ id: 'p3', title: 'C', likes: 7 })
+    expect(root.api.feed.pages.peek()[1]?.[0]).toEqual({ id: 'p3', title: 'C', likes: 7 })
 
     root.dispose()
   })

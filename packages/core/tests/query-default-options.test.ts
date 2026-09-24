@@ -30,12 +30,12 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
 
     await vi.advanceTimersByTimeAsync(0)
     // Without the root default this query is staleTime: 0 → stale immediately.
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.isStale.value).toBe(false)
 
     await vi.advanceTimersByTimeAsync(59_000)
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.isStale.value).toBe(false)
     await vi.advanceTimersByTimeAsync(2_000)
-    expect(root.x.isStale.value).toBe(true)
+    expect(root.api.x.isStale.value).toBe(true)
     root.dispose()
   })
 
@@ -83,7 +83,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
 
     await vi.advanceTimersByTimeAsync(0)
     // spec.staleTime: 0 wins over the root's 60s → stale right away.
-    expect(root.x.isStale.value).toBe(true)
+    expect(root.api.x.isStale.value).toBe(true)
     root.dispose()
   })
 
@@ -92,7 +92,7 @@ describe('RootOptions.defaultQueryOptions — staleTime (§5.9)', () => {
     const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
-    expect(root.x.isStale.value).toBe(true)
+    expect(root.api.x.isStale.value).toBe(true)
     root.dispose()
   })
 })
@@ -121,8 +121,8 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
     await vi.advanceTimersByTimeAsync(10)
     await vi.advanceTimersByTimeAsync(10)
     expect(attempts).toBe(3) // initial + 2 retries
-    expect(root.r.status.value).toBe('error')
-    expect((root.r.error.value as Error).message).toBe('fail-3')
+    expect(root.api.r.status.value).toBe('error')
+    expect((root.api.r.error.value as Error).message).toBe('fail-3')
     root.dispose()
   })
 
@@ -146,7 +146,7 @@ describe('RootOptions.defaultQueryOptions — retry (§5.9)', () => {
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(50)
     expect(attempts).toBe(1)
-    expect(root.r.status.value).toBe('error')
+    expect(root.api.r.status.value).toBe('error')
     root.dispose()
   })
 })
@@ -184,13 +184,13 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
       defaultQueryOptions: { gcTime: 100, staleTime: 60_000 },
     })
 
-    root.open()
+    root.api.open()
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchCount).toBe(1)
 
-    root.close()
+    root.api.close()
     await vi.advanceTimersByTimeAsync(200) // past the root-wide gcTime
-    root.open()
+    root.api.open()
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchCount).toBe(2)
     root.dispose()
@@ -205,13 +205,13 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
       defaultQueryOptions: { gcTime: 60_000, staleTime: 60_000 },
     })
 
-    root.open()
+    root.api.open()
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchCount).toBe(1)
 
-    root.close()
+    root.api.close()
     await vi.advanceTimersByTimeAsync(200)
-    root.open()
+    root.api.open()
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchCount).toBe(1) // entry survived; still fresh
     root.dispose()
@@ -232,13 +232,13 @@ describe('RootOptions.defaultQueryOptions — gcTime + keepPreviousData', () => 
       defaultQueryOptions: { keepPreviousData: true },
     })
     await vi.advanceTimersByTimeAsync(0)
-    expect(root.x.data.value).toBe('data-a')
+    expect(root.api.x.data.value).toBe('data-a')
 
     id.set('b')
     // Previous key's data survives while the new key is in flight.
-    expect(root.x.data.value).toBe('data-a')
+    expect(root.api.x.data.value).toBe('data-a')
     await vi.advanceTimersByTimeAsync(0)
-    expect(root.x.data.value).toBe('data-b')
+    expect(root.api.x.data.value).toBe('data-b')
     root.dispose()
   })
 })
@@ -319,8 +319,8 @@ describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
       defaultQueryOptions: { staleTime: 60_000 },
     })
     await flush()
-    expect(root.user.status.value).toBe('success')
-    expect(root.user.isStale.value).toBe(false)
+    expect(root.api.user.status.value).toBe('success')
+    expect(root.api.user.isStale.value).toBe(false)
     root.dispose()
   })
 
@@ -334,7 +334,7 @@ describe('RootOptions.defaultQueryOptions — ctx.cache', () => {
       defaultQueryOptions: { staleTime: 60_000 },
     })
     await flush()
-    expect(root.user.isStale.value).toBe(true)
+    expect(root.api.user.isStale.value).toBe(true)
     root.dispose()
   })
 })
@@ -383,10 +383,10 @@ describe('RootOptions.defaultQueryOptions — infinite queries', () => {
     })
 
     await vi.advanceTimersByTimeAsync(0)
-    expect(root.f.isStale.value).toBe(false)
+    expect(root.api.f.isStale.value).toBe(false)
 
     await vi.advanceTimersByTimeAsync(61_000)
-    expect(root.f.isStale.value).toBe(true)
+    expect(root.api.f.isStale.value).toBe(true)
     root.dispose()
   })
 })

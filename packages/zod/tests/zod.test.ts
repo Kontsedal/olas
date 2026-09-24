@@ -49,7 +49,7 @@ describe('formFromZod', () => {
       form: formFromZod(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({ name: 'Alice', age: 0 })
+    expect(root.api.form.value.value).toEqual({ name: 'Alice', age: 0 })
     root.dispose()
   })
 
@@ -70,7 +70,7 @@ describe('formFromZod', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({
+    expect(root.api.form.value.value).toEqual({
       name: 'Bob',
       address: { street: 'Main', city: 'Springfield' },
     })
@@ -85,8 +85,8 @@ describe('formFromZod', () => {
       form: formFromZod(ctx, schema, { initials: { tags: ['hello', 'world'] } }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({ tags: ['hello', 'world'] })
-    expect(root.form.isValid.value).toBe(true)
+    expect(root.api.form.value.value).toEqual({ tags: ['hello', 'world'] })
+    expect(root.api.form.isValid.value).toBe(true)
     root.dispose()
   })
 
@@ -107,12 +107,12 @@ describe('formFromZod', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
-    const titleField = (root.form.fields as { title: { errors: { value: string[] } } }).title
+    const titleField = (root.api.form.fields as { title: { errors: { value: string[] } } }).title
     expect(titleField.errors.value).toContain('title is reserved')
 
     // Sibling field unaffected.
     const street = (
-      root.form.fields as {
+      root.api.form.fields as {
         address: { fields: { street: { errors: { value: string[] } } } }
       }
     ).address.fields.street
@@ -142,7 +142,7 @@ describe('formFromZod', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
-    const items = root.form.fields.tags.items.value
+    const items = root.api.form.fields.tags.items.value
     expect(items).toHaveLength(2)
     // Each element ran the validator with its OWN value, not with the array.
     expect(seen).toEqual(['ok', 'banned'])
@@ -171,11 +171,11 @@ describe('formFromZod', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
-    expect(root.form.isValid.value).toBe(false)
+    expect(root.api.form.isValid.value).toBe(false)
     // Root issue surfaces on the form, not on any leaf.
-    expect(root.form.topLevelErrors.value).toContain('passwords must match')
+    expect(root.api.form.topLevelErrors.value).toContain('passwords must match')
     // Sibling leaves stay clean (they each satisfy their own schema).
-    const fields = root.form.fields as unknown as {
+    const fields = root.api.form.fields as unknown as {
       password: { errors: { value: string[] } }
       confirm: { errors: { value: string[] } }
     }
@@ -201,7 +201,7 @@ describe('formFromZod', () => {
     await flush()
 
     const city = (
-      root.form.fields as { address: { fields: { city: { errors: { value: string[] } } } } }
+      root.api.form.fields as { address: { fields: { city: { errors: { value: string[] } } } } }
     ).address.fields.city
     expect(city.errors.value).toContain('no go')
 
@@ -217,9 +217,9 @@ describe('formFromZod', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.form.isValid.value).toBe(false)
+    expect(root.api.form.isValid.value).toBe(false)
     // We can't statically know `fields.name` is a Field — narrow:
-    const nameField = (root.form.fields as { name: { errors: { value: string[] } } }).name
+    const nameField = (root.api.form.fields as { name: { errors: { value: string[] } } }).name
     expect(nameField.errors.value.length).toBeGreaterThan(0)
     root.dispose()
   })
@@ -235,7 +235,7 @@ describe('formFromZod', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // optional/nullable have no Zod default → defaultInitial returns ''
     // for the inner string, 0 for the inner number.
-    expect(root.form.value.value).toEqual({ maybe: '', nullable: 0 })
+    expect(root.api.form.value.value).toEqual({ maybe: '', nullable: 0 })
     root.dispose()
   })
 
@@ -249,7 +249,7 @@ describe('formFromZod', () => {
       form: formFromZod(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({ flag: false, tags: [], kind: 'a' })
+    expect(root.api.form.value.value).toEqual({ flag: false, tags: [], kind: 'a' })
     root.dispose()
   })
 
@@ -261,7 +261,7 @@ describe('formFromZod', () => {
       form: formFromZod(ctx, schema),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({ now: 42 })
+    expect(root.api.form.value.value).toEqual({ now: 42 })
     root.dispose()
   })
 })
@@ -316,7 +316,7 @@ describe('formFromZod — defaultInitial gaps (T6.5)', () => {
     })
     const def = defineController((ctx) => ({ form: formFromZod(ctx, schema) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const fields = root.form.fields as unknown as {
+    const fields = root.api.form.fields as unknown as {
       when: { value: unknown }
       len: { value: unknown }
       either: { value: unknown }

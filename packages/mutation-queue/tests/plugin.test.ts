@@ -65,17 +65,15 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
     const def = defineController((ctx) => ({
       create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
     }))
-
-    type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
-    }) as unknown as Api & { dispose(): void }
+    })
 
     expect(adapter.store.size).toBe(0)
 
-    const promise = root.create.run({ sku: 'A-1' })
+    const promise = root.api.create.run({ sku: 'A-1' })
     // Synchronously after run, the enqueue event has fired and storage has
     // an entry.
     expect(adapter.store.size).toBe(1)
@@ -112,15 +110,14 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
         unknown
       >,
     }))
-    type Api = { run: Mutation<{ x: number }, unknown> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/err', maxAttempts: 3 })],
-    }) as unknown as Api & { dispose(): void }
+    })
 
-    await root.run.run({ x: 1 }).catch(() => {})
+    await root.api.run.run({ x: 1 }).catch(() => {})
     await settle()
     // attempts < maxAttempts, so the plugin keeps the entry for a future
     // page-load replay.
@@ -838,14 +835,13 @@ describe('a run that completed before dispose must not be replayed', () => {
     const def = defineController((ctx) => ({
       create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
     }))
-    type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
-    }) as unknown as Api & { dispose(): void }
+    })
 
-    const run = root.create.run({ sku: 'A-1' }).catch((e: unknown) => e)
+    const run = root.api.create.run({ sku: 'A-1' }).catch((e: unknown) => e)
     expect(adapter.store.size).toBe(1)
 
     resolveWrite({ id: 'srv-1' }) // the server accepts the write…
@@ -853,7 +849,7 @@ describe('a run that completed before dispose must not be replayed', () => {
     // the run's continuation ran.
     await Promise.resolve()
     await Promise.resolve()
-    root.create.dispose()
+    root.api.create.dispose()
 
     // Proves the window was hit: the run reports the abort, and the entry is
     // still gone. Without this the assertion below would also pass on the
@@ -894,19 +890,18 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
         unknown
       >,
     }))
-    type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/retry', maxAttempts: 5 })],
-    }) as unknown as Api & { dispose(): void }
+    })
 
-    await root.create.run({ sku: 'A-1' }).catch(() => {})
+    await root.api.create.run({ sku: 'A-1' }).catch(() => {})
     await settle()
     expect(adapter.store.size).toBe(1) // retained for replay
 
-    await root.create.run({ sku: 'A-1' })
+    await root.api.create.run({ sku: 'A-1' })
     await settle()
     expect(calls).toBe(2)
     // Nothing left to replay: the write the first entry describes is the one
@@ -933,19 +928,18 @@ describe('mutationQueuePlugin — a manual retry must not leave a second entry',
         unknown
       >,
     }))
-    type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       onError: () => {},
       plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/retry2', maxAttempts: 5 })],
-    }) as unknown as Api & { dispose(): void }
+    })
 
-    await root.create.run({ sku: 'A-1' }).catch(() => {})
+    await root.api.create.run({ sku: 'A-1' }).catch(() => {})
     await settle()
     expect(adapter.store.size).toBe(1)
 
-    await root.create.run({ sku: 'B-2' })
+    await root.api.create.run({ sku: 'B-2' })
     await settle()
     // B-2 succeeded and dropped its own entry; A-1 is still pending replay.
     expect(adapter.store.size).toBe(1)
@@ -1019,18 +1013,17 @@ describe('mutationQueuePlugin — replay skips runs executing in this tab', () =
     const def = defineController((ctx) => ({
       create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
     }))
-    type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       plugins: [plugin],
-    }) as unknown as Api & { dispose(): void }
+    })
     // Let `init`'s own (empty) replay pass finish, or its `replaying` guard
     // would turn the `replayNow()` below into a no-op and the test would
     // pass without exercising anything.
     await settle()
 
-    const run = root.create.run({ sku: 'A-1' })
+    const run = root.api.create.run({ sku: 'A-1' })
     expect(adapter.store.size).toBe(1)
     expect(calls).toBe(1)
 

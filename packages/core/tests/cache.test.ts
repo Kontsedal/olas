@@ -30,15 +30,15 @@ describe('ctx.cache — fetch lifecycle', () => {
       user: createCache(ctx, async () => ({ id: 'u1', name: 'Alice' })),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.user.isLoading.value).toBe(true)
-    expect(root.user.status.value).toBe('pending')
+    expect(root.api.user.isLoading.value).toBe(true)
+    expect(root.api.user.status.value).toBe('pending')
 
     await flush()
-    expect(root.user.status.value).toBe('success')
-    expect(root.user.isLoading.value).toBe(false)
-    expect(root.user.data.value).toEqual({ id: 'u1', name: 'Alice' })
-    expect(root.user.error.value).toBeUndefined()
-    expect(typeof root.user.lastUpdatedAt.value).toBe('number')
+    expect(root.api.user.status.value).toBe('success')
+    expect(root.api.user.isLoading.value).toBe(false)
+    expect(root.api.user.data.value).toEqual({ id: 'u1', name: 'Alice' })
+    expect(root.api.user.error.value).toBeUndefined()
+    expect(typeof root.api.user.lastUpdatedAt.value).toBe('number')
     root.dispose()
   })
 
@@ -50,10 +50,10 @@ describe('ctx.cache — fetch lifecycle', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.thing.status.value).toBe('error')
-    expect((root.thing.error.value as Error).message).toBe('boom')
-    expect(root.thing.data.value).toBeUndefined()
-    expect(root.thing.isLoading.value).toBe(false)
+    expect(root.api.thing.status.value).toBe('error')
+    expect((root.api.thing.error.value as Error).message).toBe('boom')
+    expect(root.api.thing.data.value).toBeUndefined()
+    expect(root.api.thing.isLoading.value).toBe(false)
     root.dispose()
   })
 
@@ -64,14 +64,14 @@ describe('ctx.cache — fetch lifecycle', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.counter.data.value).toBe(1)
-    const first = root.counter.lastUpdatedAt.value!
+    expect(root.api.counter.data.value).toBe(1)
+    const first = root.api.counter.lastUpdatedAt.value!
 
     await new Promise((r) => setTimeout(r, 5))
-    const refetched = await root.counter.refetch()
+    const refetched = await root.api.counter.refetch()
     expect(refetched).toBe(2)
-    expect(root.counter.data.value).toBe(2)
-    expect(root.counter.lastUpdatedAt.value).toBeGreaterThan(first)
+    expect(root.api.counter.data.value).toBe(2)
+    expect(root.api.counter.lastUpdatedAt.value).toBeGreaterThan(first)
     root.dispose()
   })
 
@@ -86,14 +86,14 @@ describe('ctx.cache — fetch lifecycle', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    await root.x.refetch().catch(() => {})
-    expect(root.x.status.value).toBe('error')
-    expect(root.x.data.value).toBe('ok')
+    await root.api.x.refetch().catch(() => {})
+    expect(root.api.x.status.value).toBe('error')
+    expect(root.api.x.data.value).toBe('ok')
 
-    root.x.reset()
-    expect(root.x.status.value).toBe('success')
-    expect(root.x.error.value).toBeUndefined()
-    expect(root.x.data.value).toBe('ok')
+    root.api.x.reset()
+    expect(root.api.x.status.value).toBe('success')
+    expect(root.api.x.error.value).toBeUndefined()
+    expect(root.api.x.data.value).toBe('ok')
     root.dispose()
   })
 
@@ -103,7 +103,7 @@ describe('ctx.cache — fetch lifecycle', () => {
       n: createCache(ctx, () => d.promise),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const promise = root.n.firstValue()
+    const promise = root.api.n.firstValue()
     d.resolve(42)
     expect(await promise).toBe(42)
     root.dispose()
@@ -115,7 +115,7 @@ describe('ctx.cache — fetch lifecycle', () => {
       n: createCache(ctx, () => d.promise),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const promise = root.n.firstValue()
+    const promise = root.api.n.firstValue()
     d.reject(new Error('nope'))
     await expect(promise).rejects.toThrow('nope')
     root.dispose()
@@ -135,18 +135,18 @@ describe('ctx.cache — race protection (§5.6)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // First fetch from initial load is in flight. Trigger a second.
-    const secondPromise = root.thing.refetch()
+    const secondPromise = root.api.thing.refetch()
     await flush()
 
     // Resolve the second (latest) one first
     fetchers[1]!.resolve('second')
     expect(await secondPromise).toBe('second')
-    expect(root.thing.data.value).toBe('second')
+    expect(root.api.thing.data.value).toBe('second')
 
     // Now resolve the first (older) — should be dropped.
     fetchers[0]!.resolve('first')
     await flush()
-    expect(root.thing.data.value).toBe('second')
+    expect(root.api.thing.data.value).toBe('second')
     root.dispose()
   })
 
@@ -165,7 +165,7 @@ describe('ctx.cache — race protection (§5.6)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.thing.refetch().catch(() => {})
+    root.api.thing.refetch().catch(() => {})
     await flush()
     expect(seenAborts).toEqual([true])
     root.dispose()
@@ -188,11 +188,11 @@ describe('ctx.cache — reactive key', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.thing.data.value).toBe('value-of-a')
+    expect(root.api.thing.data.value).toBe('value-of-a')
 
     id.set('b')
     await flush()
-    expect(root.thing.data.value).toBe('value-of-b')
+    expect(root.api.thing.data.value).toBe('value-of-b')
     expect(fetched).toEqual(['a', 'b'])
     root.dispose()
   })
@@ -214,17 +214,17 @@ describe('ctx.cache — reactive key', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     d.a!.resolve('A')
     await flush()
-    expect(root.thing.data.value).toBe('A')
+    expect(root.api.thing.data.value).toBe('A')
 
     id.set('b')
     await flush()
     // While B is in flight, data is undefined (no keepPreviousData).
-    expect(root.thing.data.value).toBeUndefined()
-    expect(root.thing.isLoading.value).toBe(true)
+    expect(root.api.thing.data.value).toBeUndefined()
+    expect(root.api.thing.isLoading.value).toBe(true)
 
     d.b!.resolve('B')
     await flush()
-    expect(root.thing.data.value).toBe('B')
+    expect(root.api.thing.data.value).toBe('B')
     root.dispose()
   })
 
@@ -245,16 +245,16 @@ describe('ctx.cache — reactive key', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     d.a!.resolve('A')
     await flush()
-    expect(root.thing.data.value).toBe('A')
+    expect(root.api.thing.data.value).toBe('A')
 
     id.set('b')
     await flush()
-    expect(root.thing.data.value).toBe('A') // kept
-    expect(root.thing.isFetching.value).toBe(true)
+    expect(root.api.thing.data.value).toBe('A') // kept
+    expect(root.api.thing.isFetching.value).toBe(true)
 
     d.b!.resolve('B')
     await flush()
-    expect(root.thing.data.value).toBe('B')
+    expect(root.api.thing.data.value).toBe('B')
     root.dispose()
   })
 })
@@ -286,16 +286,16 @@ describe('ctx.cache — setData and rollback (§6.3, §6.4)', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.x.data.value).toBe(1)
-    expect(root.x.hasPendingMutations.value).toBe(false)
+    expect(root.api.x.data.value).toBe(1)
+    expect(root.api.x.hasPendingMutations.value).toBe(false)
 
-    const snap = root.x.setData((prev) => (prev ?? 0) + 10)
-    expect(root.x.data.value).toBe(11)
-    expect(root.x.hasPendingMutations.value).toBe(true)
+    const snap = root.api.x.setData((prev) => (prev ?? 0) + 10)
+    expect(root.api.x.data.value).toBe(11)
+    expect(root.api.x.hasPendingMutations.value).toBe(true)
 
     snap.rollback()
-    expect(root.x.data.value).toBe(1)
-    expect(root.x.hasPendingMutations.value).toBe(false)
+    expect(root.api.x.data.value).toBe(1)
+    expect(root.api.x.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
@@ -306,15 +306,15 @@ describe('ctx.cache — setData and rollback (§6.3, §6.4)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
-    const snapA = root.x.setData((p) => (p ?? 0) + 1) // 0 → 1
-    const snapB = root.x.setData((p) => (p ?? 0) + 10) // 1 → 11
-    expect(root.x.data.value).toBe(11)
+    const snapA = root.api.x.setData((p) => (p ?? 0) + 1) // 0 → 1
+    const snapB = root.api.x.setData((p) => (p ?? 0) + 10) // 1 → 11
+    expect(root.api.x.data.value).toBe(11)
 
     snapB.rollback() // back to 1 (state after A)
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
     snapA.rollback() // back to 0
-    expect(root.x.data.value).toBe(0)
-    expect(root.x.hasPendingMutations.value).toBe(false)
+    expect(root.api.x.data.value).toBe(0)
+    expect(root.api.x.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
@@ -324,10 +324,10 @@ describe('ctx.cache — setData and rollback (§6.3, §6.4)', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    const snap = root.x.setData(() => 'b')
+    const snap = root.api.x.setData(() => 'b')
     snap.rollback()
     snap.rollback() // no-op
-    expect(root.x.data.value).toBe('a')
+    expect(root.api.x.data.value).toBe('a')
     root.dispose()
   })
 })
@@ -342,7 +342,7 @@ describe('ctx.cache — invalidate / reactive key short-circuit', () => {
     await flush()
     expect(calls).toBe(1)
 
-    root.x.invalidate()
+    root.api.x.invalidate()
     await flush()
     expect(calls).toBe(2)
     root.dispose()
@@ -366,11 +366,11 @@ describe('ctx.cache — invalidate / reactive key short-circuit', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     trigger.set(1)
     await flush()
-    expect(root.x.data.value).toBeDefined()
+    expect(root.api.x.data.value).toBeDefined()
     root.dispose()
   })
 })
@@ -385,7 +385,7 @@ describe('ctx.cache via createTestController', () => {
       props: { id: 'u1' },
     })
     await flush()
-    expect(root.user.data.value).toEqual({ id: 'u1', name: 'Mocky' })
+    expect(root.api.user.data.value).toEqual({ id: 'u1', name: 'Mocky' })
     root.dispose()
   })
 })
@@ -400,18 +400,18 @@ describe('ctx.cache — staleTime / isStale', () => {
       x: createCache(ctx, async () => 'v', { staleTime: 100 }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.x.isStale.value).toBe(true)
+    expect(root.api.x.isStale.value).toBe(true)
 
     // Drain the microtasks that resolve the fetch.
     await vi.advanceTimersByTimeAsync(0)
-    expect(root.x.data.value).toBe('v')
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.data.value).toBe('v')
+    expect(root.api.x.isStale.value).toBe(false)
 
     vi.advanceTimersByTime(50)
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.isStale.value).toBe(false)
 
     vi.advanceTimersByTime(60)
-    expect(root.x.isStale.value).toBe(true)
+    expect(root.api.x.isStale.value).toBe(true)
     root.dispose()
   })
 })

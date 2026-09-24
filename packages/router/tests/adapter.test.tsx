@@ -101,17 +101,14 @@ describe('createRouterAdapter — scope wiring', () => {
     const def = defineController((ctx) => ({
       params: ctx.inject(RouteParamsScope),
     }))
-    type Api = { params: ReadSignal<Record<string, string | undefined>> }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       scopes: adapter.scopes,
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
 
     let fires = 0
-    const unsub = root.params.subscribe(() => fires++)
+    const unsub = root.api.params.subscribe(() => fires++)
     fires = 0 // subscribe fires synchronously with the current value; reset.
 
     // Render the bridge with a fresh object literal on every "navigation"
@@ -214,23 +211,17 @@ describe('createRouterAdapter — scope wiring', () => {
       search: ctx.inject(RouteSearchScope),
       pathname: ctx.inject(RoutePathnameScope),
     }))
-    type Api = {
-      search: ReadSignal<Record<string, unknown>>
-      pathname: ReadSignal<string>
-    }
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
       scopes: adapter.scopes,
-    }) as unknown as Api & {
-      dispose(): void
-    }
+    })
 
     render(<adapter.Bridge params={{}} />)
     await act(async () => {})
 
-    expect(root.search.value).toEqual({})
-    expect(root.pathname.value).toBe('')
+    expect(root.api.search.value).toEqual({})
+    expect(root.api.pathname.value).toBe('')
 
     root.dispose()
   })

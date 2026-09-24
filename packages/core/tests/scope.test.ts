@@ -129,7 +129,7 @@ describe('ctx.provide / ctx.inject', () => {
 
     const r = createRoot(root, noDeps)
     expect(observed).toEqual(['light'])
-    r.theme.set('dark')
+    r.api.theme.set('dark')
     expect(observed).toEqual(['light', 'dark'])
     r.dispose()
   })

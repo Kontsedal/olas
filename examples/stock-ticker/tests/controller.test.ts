@@ -43,10 +43,10 @@ describe('tickerController', () => {
     await flush()
 
     market.tick('AAPL', 200)
-    expect(root.prices.value).toEqual({ AAPL: 200 })
+    expect(root.api.prices.value).toEqual({ AAPL: 200 })
 
     market.tick('AAPL', 201.5)
-    expect(root.prices.value).toEqual({ AAPL: 201.5 })
+    expect(root.api.prices.value).toEqual({ AAPL: 201.5 })
 
     root.dispose()
   })
@@ -66,7 +66,7 @@ describe('tickerController', () => {
     const initialCalls = subscribeSpy.mock.calls.length
 
     // Mutate watchlist — effect re-runs, old unsub fires, new subscribes happen.
-    root.watchlist.set(['MSFT', 'NVDA'])
+    root.api.watchlist.set(['MSFT', 'NVDA'])
     await flush()
     expect(subscribeSpy.mock.calls.length).toBeGreaterThan(initialCalls)
     expect(subscribeSpy).toHaveBeenCalledWith('MSFT', expect.any(Function))
@@ -74,7 +74,7 @@ describe('tickerController', () => {
 
     // Old symbol should be gone — ticks for it stop reaching the prices map.
     market.tick('AAPL', 999)
-    expect(root.prices.value.AAPL ?? 0).toBe(0)
+    expect(root.api.prices.value.AAPL ?? 0).toBe(0)
 
     root.dispose()
   })
@@ -91,7 +91,7 @@ describe('tickerController', () => {
     await Promise.resolve()
 
     const seen: Record<string, number>[] = []
-    const unsub = root.pricesThrottled.subscribe((v) => seen.push({ ...v }))
+    const unsub = root.api.pricesThrottled.subscribe((v) => seen.push({ ...v }))
 
     // First tick — leading edge of the throttle window — should be visible.
     market.tick('AAPL', 100)
@@ -124,12 +124,12 @@ describe('tickerController', () => {
     await Promise.resolve()
 
     const seen: string[] = []
-    const unsub = root.searchDebounced.subscribe((v) => seen.push(v))
+    const unsub = root.api.searchDebounced.subscribe((v) => seen.push(v))
 
     // Type rapidly within the debounce window.
-    root.searchInput.set('a')
-    root.searchInput.set('ap')
-    root.searchInput.set('app')
+    root.api.searchInput.set('a')
+    root.api.searchInput.set('ap')
+    root.api.searchInput.set('app')
 
     // Before the window elapses, only the initial subscribe value has fired.
     expect(seen).toEqual([''])
@@ -152,7 +152,7 @@ describe('tickerController', () => {
     })
     await flush()
 
-    root.watchlist.set(['AAPL', 'GOOG', 'NVDA'])
+    root.api.watchlist.set(['AAPL', 'GOOG', 'NVDA'])
     expect(storage.store.get('olas-ticker.watchlist')).toBe(
       JSON.stringify(['AAPL', 'GOOG', 'NVDA']),
     )
@@ -172,7 +172,7 @@ describe('tickerController', () => {
     await flush()
 
     // The persisted value beats the constructor-supplied default.
-    expect(root.watchlist.value).toEqual(['TSLA', 'F'])
+    expect(root.api.watchlist.value).toEqual(['TSLA', 'F'])
 
     root.dispose()
   })
@@ -186,13 +186,13 @@ describe('tickerController', () => {
     })
     await flush()
 
-    root.addToWatchlist('GOOG')
-    expect(root.watchlist.value).toEqual(['AAPL', 'GOOG'])
+    root.api.addToWatchlist('GOOG')
+    expect(root.api.watchlist.value).toEqual(['AAPL', 'GOOG'])
     // Adding the same symbol twice is a no-op.
-    root.addToWatchlist('GOOG')
-    expect(root.watchlist.value).toEqual(['AAPL', 'GOOG'])
-    root.removeFromWatchlist('AAPL')
-    expect(root.watchlist.value).toEqual(['GOOG'])
+    root.api.addToWatchlist('GOOG')
+    expect(root.api.watchlist.value).toEqual(['AAPL', 'GOOG'])
+    root.api.removeFromWatchlist('AAPL')
+    expect(root.api.watchlist.value).toEqual(['GOOG'])
 
     // Persistence reflects the latest list.
     expect(storage.store.get('olas-ticker.watchlist')).toBe(JSON.stringify(['GOOG']))
@@ -208,11 +208,11 @@ describe('tickerController', () => {
     await flush()
 
     const seen: Array<{ symbol: string; target: number; price: number }> = []
-    root.alertFiredEmitter.on((ev) => {
+    root.api.alertFiredEmitter.on((ev) => {
       seen.push({ symbol: ev.alert.symbol, target: ev.alert.target, price: ev.price })
     })
 
-    root.addAlert({ symbol: 'AAPL', direction: 'above', target: 150 })
+    root.api.addAlert({ symbol: 'AAPL', direction: 'above', target: 150 })
     // First tick seeds history; alert evaluator requires a prev price.
     market.tick('AAPL', 100)
     expect(seen).toEqual([])
@@ -225,7 +225,7 @@ describe('tickerController', () => {
     // Further crossings should not refire (fired=true is sticky).
     market.tick('AAPL', 200)
     expect(seen.length).toBe(1)
-    expect(root.alerts.value[0]!.fired).toBe(true)
+    expect(root.api.alerts.value[0]!.fired).toBe(true)
     root.dispose()
   })
 
@@ -238,9 +238,9 @@ describe('tickerController', () => {
     await flush()
 
     for (let i = 0; i < 12; i++) market.tick('AAPL', 100 + i)
-    expect(root.historyThrottled.value.AAPL!.length).toBe(5)
+    expect(root.api.historyThrottled.value.AAPL!.length).toBe(5)
     // Latest five values.
-    expect(root.historyThrottled.value.AAPL).toEqual([107, 108, 109, 110, 111])
+    expect(root.api.historyThrottled.value.AAPL).toEqual([107, 108, 109, 110, 111])
     root.dispose()
   })
 
@@ -256,7 +256,7 @@ describe('tickerController', () => {
     market.tick('MSFT', 200)
     market.tick('NVDA', 500) // not in watchlist — shouldn't count
     await flush()
-    expect(root.portfolioTotal.value).toBeCloseTo(300, 2)
+    expect(root.api.portfolioTotal.value).toBeCloseTo(300, 2)
 
     root.dispose()
   })

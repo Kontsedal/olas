@@ -22,11 +22,11 @@ describe('defineController + createRoot', () => {
       defineController(() => ({ count: signal(0) })),
       { queries: queryEngine(), deps: noopApi },
     )
-    expect(typeof root.count.value).toBe('number')
+    expect(typeof root.api.count.value).toBe('number')
     expect(typeof root.dispose).toBe('function')
     expect(typeof root.suspend).toBe('function')
     expect(typeof root.resume).toBe('function')
-    expect(typeof root.__debug.subscribe).toBe('function')
+    expect(typeof root.debug.subscribe).toBe('function')
     root.dispose()
   })
 
@@ -41,7 +41,7 @@ describe('defineController + createRoot', () => {
       { queries: queryEngine(), deps: noopApi },
     )
     expect(observed).toBe(noopApi)
-    expect(root.child.ok).toBe(true)
+    expect(root.api.child.ok).toBe(true)
     root.dispose()
   })
 
@@ -80,7 +80,7 @@ describe('ctx.effect', () => {
     })
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     expect(observed).toEqual([1])
-    root.a.set(2)
+    root.api.a.set(2)
     expect(observed).toEqual([1, 2])
     root.dispose()
   })
@@ -112,7 +112,7 @@ describe('ctx.effect', () => {
     expect(onError).toHaveBeenCalledTimes(1)
     expect((onError.mock.calls[0]![0] as Error).message).toBe('effect boom')
     expect(onError.mock.calls[0]![1].kind).toBe('effect')
-    expect(root.ok).toBe(true)
+    expect(root.api.ok).toBe(true)
     root.dispose()
   })
 })
@@ -125,12 +125,12 @@ describe('ctx.emitter / ctx.on', () => {
     })
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     const handler = vi.fn()
-    root.emitter.on(handler)
-    root.emitter.emit(1)
+    root.api.emitter.on(handler)
+    root.api.emitter.emit(1)
     expect(handler).toHaveBeenCalledWith(1)
     root.dispose()
     // After dispose, emits are no-ops.
-    root.emitter.emit(2)
+    root.api.emitter.emit(2)
     expect(handler).toHaveBeenCalledTimes(1)
   })
 
@@ -172,8 +172,8 @@ describe('ctx.field — sync validators', () => {
       name: createField(ctx, '', [(v) => (v.length === 0 ? 'required' : null)]),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    expect(root.name.errors.value).toEqual(['required'])
-    expect(root.name.isValid.value).toBe(false)
+    expect(root.api.name.errors.value).toEqual(['required'])
+    expect(root.api.name.isValid.value).toBe(false)
     root.dispose()
   })
 
@@ -182,12 +182,12 @@ describe('ctx.field — sync validators', () => {
       n: createField(ctx, 0, [(v) => (v < 5 ? 'too small' : null)]),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    expect(root.n.isDirty.value).toBe(false)
-    root.n.set(10)
-    expect(root.n.value).toBe(10)
-    expect(root.n.errors.value).toEqual([])
-    expect(root.n.isValid.value).toBe(true)
-    expect(root.n.isDirty.value).toBe(true)
+    expect(root.api.n.isDirty.value).toBe(false)
+    root.api.n.set(10)
+    expect(root.api.n.value).toBe(10)
+    expect(root.api.n.errors.value).toEqual([])
+    expect(root.api.n.isValid.value).toBe(true)
+    expect(root.api.n.isDirty.value).toBe(true)
     root.dispose()
   })
 
@@ -197,12 +197,12 @@ describe('ctx.field — sync validators', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     // Detach `set`, as with `onChange={field.set}` or `setName: field.set`.
-    const set = root.n.set
+    const set = root.api.n.set
     expect(() => set(10)).not.toThrow()
-    expect(root.n.value).toBe(10)
-    expect(root.n.errors.value).toEqual([]) // validators still ran through the bound path
-    expect(root.n.isDirty.value).toBe(true)
-    expect(root.n.set).toBe(set) // stable identity
+    expect(root.api.n.value).toBe(10)
+    expect(root.api.n.errors.value).toEqual([]) // validators still ran through the bound path
+    expect(root.api.n.isDirty.value).toBe(true)
+    expect(root.api.n.set).toBe(set) // stable identity
     root.dispose()
   })
 
@@ -211,18 +211,18 @@ describe('ctx.field — sync validators', () => {
       s: createField(ctx, 'init', [(v) => (v === 'init' ? null : 'must equal init')]),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    root.s.set('other')
-    root.s.markTouched()
-    expect(root.s.value).toBe('other')
-    expect(root.s.touched.value).toBe(true)
-    expect(root.s.isDirty.value).toBe(true)
-    expect(root.s.errors.value).toEqual(['must equal init'])
+    root.api.s.set('other')
+    root.api.s.markTouched()
+    expect(root.api.s.value).toBe('other')
+    expect(root.api.s.touched.value).toBe(true)
+    expect(root.api.s.isDirty.value).toBe(true)
+    expect(root.api.s.errors.value).toEqual(['must equal init'])
 
-    root.s.reset()
-    expect(root.s.value).toBe('init')
-    expect(root.s.touched.value).toBe(false)
-    expect(root.s.isDirty.value).toBe(false)
-    expect(root.s.errors.value).toEqual([])
+    root.api.s.reset()
+    expect(root.api.s.value).toBe('init')
+    expect(root.api.s.touched.value).toBe(false)
+    expect(root.api.s.isDirty.value).toBe(false)
+    expect(root.api.s.errors.value).toEqual([])
     root.dispose()
   })
 
@@ -232,11 +232,11 @@ describe('ctx.field — sync validators', () => {
       confirm: createField(ctx, '', [(v) => (v === password.value ? null : 'must match')]),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
-    expect(root.confirm.errors.value).toEqual(['must match'])
-    root.confirm.set('hunter2')
-    expect(root.confirm.errors.value).toEqual([])
+    expect(root.api.confirm.errors.value).toEqual(['must match'])
+    root.api.confirm.set('hunter2')
+    expect(root.api.confirm.errors.value).toEqual([])
     password.set('changed')
-    expect(root.confirm.errors.value).toEqual(['must match'])
+    expect(root.api.confirm.errors.value).toEqual(['must match'])
     root.dispose()
   })
 })
@@ -256,18 +256,18 @@ describe('ctx.field — async validators', () => {
 
     // Wait one microtask so the effect's async branch kicks off.
     await Promise.resolve()
-    expect(root.name.isValidating.value).toBe(true)
+    expect(root.api.name.isValidating.value).toBe(true)
     // isValid HOLDS the last-known validity while a pass is in flight (T5.3) —
     // a fresh field with no prior settle defaults to valid, so it does not flash
     // invalid mid-check (which would strobe a submit button on every keystroke).
-    expect(root.name.isValid.value).toBe(true)
+    expect(root.api.name.isValid.value).toBe(true)
 
     resolveValidator(null)
     await Promise.resolve()
     await Promise.resolve()
-    expect(root.name.isValidating.value).toBe(false)
-    expect(root.name.errors.value).toEqual([])
-    expect(root.name.isValid.value).toBe(true)
+    expect(root.api.name.isValidating.value).toBe(false)
+    expect(root.api.name.errors.value).toEqual([])
+    expect(root.api.name.isValid.value).toBe(true)
     root.dispose()
   })
 
@@ -280,18 +280,18 @@ describe('ctx.field — async validators', () => {
 
     // first run (initial) created resolvers[0]
     await Promise.resolve()
-    root.n.set('b') // triggers re-run; resolvers[1] queued
+    root.api.n.set('b') // triggers re-run; resolvers[1] queued
     await Promise.resolve()
     // resolve the second (latest) one first
     resolvers[1]!('only b matters')
     await Promise.resolve()
     await Promise.resolve()
-    expect(root.n.errors.value).toEqual(['only b matters'])
+    expect(root.api.n.errors.value).toEqual(['only b matters'])
     // older one resolves later — should be ignored
     resolvers[0]!('this should NOT win')
     await Promise.resolve()
     await Promise.resolve()
-    expect(root.n.errors.value).toEqual(['only b matters'])
+    expect(root.api.n.errors.value).toEqual(['only b matters'])
     root.dispose()
   })
 })
@@ -310,15 +310,15 @@ describe('lifecycle — suspend / resume / dispose', () => {
     expect(observed).toEqual([0])
 
     root.suspend()
-    root.a.set(1)
-    root.a.set(2)
+    root.api.a.set(1)
+    root.api.a.set(2)
     expect(observed).toEqual([0]) // suspended; no re-runs
 
     root.resume()
     // Effect re-runs once on resume, picking up the latest value.
     expect(observed).toEqual([0, 2])
 
-    root.a.set(3)
+    root.api.a.set(3)
     expect(observed).toEqual([0, 2, 3])
     root.dispose()
   })
@@ -454,13 +454,33 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('controller api defining a reserved root key throws on createRoot', () => {
-    for (const reserved of ['dispose', 'suspend', 'resume', '__debug'] as const) {
-      const def = defineController(() => ({ [reserved]: () => {} }) as Record<string, () => void>)
-      expect(() => createRoot(def, { queries: queryEngine(), deps: noopApi })).toThrowError(
-        /conflicts with the root controls/,
-      )
-    }
+  test('an api may use the names of root controls; the two never collide', () => {
+    const own = { dispose: vi.fn(), suspend: vi.fn(), resume: vi.fn(), debug: 'mine' }
+    const def = defineController(() => own)
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    root.api.dispose()
+    root.api.suspend()
+    expect(own.dispose).toHaveBeenCalledTimes(1)
+    expect(own.suspend).toHaveBeenCalledTimes(1)
+    expect(root.api.debug).toBe('mine')
+    expect(typeof root.debug.subscribe).toBe('function')
+    root.dispose()
+  })
+
+  test('a primitive api is returned as-is on root.api', () => {
+    const def = defineController(() => 42)
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    expect(root.api).toBe(42)
+    root.dispose()
+  })
+
+  test('the root handle is frozen', () => {
+    const root = createRoot(
+      defineController(() => ({})),
+      { queries: queryEngine(), deps: noopApi },
+    )
+    expect(Object.isFrozen(root)).toBe(true)
+    root.dispose()
   })
 })
 
@@ -507,7 +527,7 @@ describe('construction error rollback (§12.1)', () => {
 
     const root = createRoot(parent, { queries: queryEngine(), deps: noopApi })
     expect(siblingDisposed).not.toHaveBeenCalled()
-    expect(root.s.ok).toBe(true)
+    expect(root.api.s.ok).toBe(true)
     root.dispose()
     expect(siblingDisposed).toHaveBeenCalledTimes(1)
   })
@@ -554,7 +574,7 @@ describe('createTestController', () => {
       deps: { whatever: true },
       props: { id: 'u1' },
     })
-    expect(root.greeting.value).toBe('hello u1')
+    expect(root.api.greeting.value).toBe('hello u1')
     expect(typeof root.dispose).toBe('function')
     root.dispose()
   })
@@ -591,12 +611,12 @@ describe('three-level tree (root → feature → leaf)', () => {
 
     const root = createRoot(rootDef, { queries: queryEngine(), deps: noopApi })
     const seen: string[] = []
-    const off = root.feature.events.on((e) => seen.push(e.kind))
+    const off = root.api.feature.events.on((e) => seen.push(e.kind))
 
-    expect(root.feature.a.field.isValid.value).toBe(false)
-    root.feature.a.field.set('x')
-    expect(root.feature.a.field.isValid.value).toBe(true)
-    root.feature.b.field.set('y')
+    expect(root.api.feature.a.field.isValid.value).toBe(false)
+    root.api.feature.a.field.set('x')
+    expect(root.api.feature.a.field.isValid.value).toBe(true)
+    root.api.feature.b.field.set('y')
     expect(seen).toEqual(['both-valid'])
 
     root.suspend()

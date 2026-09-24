@@ -24,9 +24,9 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({ name: 'Alice', age: 30 })
-    root.form.fields.name.set('Bob')
-    expect(root.form.value.value).toEqual({ name: 'Bob', age: 30 })
+    expect(root.api.form.value.value).toEqual({ name: 'Alice', age: 30 })
+    root.api.form.fields.name.set('Bob')
+    expect(root.api.form.value.value).toEqual({ name: 'Bob', age: 30 })
     root.dispose()
   })
 
@@ -41,12 +41,12 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({
+    expect(root.api.form.value.value).toEqual({
       name: 'Alice',
       address: { street: 'Main', city: 'Springfield' },
     })
-    root.form.fields.address.fields.city.set('NYC')
-    expect(root.form.value.value).toEqual({
+    root.api.form.fields.address.fields.city.set('NYC')
+    expect(root.api.form.value.value).toEqual({
       name: 'Alice',
       address: { street: 'Main', city: 'NYC' },
     })
@@ -61,12 +61,12 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.errors.value).toEqual({ name: ['Required'], age: undefined })
-    expect(root.form.isValid.value).toBe(false)
+    expect(root.api.form.errors.value).toEqual({ name: ['Required'], age: undefined })
+    expect(root.api.form.isValid.value).toBe(false)
 
-    root.form.fields.name.set('Alice')
-    expect(root.form.errors.value).toEqual({ name: undefined, age: undefined })
-    expect(root.form.isValid.value).toBe(true)
+    root.api.form.fields.name.set('Alice')
+    expect(root.api.form.errors.value).toEqual({ name: undefined, age: undefined })
+    expect(root.api.form.isValid.value).toBe(true)
     root.dispose()
   })
 
@@ -78,8 +78,8 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.form.set({ name: 'B', nested: { x: 10 } })
-    expect(root.form.value.value).toEqual({ name: 'B', nested: { x: 10, y: 2 } })
+    root.api.form.set({ name: 'B', nested: { x: 10 } })
+    expect(root.api.form.value.value).toEqual({ name: 'B', nested: { x: 10, y: 2 } })
     root.dispose()
   })
 
@@ -91,17 +91,17 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.form.markAllTouched()
-    expect(root.form.fields.name.touched.value).toBe(true)
-    expect(root.form.fields.nested.fields.x.touched.value).toBe(true)
-    expect(root.form.touched.value).toBe(true)
+    root.api.form.markAllTouched()
+    expect(root.api.form.fields.name.touched.value).toBe(true)
+    expect(root.api.form.fields.nested.fields.x.touched.value).toBe(true)
+    expect(root.api.form.touched.value).toBe(true)
 
-    root.form.fields.name.set('x')
-    expect(root.form.isDirty.value).toBe(true)
+    root.api.form.fields.name.set('x')
+    expect(root.api.form.isDirty.value).toBe(true)
 
-    root.form.reset()
-    expect(root.form.isDirty.value).toBe(false)
-    expect(root.form.touched.value).toBe(false)
+    root.api.form.reset()
+    expect(root.api.form.isDirty.value).toBe(false)
+    expect(root.api.form.touched.value).toBe(false)
     root.dispose()
   })
 
@@ -112,9 +112,9 @@ describe('ctx.form — basic aggregation', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(await root.form.validate()).toBe(false)
-    root.form.fields.name.set('Alice')
-    expect(await root.form.validate()).toBe(true)
+    expect(await root.api.form.validate()).toBe(false)
+    root.api.form.fields.name.set('Alice')
+    expect(await root.api.form.validate()).toBe(true)
     root.dispose()
   })
 
@@ -144,13 +144,13 @@ describe('ctx.form — basic aggregation', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // Initial values applied
-    expect(root.form.fields.name.value).toBe('Ada')
-    expect(root.form.fields.address.fields.city.value).toBe('London')
+    expect(root.api.form.fields.name.value).toBe('Ada')
+    expect(root.api.form.fields.address.fields.city.value).toBe('London')
 
     // Not dirty — top level or any leaf
-    expect(root.form.isDirty.value).toBe(false)
-    expect(root.form.fields.name.isDirty.value).toBe(false)
-    expect(root.form.fields.address.fields.city.isDirty.value).toBe(false)
+    expect(root.api.form.isDirty.value).toBe(false)
+    expect(root.api.form.fields.name.isDirty.value).toBe(false)
+    expect(root.api.form.fields.address.fields.city.isDirty.value).toBe(false)
     root.dispose()
   })
 
@@ -162,13 +162,13 @@ describe('ctx.form — basic aggregation', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
-    root.form.fields.name.set('Bob')
-    expect(root.form.fields.name.value).toBe('Bob')
-    expect(root.form.isDirty.value).toBe(true)
+    root.api.form.fields.name.set('Bob')
+    expect(root.api.form.fields.name.value).toBe('Bob')
+    expect(root.api.form.isDirty.value).toBe(true)
 
-    root.form.reset()
-    expect(root.form.fields.name.value).toBe('Ada')
-    expect(root.form.isDirty.value).toBe(false)
+    root.api.form.reset()
+    expect(root.api.form.fields.name.value).toBe('Ada')
+    expect(root.api.form.isDirty.value).toBe(false)
     root.dispose()
   })
 })
@@ -188,13 +188,15 @@ describe('ctx.form — form-level validators', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.form.fields.password.set('abc')
-    await vi.waitFor(() => expect(root.form.topLevelErrors.value).toEqual(['Passwords must match']))
-    expect(root.form.isValid.value).toBe(false)
+    root.api.form.fields.password.set('abc')
+    await vi.waitFor(() =>
+      expect(root.api.form.topLevelErrors.value).toEqual(['Passwords must match']),
+    )
+    expect(root.api.form.isValid.value).toBe(false)
 
-    root.form.fields.confirm.set('abc')
-    await vi.waitFor(() => expect(root.form.topLevelErrors.value).toEqual([]))
-    expect(root.form.isValid.value).toBe(true)
+    root.api.form.fields.confirm.set('abc')
+    await vi.waitFor(() => expect(root.api.form.topLevelErrors.value).toEqual([]))
+    expect(root.api.form.isValid.value).toBe(true)
     root.dispose()
   })
 })
@@ -218,11 +220,11 @@ describe('ctx.form — flatErrors', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Wait for the always-wrong top-level + required leaf to land in flat.
     await vi.waitFor(() => {
-      const f = root.form.flatErrors.value
+      const f = root.api.form.flatErrors.value
       expect(f).toContainEqual({ path: '', errors: ['always wrong'] })
       expect(f).toContainEqual({ path: 'name', errors: ['Required'] })
     })
-    const flat = root.form.flatErrors.value
+    const flat = root.api.form.flatErrors.value
     expect(flat).toContainEqual({ path: 'address.city', errors: ['Required'] })
     root.dispose()
   })
@@ -234,23 +236,23 @@ describe('ctx.fieldArray', () => {
       tags: createFieldArray(ctx, (initial) => createField(ctx, initial ?? '')),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.tags.add('a')
-    root.tags.add('b')
-    root.tags.add('c')
-    expect(root.tags.value.value).toEqual(['a', 'b', 'c'])
-    expect(root.tags.size.value).toBe(3)
+    root.api.tags.add('a')
+    root.api.tags.add('b')
+    root.api.tags.add('c')
+    expect(root.api.tags.value.value).toEqual(['a', 'b', 'c'])
+    expect(root.api.tags.size.value).toBe(3)
 
-    root.tags.insert(1, 'x')
-    expect(root.tags.value.value).toEqual(['a', 'x', 'b', 'c'])
+    root.api.tags.insert(1, 'x')
+    expect(root.api.tags.value.value).toEqual(['a', 'x', 'b', 'c'])
 
-    root.tags.remove(2)
-    expect(root.tags.value.value).toEqual(['a', 'x', 'c'])
+    root.api.tags.remove(2)
+    expect(root.api.tags.value.value).toEqual(['a', 'x', 'c'])
 
-    root.tags.move(0, 2)
-    expect(root.tags.value.value).toEqual(['x', 'c', 'a'])
+    root.api.tags.move(0, 2)
+    expect(root.api.tags.value.value).toEqual(['x', 'c', 'a'])
 
-    root.tags.clear()
-    expect(root.tags.value.value).toEqual([])
+    root.api.tags.clear()
+    expect(root.api.tags.value.value).toEqual([])
     root.dispose()
   })
 
@@ -268,17 +270,19 @@ describe('ctx.fieldArray', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.items.add({ sku: 'A', qty: 2 })
-    root.items.add({ sku: '', qty: 5 })
-    expect(root.items.value.value).toEqual([
+    root.api.items.add({ sku: 'A', qty: 2 })
+    root.api.items.add({ sku: '', qty: 5 })
+    expect(root.api.items.value.value).toEqual([
       { sku: 'A', qty: 2 },
       { sku: '', qty: 5 },
     ])
-    expect(root.items.isValid.value).toBe(false) // second item's sku is empty
+    expect(root.api.items.isValid.value).toBe(false) // second item's sku is empty
 
-    const second = root.items.at(1) as unknown as { fields: { sku: { set: (v: string) => void } } }
+    const second = root.api.items.at(1) as unknown as {
+      fields: { sku: { set: (v: string) => void } }
+    }
     second.fields.sku.set('B')
-    expect(root.items.isValid.value).toBe(true)
+    expect(root.api.items.isValid.value).toBe(true)
     root.dispose()
   })
 
@@ -289,12 +293,12 @@ describe('ctx.fieldArray', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual(['At least one']))
-    expect(root.tags.isValid.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.tags.topLevelErrors.value).toEqual(['At least one']))
+    expect(root.api.tags.isValid.value).toBe(false)
 
-    root.tags.add('hello')
-    await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual([]))
-    expect(root.tags.isValid.value).toBe(true)
+    root.api.tags.add('hello')
+    await vi.waitFor(() => expect(root.api.tags.topLevelErrors.value).toEqual([]))
+    expect(root.api.tags.isValid.value).toBe(true)
     root.dispose()
   })
 
@@ -305,10 +309,10 @@ describe('ctx.fieldArray', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.tags.value.value).toEqual(['x', 'y'])
-    root.tags.add('z')
-    root.tags.reset()
-    expect(root.tags.value.value).toEqual(['x', 'y'])
+    expect(root.api.tags.value.value).toEqual(['x', 'y'])
+    root.api.tags.add('z')
+    root.api.tags.reset()
+    expect(root.api.tags.value.value).toEqual(['x', 'y'])
     root.dispose()
   })
 
@@ -328,10 +332,10 @@ describe('ctx.fieldArray', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.tags.add('a')
-    expect(await root.tags.validate()).toBe(false)
-    root.tags.add('b')
-    expect(await root.tags.validate()).toBe(true)
+    root.api.tags.add('a')
+    expect(await root.api.tags.validate()).toBe(false)
+    root.api.tags.add('b')
+    expect(await root.api.tags.validate()).toBe(true)
     root.dispose()
   })
 
@@ -342,10 +346,10 @@ describe('ctx.fieldArray', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.items.add({ sku: '' })
-    root.items.add({ sku: '' })
-    root.items.markAllTouched()
-    const first = root.items.at(0) as unknown as {
+    root.api.items.add({ sku: '' })
+    root.api.items.add({ sku: '' })
+    root.api.items.markAllTouched()
+    const first = root.api.items.at(0) as unknown as {
       fields: { sku: { touched: { value: boolean } } }
     }
     expect(first.fields.sku.touched.value).toBe(true)
@@ -360,10 +364,10 @@ describe('ctx.fieldArray', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.form.fields.tags.add('x')
-    root.form.fields.tags.add('y')
-    root.form.set({ name: 'B', tags: ['p', 'q', 'r'] })
-    expect(root.form.value.value).toEqual({ name: 'B', tags: ['p', 'q', 'r'] })
+    root.api.form.fields.tags.add('x')
+    root.api.form.fields.tags.add('y')
+    root.api.form.set({ name: 'B', tags: ['p', 'q', 'r'] })
+    expect(root.api.form.value.value).toEqual({ name: 'B', tags: ['p', 'q', 'r'] })
     root.dispose()
   })
 
@@ -379,10 +383,10 @@ describe('ctx.fieldArray', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.form.fields.tags.add('x')
-    root.form.fields.tags.add('y')
-    const beforeFirst = root.form.fields.tags.at(0)
-    const beforeSecond = root.form.fields.tags.at(1)
+    root.api.form.fields.tags.add('x')
+    root.api.form.fields.tags.add('y')
+    const beforeFirst = root.api.form.fields.tags.at(0)
+    const beforeSecond = root.api.form.fields.tags.at(1)
     // Make item-0 touched + dirty.
     beforeFirst?.markTouched()
     beforeFirst?.set('x-edited')
@@ -390,11 +394,11 @@ describe('ctx.fieldArray', () => {
     expect(beforeFirst?.isDirty.value).toBe(true)
 
     // Patch the array — overlap on indices 0/1, grow tail by one.
-    root.form.set({ tags: ['x-edited', 'y-new', 'z'] })
+    root.api.form.set({ tags: ['x-edited', 'y-new', 'z'] })
 
-    const afterFirst = root.form.fields.tags.at(0)
-    const afterSecond = root.form.fields.tags.at(1)
-    const afterThird = root.form.fields.tags.at(2)
+    const afterFirst = root.api.form.fields.tags.at(0)
+    const afterSecond = root.api.form.fields.tags.at(1)
+    const afterThird = root.api.form.fields.tags.at(2)
     // Identity preserved on overlap; touched/dirty survive.
     expect(afterFirst).toBe(beforeFirst)
     expect(afterSecond).toBe(beforeSecond)
@@ -404,7 +408,7 @@ describe('ctx.fieldArray', () => {
     expect(afterThird).not.toBe(beforeFirst)
 
     // Values reflect the patch.
-    expect(root.form.value.value).toEqual({ tags: ['x-edited', 'y-new', 'z'] })
+    expect(root.api.form.value.value).toEqual({ tags: ['x-edited', 'y-new', 'z'] })
     root.dispose()
   })
 
@@ -428,23 +432,23 @@ describe('ctx.fieldArray', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.value.value).toEqual({ tags: ['a', 'b'] })
+    expect(root.api.form.value.value).toEqual({ tags: ['a', 'b'] })
 
     // "Server reloaded" — apply via resetWithInitial path. We trigger it by
     // mutating the source and calling reset() (which re-applies `initial`).
     serverData = { tags: ['x', 'y', 'z'] }
-    root.form.reset()
-    expect(root.form.value.value).toEqual({ tags: ['x', 'y', 'z'] })
+    root.api.form.reset()
+    expect(root.api.form.value.value).toEqual({ tags: ['x', 'y', 'z'] })
 
     // User edits — then reset should revert to the most-recently-applied
     // initial, NOT the construction-time initial ['a','b'].
-    root.form.fields.tags.add('w')
-    expect(root.form.value.value.tags).toEqual(['x', 'y', 'z', 'w'])
+    root.api.form.fields.tags.add('w')
+    expect(root.api.form.value.value.tags).toEqual(['x', 'y', 'z', 'w'])
     // `reset()` re-applies the form's `initial` (which now returns
     // ['x','y','z']) — so it'll go back there regardless. To exercise the
     // initialItems-anchor path we call the FieldArray's own reset:
-    root.form.fields.tags.reset()
-    expect(root.form.value.value.tags).toEqual(['x', 'y', 'z'])
+    root.api.form.fields.tags.reset()
+    expect(root.api.form.value.value.tags).toEqual(['x', 'y', 'z'])
     root.dispose()
   })
 })
@@ -470,10 +474,10 @@ describe('async form-level + field-array-level validators', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // The validator effect runs on construction; isValid is false while pending.
-    await vi.waitFor(() => expect(root.form.isValidating.value).toBe(true))
+    await vi.waitFor(() => expect(root.api.form.isValidating.value).toBe(true))
     resolve('bad')
-    await vi.waitFor(() => expect(root.form.topLevelErrors.value).toEqual(['bad']))
-    expect(root.form.isValidating.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.form.topLevelErrors.value).toEqual(['bad']))
+    expect(root.api.form.isValidating.value).toBe(false)
     root.dispose()
   })
 
@@ -495,7 +499,7 @@ describe('async form-level + field-array-level validators', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() =>
-      expect(root.form.topLevelErrors.value).toEqual(expect.arrayContaining(['boom'])),
+      expect(root.api.form.topLevelErrors.value).toEqual(expect.arrayContaining(['boom'])),
     )
     root.dispose()
   })
@@ -517,8 +521,8 @@ describe('async form-level + field-array-level validators', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.form.isValidating.value).toBe(true))
-    const verdict = root.form.validate()
+    await vi.waitFor(() => expect(root.api.form.isValidating.value).toBe(true))
+    const verdict = root.api.form.validate()
     // Resolve on the next tick so validate() actually has to wait.
     setTimeout(() => resolve(null), 5)
     expect(await verdict).toBe(true)
@@ -538,9 +542,9 @@ describe('async form-level + field-array-level validators', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.tags.isValidating.value).toBe(true))
+    await vi.waitFor(() => expect(root.api.tags.isValidating.value).toBe(true))
     resolve('rejected')
-    await vi.waitFor(() => expect(root.tags.topLevelErrors.value).toEqual(['rejected']))
+    await vi.waitFor(() => expect(root.api.tags.topLevelErrors.value).toEqual(['rejected']))
     root.dispose()
   })
 
@@ -556,7 +560,7 @@ describe('async form-level + field-array-level validators', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() =>
-      expect(root.tags.topLevelErrors.value).toEqual(expect.arrayContaining(['nope'])),
+      expect(root.api.tags.topLevelErrors.value).toEqual(expect.arrayContaining(['nope'])),
     )
     root.dispose()
   })
@@ -579,11 +583,11 @@ describe('flatErrors walker — fieldArray of forms', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.form.fields.items.add({ sku: '' })
-    root.form.fields.items.add({ sku: 'banned' })
+    root.api.form.fields.items.add({ sku: '' })
+    root.api.form.fields.items.add({ sku: 'banned' })
 
     await vi.waitFor(() => {
-      const flat = root.form.flatErrors.value
+      const flat = root.api.form.flatErrors.value
       expect(flat).toContainEqual({ path: 'items[0].sku', errors: ['Required'] })
       expect(flat).toContainEqual({ path: 'items[1]', errors: ['sku is banned'] })
     })
@@ -597,10 +601,10 @@ describe('flatErrors walker — fieldArray of forms', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.tags.add('')
-    root.tags.add('ok')
+    root.api.tags.add('')
+    root.api.tags.add('ok')
     await vi.waitFor(() => {
-      const errs = root.tags.errors.value
+      const errs = root.api.tags.errors.value
       expect(errs[0]).toEqual(['Required'])
       expect(errs[1]).toBeUndefined()
     })
@@ -619,19 +623,19 @@ describe('field validateOn (T5.3)', () => {
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Locked: an invalid (empty) value surfaces NO error and reads valid.
-    expect(root.name.errors.value).toEqual([])
-    expect(root.name.isValid.value).toBe(true)
+    expect(root.api.name.errors.value).toEqual([])
+    expect(root.api.name.isValid.value).toBe(true)
     // A change while still locked doesn't surface errors either.
-    root.name.set('')
-    expect(root.name.errors.value).toEqual([])
+    root.api.name.set('')
+    expect(root.api.name.errors.value).toEqual([])
     // Blur unlocks → validates now.
-    root.name.markTouched()
-    await vi.waitFor(() => expect(root.name.errors.value).toEqual(['Required']))
+    root.api.name.markTouched()
+    await vi.waitFor(() => expect(root.api.name.errors.value).toEqual(['Required']))
     // Subsequent changes re-validate live (RHF reValidateMode: onChange).
-    root.name.set('ok')
-    await vi.waitFor(() => expect(root.name.errors.value).toEqual([]))
-    root.name.set('')
-    await vi.waitFor(() => expect(root.name.errors.value).toEqual(['Required']))
+    root.api.name.set('ok')
+    await vi.waitFor(() => expect(root.api.name.errors.value).toEqual([]))
+    root.api.name.set('')
+    await vi.waitFor(() => expect(root.api.name.errors.value).toEqual(['Required']))
     root.dispose()
   })
 
@@ -640,13 +644,13 @@ describe('field validateOn (T5.3)', () => {
       name: createField<string>(ctx, '', [required()], { validateOn: 'submit' }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.name.errors.value).toEqual([])
-    root.name.markTouched()
-    root.name.set('')
-    expect(root.name.errors.value).toEqual([])
+    expect(root.api.name.errors.value).toEqual([])
+    root.api.name.markTouched()
+    root.api.name.set('')
+    expect(root.api.name.errors.value).toEqual([])
     // revalidate() unlocks + runs.
-    await root.name.revalidate()
-    expect(root.name.errors.value).toEqual(['Required'])
+    await root.api.name.revalidate()
+    expect(root.api.name.errors.value).toEqual(['Required'])
     root.dispose()
   })
 
@@ -655,12 +659,12 @@ describe('field validateOn (T5.3)', () => {
       name: createField<string>(ctx, '', [required()], { validateOn: 'blur' }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.name.markTouched()
-    await vi.waitFor(() => expect(root.name.errors.value).toEqual(['Required']))
-    root.name.reset()
-    expect(root.name.errors.value).toEqual([])
-    root.name.set('') // still locked → no error
-    expect(root.name.errors.value).toEqual([])
+    root.api.name.markTouched()
+    await vi.waitFor(() => expect(root.api.name.errors.value).toEqual(['Required']))
+    root.api.name.reset()
+    expect(root.api.name.errors.value).toEqual([])
+    root.api.name.set('') // still locked → no error
+    expect(root.api.name.errors.value).toEqual([])
     root.dispose()
   })
 })
@@ -677,14 +681,14 @@ describe('Form.dirtyFields + clearSubtree (T5.3)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.dirtyFields.value).toEqual([])
-    root.form.fields.name.set('b')
-    root.form.fields.address.fields.city.set('NYC')
-    root.form.fields.tags.at(0)?.set('y')
-    expect(root.form.dirtyFields.value).toEqual(['name', 'address.city', 'tags[0]'])
+    expect(root.api.form.dirtyFields.value).toEqual([])
+    root.api.form.fields.name.set('b')
+    root.api.form.fields.address.fields.city.set('NYC')
+    root.api.form.fields.tags.at(0)?.set('y')
+    expect(root.api.form.dirtyFields.value).toEqual(['name', 'address.city', 'tags[0]'])
     // Setting a leaf back to its initial drops it from the list.
-    root.form.fields.name.set('a')
-    expect(root.form.dirtyFields.value).toEqual(['address.city', 'tags[0]'])
+    root.api.form.fields.name.set('a')
+    expect(root.api.form.dirtyFields.value).toEqual(['address.city', 'tags[0]'])
     root.dispose()
   })
 
@@ -696,15 +700,15 @@ describe('Form.dirtyFields + clearSubtree (T5.3)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.form.fields.a.set('A')
-    root.form.fields.b.set('B')
-    root.form.clearSubtree('a')
-    expect(root.form.fields.a.value).toBe('x') // reset to initial
-    expect(root.form.fields.b.value).toBe('B') // untouched
-    root.form.fields.a.set('A2')
-    root.form.clearSubtree('') // whole form
-    expect(root.form.fields.a.value).toBe('x')
-    expect(root.form.fields.b.value).toBe('y')
+    root.api.form.fields.a.set('A')
+    root.api.form.fields.b.set('B')
+    root.api.form.clearSubtree('a')
+    expect(root.api.form.fields.a.value).toBe('x') // reset to initial
+    expect(root.api.form.fields.b.value).toBe('B') // untouched
+    root.api.form.fields.a.set('A2')
+    root.api.form.clearSubtree('') // whole form
+    expect(root.api.form.fields.a.value).toBe('x')
+    expect(root.api.form.fields.b.value).toBe('y')
     root.dispose()
   })
 })
@@ -718,21 +722,21 @@ describe('field isValid stays stable while validating (T5.3)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Initial run in flight: default last-known validity is `true`, so isValid
     // reads true (not a false flash).
-    expect(root.name.isValidating.value).toBe(true)
-    expect(root.name.isValid.value).toBe(true)
+    expect(root.api.name.isValidating.value).toBe(true)
+    expect(root.api.name.isValid.value).toBe(true)
     gate.resolve(null)
-    await vi.waitFor(() => expect(root.name.isValidating.value).toBe(false))
-    expect(root.name.isValid.value).toBe(true)
+    await vi.waitFor(() => expect(root.api.name.isValidating.value).toBe(false))
+    expect(root.api.name.isValid.value).toBe(true)
 
     // Edit → a fresh validation is in flight. isValid must HOLD the last
     // settled (valid) value, not strobe to false.
     gate = deferred<string | null>()
-    root.name.set('ok2')
-    expect(root.name.isValidating.value).toBe(true)
-    expect(root.name.isValid.value).toBe(true)
+    root.api.name.set('ok2')
+    expect(root.api.name.isValidating.value).toBe(true)
+    expect(root.api.name.isValid.value).toBe(true)
     gate.resolve(null)
-    await vi.waitFor(() => expect(root.name.isValidating.value).toBe(false))
-    expect(root.name.isValid.value).toBe(true)
+    await vi.waitFor(() => expect(root.api.name.isValidating.value).toBe(false))
+    expect(root.api.name.isValid.value).toBe(true)
     root.dispose()
   })
 })
@@ -748,20 +752,20 @@ describe('Form.reset batching (T5.3)', () => {
       ),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.form.fields.name.value).toBe('a') // construction applied initial
+    expect(root.api.form.fields.name.value).toBe('a') // construction applied initial
     // Make it dirty so the reactive-initial auto-reseat is blocked while we
     // change the seed underneath it.
-    root.form.fields.name.set('dirty')
+    root.api.form.fields.name.set('dirty')
     seed.set('b')
-    expect(root.form.fields.name.value).toBe('dirty')
+    expect(root.api.form.fields.name.value).toBe('dirty')
 
     // reset() must revert AND re-seat to the current initial ('b') in a single
     // notification — no intermediate 'a' (the pre-fix out-of-batch re-apply).
     const seen: string[] = []
-    const unsub = root.form.fields.name.subscribeChanges((v) => seen.push(v))
-    root.form.reset()
+    const unsub = root.api.form.fields.name.subscribeChanges((v) => seen.push(v))
+    root.api.form.reset()
     unsub()
-    expect(root.form.fields.name.value).toBe('b')
+    expect(root.api.form.fields.name.value).toBe('b')
     expect(seen).toEqual(['b'])
     root.dispose()
   })

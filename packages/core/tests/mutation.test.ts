@@ -27,15 +27,15 @@ describe('ctx.mutation — happy paths', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.save.isPending.value).toBe(false)
-    const promise = root.save.run({ x: 5 })
-    expect(root.save.isPending.value).toBe(true)
-    expect(root.save.lastVariables.value).toEqual({ x: 5 })
+    expect(root.api.save.isPending.value).toBe(false)
+    const promise = root.api.save.run({ x: 5 })
+    expect(root.api.save.isPending.value).toBe(true)
+    expect(root.api.save.lastVariables.value).toEqual({ x: 5 })
     const result = await promise
     expect(result).toBe(10)
-    expect(root.save.data.value).toBe(10)
-    expect(root.save.isPending.value).toBe(false)
-    expect(root.save.error.value).toBeUndefined()
+    expect(root.api.save.data.value).toBe(10)
+    expect(root.api.save.isPending.value).toBe(false)
+    expect(root.api.save.error.value).toBeUndefined()
     root.dispose()
   })
 
@@ -48,9 +48,9 @@ describe('ctx.mutation — happy paths', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await expect(root.save.run()).rejects.toThrow('save failed')
-    expect((root.save.error.value as Error).message).toBe('save failed')
-    expect(root.save.isPending.value).toBe(false)
+    await expect(root.api.save.run()).rejects.toThrow('save failed')
+    expect((root.api.save.error.value as Error).message).toBe('save failed')
+    expect(root.api.save.isPending.value).toBe(false)
     root.dispose()
   })
 
@@ -62,11 +62,11 @@ describe('ctx.mutation — happy paths', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const promise = root.save.run().catch((e) => e)
-    expect(root.save.isPending.value).toBe(true)
-    root.save.reset()
-    expect(root.save.isPending.value).toBe(false)
-    expect(root.save.lastVariables.value).toBeUndefined()
+    const promise = root.api.save.run().catch((e) => e)
+    expect(root.api.save.isPending.value).toBe(true)
+    root.api.save.reset()
+    expect(root.api.save.isPending.value).toBe(false)
+    expect(root.api.save.lastVariables.value).toBeUndefined()
     d.resolve(1)
     const result = await promise
     expect(isAbortError(result)).toBe(true)
@@ -84,21 +84,21 @@ describe('ctx.mutation — concurrency: parallel (default)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const p1 = root.save.run()
-    const p2 = root.save.run()
-    const p3 = root.save.run()
-    expect(root.save.isPending.value).toBe(true)
+    const p1 = root.api.save.run()
+    const p2 = root.api.save.run()
+    const p3 = root.api.save.run()
+    expect(root.api.save.isPending.value).toBe(true)
 
     ds[1]!.resolve('b')
     // Wait for the resolved mutation's result to land into `data`. Other
     // mutations are still in flight so `isPending` should stay true.
-    await vi.waitFor(() => expect(root.save.data.value).toBe('b'))
-    expect(root.save.isPending.value).toBe(true)
+    await vi.waitFor(() => expect(root.api.save.data.value).toBe('b'))
+    expect(root.api.save.isPending.value).toBe(true)
 
     ds[0]!.resolve('a')
     ds[2]!.resolve('c')
     await Promise.all([p1, p2, p3])
-    expect(root.save.isPending.value).toBe(false)
+    expect(root.api.save.isPending.value).toBe(false)
     root.dispose()
   })
 })
@@ -118,15 +118,15 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const p1 = root.save.run().catch((e) => e)
-    const p2 = root.save.run()
+    const p1 = root.api.save.run().catch((e) => e)
+    const p2 = root.api.save.run()
 
     ds[1]!.resolve('second')
     expect(await p2).toBe('second')
 
     const e1 = await p1
     expect(isAbortError(e1)).toBe(true)
-    expect(root.save.error.value).toBeUndefined() // supersede ≠ real failure
+    expect(root.api.save.error.value).toBeUndefined() // supersede ≠ real failure
     root.dispose()
   })
 
@@ -149,19 +149,19 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Wait for the initial query fetch to land before kicking off mutations
     // that touch the cache key.
-    await vi.waitFor(() => expect(root.x.data.value).toBe(1))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
     initialFetchDone = true
     void initialFetchDone
 
-    const p1 = root.save.run(10).catch((e) => e)
-    expect(root.x.data.value).toBe(10)
-    const p2 = root.save.run(20)
-    expect(root.x.data.value).toBe(20)
+    const p1 = root.api.save.run(10).catch((e) => e)
+    expect(root.api.x.data.value).toBe(10)
+    const p2 = root.api.save.run(20)
+    expect(root.api.x.data.value).toBe(20)
 
     const e1 = await p1
     expect(isAbortError(e1)).toBe(true)
     // After supersede, snapshot of run1 rolled back → state should match run2's
-    expect(root.x.data.value).toBe(20)
+    expect(root.api.x.data.value).toBe(20)
 
     await p2.catch(() => {})
     root.dispose()
@@ -184,8 +184,8 @@ describe('ctx.mutation — concurrency: latest-wins', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const p1 = root.save.run().catch(() => {})
-    const p2 = root.save.run()
+    const p1 = root.api.save.run().catch(() => {})
+    const p2 = root.api.save.run()
     ds[1]!.resolve()
     await p2
     await p1
@@ -211,9 +211,9 @@ describe('ctx.mutation — concurrency: serial', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const p1 = root.save.run(1)
-    const p2 = root.save.run(2)
-    const p3 = root.save.run(3)
+    const p1 = root.api.save.run(1)
+    const p2 = root.api.save.run(2)
+    const p3 = root.api.save.run(3)
     expect(order).toEqual([1]) // 2 and 3 are queued
 
     ds[0]!.resolve(1)
@@ -238,8 +238,8 @@ describe('ctx.mutation — concurrency: serial', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const p1 = root.save.run().catch((e) => e)
-    const p2 = root.save.run().catch((e) => e)
+    const p1 = root.api.save.run().catch((e) => e)
+    const p2 = root.api.save.run().catch((e) => e)
     root.dispose()
     d.resolve(1) // unblock the in-flight one
     void p1 // we don't assert here; whether it resolves or rejects depends on exact ordering
@@ -266,10 +266,10 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, save }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(0))
 
-    await expect(root.save.run()).rejects.toThrow('server says no')
-    expect(root.x.data.value).toBe(0)
+    await expect(root.api.save.run()).rejects.toThrow('server says no')
+    expect(root.api.x.data.value).toBe(0)
     root.dispose()
   })
 
@@ -300,10 +300,10 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, save }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(0))
 
-    await expect(root.save.run()).rejects.toThrow('boom')
-    expect(root.x.data.value).toBe(0)
+    await expect(root.api.save.run()).rejects.toThrow('boom')
+    expect(root.api.x.data.value).toBe(0)
     // Both the user's onError-call AND the implicit auto-call would have
     // tried to run rollback; the wrapped snapshot dedupes to exactly one.
     expect(rollbackCalls).toBe(1)
@@ -327,10 +327,10 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, save }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(0))
 
-    await expect(root.save.run()).rejects.toThrow('server says no')
-    expect(root.x.data.value).toBe(0)
+    await expect(root.api.save.run()).rejects.toThrow('server says no')
+    expect(root.api.x.data.value).toBe(0)
     root.dispose()
   })
 
@@ -353,12 +353,12 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Wait for initial fetch to settle. hasPendingMutations is the negative
     // assertion under test post-mutation, so use data as the wait condition.
-    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
-    expect(root.x.hasPendingMutations.value).toBe(false)
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(0))
+    expect(root.api.x.hasPendingMutations.value).toBe(false)
 
-    await root.save.run()
-    expect(root.x.data.value).toBe(99)
-    expect(root.x.hasPendingMutations.value).toBe(false)
+    await root.api.save.run()
+    expect(root.api.x.data.value).toBe(99)
+    expect(root.api.x.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
@@ -393,21 +393,21 @@ describe('ctx.mutation — optimistic + rollback (§6.3, §6.4)', () => {
       return { x, a, b }
     })
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await vi.waitFor(() => expect(root.x.data.value).toBe(0))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(0))
 
-    const pA = root.a.run().catch(() => {})
-    const pB = root.b.run().catch(() => {})
-    expect(root.x.data.value).toBe(11)
+    const pA = root.api.a.run().catch(() => {})
+    const pB = root.api.b.run().catch(() => {})
+    expect(root.api.x.data.value).toBe(11)
 
     // B fails first — should land on the post-A intermediate state.
     dB.reject(new Error('b'))
     await pB
-    expect(root.x.data.value).toBe(1)
+    expect(root.api.x.data.value).toBe(1)
 
     // A then fails — restores to original.
     dA.reject(new Error('a'))
     await pA
-    expect(root.x.data.value).toBe(0)
+    expect(root.api.x.data.value).toBe(0)
     root.dispose()
   })
 })
@@ -429,7 +429,7 @@ describe('ctx.mutation — retry', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const p = root.save.run().catch((e) => e as Error)
+    const p = root.api.save.run().catch((e) => e as Error)
     // initial attempt (0ms) + 2 retries (10ms each)
     await vi.advanceTimersByTimeAsync(0)
     await vi.advanceTimersByTimeAsync(10)
@@ -450,21 +450,21 @@ describe('ctx.mutation — status signal (T4.2)', () => {
       m: createMutation(ctx, { mutate: async () => d.promise }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    expect(root.m.status.value).toBe('idle')
-    const p = root.m.run()
-    expect(root.m.status.value).toBe('pending')
+    expect(root.api.m.status.value).toBe('idle')
+    const p = root.api.m.run()
+    expect(root.api.m.status.value).toBe('pending')
     d.resolve('ok')
     await p
-    expect(root.m.status.value).toBe('success')
+    expect(root.api.m.status.value).toBe('success')
     root.dispose()
   })
 
   test('a void mutation reports status success (data stays undefined)', async () => {
     const def = defineController((ctx) => ({ m: createMutation(ctx, { mutate: async () => {} }) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.m.run()
-    expect(root.m.status.value).toBe('success')
-    expect(root.m.data.value).toBeUndefined()
+    await root.api.m.run()
+    expect(root.api.m.status.value).toBe('success')
+    expect(root.api.m.data.value).toBeUndefined()
     root.dispose()
   })
 
@@ -477,8 +477,8 @@ describe('ctx.mutation — status signal (T4.2)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.m.run().catch(() => {})
-    expect(root.m.status.value).toBe('error')
+    await root.api.m.run().catch(() => {})
+    expect(root.api.m.status.value).toBe('error')
     root.dispose()
   })
 
@@ -491,24 +491,24 @@ describe('ctx.mutation — status signal (T4.2)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const pA = root.m.run('a').catch(() => {}) // superseded by B
-    const pB = root.m.run('b')
-    expect(root.m.status.value).toBe('pending')
+    const pA = root.api.m.run('a').catch(() => {}) // superseded by B
+    const pB = root.api.m.run('b')
+    expect(root.api.m.status.value).toBe('pending')
     dB.resolve('B')
     await pB
     await pA
     // B's success owns the terminal status; A's supersede must not overwrite it.
-    expect(root.m.status.value).toBe('success')
+    expect(root.api.m.status.value).toBe('success')
     root.dispose()
   })
 
   test('reset → status idle', async () => {
     const def = defineController((ctx) => ({ m: createMutation(ctx, { mutate: async () => 'x' }) }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.m.run()
-    expect(root.m.status.value).toBe('success')
-    root.m.reset()
-    expect(root.m.status.value).toBe('idle')
+    await root.api.m.run()
+    expect(root.api.m.status.value).toBe('success')
+    root.api.m.reset()
+    expect(root.api.m.status.value).toBe('idle')
     root.dispose()
   })
 })
@@ -531,7 +531,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.dispose()
 
-    const err = await root.drop.run().catch((e: unknown) => e)
+    const err = await root.api.drop.run().catch((e: unknown) => e)
     expect(err).toBeInstanceOf(MutationDisposedError)
     expect(mutateCalls).toBe(0)
     // The whole point of the type: a caller filtering cancellations must NOT
@@ -549,8 +549,8 @@ describe('dispose — what a torn-down mutation does with a write', () => {
       m: createMutation(ctx, { concurrency: 'serial' as const, mutate: async () => d.promise }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const first = root.m.run()
-    const queued = root.m.run()
+    const first = root.api.m.run()
+    const queued = root.api.m.run()
     first.catch(() => {})
     const settled = queued.catch((e: unknown) => e)
     root.dispose()
@@ -581,9 +581,9 @@ describe('dispose — what a torn-down mutation does with a write', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.read.promise()
-    const settled = root.save.run().catch((e: unknown) => e)
-    expect(root.read.data.value).toBe('written-value')
+    await root.api.read.promise()
+    const settled = root.api.save.run().catch((e: unknown) => e)
+    expect(root.api.read.data.value).toBe('written-value')
 
     d.resolve('accepted') // the server takes the write…
     // …and the screen closes in the one-microtask window after `raceAbort`
@@ -594,14 +594,14 @@ describe('dispose — what a torn-down mutation does with a write', () => {
     // was nonetheless committed.
     await Promise.resolve()
     await Promise.resolve()
-    expect(root.save.isPending.peek()).toBe(true) // the continuation has not run yet
-    root.save.dispose()
+    expect(root.api.save.isPending.peek()).toBe(true) // the continuation has not run yet
+    root.api.save.dispose()
 
     const err = await settled
     // The caller still walked away, so it still hears "aborted"…
     expect(isAbortError(err)).toBe(true)
     // …but the cache now agrees with the server rather than contradicting it.
-    expect(root.read.data.peek()).toBe('written-value')
+    expect(root.api.read.data.peek()).toBe('written-value')
     // Still not a success for the mutation's own signals: nobody is reading them.
     expect(onSuccessCalls).toBe(0)
     root.dispose()
@@ -620,14 +620,14 @@ describe('dispose — what a torn-down mutation does with a write', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.read.promise()
-    const settled = root.save.run().catch((e: unknown) => e)
-    expect(root.read.data.value).toBe('written-value')
+    await root.api.read.promise()
+    const settled = root.api.save.run().catch((e: unknown) => e)
+    expect(root.api.read.data.value).toBe('written-value')
 
-    root.save.dispose() // aborted while genuinely in flight
+    root.api.save.dispose() // aborted while genuinely in flight
     const err = await settled
     expect(isAbortError(err)).toBe(true)
-    expect(root.read.data.peek()).toBe('server-value')
+    expect(root.api.read.data.peek()).toBe('server-value')
     d.resolve('too late')
     root.dispose()
   })
@@ -649,15 +649,15 @@ describe('detached mutations (§6.5)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.read.promise()
-    const run = root.activate.run()
+    await root.api.read.promise()
+    const run = root.api.activate.run()
 
-    root.activate.dispose() // the modal closes mid-activation
+    root.api.activate.dispose() // the modal closes mid-activation
     d.resolve('pro')
 
     await expect(run).resolves.toBe('pro')
     expect(seen).toEqual(['success:pro', 'settled:ok'])
-    expect(root.read.data.peek()).toBe('pro-optimistic')
+    expect(root.api.read.data.peek()).toBe('pro-optimistic')
     root.dispose()
   })
 
@@ -675,9 +675,9 @@ describe('detached mutations (§6.5)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    root.drop.dispose()
+    root.api.drop.dispose()
 
-    await expect(root.drop.run('analytics')).resolves.toBe('ok')
+    await expect(root.api.drop.run('analytics')).resolves.toBe('ok')
     expect(dropped).toBe('analytics')
     root.dispose()
   })
@@ -697,9 +697,9 @@ describe('detached mutations (§6.5)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const runs = [root.m.run(), root.m.run(), root.m.run()]
+    const runs = [root.api.m.run(), root.api.m.run(), root.api.m.run()]
 
-    root.m.dispose()
+    root.api.m.dispose()
     gates[0]?.resolve(1)
     gates[1]?.resolve(2)
     gates[2]?.resolve(3)
@@ -714,8 +714,8 @@ describe('detached mutations (§6.5)', () => {
       m: createMutation(ctx, { detached: true, mutate: async () => d.promise }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const settled = root.m.run().catch((e: unknown) => e)
-    root.m.reset()
+    const settled = root.api.m.run().catch((e: unknown) => e)
+    root.api.m.reset()
     d.resolve('late')
 
     expect(isAbortError(await settled)).toBe(true)
@@ -729,9 +729,9 @@ describe('detached mutations (§6.5)', () => {
       m: createMutation(ctx, { detached: true, mutate: async () => d.promise }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const settled = root.m.run().catch((e: unknown) => e)
-    root.m.dispose()
-    root.m.reset()
+    const settled = root.api.m.run().catch((e: unknown) => e)
+    root.api.m.dispose()
+    root.api.m.reset()
     d.resolve('late')
 
     expect(isAbortError(await settled)).toBe(true)
@@ -753,8 +753,8 @@ describe('detached mutations (§6.5)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const a = root.m.run().catch((e: unknown) => e)
-    const b = root.m.run()
+    const a = root.api.m.run().catch((e: unknown) => e)
+    const b = root.api.m.run()
     dA.resolve('A')
     dB.resolve('B')
 
@@ -777,7 +777,7 @@ describe('detached mutations (§6.5)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    const run = root.m.run()
+    const run = root.api.m.run()
     root.dispose()
     d.resolve('landed')
 

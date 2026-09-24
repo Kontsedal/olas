@@ -67,8 +67,8 @@ describe('defineInfiniteQuery — module-level methods', () => {
       { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => {
-      expect(a.x.pages.value).toEqual(['k1p0'])
-      expect(b.x.pages.value).toEqual(['k2p0'])
+      expect(a.api.x.pages.value).toEqual(['k1p0'])
+      expect(b.api.x.pages.value).toEqual(['k2p0'])
     })
     const baseline = calls.length
     await a.bindQuery(q).invalidate(1)
@@ -99,8 +99,8 @@ describe('defineInfiniteQuery — module-level methods', () => {
       { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => {
-      expect(a.x.pages.value).toEqual(['k1'])
-      expect(b.x.pages.value).toEqual(['k2'])
+      expect(a.api.x.pages.value).toEqual(['k1'])
+      expect(b.api.x.pages.value).toEqual(['k2'])
     })
     const baseline = calls.length
     await Promise.all([a.bindQuery(q).invalidateAll(), b.bindQuery(q).invalidateAll()])
@@ -120,15 +120,15 @@ describe('defineInfiniteQuery — module-level methods', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
 
     const snap = q.setData((prev) => [...(prev ?? []), 'p1-optimistic'])
-    expect(root.x.pages.value).toEqual(['p0', 'p1-optimistic'])
-    expect(root.x.hasPendingMutations.value).toBe(true)
+    expect(root.api.x.pages.value).toEqual(['p0', 'p1-optimistic'])
+    expect(root.api.x.hasPendingMutations.value).toBe(true)
 
     snap.rollback()
-    expect(root.x.pages.value).toEqual(['p0'])
-    expect(root.x.hasPendingMutations.value).toBe(false)
+    expect(root.api.x.pages.value).toEqual(['p0'])
+    expect(root.api.x.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
@@ -143,16 +143,16 @@ describe('defineInfiniteQuery — module-level methods', () => {
       defineController((ctx) => ({ x: createQuery(ctx, q) })),
       { queries: queryEngine(), deps: emptyDeps },
     )
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['p0']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['p0']))
 
     const snap = q.setData(() => ['committed'])
-    expect(root.x.hasPendingMutations.value).toBe(true)
+    expect(root.api.x.hasPendingMutations.value).toBe(true)
     snap.finalize()
-    expect(root.x.pages.value).toEqual(['committed'])
-    expect(root.x.hasPendingMutations.value).toBe(false)
+    expect(root.api.x.pages.value).toEqual(['committed'])
+    expect(root.api.x.hasPendingMutations.value).toBe(false)
     // rollback after finalize is a no-op
     snap.rollback()
-    expect(root.x.pages.value).toEqual(['committed'])
+    expect(root.api.x.pages.value).toEqual(['committed'])
     root.dispose()
   })
 
@@ -179,7 +179,7 @@ describe('defineInfiniteQuery — module-level methods', () => {
       const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
       const a = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
       const b = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-      await vi.waitFor(() => expect(a.x.pages.value).toEqual(['page']))
+      await vi.waitFor(() => expect(a.api.x.pages.value).toEqual(['page']))
 
       await expect(q.prefetch()).rejects.toThrow(/ambiguous/)
       await expect(a.bindQuery(q).prefetch()).resolves.toBe('page')
@@ -210,8 +210,8 @@ describe('defineQuery.invalidate(...args)', () => {
       { queries: queryEngine(), deps: emptyDeps },
     )
     await vi.waitFor(() => {
-      expect(a.x.data.value).toBe('A')
-      expect(b.x.data.value).toBe('B')
+      expect(a.api.x.data.value).toBe('A')
+      expect(b.api.x.data.value).toBe('B')
     })
     const baseline = calls.length
     await a.bindQuery(q).invalidate('a')
