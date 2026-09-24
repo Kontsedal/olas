@@ -164,15 +164,15 @@ export class ControllerInstance {
   private readonly rootShared: RootShared
   private readonly parent: ControllerInstance | null
   private childCounter = 0
-  /** Scope values provided on this instance, keyed by `Scope.__id`. */
-  private scopes: Map<symbol, unknown> | null = null
+  /** Scope values provided on this instance, keyed by the scope object. */
+  private scopes: Map<Scope<unknown>, unknown> | null = null
   /**
    * Memoized result of `ctx.inject(scope)` per scope id, stamped with the
    * `scopesVersion` the lookup observed. A bump invalidates every cache
    * entry implicitly — the next `inject(scope)` finds a stale version
    * stamp and re-walks. Provide is rare; reads dominate.
    */
-  private injectCache: Map<symbol, { value: unknown; version: number }> | null = null
+  private injectCache: Map<Scope<unknown>, { value: unknown; version: number }> | null = null
   /**
    * Values registered via `ctx.debug({...})` for the devtools "Variables"
    * view. Live references (signals stay reactive in the panel). Merged across
@@ -184,15 +184,13 @@ export class ControllerInstance {
    * Pre-seed scopes from outside the factory — used by `createRoot`'s
    * `scopes:` option so an adapter (the router bridge, for one) can publish
    * cross-cutting values without forcing the user to call
-   * `ctx.provide(...)` in their root controller. Idempotent per scope id:
+   * `ctx.provide(...)` in their root controller. Idempotent per scope:
    * later calls override.
    */
-  seedScopes(bindings: ReadonlyArray<readonly [{ __id: symbol }, unknown]>): void {
+  seedScopes(bindings: ReadonlyArray<readonly [Scope<unknown>, unknown]>): void {
     if (bindings.length === 0) return
     if (this.scopes === null) this.scopes = new Map()
-    for (const [scope, value] of bindings) {
-      this.scopes.set(scope.__id, value)
-    }
+    for (const [scope, value] of bindings) this.scopes.set(scope, value)
   }
 
   /**
@@ -202,17 +200,17 @@ export class ControllerInstance {
    */
   resolveScope<T>(scope: Scope<T>, caller: string): T {
     const version = this.rootShared.scopesVersion.value
-    const cached = this.injectCache?.get(scope.__id)
+    const cached = this.injectCache?.get(scope)
     if (cached !== undefined && cached.version === version) return cached.value as T
     const remember = (value: unknown): void => {
       if (this.injectCache === null) this.injectCache = new Map()
-      this.injectCache.set(scope.__id, { value, version })
+      this.injectCache.set(scope, { value, version })
     }
     let node: ControllerInstance | null = this
     while (node !== null) {
       const map = node.scopes
-      if (map?.has(scope.__id)) {
-        const value = map.get(scope.__id) as T
+      if (map?.has(scope)) {
+        const value = map.get(scope) as T
         remember(value)
         return value
       }
@@ -222,7 +220,7 @@ export class ControllerInstance {
       remember(scope.default)
       return scope.default as T
     }
-    const label = scope.name ?? scope.__id.description ?? 'unnamed'
+    const label = scope.name ?? 'unnamed'
     throw new Error(
       `[olas] ${caller}(): no provider for scope '${label}' and no default. Provide it on an ancestor via ctx.provide(${label}, ...) or pass a default to defineScope.`,
     )
@@ -564,7 +562,7 @@ export class ControllerInstance {
 
       provide<T>(scope: Scope<T>, value: T): void {
         if (self.scopes === null) self.scopes = new Map()
-        self.scopes.set(scope.__id, value)
+        self.scopes.set(scope, value)
         // Invalidate every cached inject lookup tree-wide. A descendant
         // that resolved this scope from a higher ancestor (or from a
         // default) would now resolve to the new value, but its cache

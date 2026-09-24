@@ -37,7 +37,7 @@ const userController = defineController((ctx, props: { id: string }) => {
 `createQuery(ctx, query, keyOrOptions)`:
 
 ```ts
-const brand = query.__olas
+const brand = query[BRAND]   // core's non-exported brand symbol
 if (brand === 'infiniteQuery') return createInfiniteUse(...)
 return createUse(...)
 ```

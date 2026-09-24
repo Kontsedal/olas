@@ -1654,3 +1654,18 @@ For the W6 docs pass: README, API.md (`:832`, `:905-915`), RECIPES, SPEC (`:846`
 - New `LocalCache.cancel` test in `packages/core/tests/cache.test.ts`.
 
 Wiki: `modules/react.md` (surface, subscription, a new `mutate`/`run` section), `flows/use-root.md` (the root handle, `useRoot` returns `root.api`, the `useController` section replaced), `overview.md`, `modules/query.md`, `modules/controller.md`, `index.md` and `pitfalls/persisted-state-breaks-hydration.md`.
+
+## [2026-09-24 23:15] ingest | 1.0 W4c: symbol brands; InfiniteQuery peek / write / replace
+
+**Brands.**
+- New `packages/core/src/brand.ts` holds three `Symbol.for` keys, `BRAND`, `PHANTOM` and `INTERNAL`, none exported from the package.
+- `ControllerDef`, `Query`, `InfiniteQuery`, `QueryEngine`, `Scope` and the `defineMutation` result carry their kind under `BRAND`. The mutation brand is still non-enumerable, and `MUTATION_DEF` / `MUTATION_BRAND` are gone. Phantom types moved to `PHANTOM`. The engine's `options` and `create` moved under `INTERNAL`, as `QueryEngineInternals`.
+- `Scope.__id` is gone: the instance's `scopes` and `injectCache` maps key on the scope object.
+- `olas-entities` stamps `'entity'` under `Symbol.for('olas.brand')` itself, since core does not export the key.
+- The published `.d.ts` declares each key as a non-exported `declare const X: unique symbol`. The tree-shaking test still passes.
+
+**Infinite parity.** `InfiniteQuery` and `InfiniteQueryActions` gain `peek`, `write` and `replace`, backed by the new client methods `peekInfiniteData`, `writeInfiniteData` and `replaceInfiniteData`. They follow `peekData` / `writeData` / `replaceData` exactly.
+
+Wiki: `decisions/brand-markers-not-classes.md` is rewritten, because its argument for a string `__olas` no longer holds. Also updated: `entities/scope.md`, `entities/ctx.md`, `flows/query-subscription.md`, `glossary.md`, `overview.md`, `modules/query.md`, `modules/controller.md`, and a new infinite section in `decisions/canonical-vs-optimistic-writes.md`. That page's plugin vocabulary (`SetDataEvent`, `'set'`, `setEntryData`) is pre-v2 and joins the W6 rewrite list.
+
+Tests: scope brand/identity (no internal keys in `Object.keys`), the entities brand, and three infinite parity tests. CI green.

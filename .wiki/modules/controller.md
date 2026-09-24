@@ -43,7 +43,7 @@ Implements the controller container: `defineController`, `createRoot`, the `Ctx`
 type Ctx<TDeps = AmbientDeps> = {
   // async data
   cache<T>(fetcher, options?): LocalCache<T>
-  use<Args, T>(query, keyOrOptions?): QuerySubscription<T>     // dispatches on __olas brand
+  use<Args, T>(query, keyOrOptions?): QuerySubscription<T>     // dispatches on the query's brand
   use<Args, TPage, TItem>(infinite, keyOrOptions?): InfiniteQuerySubscription<TPage, TItem>
   mutation<V, R>(spec): Mutation<V, R>
 

@@ -22,7 +22,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Controller.** A factory function `(ctx, props) => api` produced by `defineController(...)`. Returns whatever the factory returns. The runtime instance is `ControllerInstance`.
 
-**ControllerDef.** The value returned by `defineController`. Branded `__olas: 'controller'`. Carries an internal `__factory` reference.
+**ControllerDef.** The value returned by `defineController`. Branded `'controller'`. Carries an internal `__factory` reference.
 
 **Ctx.** The lifecycle-bound primitive factory passed to every controller's factory function. Surface includes `effect`, `emitter`, `field`, `form`, `fieldArray`, `cache`, `use`, `mutation`, `child`, `on`, `onDispose/Suspend/Resume`, `deps`. Each primitive registers cleanup with the owning controller.
 
@@ -38,7 +38,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Mutation.** A controller-scoped async write. It carries a concurrency policy of parallel, latest-wins or serial, optimistic updates, and the lifecycle callbacks `onMutate`, `onSuccess`, `onError` and `onSettled`.
 
-**Query.** Module-scoped, keyed, sharable cache definition produced by `defineQuery`. Branded `__olas: 'query'`. Per-root binding happens via `QueryClient.bindEntry`.
+**Query.** Module-scoped, keyed, sharable cache definition produced by `defineQuery`. Branded `'query'`. Per-root binding happens via `QueryClient.bindEntry`.
 
 **QueryClient.** Per-root entry registry. Owns the maps of `ClientEntry` and `InfiniteClientEntry`, plus a `mutationsInflight$` signal used by `waitForIdle`.
 
@@ -54,4 +54,4 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Validators.** Functions `(value, signal) => string | null | Promise<string | null>`. Run in a tracking scope so reading signals inside re-runs the validator when those signals change. Sync validators short-circuit; async only runs if sync passed.
 
-**`__olas` brand.** Runtime discriminator used for dispatch in `createQuery`. A `ControllerDef` carries `'controller'`, a `Query` carries `'query'`, and an `InfiniteQuery` carries `'infiniteQuery'`.
+**Brand.** A value's kind, stored under core's non-exported `BRAND` symbol (`packages/core/src/brand.ts`). A `ControllerDef` carries `'controller'`, a `Query` `'query'`, an `InfiniteQuery` `'infiniteQuery'`, and a `Scope` `'scope'`. `createQuery` dispatches on it. See `decisions/brand-markers-not-classes.md`.

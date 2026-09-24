@@ -1,3 +1,4 @@
+import { BRAND } from '../brand'
 import { __currentCauseId, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { scheduleExpiry } from '../expiry-timer'
@@ -640,7 +641,7 @@ export class QueryClient implements PluginEngine {
     if (ref === undefined) {
       ref = {
         id: query.__id,
-        kind: query.__olas === 'infiniteQuery' ? 'infinite' : 'query',
+        kind: query[BRAND] === 'infiniteQuery' ? 'infinite' : 'query',
         meta: query.__spec.meta ?? {},
       }
       this.refs.set(query, ref)
@@ -741,7 +742,7 @@ export class QueryClient implements PluginEngine {
         const query = this.byId.get(id)
         if (query === undefined) return []
         const map =
-          query.__olas === 'infiniteQuery'
+          query[BRAND] === 'infiniteQuery'
             ? this.infiniteMaps.get(query as AnyInfiniteQuery)
             : this.maps.get(query as AnyQuery)
         return map === undefined ? [] : [...map.values()].map((e) => e.keyArgs)
@@ -823,7 +824,7 @@ export class QueryClient implements PluginEngine {
     const query = this.byId.get(id)
     if (query === undefined) return undefined
     const hash = stableHash(key)
-    if (query.__olas === 'infiniteQuery') {
+    if (query[BRAND] === 'infiniteQuery') {
       const entry = this.infiniteMaps.get(query as AnyInfiniteQuery)?.get(hash)
       return entry === undefined ? undefined : { kind: 'infinite', entry }
     }
@@ -935,7 +936,7 @@ export class QueryClient implements PluginEngine {
   ): void {
     const hash = stableHash(keyArgs)
     const query = this.byId.get(queryId)
-    if (query !== undefined && query.__olas === 'query') {
+    if (query !== undefined && query[BRAND] === 'query') {
       const entry = this.maps.get(query as AnyQuery)?.get(hash)
       if (entry !== undefined) {
         entry.entry.applyHydration(data, lastUpdatedAt)
@@ -1098,7 +1099,7 @@ export class QueryClient implements PluginEngine {
     query.__clients.add(this)
     this.index(query)
     const origin = options?.origin
-    if (query.__olas === 'infiniteQuery') {
+    if (query[BRAND] === 'infiniteQuery') {
       this.touchedInfiniteQueries.add(query)
       return createInfiniteQueryActions(query, getClient, origin)
     }
@@ -1565,6 +1566,68 @@ export class QueryClient implements PluginEngine {
     const map = this.infiniteMaps.get(query as AnyInfiniteQuery)
     if (!map) return
     for (const entry of map.values()) entry.entry.cancel()
+  }
+
+  /** The infinite counterpart of `peekData`: non-creating and untracked. */
+  peekInfiniteData<Args extends unknown[], TPage>(
+    query: InfiniteQuery<Args, TPage, any>,
+    args: Args,
+  ): TPage[] | undefined {
+    const internal = query as AnyInfiniteQuery
+    const map = this.infiniteMaps.get(internal)
+    if (!map) return undefined
+    const pages = map.get(stableHash(internal.__spec.key(...args)))?.entry.pages.peek()
+    return pages === undefined || pages.length === 0 ? undefined : (pages as TPage[])
+  }
+
+  /**
+   * The infinite counterpart of `writeData`: a canonical patch that leaves an
+   * in-flight fetch alone (see `writeData` for why a patch must not supersede).
+   */
+  writeInfiniteData<Args extends unknown[], TPage>(
+    query: InfiniteQuery<Args, TPage, any>,
+    args: Args,
+    updater: (prev: TPage[] | undefined) => TPage[],
+    origin?: string,
+  ): void {
+    const entry = this.bindInfiniteEntry(query, args)
+    entry.entry.setData(updater, { track: false })
+    const pages = entry.entry.pages.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      pages,
+      entry.entry.lastUpdatedAt.peek(),
+      'write',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, 'write')
+  }
+
+  /**
+   * The infinite counterpart of `replaceData`: the pages are the record, so a
+   * fetch already in flight is cancelled — only for defined pages, for the
+   * reason `replaceData` gives.
+   */
+  replaceInfiniteData<Args extends unknown[], TPage>(
+    query: InfiniteQuery<Args, TPage, any>,
+    args: Args,
+    value: TPage[],
+    origin?: string,
+  ): void {
+    const entry = this.bindInfiniteEntry(query, args)
+    entry.entry.setData(() => value, { track: false })
+    if (value !== undefined) entry.entry.cancel()
+    const pages = entry.entry.pages.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      pages,
+      entry.entry.lastUpdatedAt.peek(),
+      'replace',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, 'replace')
   }
 
   setInfiniteData<Args extends unknown[], TPage>(

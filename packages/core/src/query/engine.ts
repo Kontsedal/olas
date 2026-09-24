@@ -1,3 +1,4 @@
+import { BRAND, INTERNAL } from '../brand'
 import type { DevtoolsEmitter } from '../devtools'
 import type { ErrorHandler } from '../errors'
 import type { PluginSet } from '../plugin/host'
@@ -45,33 +46,41 @@ export type QueryEngineHost = {
  * shared — by several roots, or by a `HydrationBoundary` that rebuilds its
  * root under StrictMode.
  *
- * **The client is created eagerly**, inside `createRoot`, before the
- * controller factory runs, so plugin `init` fires at construction. That
- * matters: `mutationQueuePlugin` replays mutations persisted by a previous
- * session at `init`, which is a startup obligation and not a response to
- * anything the current session does.
+ * **The client is created eagerly**, inside `createRoot`, before plugin setup
+ * and the controller factory run, so a plugin's `setup` can already reach the
+ * cache. That matters: `mutationQueuePlugin` replays mutations persisted by a
+ * previous session from `setup`, which is a startup obligation and not a
+ * response to anything the current session does.
  */
 export type QueryEngine = {
-  readonly __olas: 'queryEngine'
-  /** @internal The defaults, readable without the client so `createCache` can use them. */
-  readonly __options: QueryEngineOptions
-  /** @internal Called once per adopting root, by `createRoot`. */
-  __create(host: QueryEngineHost): QueryClient
+  readonly [BRAND]: 'queryEngine'
+  /** @internal */
+  readonly [INTERNAL]: QueryEngineInternals
+}
+
+/** @internal What `createRoot` reads off an engine. */
+export type QueryEngineInternals = {
+  /** The defaults, readable without the client so `createCache` can use them. */
+  readonly options: QueryEngineOptions
+  /** Called once per adopting root, by `createRoot`. */
+  create(host: QueryEngineHost): QueryClient
 }
 
 export function queryEngine(options: QueryEngineOptions = {}): QueryEngine {
   return {
-    __olas: 'queryEngine',
-    __options: options,
-    __create(host: QueryEngineHost): QueryClient {
-      return new QueryClient({
-        onError: host.onError,
-        devtools: host.devtools,
-        deps: host.deps,
-        hydrate: host.hydrate,
-        defaults: options.defaults,
-        plugins: host.plugins,
-      })
+    [BRAND]: 'queryEngine',
+    [INTERNAL]: {
+      options,
+      create(host: QueryEngineHost): QueryClient {
+        return new QueryClient({
+          onError: host.onError,
+          devtools: host.devtools,
+          deps: host.deps,
+          hydrate: host.hydrate,
+          defaults: options.defaults,
+          plugins: host.plugins,
+        })
+      },
     },
   }
 }

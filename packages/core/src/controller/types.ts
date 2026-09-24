@@ -75,8 +75,8 @@ export type Field<T> = ReadSignal<T> & {
  * for inference via `CtrlProps<C>` / `CtrlApi<C>`.
  */
 export type ControllerDef<Props, Api> = {
-  readonly __olas: 'controller'
-  readonly __types?: { props: Props; api: Api }
+  readonly [BRAND]: 'controller'
+  readonly [PHANTOM]?: { props: Props; api: Api }
 }
 
 /** Extract a controller's Props type. */
@@ -310,6 +310,7 @@ export type Ctx<TDeps = AmbientDeps> = {
   readonly deps: TDeps
 }
 
+import type { BRAND, PHANTOM } from '../brand'
 import type { DebugBus } from '../devtools'
 import type { DehydratedState } from '../query/types'
 

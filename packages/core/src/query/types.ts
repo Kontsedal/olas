@@ -1,3 +1,4 @@
+import type { BRAND } from '../brand'
 import type { ReadSignal } from '../signals/types'
 
 /** Lifecycle phase of an async resource. */
@@ -306,7 +307,7 @@ export type QueryDefaults = Pick<
  * Unbound operations reject/throw when more than one root has touched the query.
  */
 export type Query<Args extends unknown[], T> = {
-  readonly __olas: 'query'
+  readonly [BRAND]: 'query'
   /**
    * Mark a specific keyed entry stale + trigger refetch if any subscribers. The
    * returned promise resolves when the triggered refetch settles **or is discarded**
@@ -414,7 +415,7 @@ export type Query<Args extends unknown[], T> = {
 }
 
 /** Imperative query operations bound to one root, without a subscription. */
-export type QueryActions<Args extends unknown[], T> = Omit<Query<Args, T>, '__olas'>
+export type QueryActions<Args extends unknown[], T> = Omit<Query<Args, T>, typeof BRAND>
 
 /** What `bindQuery(ctx, query, ...)` returns: the query's `AsyncState<T>`. */
 export type QuerySubscription<T> = AsyncState<T>

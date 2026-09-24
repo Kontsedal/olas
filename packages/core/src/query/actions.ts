@@ -97,6 +97,17 @@ export function createInfiniteQueryActions<Args extends unknown[], TPage, TItem>
         ) ?? emptySnapshot()
       )
     },
+    write(...rest) {
+      const updater = rest[rest.length - 1] as (prev: TPage[] | undefined) => TPage[]
+      getClient()?.writeInfiniteData(query, rest.slice(0, -1) as unknown as Args, updater, origin)
+    },
+    replace(...rest) {
+      const pages = rest[rest.length - 1] as TPage[]
+      getClient()?.replaceInfiniteData(query, rest.slice(0, -1) as unknown as Args, pages, origin)
+    },
+    peek(...args) {
+      return getClient()?.peekInfiniteData(query, args)
+    },
     async prefetch(...args) {
       const client = getClient()
       if (!client)

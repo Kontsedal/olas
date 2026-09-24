@@ -23,18 +23,17 @@ Provided by `ctx.provide(scope, value)` on an ancestor, consumed by `ctx.inject(
 
 ```ts
 type Scope<T> = {
-  readonly __olas: 'scope'
-  readonly __id: symbol     // identity — matches across provide/inject
-  readonly name?: string    // for error messages only
+  readonly [BRAND]: 'scope'   // symbol key, not exported — see decisions/brand-markers-not-classes.md
+  readonly name?: string      // for error messages only
   readonly default?: T
   readonly hasDefault: boolean
-  readonly __t?: T          // phantom — pins T through type inference
+  readonly [PHANTOM]?: T      // phantom — pins T through type inference
 }
 
 function defineScope<T>(options?: { default?: T; name?: string }): Scope<T>
 ```
 
-`defineScope` mints a fresh symbol each call, so two `defineScope<X>()` invocations with identical options are still distinct. Identity is what `provide` and `inject` match on.
+`defineScope` returns a fresh object each call, so two `defineScope<X>()` invocations with identical options are still distinct. The object's identity is what `provide` and `inject` match on.
 
 `hasDefault` is a separate flag so we can distinguish "no default was passed" from "default: undefined was passed". Both produce `scope.default === undefined`, but only the second hits the default branch in `inject`.
 
@@ -42,8 +41,8 @@ function defineScope<T>(options?: { default?: T; name?: string }): Scope<T>
 
 `ctx.inject(scope)` walks the parent chain starting from the calling instance:
 
-1. Read `node.scopes` (a `Map<symbol, unknown> | null`).
-2. If the map has the scope's id, return its value.
+1. Read `node.scopes` (a `Map<Scope<unknown>, unknown> | null`, keyed on the scope object).
+2. If the map has the scope, return its value.
 3. Otherwise, set `node = node.parent` and repeat.
 4. If no ancestor has it: if `scope.hasDefault`, return `scope.default`. Otherwise, throw a `[olas] ctx.inject(): no provider for scope '<name>'` error synchronously during construction.
 

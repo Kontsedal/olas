@@ -302,3 +302,69 @@ describe('infinite createQuery — keepDataWhileDisabled', () => {
     root.dispose()
   })
 })
+
+describe('InfiniteQuery peek / write / replace — parity with Query', () => {
+  const define = (id: string, fetch: ReturnType<typeof makeFixture>['fetch']) =>
+    defineInfiniteQuery({
+      id,
+      key: () => ['chat'],
+      fetcher: fetch,
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+      itemsOf: (page: Page) => page.items,
+    })
+
+  test('peek reads loaded pages without creating an entry', async () => {
+    const fx = makeFixture()
+    const q = define('infinite-parity/peek', fx.fetch)
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const bound = root.bindQuery(q)
+    expect(bound.peek()).toBeUndefined() // first page still in flight
+    await vi.waitFor(() => expect(root.api.chat.status.value).toBe('success'))
+    expect(bound.peek()).toEqual([fx.pages[0]])
+    root.dispose()
+  })
+
+  test('write patches the pages canonically: no pending mutation, fetch left alone', async () => {
+    const fx = makeFixture()
+    const q = define('infinite-parity/write', fx.fetch)
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.status.value).toBe('success'))
+    const bound = root.bindQuery(q)
+    bound.write((pages) =>
+      (pages ?? []).map((p, i) => (i === 0 ? { ...p, items: [...p.items, 'z'] } : p)),
+    )
+    expect(root.api.chat.flat.value).toEqual(['a', 'b', 'z'])
+    expect(root.api.chat.hasPendingMutations.value).toBe(false)
+    root.dispose()
+  })
+
+  test('replace supersedes the in-flight fetch', async () => {
+    let release: (p: Page) => void = () => {}
+    const q = defineInfiniteQuery({
+      id: 'infinite-parity/replace',
+      key: () => ['chat'],
+      fetcher: () =>
+        new Promise<Page>((resolve) => {
+          release = resolve
+        }),
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+      itemsOf: (page: Page) => page.items,
+    })
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.chat.isFetching.value).toBe(true)
+    root.bindQuery(q).replace([{ items: ['server'], next: null, prev: null }])
+    expect(root.api.chat.isFetching.value).toBe(false)
+    expect(root.api.chat.flat.value).toEqual(['server'])
+    // The superseded response lands too late to overwrite the replacement.
+    release({ items: ['stale'], next: null, prev: null })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.api.chat.flat.value).toEqual(['server'])
+    root.dispose()
+  })
+})

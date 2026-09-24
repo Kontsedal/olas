@@ -1,3 +1,4 @@
+import { BRAND } from '../brand'
 import { ctxInternals } from '../controller/internals'
 import type { Ctx } from '../controller/types'
 import type { BindQueryOptions } from './client'
@@ -54,7 +55,7 @@ export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
   const internals = ctxInternals(ctx, 'createQuery')
   internals.assertLive('createQuery')
   const client = internals.requireClient('createQuery')
-  const brand = (query as { __olas?: string }).__olas
+  const brand = (query as { [BRAND]?: string })[BRAND]
   const handle =
     brand === 'infiniteQuery'
       ? createInfiniteUse(client, query as InfiniteQuery<unknown[], unknown, unknown>, keyOrOptions)

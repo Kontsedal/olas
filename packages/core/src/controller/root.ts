@@ -1,3 +1,4 @@
+import { INTERNAL } from '../brand'
 import { DevtoolsEmitter } from '../devtools'
 import { scheduleExpiry } from '../expiry-timer'
 import { PluginSet } from '../plugin/host'
@@ -32,7 +33,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
   // `QueryClient` as a TYPE only; `query/engine.ts` is the single value
   // importer, which is what keeps the cache engine out of a query-free bundle.
   const queryClient =
-    options.queries?.__create({
+    options.queries?.[INTERNAL].create({
       onError: options.onError,
       devtools,
       deps,
@@ -51,7 +52,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     devtools,
     onError: options.onError,
     queryClient,
-    queryDefaults: options.queries?.__options.defaults ?? {},
+    queryDefaults: options.queries?.[INTERNAL].options.defaults ?? {},
     scopesVersion: { value: 0 },
   }
 

@@ -1,3 +1,4 @@
+import { BRAND } from '../brand'
 import type { ControllerDef, Ctx } from './types'
 
 type InternalControllerDef<Props, Api> = ControllerDef<Props, Api> & {
@@ -30,7 +31,7 @@ export function defineController<Props = void, Api = unknown>(
   options?: DefineControllerOptions,
 ): ControllerDef<Props, Api> {
   const def: InternalControllerDef<Props, Api> = {
-    __olas: 'controller',
+    [BRAND]: 'controller',
     __factory: factory,
     ...(options?.name !== undefined ? { __name: options.name } : {}),
   } as InternalControllerDef<Props, Api>

@@ -10,9 +10,17 @@ describe('defineScope', () => {
   test('two scopes are distinct even when shaped identically', () => {
     const a = defineScope<string>()
     const b = defineScope<string>()
-    expect(a.__olas).toBe('scope')
-    expect(b.__olas).toBe('scope')
-    expect(a.__id).not.toBe(b.__id)
+    const brand = Symbol.for('olas.brand')
+    expect((a as unknown as Record<symbol, unknown>)[brand]).toBe('scope')
+    expect(a).not.toBe(b)
+    // The brand is a symbol key: nothing internal shows up in the object's keys.
+    expect(Object.keys(a)).toEqual(['hasDefault'])
+    // Distinct in use too: providing one does not satisfy the other.
+    const def = defineController((ctx) => {
+      ctx.provide(a, 'from-a')
+      return { a: ctx.inject(a), b: ctx.inject(b) }
+    })
+    expect(() => createRoot(def, { queries: queryEngine(), ...noDeps })).toThrow()
   })
 
   test('hasDefault flag distinguishes "no default" from "default: undefined"', () => {

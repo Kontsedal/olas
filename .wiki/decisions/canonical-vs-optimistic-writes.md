@@ -7,13 +7,14 @@ covers:
   - packages/core/src/query/client.ts:1370-1445
   - packages/core/src/query/actions.ts:36-52
   - packages/core/src/query/entry.ts:487-525
+  - packages/core/src/query/infinite.ts:75-110
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: ../pitfalls/no-invalidator-still-refetches.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-09-22
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -81,6 +82,10 @@ question — "is this write the whole record", which nothing inside the entry ca
 ## Why `write` still creates a missing entry
 
 `setEntryData` (the plugin path) drops silently when no entry exists; `write` binds one, exactly as `setData` does. The reason is symmetry: `write` is `setData` minus the snapshot, and diverging on entry creation would make it a second, subtly different write. Callers that must not patch an absent key have `peek(...)` as the guard — and a merge over `undefined` is usually the shape that needs it.
+
+## Infinite queries have the same three doors
+
+`InfiniteQuery` gained `peek`, `write` and `replace` in 1.0 (`packages/core/src/query/infinite.ts`, `client.ts:1572-1632`). The rules carry over unchanged: `write` patches the pages and leaves an in-flight fetch alone, and `replace` takes whole pages and cancels it. `peek` returns `undefined` for a missing entry or no loaded page. Both writes go through `InfiniteEntry.setData(..., { track: false })`, which keeps `pageParams` length-aligned with the pages by trimming or padding with the last param. Pinned by the parity tests in `packages/core/tests/infinite.test.ts`.
 
 ## Consequences to preserve
 

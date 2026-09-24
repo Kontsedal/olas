@@ -52,7 +52,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 | `local.ts` | `LocalCache<T>` wrapper + `createLocalCache(fetcher, options)`. Backs `createCache`. |
 | `keys.ts` | `stableHash(args)` — deterministic JSON-based hashing. Sorted object keys. Handles `Date` and `undefined`. Throws on functions / symbols. |
 | `client.ts` | `QueryClient`, `ClientEntry<T>`, `InfiniteClientEntry`. Per-root entry registry, gcTime, the refetch-interval chain (`resolveRefetchInterval` + `armIntervalTick`, `client.ts:30-82`), `mutationsInflight$`, dehydrate/hydrate/waitForIdle. |
-| `define.ts` | `defineQuery`, `defineInfiniteQuery`. Module-scoped values branded `__olas`. Carry a `__clients: Set<QueryClient>` for multi-root operation. |
+| `define.ts` | `defineQuery`, `defineInfiniteQuery`. Module-scoped values branded under core's `BRAND` symbol. Carry a `__clients: Set<QueryClient>` for multi-root operation. |
 | `use.ts` | `createUse` and `createInfiniteUse`. Build a `SubscriptionImpl` that swaps entries reactively on key change. |
 | `mutation.ts` | `MutationImpl` — three concurrency modes, abort-race, snapshot rollback. |
 | `infinite.ts` | `InfiniteEntry<TPage, TItem, PageParam>` — paginated variant. Owns `pages`, `pageParams`, `fetchNextPage`, `fetchPreviousPage`. A refetch (interval/invalidate/refetch) re-fetches ALL loaded pages via `runRefetchAll`, not just page one (T3.7). Not dehydrated for SSR (BACKLOG). |
@@ -64,7 +64,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 ```
 createQuery(ctx, query, () => [id])
    ↓
-createUse / createInfiniteUse           (dispatch on query.__olas brand)
+createUse / createInfiniteUse           (dispatch on the query's brand)
    ↓
 effect tracks keyFn + enabledFn
    ↓

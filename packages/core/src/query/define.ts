@@ -1,3 +1,4 @@
+import { BRAND } from '../brand'
 import { createInfiniteQueryActions, createQueryActions, singleClient } from './actions'
 import type { QueryClient } from './client'
 import type { InfiniteQuery, InfiniteQuerySpec } from './infinite'
@@ -22,7 +23,7 @@ export function defineQuery<Args extends unknown[], T>(spec: QuerySpec<Args, T>)
   assertId(spec.id, 'defineQuery')
   const clients = new Set<QueryClient>()
   const query = {
-    __olas: 'query' as const,
+    [BRAND]: 'query' as const,
     __spec: spec,
     __id: spec.id,
     __clients: clients,
@@ -45,7 +46,7 @@ export function defineInfiniteQuery<Args extends unknown[], PageParam, TPage, TI
   assertId(spec.id, 'defineInfiniteQuery')
   const clients = new Set<QueryClient>()
   const query = {
-    __olas: 'infiniteQuery' as const,
+    [BRAND]: 'infiniteQuery' as const,
     __spec: spec,
     __id: spec.id,
     __clients: clients,

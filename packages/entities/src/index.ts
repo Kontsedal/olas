@@ -10,6 +10,12 @@ import {
   signal,
 } from '@kontsedal/olas-core'
 
+// Core's brand keys. `Symbol.for`, so these are the same runtime symbols core
+// uses; core does not export them, and a symbol key keeps them out of
+// autocomplete and `Object.keys`.
+const BRAND: unique symbol = Symbol.for('olas.brand')
+declare const PHANTOM: unique symbol
+
 /**
  * Module-scoped descriptor for an entity type. Define one per entity class
  * (`Post`, `User`, `Comment`), then pass the resulting handles to
@@ -20,12 +26,11 @@ import {
  * to walk query results (testing every reachable subtree value) and to look
  * up entities in the store. Falsy returns are treated as "not an entity."
  *
- * The `__olas: 'entity'` brand and `__t` phantom-type let
- * `entities.signal(Post, id)` return `ReadSignal<Post | undefined>` rather
- * than a type-erased `unknown`.
+ * The phantom type slot lets `entities.signal(Post, id)` return
+ * `ReadSignal<Post | undefined>` rather than a type-erased `unknown`.
  */
 export type EntityDef<T> = {
-  readonly __olas: 'entity'
+  readonly [BRAND]: 'entity'
   readonly name: string
   readonly idOf: (value: unknown) => string | null | undefined
   /**
@@ -67,7 +72,7 @@ export type EntityDef<T> = {
    * assignable to `EntityDef<unknown>` — the user passes `[Post, User]` to
    * `entitiesPlugin({ entities })`, and the array's element type widens cleanly.
    */
-  readonly __t?: T
+  readonly [PHANTOM]?: T
 }
 
 /**
@@ -100,7 +105,7 @@ export function defineEntity<T>(opts: {
   maxSlots?: number
 }): EntityDef<T> {
   return {
-    __olas: 'entity',
+    [BRAND]: 'entity',
     name: opts.name,
     // Type-erase: the plugin calls idOf on arbitrary subtree values during
     // the walk, so the runtime contract is `(unknown) => string | null`.

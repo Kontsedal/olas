@@ -47,7 +47,7 @@ const settle = async () => {
 
 describe('defineEntity', () => {
   test('returns a branded handle with the configured name + idOf', () => {
-    expect(Post.__olas).toBe('entity')
+    expect((Post as unknown as Record<symbol, unknown>)[Symbol.for('olas.brand')]).toBe('entity')
     expect(Post.name).toBe('Post')
     expect(Post.idOf({ id: 'p1', title: 'X', likes: 0 })).toBe('p1')
     expect(Post.idOf({ id: 'u1', name: 'Alice' })).toBe(null)

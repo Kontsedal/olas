@@ -73,10 +73,10 @@ Read-only getter on `ctx`. Returns the merged deps object (parent's deps + any o
 
 ## `createQuery` overload dispatch
 
-`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on `query.__olas`:
+`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on the query's brand:
 
 ```ts
-const brand = (query as { __olas?: string }).__olas
+const brand = (query as { [BRAND]?: string })[BRAND]
 if (brand === 'infiniteQuery') return createInfiniteUse(...)
 return createUse(...)
 ```

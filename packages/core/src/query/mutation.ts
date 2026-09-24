@@ -1,3 +1,4 @@
+import { BRAND } from '../brand'
 import type { AmbientDeps } from '../controller/types'
 import { __runWithCause, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
@@ -152,24 +153,20 @@ export type MutationHooks<V, R> = Pick<
   'onMutate' | 'onSuccess' | 'onError' | 'onSettled' | 'detached'
 >
 
-declare const MUTATION_BRAND: unique symbol
-
 /**
  * A module-scope mutation, returned by `defineMutation(...)`. Run it from a
  * controller with `createMutation(ctx, def, hooks?)`.
  */
 export type MutationDef<V, R> = MutationDefinition<V, R> & {
-  readonly [MUTATION_BRAND]: true
+  readonly [BRAND]: 'mutation'
 }
-
-const MUTATION_DEF = Symbol.for('olas.mutationDef')
 
 /** True for a value returned by `defineMutation`. Internal. */
 export function isMutationDef(value: unknown): value is MutationDef<unknown, unknown> {
   return (
     typeof value === 'object' &&
     value !== null &&
-    (value as Record<symbol, unknown>)[MUTATION_DEF] === true
+    (value as Record<symbol, unknown>)[BRAND] === 'mutation'
   )
 }
 
@@ -202,7 +199,7 @@ export function defineMutation<V, R>(definition: MutationDefinition<V, R>): Muta
   const def = { ...definition } as MutationDef<V, R>
   // Non-enumerable, so spreading a definition into an inline spec does not
   // carry the brand along with it.
-  Object.defineProperty(def, MUTATION_DEF, { value: true, enumerable: false })
+  Object.defineProperty(def, BRAND, { value: 'mutation', enumerable: false })
   registerMutationById(definition.id, {
     id: definition.id,
     definition: def as unknown as MutationDefinition<unknown, unknown>,

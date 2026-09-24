@@ -1,3 +1,4 @@
+import type { BRAND } from '../brand'
 import { scheduleExpiry } from '../expiry-timer'
 import { batch, computed, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
@@ -74,12 +75,30 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
  * with paginated `setData` semantics.
  */
 export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
-  readonly __olas: 'infiniteQuery'
+  readonly [BRAND]: 'infiniteQuery'
   /** Like `Query.invalidate`; resolves when the triggered refetch (all loaded pages) settles. */
   invalidate(...args: Args): Promise<void>
   /** Like `Query.invalidateAll`; resolves when every entry's refetch settles. */
   invalidateAll(): Promise<void>
   setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot
+  /**
+   * Like `Query.write`: a canonical patch of the loaded pages. No snapshot,
+   * no `hasPendingMutations`, and a fetch already in flight is left alone.
+   * If the updater changes the page count, `pageParams` is trimmed or padded
+   * with the last param to stay aligned, as with `setData`.
+   */
+  write(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): void
+  /**
+   * Like `Query.replace`: the pages ARE the record now, so a fetch already in
+   * flight for the key is cancelled. `pageParams` is aligned as with `write`;
+   * refetch when the new pages need fresh params.
+   */
+  replace(...args: [...Args, pages: TPage[]]): void
+  /**
+   * Like `Query.peek`: the loaded pages, read without creating an entry or
+   * subscribing. `undefined` when no entry exists or no page has loaded.
+   */
+  peek(...args: Args): TPage[] | undefined
   /** Cancel the in-flight fetch (initial/refetch or paging) for a key. See
    *  `Query.cancel` (spec §5, §6.4). */
   cancel(...args: Args): void
@@ -91,7 +110,7 @@ export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
 /** Imperative paginated-query operations bound to one root. */
 export type InfiniteQueryActions<Args extends unknown[], TPage, TItem> = Omit<
   InfiniteQuery<Args, TPage, TItem>,
-  '__olas'
+  typeof BRAND
 >
 
 /**
