@@ -31,7 +31,7 @@ usePersisted(ctx, 'app.theme', theme)   // server: stays 'auto'. client: 'dark',
 
 ```tsx
 // App.tsx — server emits "Auto", client's first pass renders "Dark"
-<span>{use(api.theme)}</span>
+<span>{useValue(api.theme)}</span>
 ```
 
 That is a hydration mismatch. React does not patch it up. It discards the server's DOM for that subtree and re-renders on the client, which is the whole cost the server render was paying to avoid. It only happens for a **returning** visitor, so it survives every first-visit test and every fresh-profile manual check.
@@ -46,7 +46,7 @@ Do not change what the controller does. The controller is right — the stored v
 
 ```tsx
 const hydrated = useHydrated()
-const theme = hydrated ? use(api.theme) : 'auto'
+const theme = hydrated ? useValue(api.theme) : 'auto'
 
 function useHydrated(): boolean {
   // React uses the third argument for the server render AND for the

@@ -591,7 +591,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.api.read.promise()
+    await root.api.read.firstValue()
     const settled = root.api.save.run().catch((e: unknown) => e)
     expect(root.api.read.data.value).toBe('written-value')
 
@@ -634,7 +634,7 @@ describe('dispose — what a torn-down mutation does with a write', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.api.read.promise()
+    await root.api.read.firstValue()
     const settled = root.api.save.run().catch((e: unknown) => e)
     expect(root.api.read.data.value).toBe('written-value')
 
@@ -667,7 +667,7 @@ describe('detached mutations (§6.5)', () => {
       }),
     }))
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
-    await root.api.read.promise()
+    await root.api.read.firstValue()
     const run = root.api.activate.run()
 
     root.api.activate.dispose() // the modal closes mid-activation

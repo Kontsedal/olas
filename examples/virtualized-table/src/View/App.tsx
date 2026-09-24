@@ -3,7 +3,7 @@
 // table controller, not React state.
 
 import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
-import { OlasProvider, use } from '@kontsedal/olas-react'
+import { OlasProvider, useValue } from '@kontsedal/olas-react'
 import { Layers, Sparkles, X } from 'lucide-react'
 import type { ReactElement } from 'react'
 import type { Status } from '../api'
@@ -51,8 +51,8 @@ export function App({ root }: { root: AppRoot }): ReactElement {
 
 function CountsAndFilter(): ReactElement {
   const api = useApi()
-  const visible = use(api.table.rowCount)
-  const filterValue = use(api.table.filter)
+  const visible = useValue(api.table.rowCount)
+  const filterValue = useValue(api.table.filter)
   return (
     <div className="flex items-center gap-3">
       <span className="rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-elev) px-2 py-1 text-[length:var(--text-meta)] font-mono tabular-nums text-(--color-fg-mute)">
@@ -71,8 +71,8 @@ function CountsAndFilter(): ReactElement {
 
 function BulkBar(): ReactElement | null {
   const api = useApi()
-  const size = use(api.table.selection.size)
-  const isPending = use(api.table.updateStatus.isPending)
+  const size = useValue(api.table.selection.size)
+  const isPending = useValue(api.table.updateStatus.isPending)
   if (size === 0) return null
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-surface)] border border-(--color-accent) bg-(--color-accent-soft) px-3 py-2 text-[length:var(--text-body)]">

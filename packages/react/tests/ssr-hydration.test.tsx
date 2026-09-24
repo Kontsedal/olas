@@ -26,7 +26,7 @@ import type { ReactElement } from 'react'
 import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { beforeEach, describe, expect, test } from 'vitest'
-import { OlasProvider, use, useRoot } from '../src'
+import { OlasProvider, useRoot, useValue } from '../src'
 
 const ARTICLES = ['Rivers', 'Tides', 'Wakes']
 
@@ -67,8 +67,8 @@ const pendingDef = defineController((ctx: Ctx) => ({
 
 function Feed(): ReactElement {
   const api = useRoot<AppApi>()
-  const data = use(api.articles.data)
-  const isLoading = use(api.articles.isLoading)
+  const data = useValue(api.articles.data)
+  const isLoading = useValue(api.articles.isLoading)
   return (
     <ul data-testid="feed">
       {isLoading && <li>loading…</li>}

@@ -5,6 +5,7 @@ import {
   type Field,
   type FieldTransform,
   type Mutation,
+  type MutationRun,
   type ReadSignal,
 } from '@kontsedal/olas-core'
 import { type ChangeEvent, useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
@@ -24,8 +25,13 @@ function subscribeOnChange<T>(s: ReadSignal<T>, onChange: () => void): () => voi
   return s.subscribeChanges(() => onChange())
 }
 
+const isAbortError = (err: unknown): boolean =>
+  typeof err === 'object' && err !== null && (err as { name?: unknown }).name === 'AbortError'
+
 /**
- * Subscribe to a single read-signal and return its current value.
+ * Subscribe to a single read-signal and return its current value. Any
+ * `ReadSignal` works: a `signal`, a `computed`, a `Field`, a `Form` or a
+ * `FieldArray`.
  *
  * Built on `useSyncExternalStore` — concurrent-safe, no tearing. Use this
  * when a component depends on one signal; for `Field<T>` and `AsyncState<T>`,
@@ -38,20 +44,20 @@ function subscribeOnChange<T>(s: ReadSignal<T>, onChange: () => void): () => voi
  * changes:
  *
  * ```ts
- * const name = use(userSignal, { select: u => u.name })
- * const tags = use(postSignal, {
+ * const name = useValue(userSignal, { select: u => u.name })
+ * const tags = useValue(postSignal, {
  *   select: p => p.tags,
  *   isEqual: (a, b) => a.length === b.length && a.every((x, i) => x === b[i]),
  * })
  * ```
  */
-export function use<T>(signal: ReadSignal<T>): T
-export function use<T, U>(
+export function useValue<T>(signal: ReadSignal<T>): T
+export function useValue<T, U>(
   signal: ReadSignal<T>,
   options: { select: (value: T) => U; isEqual?: (a: U, b: U) => boolean },
 ): U
-export function use<T>(signal: ReadSignal<T>, options: { isEqual: (a: T, b: T) => boolean }): T
-export function use<T, U = T>(
+export function useValue<T>(signal: ReadSignal<T>, options: { isEqual: (a: T, b: T) => boolean }): T
+export function useValue<T, U = T>(
   signal: ReadSignal<T>,
   options?: { select?: (value: T) => U; isEqual?: (a: U, b: U) => boolean },
 ): T | U {
@@ -102,14 +108,36 @@ export function use<T, U = T>(
 }
 
 /**
- * Subscribe to all eight signals on an `AsyncState<T>` with a single
+ * What `useQuery` returns: every `AsyncState` signal read as a plain value,
+ * plus its actions.
+ */
+export type UseQueryResult<T> = {
+  data: T | undefined
+  error: unknown | undefined
+  status: AsyncStatus
+  isLoading: boolean
+  isFetching: boolean
+  isStale: boolean
+  isPaused: boolean
+  lastUpdatedAt: number | undefined
+  hasPendingMutations: boolean
+  refetch: () => Promise<T>
+  reset: () => void
+  cancel: () => void
+}
+
+/** What `useSuspenseQuery` (and `useQuery(sub, { suspense: true })`) returns. */
+export type UseSuspenseQueryResult<T> = Omit<UseQueryResult<T>, 'data'> & { data: T }
+
+/**
+ * Subscribe to every signal on an `AsyncState<T>` with a single
  * useSyncExternalStore call. Returns the plain values plus the action
  * functions. See spec §20.10.
  *
  * Pass `{ suspense: true }` to opt into React 18/19 Suspense semantics:
  *
  *  - While `status === 'pending'` (no data yet) the hook **throws**
- *    `subscription.promise()` — caught by the nearest `<Suspense>` boundary.
+ *    `subscription.firstValue()` — caught by the nearest `<Suspense>` boundary.
  *  - When `status === 'error'` AND there's no data yet, the hook **throws**
  *    `subscription.error` — caught by the nearest `<ErrorBoundary>` (React
  *    itself doesn't ship one; use `react-error-boundary` or your own). A
@@ -118,52 +146,22 @@ export function use<T, U = T>(
  *    `T` (never `undefined`).
  *  - A DISABLED (`enabled: () => false`) query has no data and never fetches,
  *    so it suspends indefinitely — don't combine `suspense` with a disabled
- *    query (see `BACKLOG.md`).
+ *    query.
  *
  *  Refetches AFTER a first success do NOT re-suspend — only the initial load
  *  throws. `reset()` does NOT re-suspend either: it clears `error`/`status` but
  *  keeps `data`, so `status` returns to `'success'` (spec §5). There is no
  *  built-in way to force re-suspension short of a fresh subscription.
  */
-export function useQuery<T>(subscription: AsyncState<T>): {
-  data: T | undefined
-  error: unknown | undefined
-  status: AsyncStatus
-  isLoading: boolean
-  isFetching: boolean
-  isStale: boolean
-  lastUpdatedAt: number | undefined
-  hasPendingMutations: boolean
-  refetch: () => Promise<T>
-}
+export function useQuery<T>(subscription: AsyncState<T>): UseQueryResult<T>
 export function useQuery<T>(
   subscription: AsyncState<T>,
   options: { suspense: true },
-): {
-  data: T
-  error: unknown | undefined
-  status: AsyncStatus
-  isLoading: boolean
-  isFetching: boolean
-  isStale: boolean
-  lastUpdatedAt: number | undefined
-  hasPendingMutations: boolean
-  refetch: () => Promise<T>
-}
+): UseSuspenseQueryResult<T>
 export function useQuery<T>(
   subscription: AsyncState<T>,
   options?: { suspense?: boolean },
-): {
-  data: T | undefined
-  error: unknown | undefined
-  status: AsyncStatus
-  isLoading: boolean
-  isFetching: boolean
-  isStale: boolean
-  lastUpdatedAt: number | undefined
-  hasPendingMutations: boolean
-  refetch: () => Promise<T>
-} {
+): UseQueryResult<T> {
   // A memoized `computed` snapshot: reading each signal's `.value` inside makes
   // the computed re-evaluate (and mint a NEW object) exactly when any of them
   // changes, and return the SAME object when nothing did. `getSnapshot` returns
@@ -179,6 +177,7 @@ export function useQuery<T>(
         isLoading: subscription.isLoading.value,
         isFetching: subscription.isFetching.value,
         isStale: subscription.isStale.value,
+        isPaused: subscription.isPaused.value,
         lastUpdatedAt: subscription.lastUpdatedAt.value,
         hasPendingMutations: subscription.hasPendingMutations.value,
       })),
@@ -202,15 +201,17 @@ export function useQuery<T>(
     }
     // No data and not errored → suspend (pending / idle / offline-parked); the
     // thrown promise resolves once data lands. NB: a DISABLED (idle) query stays
-    // suspended forever — see BACKLOG. Throwing a hard error for the idle case
-    // was tried (T4.7) but is indistinguishable from a query torn down during
-    // dispose, so it produced teardown false-positives.
-    throw subscription.promise()
+    // suspended forever. Throwing a hard error for the idle case was tried
+    // (T4.7) but is indistinguishable from a query torn down during dispose, so
+    // it produced teardown false-positives.
+    throw subscription.firstValue()
   }
 
   return {
     ...snap,
     refetch: subscription.refetch,
+    reset: subscription.reset,
+    cancel: subscription.cancel,
   }
 }
 
@@ -226,26 +227,12 @@ export function useQuery<T>(
  * Sugar over `useQuery(sub, { suspense: true })`; exists so call sites
  * read as `useSuspenseQuery(sub)` without an options bag.
  */
-export function useSuspenseQuery<T>(subscription: AsyncState<T>): {
-  data: T
-  error: unknown | undefined
-  status: AsyncStatus
-  isLoading: boolean
-  isFetching: boolean
-  isStale: boolean
-  lastUpdatedAt: number | undefined
-  hasPendingMutations: boolean
-  refetch: () => Promise<T>
-} {
+export function useSuspenseQuery<T>(subscription: AsyncState<T>): UseSuspenseQueryResult<T> {
   return useQuery(subscription, { suspense: true })
 }
 
-/**
- * Subscribe to all signals on a `Field<T>` with a single useSyncExternalStore
- * call. Returns the plain values plus the action methods so a binding to an
- * `<input>` is one destructure. See spec §20.10.
- */
-export function useField<T>(field: Field<T>): {
+/** What `useField` returns: the field's signals as plain values, plus its actions. */
+export type UseFieldResult<T> = {
   value: T
   errors: string[]
   isValid: boolean
@@ -253,6 +240,7 @@ export function useField<T>(field: Field<T>): {
   touched: boolean
   isValidating: boolean
   set: (value: T) => void
+  setAsInitial: (value: T) => void
   reset: () => void
   markTouched: () => void
   revalidate: () => Promise<boolean>
@@ -262,7 +250,14 @@ export function useField<T>(field: Field<T>): {
    * automatically on the next user write — same channel as `Field.setErrors`.
    */
   setErrors: (errors: ReadonlyArray<string>) => void
-} {
+}
+
+/**
+ * Subscribe to all signals on a `Field<T>` with a single useSyncExternalStore
+ * call. Returns the plain values plus the action methods so a binding to an
+ * `<input>` is one destructure. See spec §20.10.
+ */
+export function useField<T>(field: Field<T>): UseFieldResult<T> {
   // Memoized `computed` snapshot — see `useQuery` for why this replaces the
   // old version counter (T4.5). `field.value` reads `value$.value` (tracked).
   const snapshot = useMemo(
@@ -284,14 +279,28 @@ export function useField<T>(field: Field<T>): {
   const getSnapshot = useCallback(() => snapshot.value, [snapshot])
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-  return {
-    ...snap,
-    set: (next: T) => field.set(next),
-    reset: () => field.reset(),
-    markTouched: () => field.markTouched(),
-    revalidate: () => field.revalidate(),
-    setErrors: (errs: ReadonlyArray<string>) => field.setErrors(errs),
-  }
+  // Stable identities, so a memoized child that takes `set` doesn't re-render.
+  const actions = useMemo(
+    () => ({
+      set: (next: T) => field.set(next),
+      setAsInitial: (next: T) => field.setAsInitial(next),
+      reset: () => field.reset(),
+      markTouched: () => field.markTouched(),
+      revalidate: () => field.revalidate(),
+      setErrors: (errs: ReadonlyArray<string>) => field.setErrors(errs),
+    }),
+    [field],
+  )
+  return { ...snap, ...actions }
+}
+
+/** Props `useFieldInput` returns, ready to spread onto a native input. */
+export type UseFieldInputResult = {
+  value: string
+  onChange: (e: ChangeEvent<{ value: string }>) => void
+  onBlur: () => void
+  name: string | undefined
+  'aria-invalid': boolean | undefined
 }
 
 /**
@@ -326,33 +335,15 @@ export function useField<T>(field: Field<T>): {
 export function useFieldInput<T extends string>(
   field: Field<T>,
   options?: { name?: string },
-): {
-  value: string
-  onChange: (e: ChangeEvent<{ value: string }>) => void
-  onBlur: () => void
-  name: string | undefined
-  'aria-invalid': boolean | undefined
-}
+): UseFieldInputResult
 export function useFieldInput<T>(
   field: Field<T>,
   options: { transform: FieldTransform<T>; name?: string },
-): {
-  value: string
-  onChange: (e: ChangeEvent<{ value: string }>) => void
-  onBlur: () => void
-  name: string | undefined
-  'aria-invalid': boolean | undefined
-}
+): UseFieldInputResult
 export function useFieldInput<T>(
   field: Field<T>,
   options?: { transform?: FieldTransform<T>; name?: string },
-): {
-  value: string
-  onChange: (e: ChangeEvent<{ value: string }>) => void
-  onBlur: () => void
-  name: string | undefined
-  'aria-invalid': boolean | undefined
-} {
+): UseFieldInputResult {
   const transform = options?.transform
   // Keep the latest transform in a ref so the handlers memo keys on [field]
   // ONLY. The docstring shows an inline `transform={{ parse, format }}` literal,
@@ -410,41 +401,59 @@ export function useFieldInput<T>(
 }
 
 /**
- * Subscribe to all signals on a `Mutation<V, R>` with a single
- * useSyncExternalStore call. Returns the four observable values plus the
- * actions (`mutate` is a friendlier alias for `run`).
- *
- * `mutate(vars)` is the canonical way to trigger from JSX. It returns the
- * resolved Promise so callers can `await` or chain `.then`. Errors are
- * captured on `error` (no need to try/catch unless you specifically want
- * to). For tight latest-wins / serial concurrency semantics, the
- * underlying `Mutation` was already configured in the controller; the hook
- * is a pure subscription layer.
- *
- * `onSuccess` / `onError` / `onSettled` callbacks fire AFTER the run
- * resolves; they fire from the React layer, NOT the controller, so don't
- * use them for cache writes — put cache work on the mutation's spec
- * (`onSuccess`/`onError` there are the real lifecycle hooks).
+ * Callbacks `useMutation` runs after a run settles. They fire from the React
+ * layer, not the controller: put cache work on the mutation's own hooks.
+ * A run that was aborted (superseded, reset or disposed) fires none of them,
+ * as the mutation's own hooks don't.
  */
-export function useMutation<V, R>(
-  mutation: Mutation<V, R>,
-  callbacks?: {
-    onSuccess?: (data: R, variables: V) => void
-    onError?: (error: unknown, variables: V) => void
-    onSettled?: (data: R | undefined, error: unknown | undefined, variables: V) => void
-  },
-): {
+export type UseMutationCallbacks<V, R> = {
+  onSuccess?: (data: R, variables: V) => void
+  onError?: (error: unknown, variables: V) => void
+  onSettled?: (data: R | undefined, error: unknown | undefined, variables: V) => void
+}
+
+/** `useMutation`'s fire-and-forget trigger: `run`'s arguments, no promise. */
+export type MutateFn<V> = (...args: Parameters<MutationRun<V, unknown>>) => void
+
+/** What `useMutation` returns: the mutation's signals as plain values, plus its triggers. */
+export type UseMutationResult<V, R> = {
   data: R | undefined
   error: unknown | undefined
+  /** Outcome of the latest run. See `Mutation.status`. */
+  status: AsyncStatus
+  /** True while any run is in flight. */
   isPending: boolean
-  lastVariables: V | undefined
   isIdle: boolean
   isSuccess: boolean
   isError: boolean
-  mutate: (vars: V) => Promise<R>
-  mutateAsync: (vars: V) => Promise<R>
+  lastVariables: V | undefined
+  /**
+   * Start a run and return nothing — the call for an event handler. A failure
+   * lands on `error` / `status` and in `onError`; it never becomes an
+   * unhandled rejection.
+   */
+  mutate: MutateFn<V>
+  /** Start a run and return its promise. The caller owns the rejection. */
+  run: MutationRun<V, R>
   reset: () => void
-} {
+}
+
+/**
+ * Subscribe to all signals on a `Mutation<V, R>` with a single
+ * useSyncExternalStore call. Returns the observable values plus two triggers:
+ *
+ * - `mutate(vars)` for an event handler. It returns nothing, and a failure
+ *   surfaces on `error` / `status` and through `onError`.
+ * - `run(vars)` when the caller needs the result. It returns the run's promise,
+ *   which rejects on failure.
+ *
+ * The hook is a subscription layer: concurrency (`latest-wins`, `serial`, …)
+ * is configured on the mutation in the controller.
+ */
+export function useMutation<V, R>(
+  mutation: Mutation<V, R>,
+  callbacks?: UseMutationCallbacks<V, R>,
+): UseMutationResult<V, R> {
   const cbRef = useRef(callbacks)
   cbRef.current = callbacks
 
@@ -467,23 +476,36 @@ export function useMutation<V, R>(
   const getSnapshot = useCallback(() => snapshot.value, [snapshot])
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
 
-  const mutate = useCallback(
-    (vars: V): Promise<R> => {
-      const p = (mutation.run as (vars: V) => Promise<R>)(vars)
-      p.then(
+  const actions = useMemo(() => {
+    const run = (...args: unknown[]): Promise<R> => {
+      const vars = args[0] as V
+      // The returned promise is the derived one, so a caller that ignores a
+      // failed `run` sees an unhandled rejection rather than a silent drop.
+      return (mutation.run as (vars: V) => Promise<R>)(vars).then(
         (data) => {
           cbRef.current?.onSuccess?.(data, vars)
           cbRef.current?.onSettled?.(data, undefined, vars)
+          return data
         },
-        (err) => {
-          cbRef.current?.onError?.(err, vars)
-          cbRef.current?.onSettled?.(undefined, err, vars)
+        (err: unknown) => {
+          if (!isAbortError(err)) {
+            cbRef.current?.onError?.(err, vars)
+            cbRef.current?.onSettled?.(undefined, err, vars)
+          }
+          throw err
         },
       )
-      return p
-    },
-    [mutation],
-  )
+    }
+    const mutate = (...args: unknown[]): void => {
+      // The failure is already on `error` / `status` and in `onError`.
+      run(...args).catch(() => {})
+    }
+    return {
+      run: run as MutationRun<V, R>,
+      mutate: mutate as MutateFn<V>,
+      reset: () => mutation.reset(),
+    }
+  }, [mutation])
 
   // Derive from the core `status` signal, NOT from `data` — a `void` mutation
   // resolves `undefined`, so the old `data !== undefined` heuristic left
@@ -491,13 +513,12 @@ export function useMutation<V, R>(
   return {
     data: snap.data,
     error: snap.error,
+    status: snap.status,
     isPending: snap.isPending,
-    lastVariables: snap.lastVariables,
     isIdle: snap.status === 'idle',
     isSuccess: snap.status === 'success',
     isError: snap.status === 'error',
-    mutate,
-    mutateAsync: mutate,
-    reset: () => mutation.reset(),
+    lastVariables: snap.lastVariables,
+    ...actions,
   }
 }

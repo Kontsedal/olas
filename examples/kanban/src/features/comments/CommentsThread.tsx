@@ -1,4 +1,4 @@
-import { use, useRoot } from '@kontsedal/olas-react'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 import { Send } from 'lucide-react'
 import type { Comment } from '../../api'
 import type { AppApi } from '../../app.controller'
@@ -7,9 +7,9 @@ import { Avatar, Button } from '../../ui'
 
 export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
   const app = useRoot<AppApi>()
-  const visible = use(app.comments.visible)
-  const draft = use(app.comments.draft)
-  const isPending = use(app.comments.addComment.isPending)
+  const visible = useValue(app.comments.visible)
+  const draft = useValue(app.comments.draft)
+  const isPending = useValue(app.comments.addComment.isPending)
 
   const onSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
@@ -66,7 +66,7 @@ export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
  */
 function CommentRow({ comment }: { comment: Comment }) {
   const app = useRoot<AppApi>()
-  const author = use(app.entities.signal(UserEntity, comment.authorId))
+  const author = useValue(app.entities.signal(UserEntity, comment.authorId))
   return (
     <li className="olas-comment">
       <Avatar name={author?.name ?? 'Unknown'} hue={author?.hue} size="sm" />

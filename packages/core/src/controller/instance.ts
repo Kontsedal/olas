@@ -407,7 +407,7 @@ export class ControllerInstance {
             break
           case 'child':
             // Skip children explicitly suspended via attach.suspend() or
-            // collection suspendItem() — a whole-tree resume (KeepAlive) must
+            // collection suspendItem() — a whole-tree resume (SuspendOnUnmount) must
             // not wake them. They resume only via their own attach.resume() /
             // resumeItem(). (T2.6)
             if (entry.explicitlySuspended) break
@@ -561,9 +561,6 @@ export class ControllerInstance {
         self.entries.push({ kind: 'cleanup', dispose: () => e.dispose() })
         return e
       },
-
-      signal,
-      computed,
 
       provide<T>(scope: Scope<T>, value: T): void {
         if (self.scopes === null) self.scopes = new Map()

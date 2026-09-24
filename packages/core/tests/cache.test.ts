@@ -415,3 +415,27 @@ describe('ctx.cache — staleTime / isStale', () => {
     root.dispose()
   })
 })
+
+describe('LocalCache.cancel', () => {
+  test('aborts the in-flight fetch and keeps the previous data', async () => {
+    let n = 0
+    let seen: AbortSignal | undefined
+    const def = defineController((ctx) => ({
+      cache: createCache(ctx, ({ signal }) => {
+        n += 1
+        if (n === 1) return Promise.resolve('first')
+        seen = signal
+        return new Promise<string>(() => {}) // never settles on its own
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
+    await root.api.cache.firstValue()
+    void root.api.cache.refetch().catch(() => {})
+    expect(root.api.cache.isFetching.value).toBe(true)
+    root.api.cache.cancel()
+    expect(seen?.aborted).toBe(true)
+    expect(root.api.cache.isFetching.value).toBe(false)
+    expect(root.api.cache.data.value).toBe('first')
+    root.dispose()
+  })
+})

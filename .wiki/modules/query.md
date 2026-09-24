@@ -47,7 +47,7 @@ The largest module — owns async data, mutations, and SSR. Spec §5, §6, §7, 
 
 | File | Owns |
 |------|------|
-| `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QuerySpec`, `DefaultQueryOptions`, `QuerySubscription`, `UseOptions`, `DehydratedState`, `RetryPolicy`, `RetryDelay`, `RefetchInterval`, `NetworkMode`, `FetchCtx` |
+| `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QuerySpec`, `QueryDefaults`, `QuerySubscription`, `QuerySubscriptionOptions`, `DehydratedState`, `RetryPolicy`, `RetryDelay`, `RefetchInterval`, `NetworkMode`, `FetchCtx` |
 | `entry.ts` | `Entry<T>` — race-protected state machine for one cache key. Retry loop. Snapshot stack. Staleness timer. |
 | `local.ts` | `LocalCache<T>` wrapper + `createLocalCache(fetcher, options)`. Backs `createCache`. |
 | `keys.ts` | `stableHash(args)` — deterministic JSON-based hashing. Sorted object keys. Handles `Date` and `undefined`. Throws on functions / symbols. |

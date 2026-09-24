@@ -6,17 +6,17 @@
 // time gets per-row reactivity without allocating a controller per row
 // (which would churn hundreds of constructions per scroll-second).
 //
-// Selection ranges + bulk updates leverage `@kontsedal/olas-core`'s `selection`
+// Selection ranges + bulk updates leverage `@kontsedal/olas-core`'s `createSelection`
 // composable (SPEC §17.5) over the same row signals — no extra plumbing.
 
 import {
   type Ctx,
   computed,
   createMutation,
+  createSelection,
   defineController,
   type ReadSignal,
   type Signal,
-  selection,
   signal,
 } from '@kontsedal/olas-core'
 import type { Issue, Status } from '../api'
@@ -54,7 +54,7 @@ export const tableController = defineController(
       return out
     })
 
-    const sel = selection<string>()
+    const sel = createSelection<string>()
 
     // Single-row status update. Returns a Snapshot-shaped object from
     // `onMutate` so the framework's auto-rollback fires on non-abort errors

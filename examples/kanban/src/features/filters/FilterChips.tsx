@@ -3,7 +3,7 @@
  * board controller, renders chips, and toggles individual entries.
  */
 
-import { use, useQuery, useRoot } from '@kontsedal/olas-react'
+import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { X } from 'lucide-react'
 import type { Priority } from '../../api'
 import type { AppApi } from '../../app.controller'
@@ -14,9 +14,9 @@ const ALL_PRIORITIES: Priority[] = ['urgent', 'high', 'med', 'low']
 export function FilterChips() {
   const app = useRoot<AppApi>()
   const labels = useQuery(app.labels)
-  const selPri = use(app.board.selectedPriorities)
-  const selLab = use(app.board.selectedLabelIds)
-  const selAss = use(app.board.selectedAssigneeIds)
+  const selPri = useValue(app.board.selectedPriorities)
+  const selLab = useValue(app.board.selectedLabelIds)
+  const selAss = useValue(app.board.selectedAssigneeIds)
   const hasFilter = selPri.size > 0 || selLab.size > 0 || selAss.size > 0
 
   return (

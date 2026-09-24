@@ -78,7 +78,7 @@ type Ctx<TDeps = AmbientDeps> = {
 }
 ```
 
-`ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`. `<KeepAlive controller={...}>` in `@kontsedal/olas-react` consumes the `{ suspend, resume }` pair directly — no hand-rolled `isPaused` signal on the child. `suspend` and `resume` cascade through the attached sub-tree's `LifecycleEntry[]`, paused effects re-instantiate on resume, suspended cache subscriptions release their entry.
+`ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`. `<SuspendOnUnmount controller={...}>` in `@kontsedal/olas-react` consumes the `{ suspend, resume }` pair directly — no hand-rolled `isPaused` signal on the child. `suspend` and `resume` cascade through the attached sub-tree's `LifecycleEntry[]`, paused effects re-instantiate on resume, suspended cache subscriptions release their entry.
 
 ### Dynamic children: `session` / `collection` / `lazyChild` (SPEC §11.1, §16.5)
 

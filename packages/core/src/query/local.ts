@@ -91,7 +91,7 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   refetch = (): Promise<T> => this.entry.refetch()
   reset = (): void => this.entry.reset()
   firstValue = (): Promise<T> => this.entry.firstValue()
-  promise = (): Promise<T> => this.entry.firstValue()
+  cancel = (): void => this.entry.cancel()
   invalidate = (): Promise<void> =>
     // Resolves when the refetch settles; errors surface on the cache's `error`
     // signal (AsyncState), so the awaiter's promise resolves rather than rejects.

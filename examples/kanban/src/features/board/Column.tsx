@@ -8,7 +8,7 @@
  */
 
 import { useDroppable } from '@dnd-kit/core'
-import { use, useRoot } from '@kontsedal/olas-react'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 import { MoreHorizontal, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { Board as BoardData, Column as ColumnData } from '../../api'
@@ -28,7 +28,7 @@ export function Column({
   draggingCardId: string | null
 }) {
   const app = useRoot<AppApi>()
-  const matches = use(app.board.filterMatches)
+  const matches = useValue(app.board.filterMatches)
   const style = { ['--column-color' as string]: identityColor(column.hue) } as React.CSSProperties
   const [createOpen, setCreateOpen] = useState(false)
 

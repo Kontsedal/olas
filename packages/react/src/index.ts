@@ -5,15 +5,21 @@ export {
   useRoot,
 } from './context'
 export {
-  use,
+  type MutateFn,
+  type UseFieldInputResult,
+  type UseFieldResult,
+  type UseMutationCallbacks,
+  type UseMutationResult,
+  type UseQueryResult,
+  type UseSuspenseQueryResult,
   useField,
   useFieldInput,
   useMutation,
   useQuery,
   useSuspenseQuery,
+  useValue,
 } from './hooks'
 export {
-  KeepAlive,
   type SuspendableController,
   SuspendOnUnmount,
   useSuspendOnHidden,

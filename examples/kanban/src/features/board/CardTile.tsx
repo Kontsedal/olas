@@ -12,7 +12,7 @@
 
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { use, useRoot } from '@kontsedal/olas-react'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 import { CalendarDays, GripVertical, MessageSquare } from 'lucide-react'
 import type { CSSProperties, MouseEvent } from 'react'
 import type { Card as CardData, Priority } from '../../api'
@@ -39,8 +39,8 @@ export function CardTile({ card, ordered }: { card: CardData; ordered: readonly 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: card.id,
   })
-  const selectedIds = use(app.board.selection.selectedIds)
-  const selectedCardId = use(app.board.selectedCardId)
+  const selectedIds = useValue(app.board.selection.selectedIds)
+  const selectedCardId = useValue(app.board.selectedCardId)
   const isSelected = selectedIds.has(card.id)
   const isOpen = selectedCardId === card.id
 
@@ -145,7 +145,7 @@ export function CardTile({ card, ordered }: { card: CardData; ordered: readonly 
  */
 function LabelTag({ id }: { id: string }) {
   const app = useRoot<AppApi>()
-  const label = use(app.entities.signal(LabelEntity, id))
+  const label = useValue(app.entities.signal(LabelEntity, id))
   if (label === undefined) return null
   return <Tag hue={label.hue}>{label.name}</Tag>
 }
@@ -171,7 +171,7 @@ function AssigneeAvatars({ ids, max = 3 }: { ids: readonly string[]; max?: numbe
 
 function AssigneeAvatar({ id }: { id: string }) {
   const app = useRoot<AppApi>()
-  const user = use(app.entities.signal(UserEntity, id))
+  const user = useValue(app.entities.signal(UserEntity, id))
   if (user === undefined) return null
   return <Avatar name={user.name} hue={user.hue} size="sm" />
 }

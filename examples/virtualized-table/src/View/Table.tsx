@@ -2,7 +2,7 @@
 // and tells us which row indices are visible; we render that slice using the
 // per-row `<Row>` component which subscribes to its own row signal.
 
-import { use } from '@kontsedal/olas-react'
+import { useValue } from '@kontsedal/olas-react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { type ReactElement, useMemo, useRef } from 'react'
 import { Row } from './Row'
@@ -12,7 +12,7 @@ const ROW_HEIGHT = 38
 
 export function Table(): ReactElement {
   const api = useApi()
-  const visibleIds = use(api.table.visibleIds)
+  const visibleIds = useValue(api.table.visibleIds)
   const parentRef = useRef<HTMLDivElement | null>(null)
 
   // `useVirtualizer` allocates a small fixed-size window; row count can spike

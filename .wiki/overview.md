@@ -42,7 +42,7 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 | Package | Status | Purpose |
 |---------|--------|---------|
 | `@kontsedal/olas-core` | Implemented | Signals, controllers, queries, mutations, forms, scopes, SSR + streaming SSR, devtools event bus, `defineScope` |
-| `@kontsedal/olas-react` | Implemented | `OlasProvider`, `useRoot`, `useController`, `use`/`useQuery`/`useSuspenseQuery`/`useField`/`useFieldInput`/`useMutation`, `KeepAlive`, `useSuspendOnHidden`, `HydrationBoundary` + streaming hydrator |
+| `@kontsedal/olas-react` | Implemented | `OlasProvider`, `useRoot`, `useValue`/`useQuery`/`useSuspenseQuery`/`useField`/`useFieldInput`/`useMutation`, `SuspendOnUnmount`, `useSuspendOnHidden`, `HydrationBoundary` + streaming hydrator |
 | `@kontsedal/olas-zod` | Implemented | `zodValidator` + `zodValidatorAsync` + `rootOnlyZodValidator` + `formFromZod` (takes `{ extraValidators }`) |
 | `@kontsedal/olas-persist` | Implemented | `usePersisted` + `localStorageAdapter` + `indexedDbAdapter` |
 | `@kontsedal/olas-devtools` | Implemented | `<DevtoolsPanel>` + `<DevtoolsLauncher>` + `DevtoolsStore` over `root.__debug` |

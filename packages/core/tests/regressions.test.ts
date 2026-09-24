@@ -1074,7 +1074,7 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
 // ---------------------------------------------------------------------------
 // R-L2.6 (T2.6) — an explicitly-suspended child (attach.suspend / collection
 // suspendItem) must survive a whole-tree suspend()/resume() cascade (what
-// KeepAlive does). Before the fix the tree resume woke every child, so a
+// SuspendOnUnmount does). Before the fix the tree resume woke every child, so a
 // virtualized list's scrolled-out rows all resumed; and attach.resume() under
 // a still-suspended parent activated a child inside a frozen tree.
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import {
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode, useEffect, useLayoutEffect } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { OlasProvider, use, useField, useMutation, useQuery, useRoot } from '../src'
+import { OlasProvider, useField, useMutation, useQuery, useRoot, useValue } from '../src'
 
 afterEach(() => {
   cleanup()
@@ -28,7 +28,7 @@ describe('use(signal)', () => {
     const root = createRoot(counterDef, { queries: queryEngine(), deps: {} })
 
     function Counter() {
-      const value = use(root.api.count)
+      const value = useValue(root.api.count)
       return <span data-testid="count">{value}</span>
     }
 
@@ -146,7 +146,7 @@ describe('StrictMode safety', () => {
     expect(constructions).toHaveBeenCalledTimes(1)
 
     function View() {
-      const v = use(root.api.count)
+      const v = useValue(root.api.count)
       // Track that React does mount/unmount per StrictMode
       useEffect(() => {
         // intentional empty — just exercise StrictMode's double-effect path
@@ -252,7 +252,7 @@ describe('use(signal, { select, isEqual }) (R4.4)', () => {
   test('a changed selector re-derives even when the raw value is unchanged', () => {
     const arr = signal(['a', 'b', 'c'])
     function View({ index }: { index: number }) {
-      const item = use(arr, { select: (a) => a[index] })
+      const item = useValue(arr, { select: (a) => a[index] })
       return <span data-testid="item">{item}</span>
     }
     const { rerender } = render(<View index={0} />)
@@ -266,7 +266,7 @@ describe('use(signal, { select, isEqual }) (R4.4)', () => {
     const src = signal<{ tags: string[] }>({ tags: ['x', 'y'] })
     let renders = 0
     function View() {
-      const tags = use(src, {
+      const tags = useValue(src, {
         select: (s) => s.tags,
         isEqual: (a, b) => a.length === b.length && a.every((t, i) => t === b[i]),
       })

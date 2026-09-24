@@ -59,14 +59,6 @@ export function SuspendOnUnmount(props: {
 }
 
 /**
- * @deprecated Renamed to `SuspendOnUnmount` — the old name implied Vue-
- * style DOM preservation which this component does NOT do. Re-exported as
- * an alias so existing call sites keep working. Will be removed in a
- * future major.
- */
-export const KeepAlive = SuspendOnUnmount
-
-/**
  * Auto-suspend a controller when `document.visibilityState === 'hidden'`,
  * and resume on visible. See spec §20.10.
  *

@@ -1631,3 +1631,26 @@ Wiki: new `decisions/forms-are-read-signals.md`. `pitfalls/field-value-shape.md`
 Tests: the `.value.value` sites in core, zod and kanban were collapsed at their tsc error sites. New tests cover the node-as-signal surface, `FieldArray.set` / `setAsInitial`, `Form.setAsInitial` through nested nodes, and the `SubmitResult` narrowing. 978 tests, CI green.
 
 For the W6 docs pass: README, API.md (`:832`, `:905-915`), RECIPES, SPEC (`:846` cites the deleted pitfall) and the zod README still show `form.value.value`, `resetWithInitial` or `{ ok, data?, error? }`.
+
+## [2026-09-24 22:30] ingest | 1.0 W4b: React hooks renamed and completed; aliases removed
+
+**react (`packages/react/src/hooks.ts`).**
+- `use` is renamed `useValue`.
+- `useQuery` reads `isPaused` into its snapshot and returns `reset` and `cancel`.
+- `useMutation` returns `mutate` (void, swallows the rejection) and `run` (the derived promise, so an ignored failure is unhandled). An aborted run fires no callback.
+- `useField` and `useMutation` build their actions in a `useMemo` keyed on the target.
+- The result types are named and exported.
+- `KeepAlive` is removed.
+
+**core.**
+- `AsyncState` gains `cancel` and loses `promise`. `QuerySubscription<T>` is now `AsyncState<T>`, and the infinite subscription type's duplicate `cancel` is gone. `LocalCacheImpl.cancel` delegates to `Entry.cancel`.
+- `ctx.signal` and `ctx.computed` are removed from `Ctx` and from `instance.ts`.
+- `selection` is renamed `createSelection`, and `UseOptions` is renamed `QuerySubscriptionOptions`.
+
+**Codemod.** `scripts/codemods/react-hooks.ts` does the renames through the language service. One finding for W15's codemod package: `rename()` on an un-aliased import specifier renames the exported symbol, so every importer in the project changes in memory at once. The script must save every changed file, not only the file it is visiting. The first run saved one file per pass and silently dropped the rest.
+
+**Tests.**
+- New `packages/react/tests/hooks-surface.test.tsx` covers `mutate` failing into state with no unhandled rejection, `run` resolving and rejecting, the superseded run firing no callbacks, stable action identities, and `useQuery`'s `cancel`.
+- New `LocalCache.cancel` test in `packages/core/tests/cache.test.ts`.
+
+Wiki: `modules/react.md` (surface, subscription, a new `mutate`/`run` section), `flows/use-root.md` (the root handle, `useRoot` returns `root.api`, the `useController` section replaced), `overview.md`, `modules/query.md`, `modules/controller.md`, `index.md` and `pitfalls/persisted-state-breaks-hydration.md`.

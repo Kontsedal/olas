@@ -132,18 +132,18 @@ export type {
   QueryMeta,
   QuerySpec,
   QuerySubscription,
+  QuerySubscriptionOptions,
   RefetchInterval,
   RetryDelay,
   RetryPolicy,
   Snapshot,
-  UseOptions,
 } from './query/types'
 // Scopes — typed cross-tree data (§10.3)
 export type { Scope, ScopeOptions } from './scope'
 export { defineScope } from './scope'
 // Selection — multi-select with shift/meta-click semantics (§17.5)
 export type { Selection } from './selection'
-export { selection } from './selection'
+export { createSelection } from './selection'
 export type { Computed, ReadSignal, Signal } from './signals'
 export { batch, computed, effect, signal, untracked } from './signals'
 // Timing

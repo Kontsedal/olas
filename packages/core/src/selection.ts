@@ -39,7 +39,9 @@ export type Selection<T = unknown> = {
  *
  * Spec §16.5 / §17.5.
  */
-export function selection<T = unknown>(options?: { initial?: readonly string[] }): Selection<T> {
+export function createSelection<T = unknown>(options?: {
+  initial?: readonly string[]
+}): Selection<T> {
   const ids = signal<ReadonlySet<string>>(new Set(options?.initial))
   let anchor: string | null = options?.initial?.length
     ? (options.initial[options.initial.length - 1] ?? null)

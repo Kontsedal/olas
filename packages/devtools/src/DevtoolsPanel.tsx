@@ -1,5 +1,5 @@
 import type { DebugCacheEntry, DebugEvent, ReadSignal, Root } from '@kontsedal/olas-core'
-import { use } from '@kontsedal/olas-react'
+import { useValue } from '@kontsedal/olas-react'
 import { type ReactElement, useEffect, useMemo, useState } from 'react'
 import { type Diff, diffValues, hasChange } from './diff'
 import { formatPath, formatTime } from './format'
@@ -91,15 +91,15 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
     writeUrlHash(urlHashKey, { tab, filters })
   }, [urlHashKey, tab, filters])
 
-  const liveTree = use(store.tree$)
-  const liveCache = use(store.cache$)
-  const liveMutations = use(store.mutations$)
-  const liveFields = use(store.fields$)
-  const liveEvents = use(store.events$)
+  const liveTree = useValue(store.tree$)
+  const liveCache = useValue(store.cache$)
+  const liveMutations = useValue(store.mutations$)
+  const liveFields = useValue(store.fields$)
+  const liveEvents = useValue(store.events$)
   // The cache inspector is event-driven: the store seeds this from
   // `root.debug.queryEntries()` on attach and refreshes it whenever a cache
   // event lands — no polling interval (the old 800ms poll is gone).
-  const liveCacheState = use(store.cacheState$)
+  const liveCacheState = useValue(store.cacheState$)
 
   // When paused, snapshot once and keep showing that frozen state.
   const [frozen, setFrozen] = useState<{
@@ -440,7 +440,7 @@ function DebugVar({ name, value }: { name: string; value: unknown }): ReactEleme
 
 /** Subscribes to a signal via `use()` so the rendered value updates live. */
 function ReactiveValue({ signal }: { signal: SignalLike }): ReactElement {
-  const value = use(signal as unknown as ReadSignal<unknown>)
+  const value = useValue(signal as unknown as ReadSignal<unknown>)
   return (
     <span className="olas-devtools-var-value">
       <JsonView value={value} />

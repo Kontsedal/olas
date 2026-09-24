@@ -4,7 +4,7 @@ import type { ReadSignal } from '../signals/types'
 export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
 
 /**
- * The nine reactive signals + three actions a subscriber sees for any async
+ * The nine reactive signals + four actions a subscriber sees for any async
  * resource (`LocalCache<T>` or a `Query` subscription). Spec §20.4.
  *
  * - `data` / `error` / `status` — current outcome.
@@ -18,7 +18,10 @@ export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
  * Actions:
  * - `refetch()` — force a fetch; resolves with the result.
  * - `reset()` — clear `error` + `status` without re-fetching.
- * - `firstValue()` — resolves on the first success after subscribe.
+ * - `cancel()` — abort the in-flight fetch, if any.
+ * - `firstValue()` — resolves on the first success after subscribe. Resolves
+ *   at once when data is already there; rejects on the first failure. It is
+ *   the promise to hand to Suspense or React 19's `use(...)`.
  */
 export type AsyncState<T> = {
   data: ReadSignal<T | undefined>
@@ -41,14 +44,13 @@ export type AsyncState<T> = {
 
   refetch: () => Promise<T>
   reset: () => void
-  firstValue: () => Promise<T>
   /**
-   * Alias of `firstValue()` — clearer name for Suspense / `React.use(...)`
-   * use cases. Resolves with `data` on first success (short-circuits if
-   * already settled), rejects with `error` on the first failure. Use this
-   * to suspend a React tree until the query lands its first value.
+   * Abort the in-flight fetch, if any; `isFetching` drops and the data stays.
+   * The canonical optimistic update cancels first, so an older response
+   * cannot land over the optimistic value. See `Query.cancel`.
    */
-  promise: () => Promise<T>
+  cancel: () => void
+  firstValue: () => Promise<T>
 }
 
 /**
@@ -153,7 +155,7 @@ export type RetryDelay = number | ((attempt: number) => number)
  *   reschedules nothing. Drive the decision off the `data` argument.
  * - **Per entry, not per subscriber.** The timer belongs to the shared cache
  *   entry, so ten controllers on one key share one interval. That's why
- *   `UseOptions` has no `refetchInterval`: per-subscriber intervals need a
+ *   `QuerySubscriptionOptions` has no `refetchInterval`: per-subscriber intervals need a
  *   "whose interval wins" rule and every answer to that surprises somebody.
  *   Same reason it stays out of `DefaultQueryOptions` (§5.9) — a root-wide
  *   interval polls the entire app.
@@ -414,11 +416,8 @@ export type Query<Args extends unknown[], T> = {
 /** Imperative query operations bound to one root, without a subscription. */
 export type QueryActions<Args extends unknown[], T> = Omit<Query<Args, T>, '__olas'>
 
-/** What `ctx.use(query, ...)` returns — `AsyncState<T>` plus `cancel()`. */
-export type QuerySubscription<T> = AsyncState<T> & {
-  /** Cancel this subscription's in-flight fetch (if any). See `Query.cancel`. */
-  cancel: () => void
-}
+/** What `bindQuery(ctx, query, ...)` returns: the query's `AsyncState<T>`. */
+export type QuerySubscription<T> = AsyncState<T>
 
 /**
  * Options passed to `createQuery(ctx, query, opts)` to control the subscription
@@ -429,7 +428,7 @@ export type QuerySubscription<T> = AsyncState<T> & {
  * shape is accepted via a dedicated overload on `Ctx.use` rather than this
  * options bag — the overload threads `T → U` types through cleanly.
  */
-export type UseOptions<Args extends readonly unknown[]> = {
+export type QuerySubscriptionOptions<Args extends readonly unknown[]> = {
   key?: () => Args
   enabled?: () => boolean
   /**
@@ -450,6 +449,10 @@ export type UseOptions<Args extends readonly unknown[]> = {
  * field used by the `select` overload on `Ctx.use`. Not exported on the
  * public surface; consumers use the typed overload.
  */
-export type UseInternalOptions<Args extends readonly unknown[], T, U> = UseOptions<Args> & {
+export type SubscriptionInternalOptions<
+  Args extends readonly unknown[],
+  T,
+  U,
+> = QuerySubscriptionOptions<Args> & {
   select?: (data: T) => U
 }

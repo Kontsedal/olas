@@ -6,7 +6,7 @@
 // action.
 
 import type { ReadSignal } from '@kontsedal/olas-core'
-import { use } from '@kontsedal/olas-react'
+import { useValue } from '@kontsedal/olas-react'
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import type { Issue, Status } from '../api'
 import { useApi } from './useApi'
@@ -57,8 +57,8 @@ function RowInner({
   const renderCount = useRef(0)
   renderCount.current += 1
 
-  const issue = use(sig)
-  const selected = use(api.table.selection.isSelected(id))
+  const issue = useValue(sig)
+  const selected = useValue(api.table.selection.isSelected(id))
 
   return (
     <div
@@ -95,7 +95,7 @@ function RowInner({
         <StatusCell
           id={id}
           current={issue.status}
-          isPending={use(api.table.updateStatus.isPending)}
+          isPending={useValue(api.table.updateStatus.isPending)}
         />
       </FlashOnChange>
       <span className="font-mono text-[length:var(--text-chrome)] text-(--color-fg-mute) tabular-nums">

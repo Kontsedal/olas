@@ -1,5 +1,5 @@
 import type { Field, Form } from '@kontsedal/olas-core'
-import { use, useField, useRoot } from '@kontsedal/olas-react'
+import { useField, useRoot, useValue } from '@kontsedal/olas-react'
 import { Plus, Trash2 } from 'lucide-react'
 import type { AppApi } from '../../app.controller'
 import { IconButton } from '../../ui'
@@ -36,7 +36,7 @@ const keyOf = (item: object): string => {
 export function SubtasksRow() {
   const app = useRoot<AppApi>()
   const array = app.cardDetail.form.fields.subtasks
-  const items = use(array.items)
+  const items = useValue(array.items)
 
   return (
     <div className="olas-detail-row">

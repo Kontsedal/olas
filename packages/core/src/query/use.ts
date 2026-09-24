@@ -8,8 +8,8 @@ import type {
   Query,
   QuerySpec,
   QuerySubscription,
-  UseInternalOptions,
-  UseOptions,
+  QuerySubscriptionOptions,
+  SubscriptionInternalOptions,
 } from './types'
 
 type QueryInternal<Args extends unknown[], T> = Query<Args, T> & {
@@ -126,9 +126,6 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     return cur.entry.firstValue().then((v) => this.project(v))
   }
 
-  // Alias surfaced on `AsyncState` for Suspense / React 19 `use(...)`.
-  promise = (): Promise<U> => this.firstValue()
-
   private project(v: T): U {
     return this.select === undefined ? (v as unknown as U) : this.select(v)
   }
@@ -146,7 +143,7 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
 export function createUse<Args extends unknown[], T, U = T>(
   client: QueryClient,
   query: Query<Args, T>,
-  keyOrOptions?: (() => Args) | UseInternalOptions<Args, T, U>,
+  keyOrOptions?: (() => Args) | SubscriptionInternalOptions<Args, T, U>,
 ): {
   subscription: QuerySubscription<U>
   dispose: () => void
@@ -398,9 +395,6 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     return cur.entry.firstValue()
   }
 
-  // Alias of firstValue() for Suspense / React 19 `use(...)` ergonomics.
-  promise = (): Promise<TPage[]> => this.firstValue()
-
   fetchNextPage = (): Promise<void> => {
     const cur = this.current$.peek()
     if (!cur) return Promise.resolve()
@@ -417,7 +411,7 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
 export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
   client: QueryClient,
   query: InfiniteQuery<Args, TPage, TItem>,
-  keyOrOptions?: (() => Args) | UseOptions<Args>,
+  keyOrOptions?: (() => Args) | QuerySubscriptionOptions<Args>,
 ): {
   subscription: InfiniteQuerySubscription<TPage, TItem>
   dispose: () => void

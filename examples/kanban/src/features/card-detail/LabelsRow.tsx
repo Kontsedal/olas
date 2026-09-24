@@ -1,4 +1,4 @@
-import { use, useQuery, useRoot } from '@kontsedal/olas-react'
+import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import type { AppApi } from '../../app.controller'
 import { cx } from '../../ui'
 import { identityColor } from '../../ui/identity'
@@ -7,7 +7,7 @@ export function LabelsRow() {
   const app = useRoot<AppApi>()
   const labels = useQuery(app.labels)
   const array = app.cardDetail.form.fields.labelIds
-  const value = use(array)
+  const value = useValue(array)
   const selectedSet = new Set(value)
 
   return (

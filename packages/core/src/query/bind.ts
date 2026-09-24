@@ -17,7 +17,7 @@ import type {
   Query,
   QueryActions,
   QuerySubscription,
-  UseOptions,
+  QuerySubscriptionOptions,
 } from './types'
 import { createInfiniteUse, createUse } from './use'
 
@@ -43,12 +43,12 @@ export function createQuery<Args extends unknown[], T, U>(
 export function createQuery<Args extends unknown[], T>(
   ctx: Ctx,
   source: Query<Args, T>,
-  keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
+  keyOrOptions?: (() => readonly [...Args]) | QuerySubscriptionOptions<Args>,
 ): QuerySubscription<T>
 export function createQuery<Args extends unknown[], TPage, TItem>(
   ctx: Ctx,
   source: InfiniteQuery<Args, TPage, TItem>,
-  keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
+  keyOrOptions?: (() => readonly [...Args]) | QuerySubscriptionOptions<Args>,
 ): InfiniteQuerySubscription<TPage, TItem>
 export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
   const internals = ctxInternals(ctx, 'createQuery')

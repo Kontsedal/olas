@@ -11,7 +11,7 @@
  * returns before them renders a different number of hooks per pass.
  */
 
-import { SuspendOnUnmount, use, useField, useQuery, useRoot } from '@kontsedal/olas-react'
+import { SuspendOnUnmount, useField, useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { Archive, Loader2, MoveRight, X } from 'lucide-react'
 import type { Card } from '../../api'
 import type { AppApi } from '../../app.controller'
@@ -23,7 +23,7 @@ import { SubtasksRow } from './SubtasksRow'
 
 export function CardDetail() {
   const app = useRoot<AppApi>()
-  const card = use(app.cardDetail.card)
+  const card = useValue(app.cardDetail.card)
   if (card === null) return null
   return (
     <SuspendOnUnmount controller={app.cardDetail}>
@@ -39,9 +39,9 @@ function DetailPanel({ card }: { card: Card }) {
   const descField = useField(app.cardDetail.form.fields.description)
   const priorityField = useField(app.cardDetail.form.fields.priority)
   const dueField = useField(app.cardDetail.form.fields.dueDate)
-  const titleAsync = use(app.cardDetail.titleAsyncError)
-  const isChecking = use(app.cardDetail.isTitleChecking)
-  const isSaving = use(app.cardDetail.save.isPending)
+  const titleAsync = useValue(app.cardDetail.titleAsyncError)
+  const isChecking = useValue(app.cardDetail.isTitleChecking)
+  const isSaving = useValue(app.cardDetail.save.isPending)
 
   const titleError = titleField.touched ? (titleAsync ?? titleField.errors[0]) : undefined
   const columns = board.data?.columns ?? []

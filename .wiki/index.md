@@ -45,7 +45,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [flows/mutation-concurrency.md](flows/mutation-concurrency.md) — parallel, latest-wins and serial paths
 - [flows/ssr.md](flows/ssr.md) — `waitForIdle → dehydrate` (server) → `hydrate` (client)
 - [flows/construction-rollback.md](flows/construction-rollback.md) — factory throws → partial state torn down
-- [flows/use-root.md](flows/use-root.md) — `createRoot` → `<OlasProvider>` → `useRoot()` → `use(signal)` → DOM
+- [flows/use-root.md](flows/use-root.md) — `createRoot` → `<OlasProvider>` → `useRoot()` → `useValue(signal)` → DOM
 - [flows/devtools-causal-timeline.md](flows/devtools-causal-timeline.md) — one mutation → one `causeId` → a cause-chain + before/after diff in the panel
 
 ## Decisions

@@ -50,7 +50,7 @@ function silenceConsoleError(): () => void {
 }
 
 describe('useQuery({ suspense: true })', () => {
-  test('throws subscription.promise() while pending → Suspense fallback shows, then resolves', async () => {
+  test('throws subscription.firstValue() while pending → Suspense fallback shows, then resolves', async () => {
     let resolveFetcher!: (value: string) => void
     const userQuery = defineQuery({
       id: 'suspense-test/load',
@@ -292,7 +292,7 @@ describe('useQuery({ suspense: true })', () => {
   })
 })
 
-describe('subscription.promise()', () => {
+describe('subscription.firstValue()', () => {
   test('resolves with data on success', async () => {
     const q = defineQuery({
       id: 'promise-test/success',
@@ -303,7 +303,7 @@ describe('subscription.promise()', () => {
     const def = defineController((ctx) => ({ sub: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
-    const value = await root.api.sub.promise()
+    const value = await root.api.sub.firstValue()
     expect(value).toEqual({ id: 1 })
     root.dispose()
   })
@@ -322,7 +322,7 @@ describe('subscription.promise()', () => {
     const def = defineController((ctx) => ({ sub: createQuery(ctx, q, () => []) }))
     const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
-    await expect(root.api.sub.promise()).rejects.toBe(boom)
+    await expect(root.api.sub.firstValue()).rejects.toBe(boom)
     root.dispose()
   })
 })

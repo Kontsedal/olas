@@ -25,7 +25,7 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { use, useQuery, useRoot } from '@kontsedal/olas-react'
+import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
 import type { AppApi } from '../../app.controller'
@@ -42,7 +42,7 @@ export function Board() {
   const boardQuery = useQuery(board)
 
   // Selection bar
-  const selectedIds = use(app.board.selection.selectedIds)
+  const selectedIds = useValue(app.board.selection.selectedIds)
   const selCount = selectedIds.size
 
   const sensors = useSensors(

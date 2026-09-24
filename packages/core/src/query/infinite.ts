@@ -111,8 +111,6 @@ export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
   isFetchingPreviousPage: ReadSignal<boolean>
   fetchNextPage: () => Promise<void>
   fetchPreviousPage: () => Promise<void>
-  /** Cancel this subscription's in-flight fetch (if any). See `Query.cancel`. */
-  cancel: () => void
 }
 
 /**

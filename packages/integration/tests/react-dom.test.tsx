@@ -200,13 +200,7 @@ describe('react integration: card list', () => {
       const m = useMutation(root.api.save)
       return (
         <div>
-          <button
-            type="button"
-            data-testid="save"
-            onClick={() => {
-              m.mutate().catch(() => {})
-            }}
-          >
+          <button type="button" data-testid="save" onClick={() => m.mutate()}>
             Save
           </button>
           <span data-testid="err">{m.isError ? (m.error as Error).message : 'none'}</span>

@@ -4,7 +4,7 @@
  * Linear's "type a title, hit enter, refine later" flow.
  */
 
-import { use, useRoot } from '@kontsedal/olas-react'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 import { useEffect, useRef, useState } from 'react'
 import type { AppApi } from '../../app.controller'
 import { Button, Dialog } from '../../ui'
@@ -22,7 +22,7 @@ export function CreateCardDialog({
 }) {
   const app = useRoot<AppApi>()
   const [title, setTitle] = useState('')
-  const isPending = use(app.board.createCard.isPending)
+  const isPending = useValue(app.board.createCard.isPending)
   const ref = useRef<HTMLInputElement>(null)
 
   useEffect(() => {

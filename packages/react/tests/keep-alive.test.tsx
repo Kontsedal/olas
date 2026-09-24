@@ -3,7 +3,7 @@
 import { act, cleanup, render } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { KeepAlive, type SuspendableController, useSuspendOnHidden } from '../src'
+import { type SuspendableController, SuspendOnUnmount, useSuspendOnHidden } from '../src'
 
 afterEach(() => {
   cleanup()
@@ -31,13 +31,13 @@ const makeController = (): SuspendableController & {
   }
 }
 
-describe('KeepAlive', () => {
+describe('SuspendOnUnmount', () => {
   test('mount calls resume, unmount calls suspend', () => {
     const c = makeController()
     const { unmount } = render(
-      <KeepAlive controller={c}>
+      <SuspendOnUnmount controller={c}>
         <div>child</div>
-      </KeepAlive>,
+      </SuspendOnUnmount>,
     )
     expect(c.resumeCalls).toBe(1)
     expect(c.suspendCalls).toBe(0)
@@ -57,9 +57,9 @@ describe('KeepAlive', () => {
           <button type="button" onClick={() => setWhich(b)} data-testid="swap">
             swap
           </button>
-          <KeepAlive controller={which}>
+          <SuspendOnUnmount controller={which}>
             <div>x</div>
-          </KeepAlive>
+          </SuspendOnUnmount>
         </>
       )
     }
@@ -178,7 +178,7 @@ describe('useSuspendOnHidden', () => {
 // R4.6 (T4.6) — cross-fade overlap: two wrappers around the SAME controller must
 // refcount so the exiting screen's unmount doesn't suspend a controller the
 // entering screen is still using.
-describe('KeepAlive refcounting (R4.6)', () => {
+describe('SuspendOnUnmount refcounting (R4.6)', () => {
   test('overlapping consumers keep the controller resumed until the LAST unmounts', () => {
     let resumed = false
     const controller: SuspendableController = {
@@ -193,14 +193,14 @@ describe('KeepAlive refcounting (R4.6)', () => {
       return (
         <>
           {a && (
-            <KeepAlive controller={controller}>
+            <SuspendOnUnmount controller={controller}>
               <div />
-            </KeepAlive>
+            </SuspendOnUnmount>
           )}
           {b && (
-            <KeepAlive controller={controller}>
+            <SuspendOnUnmount controller={controller}>
               <div />
-            </KeepAlive>
+            </SuspendOnUnmount>
           )}
         </>
       )

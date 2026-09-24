@@ -5,7 +5,7 @@
 // Persisted state (theme, bookmarks, reading progress) is held back from the
 // first client render — see `useHydrated` at the bottom of this file.
 
-import { OlasProvider, use, useRoot, useSuspendOnHidden } from '@kontsedal/olas-react'
+import { OlasProvider, useRoot, useSuspendOnHidden, useValue } from '@kontsedal/olas-react'
 import { Bookmark, BookmarkPlus, Loader2, MessageCircle, Moon, Sun, SunMoon } from 'lucide-react'
 import { type ReactElement, useEffect, useState, useSyncExternalStore } from 'react'
 import type { Article } from './api'
@@ -29,9 +29,9 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
   useSuspendOnHidden(root)
 
   const api = useRoot<AppApi>()
-  const articles = use(api.reader.flatArticles)
-  const hasNextPage = use(api.reader.hasNextPage)
-  const isFetching = use(api.reader.isFetching)
+  const articles = useValue(api.reader.flatArticles)
+  const hasNextPage = useValue(api.reader.hasNextPage)
+  const isFetching = useValue(api.reader.isFetching)
   // `createPersisted` reads localStorage synchronously while the controller is
   // constructed, so on a returning visitor these three already hold the
   // stored values by the time `hydrateRoot` runs — and the server, which has
@@ -39,9 +39,9 @@ function ReaderLayout({ root }: { root: AppRoot }): ReactElement {
   // stored values on the first client pass is a hydration mismatch. Hold
   // them back for one render; `useHydrated` explains the mechanism.
   const hydrated = useHydrated()
-  const storedProgress = use(api.reader.progress)
-  const storedBookmarks = use(api.reader.bookmarks)
-  const storedTheme = use(api.reader.theme)
+  const storedProgress = useValue(api.reader.progress)
+  const storedBookmarks = useValue(api.reader.bookmarks)
+  const storedTheme = useValue(api.reader.theme)
   const progress = hydrated ? storedProgress : NO_PROGRESS
   const bookmarks = hydrated ? storedBookmarks : NO_BOOKMARKS
   const theme = hydrated ? storedTheme : NO_THEME

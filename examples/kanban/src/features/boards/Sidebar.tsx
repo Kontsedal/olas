@@ -3,7 +3,7 @@
  * toggle (the collapsed width is wide enough to keep the brand mark visible).
  */
 
-import { use, useRoot } from '@kontsedal/olas-react'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 import { ChevronsLeft, ChevronsRight, Sparkles } from 'lucide-react'
 import type { AppApi } from '../../app.controller'
 import { cx, IconButton, Skeleton } from '../../ui'
@@ -11,10 +11,10 @@ import { identityColor } from '../../ui/identity'
 
 export function Sidebar() {
   const app = useRoot<AppApi>()
-  const boards = use(app.boards.list.data)
-  const isLoading = use(app.boards.list.isLoading)
-  const active = use(app.boards.activeBoardId)
-  const prefs = use(app.preferences.prefs)
+  const boards = useValue(app.boards.list.data)
+  const isLoading = useValue(app.boards.list.isLoading)
+  const active = useValue(app.boards.activeBoardId)
+  const prefs = useValue(app.preferences.prefs)
   const collapsed = prefs.sidebarCollapsed
 
   return (

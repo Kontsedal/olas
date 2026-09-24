@@ -1,6 +1,6 @@
 ---
 name: react
-description: "@kontsedal/olas-react — Provider, useRoot/useController, use/useQuery/useSuspenseQuery/useField/useFieldInput/useMutation, KeepAlive, HydrationBoundary, streaming SSR hydrator. Built on useSyncExternalStore."
+description: "@kontsedal/olas-react — Provider, useRoot, useValue/useQuery/useSuspenseQuery/useField/useFieldInput/useMutation, SuspendOnUnmount, HydrationBoundary, streaming SSR hydrator. Built on useSyncExternalStore."
 type: module
 covers:
   - packages/react/src/index.ts
@@ -13,11 +13,12 @@ edges:
   - { type: tested-by, target: ../../packages/react/tests/adapter.test.tsx }
   - { type: tested-by, target: ../../packages/react/tests/ssr-hydration.test.tsx }
   - { type: tested-by, target: ../../packages/react/tests/keep-alive.test.tsx }
+  - { type: tested-by, target: ../../packages/react/tests/hooks-surface.test.tsx }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/ctx.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
-last_verified: 2026-09-21
-confidence: high
+last_verified: 2026-09-24
+confidence: medium
 ---
 
 # `@kontsedal/olas-react`
@@ -29,25 +30,25 @@ The React adapter. Pure binding layer on top of `useSyncExternalStore` — no co
 ```ts
 // context.ts
 function OlasProvider(props: { root: Root<unknown>; children: ReactNode }): JSX.Element
-function useRoot<Api = unknown>(): Api               // throws outside <OlasProvider>
-function useController<Api>(root: Root<Api>): Api    // back-compat — takes root explicitly
-function createOlasContext<Api>(displayName?): { Provider, useRoot, use, useQuery, useField, ... }
-                                                     // typed-per-root variant; same hooks, narrower context
+function useRoot<Api = unknown>(): Api               // root.api; throws outside <OlasProvider>
+function createOlasContext<Api>(displayName?): { Provider, useRoot, Context }
+                                                     // typed-per-root variant, for apps with several roots
 function HydrationBoundary<Api>(props: { root: Root<Api>; ... }): ReactElement
                                                      // mounts the streaming hydrator (see "Streaming SSR")
 
 // hooks.ts
-function use<T>(signal: ReadSignal<T>): T
-function use<T, U>(signal: ReadSignal<T>, sel: (v: T) => U, opts?: { isEqual? }): U
-                                                     // overload — selector + custom equality
-function useQuery<T>(subscription: AsyncState<T>):   { data, error, status, isLoading, isFetching, isStale, lastUpdatedAt, hasPendingMutations, refetch }
-function useSuspenseQuery<T>(subscription):          { data, refetch, ... }   // throws the in-flight promise on first read
-function useField<T>(field: Field<T>):               { value, errors, isValid, isDirty, touched, isValidating, set, reset, markTouched, revalidate }
-function useFieldInput<T>(field: Field<T>, opts?):   { value, onChange, onBlur, ... }  // adapter for native <input>
-function useMutation<V, R>(mutation: Mutation<V, R>):{ data, error, isIdle, isPending, isSuccess, isError, run, reset }
+function useValue<T>(signal: ReadSignal<T>): T      // any ReadSignal: signal, computed, Field, Form, FieldArray
+function useValue<T, U>(signal, { select, isEqual? }): U
+function useQuery<T>(sub: AsyncState<T>): UseQueryResult<T>
+    // every AsyncState signal as a value (incl. isPaused) + refetch, reset, cancel
+function useSuspenseQuery<T>(sub): UseSuspenseQueryResult<T>   // throws sub.firstValue() until data lands
+function useField<T>(field: Field<T>): UseFieldResult<T>
+    // value, errors, isValid, isDirty, touched, isValidating + set, setAsInitial, reset, markTouched, revalidate, setErrors
+function useFieldInput<T>(field: Field<T>, opts?): UseFieldInputResult  // spread onto a native <input>
+function useMutation<V, R>(m: Mutation<V, R>, callbacks?): UseMutationResult<V, R>
+    // data, error, status, isPending, isIdle, isSuccess, isError, lastVariables + mutate (void), run (promise), reset
 
 // keep-alive.ts
-function KeepAlive(props: { controller: SuspendableController; children: ReactNode }): ReactElement
 function SuspendOnUnmount(props: { controller: SuspendableController; children: ReactNode }): ReactElement
 function useSuspendOnHidden(controller: SuspendableController): void
 type SuspendableController = { suspend(): void; resume(): void }
@@ -69,7 +70,7 @@ const STREAMING_GLOBAL: '__OLAS_HYDRATION__'              // intake queue's wind
 
 Olas's `signal.subscribe(handler)` fires the handler **synchronously with the current value** on subscribe (same as `@preact/signals-core`). That initial fire MUST NOT translate into a store-change notification: React already has the initial value via `getSnapshot`, and notifying during the subscribe phase confuses tear-detection.
 
-The fix lives in `subscribeOnChange` (`hooks.ts:11-21`): wrap the handler with a per-subscription `initial` flag and swallow the first fire. This pattern is repeated in `use`, `useQuery`, and `useField` — all three rely on it.
+The fix is core's `subscribeChanges`, which skips that first fire. `useValue` calls it through `subscribeOnChange` (`hooks.ts:24-26`), and the multi-signal hooks call it on their snapshot computed.
 
 ## `useQuery` / `useField` — multi-signal batching
 
@@ -82,7 +83,15 @@ The pattern (`hooks.ts`, shared by `useQuery`, `useField`, `useFieldInput` and `
 3. `getSnapshot()` = `snapshot.value` — a referentially-stable object that reflects real store state.
 4. `const snap = useSyncExternalStore(...)`; the hook returns `snap`'s fields plus the action closures.
 
-The returned methods (`set`, `reset`, `markTouched`, `revalidate` on `useField`; `refetch` on `useQuery`; `mutate`/`reset` on `useMutation`) are passed through with closures so destructuring works without `.bind(...)` on the caller side.
+The returned actions are closures, so destructuring works without `.bind(...)`. `useField`'s and `useMutation`'s are built in a `useMemo` keyed on the target, so their identity is stable across renders and a memoized child that takes `set` or `mutate` doesn't re-render.
+
+## `useMutation`: `mutate` and `run`
+
+- **`mutate(vars)`** returns nothing. It is the call for an event handler. A failure lands on `error` and `status` and in `onError`; `mutate` swallows the rejection, so it never becomes unhandled.
+- **`run(vars)`** returns the run's promise, and the caller owns the rejection. It returns the promise derived from the callbacks, so a caller that ignores a failed `run` gets an unhandled rejection rather than a silent drop.
+- **An aborted run fires no callback** (superseded `latest-wins`, `reset()`, or dispose). That matches the mutation's own hooks in core, which skip `onError` and `onSettled` on abort. Before 1.0 the React `onError` fired with the `AbortError`.
+
+Pinned by `packages/react/tests/hooks-surface.test.tsx`.
 
 ## Why a computed snapshot, not a version counter?
 
@@ -95,8 +104,6 @@ The root is constructed by `createRoot(def, { deps })` **outside** React. `OlasP
 If a sub-controller has UI-driven lifecycle (e.g. hidden routes), the `<SuspendOnUnmount>` wrapper handles suspend/resume. StrictMode causes an extra `resume → suspend → resume` cycle which is safe: `ControllerInstance.suspend()` is a no-op when already suspended and `resume()` is a no-op when already active.
 
 ## `SuspendOnUnmount` and `useSuspendOnHidden`
-
-`KeepAlive` is a deprecated alias of `SuspendOnUnmount` (`keep-alive.ts`); the old name implied Vue-style DOM preservation, which the component does not do.
 
 Default behavior in olas: unmounting the React component does NOT dispose the controller (the controller is owned by its parent and `createRoot`'s consumer). `<SuspendOnUnmount>` opts the wrapped sub-tree into a different policy:
 

@@ -10,7 +10,7 @@
  *                        when the user keeps typing.
  *
  * Also demonstrated here:
- *  - `selection<string>()` for bulk move.
+ *  - `createSelection<string>()` for bulk move.
  *  - `signal` + `computed` for filter intersection.
  *  - `throttled` for streaming drag progress over the realtime channel.
  *  - `createRealtimePatcher` for receiving moves from other tabs.
@@ -24,9 +24,9 @@ import {
   computed,
   createMutation,
   createQuery,
+  createSelection,
   debounced,
   defineController,
-  selection,
   signal,
   throttled,
 } from '@kontsedal/olas-core'
@@ -74,7 +74,7 @@ export const boardController = defineController(
 
     // ───────── Multi-select (bulk move) ─────────
 
-    const sel = selection<string>()
+    const sel = createSelection<string>()
 
     // Switching boards closes the detail panel — selection is per-board.
     ctx.effect(() => {

@@ -3,7 +3,7 @@
 // field shows `isValidating` while the server thinks, then either
 // `errors[0]` or "ready to post".
 
-import { use, useField } from '@kontsedal/olas-react'
+import { useField, useValue } from '@kontsedal/olas-react'
 import { Loader2, MessageCircle, Send, X } from 'lucide-react'
 import { type ReactElement, useEffect, useReducer, useRef } from 'react'
 import type { AppApi } from './controller'
@@ -54,10 +54,10 @@ export function Composer({
 
   const author = useField(handle.api.author)
   const body = useField(handle.api.body)
-  const isPending = use(handle.api.submit.isPending)
-  const error = use(handle.api.submit.error)
-  const commentsData = use(handle.api.comments.data)
-  const commentsLoading = use(handle.api.comments.isLoading)
+  const isPending = useValue(handle.api.submit.isPending)
+  const error = useValue(handle.api.submit.error)
+  const commentsData = useValue(handle.api.comments.data)
+  const commentsLoading = useValue(handle.api.comments.isLoading)
 
   const onSubmit = (e: React.FormEvent): void => {
     e.preventDefault()

@@ -6,7 +6,7 @@ import type { QueryEngine } from '../query/engine'
 import type { InfiniteQuery, InfiniteQueryActions } from '../query/infinite'
 import type { Query, QueryActions } from '../query/types'
 import type { Scope } from '../scope'
-import type { Computed, ReadSignal, Signal } from '../signals/types'
+import type { ReadSignal } from '../signals/types'
 import type { CTX_INTERNALS, CtxInternals } from './internals'
 
 /**
@@ -104,7 +104,7 @@ export type Collection<K, Api> = {
    *
    * No-op if the key isn't in the collection. Neither the collection
    * reconcile nor a whole-tree `suspend()`/`resume()` cascade (e.g.
-   * KeepAlive) will auto-resume a suspended item — call `resumeItem(key)`
+   * SuspendOnUnmount) will auto-resume a suspended item — call `resumeItem(key)`
    * to bring it back (spec §4.1).
    */
   suspendItem(key: K): void
@@ -191,22 +191,6 @@ export type Ctx<TDeps = AmbientDeps> = {
 
   emitter<T = void>(): Emitter<T>
 
-  /**
-   * Convenience re-export of the standalone `signal(initial)` function bound
-   * to the controller's surface. Identical semantics — there's no lifecycle
-   * to manage for a plain signal — but having it on `ctx` makes "everything
-   * I need is on ctx" feel honest and lets consumers avoid importing from
-   * `@kontsedal/olas-core` separately.
-   */
-  signal<T>(initial: T): Signal<T>
-
-  /**
-   * Convenience re-export of the standalone `computed(fn)` function bound
-   * to the controller's surface. Re-evaluates on tracked-dep change; same
-   * caveat as `signal` — no lifecycle binding, just discoverability.
-   */
-  computed<T>(fn: () => T): Computed<T>
-
   child<Props, Api>(
     def: ControllerDef<Props, Api>,
     props: Props,
@@ -220,7 +204,7 @@ export type Ctx<TDeps = AmbientDeps> = {
    * The child is still disposed automatically when the parent disposes;
    * `dispose()` / `suspend()` / `resume()` are idempotent.
    *
-   * `<KeepAlive controller={…}>` in `@kontsedal/olas-react` consumes the
+   * `<SuspendOnUnmount controller={…}>` in `@kontsedal/olas-react` consumes the
    * returned `{ suspend, resume }` directly — no hand-rolled `isPaused`
    * signal needed on the child's `Api`. Useful for "openable" sub-
    * controllers driven by a user gesture (modal, side panel, wizard).
