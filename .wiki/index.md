@@ -58,6 +58,9 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/canonical-vs-optimistic-writes.md](decisions/canonical-vs-optimistic-writes.md) — why `Query` has two write methods (`setData` optimistic, `write` canonical) rather than one with an options bag
 - [decisions/no-vanilla-adapter.md](decisions/no-vanilla-adapter.md) — why olas ships no vanilla DOM adapter: one was built, measured and dropped
 - [decisions/ctx-primitives-are-free-functions.md](decisions/ctx-primitives-are-free-functions.md) — why `createField`/`createQuery` take `ctx` instead of hanging off it, and why `createRoot` takes an explicit query engine
+- [decisions/root-handle-separate.md](decisions/root-handle-separate.md) — why `createRoot` returns a handle with the app api on `.api` instead of the api with root controls mixed in
+- [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`
+- [decisions/plugin-host-v2.md](decisions/plugin-host-v2.md) — plugins as per-root `setup(host)` definitions: the host, the write vocabulary and origins, middleware, services via scopes, and what the old `QueryClientPlugin` got wrong
 - [decisions/prose-rules.md](decisions/prose-rules.md) — the writing rules every `.md` follows, what `pnpm prose:lint` enforces, and what it flags that we leave alone
 - [decisions/ui-rules.md](decisions/ui-rules.md) — the ten rules every interface follows, the scales they are picked from, what makes a screen read as generated, and which of the ten anything checks
 

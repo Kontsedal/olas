@@ -69,7 +69,7 @@ This relies on `setAtPath` returning a structure that shares siblings by referen
 
 ## Where the new core hooks live
 
-- **`SetDataEvent.source: 'set' | 'fetch' | 'remote'`** — added in `packages/core/src/query/plugin.ts:60-83`. Lets the plugin react to fetch results (not only explicit `setData`).
+- **`WriteEvent.source`** (`packages/core/src/plugin/types.ts`) — `'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'write' | 'replace'`, plus `origin`. The plugin walks every source and skips writes whose origin is its own name. See `decisions/plugin-host-v2.md`.
 - **`Entry.onSuccessData` callback** — `packages/core/src/query/entry.ts:21-32, 178-187`. Fires from `applySuccess` after the batched signal writes. `ClientEntry` wires it in `client.ts:69-77` to call `client.emitSetData(query, keyArgs, data, 'data', 'fetch')`.
 - **`QueryClientPluginApi.setEntryData(queryId, keyArgs, updater)`** — `plugin.ts:34-58`, implemented at `client.ts:577-595`. Local-originated setData by keyArgs. Cross-tab WILL rebroadcast (`source: 'set'`).
 - **Cross-tab now skips `source: 'fetch'`** — `packages/cross-tab/src/plugin.ts:163-168`. Each tab runs its own fetcher; broadcasting fetch results would be quadratic noise.

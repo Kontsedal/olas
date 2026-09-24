@@ -14,7 +14,7 @@ covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/mutation.ts
   - packages/core/src/query/infinite.ts
-  - packages/core/src/query/plugin.ts
+  - packages/core/src/plugin/host.ts
   - packages/core/src/query/index.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query-isolation.test.ts }

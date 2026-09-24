@@ -5,7 +5,7 @@ type: entity
 covers:
   - packages/core/src/query/client.ts
   - packages/core/src/query/focus-online.ts
-  - packages/core/src/query/plugin.ts
+  - packages/core/src/plugin/host.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
