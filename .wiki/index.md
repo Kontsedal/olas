@@ -19,9 +19,9 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/timing.md](modules/timing.md) — `debounced` and `throttled` signal projections
 - [modules/devtools.md](modules/devtools.md) — `DebugEvent` bus
 - [modules/errors.md](modules/errors.md) — `ErrorContext`, `dispatchError`
-- [modules/zod.md](modules/zod.md) — `@kontsedal/olas-zod`: `zodValidator`, `formFromZod`
-- [modules/persist.md](modules/persist.md) — `@kontsedal/olas-persist`: `usePersisted`
-- [modules/realtime.md](modules/realtime.md) — `@kontsedal/olas-realtime`: `useRealtimePatcher` + `useLiveStream` over a consumer-supplied `RealtimeService`
+- [modules/zod.md](modules/zod.md) — `@kontsedal/olas-zod`: `zodValidator`, `createZodForm`
+- [modules/persist.md](modules/persist.md) — `@kontsedal/olas-persist`: `createPersisted`, `persistQueryCachePlugin`
+- [modules/realtime.md](modules/realtime.md) — `@kontsedal/olas-realtime`: `createRealtimePatcher` + `createLiveStream` over a consumer-supplied `RealtimeService`
 - [modules/cross-tab.md](modules/cross-tab.md) — `@kontsedal/olas-cross-tab`: `BroadcastChannel`-backed cross-tab in-memory query cache sync
 - [modules/mutation-queue.md](modules/mutation-queue.md) — `@kontsedal/olas-mutation-queue`: best-effort persistent replay queue for `persist:true` mutations (reload + reconnect + cross-tab-coordinated)
 - [modules/router.md](modules/router.md) — `@kontsedal/olas-router`: `createRouterAdapter` bridging TanStack Router and React Router v6 into `RouteParams`/`Search`/`Pathname` scopes
@@ -84,7 +84,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/dispose-order-is-registration-order.md](pitfalls/dispose-order-is-registration-order.md) — teardown is one reverse-registration pass, not phased; an `onDispose` hook reaches an effect only if the effect was created first
 - [pitfalls/no-invalidator-still-refetches.md](pitfalls/no-invalidator-still-refetches.md) — "nothing invalidates this query" is not grounds to skip `cancel()` before an optimistic `setData`: a stale entry refetches on subscribe and `resume()` with no invalidator anywhere
 - [pitfalls/proto-key-assignment.md](pitfalls/proto-key-assignment.md) — rebuilding an object with `out[key] = value` swaps its prototype when the key is `__proto__`, and `JSON.parse` can put one in a payload
-- [pitfalls/persisted-state-breaks-hydration.md](pitfalls/persisted-state-breaks-hydration.md) — `usePersisted` reads localStorage during construction, so a returning visitor's first client render disagrees with the server HTML
+- [pitfalls/persisted-state-breaks-hydration.md](pitfalls/persisted-state-breaks-hydration.md) — `createPersisted` reads localStorage during construction, so a returning visitor's first client render disagrees with the server HTML
 
 ## Candidates (not authoritative)
 

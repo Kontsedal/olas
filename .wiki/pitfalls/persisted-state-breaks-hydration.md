@@ -1,6 +1,6 @@
 ---
 name: persisted-state-breaks-hydration
-description: usePersisted reads localStorage during controller construction, so a returning visitor's first client render disagrees with the server HTML. Gate the values, not the controller.
+description: createPersisted reads localStorage during controller construction, so a returning visitor's first client render disagrees with the server HTML. Gate the values, not the controller.
 type: pitfall
 covers:
   - packages/persist/src/index.ts:286-300
@@ -19,14 +19,14 @@ confidence: medium
 
 ## The trap
 
-`usePersisted(ctx, key, source)` loads the stored value while the controller is being constructed (`persist/src/index.ts:436-437`, `const loaded = storage.get(key)`). For `localStorageAdapter` that read is synchronous (`index.ts:286-300`). The client builds its root before `hydrateRoot`, so by the time React hydrates, the signal already holds the visitor's stored value.
+`createPersisted(ctx, key, source)` loads the stored value while the controller is being constructed (`persist/src/index.ts:436-437`, `const loaded = storage.get(key)`). For `localStorageAdapter` that read is synchronous (`index.ts:286-300`). The client builds its root before `hydrateRoot`, so by the time React hydrates, the signal already holds the visitor's stored value.
 
 The server had no localStorage. It rendered the default.
 
 ```ts
 // controller.ts — runs on both sides
 const theme = signal<Theme>('auto')
-usePersisted(ctx, 'app.theme', theme)   // server: stays 'auto'. client: 'dark', already
+createPersisted(ctx, 'app.theme', theme)   // server: stays 'auto'. client: 'dark', already
 ```
 
 ```tsx
@@ -65,8 +65,8 @@ One extra client render, and a first paint showing the default before the stored
 
 Two alternatives look cheaper and are not:
 
-- **Make `usePersisted` async on the client.** It would fix the first render and break every consumer that reads the value during construction, which is the API's whole point. The adapter already supports an async `get` for exactly the stores that need it; forcing it on `localStorage` makes the common case worse to fix the rarer one.
-- **Skip `usePersisted` on the server.** It already no-ops there — `localStorageAdapter.get` returns `null` when `typeof localStorage === 'undefined'`. The mismatch is not the server reading something it should not; it is the client reading something the server could not.
+- **Make `createPersisted` async on the client.** It would fix the first render and break every consumer that reads the value during construction, which is the API's whole point. The adapter already supports an async `get` for exactly the stores that need it; forcing it on `localStorage` makes the common case worse to fix the rarer one.
+- **Skip `createPersisted` on the server.** It already no-ops there — `localStorageAdapter.get` returns `null` when `typeof localStorage === 'undefined'`. The mismatch is not the server reading something it should not; it is the client reading something the server could not.
 
 ## Detecting it
 

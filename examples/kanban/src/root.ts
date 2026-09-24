@@ -16,6 +16,7 @@ import { type Api, type Broadcaster, createBroadcaster, createFakeApi } from './
 import type { NotifyRef } from './api/schema'
 import { appController } from './app.controller'
 import { kanbanEntities } from './entities'
+import { tracingPlugin } from './tracing'
 
 export function createAppRoot(opts?: { api?: Api; broadcaster?: Broadcaster }) {
   const api = opts?.api ?? createFakeApi()
@@ -31,7 +32,12 @@ export function createAppRoot(opts?: { api?: Api; broadcaster?: Broadcaster }) {
       tabId: broadcaster.tabId,
       notifyRef,
     },
-    plugins: [kanbanEntities, crossTabPlugin({ channelName: 'olas-kanban-cache' })],
+    plugins: [
+      // First, so its spans time the whole chain the other plugins wrap.
+      tracingPlugin(),
+      kanbanEntities,
+      crossTabPlugin({ channelName: 'olas-kanban-cache' }),
+    ],
     onError: (err, context) => {
       const message = err instanceof Error ? err.message : String(err)
       notifyRef.current({

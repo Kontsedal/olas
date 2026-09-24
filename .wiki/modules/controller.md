@@ -35,7 +35,7 @@ Implements the controller container: `defineController`, `createRoot`, the `Ctx`
 - **`root.ts`** — `createRoot` and `createRootWithProps`. Wraps the root `ControllerInstance` with `dispose, suspend, resume, dehydrate, waitForIdle and __debug` non-enumerable methods on the returned api (see `attachRootControls` in `root.ts:71-157`).
 - **`index.ts`** — public re-exports.
 
-`testing.ts`, at the root of `core/src/`, is published as `@kontsedal/olas-core/testing`. It exports `createTestController(def, { deps, props, onError?, defaultQueryOptions? })`, equivalent to `createRootWithProps` but more ergonomic for tests. Each call builds its **own** root and therefore its own query cache, so two calls never share an entry. Cache-lifetime behavior such as gcTime and dedup must be tested inside one root, via `ctx.session` or `ctx.attach`.
+`testing.ts`, at the root of `core/src/`, is published as `@kontsedal/olas-core/testing`. Besides the helpers below, it re-exports the plugin test helpers from `test-plugins.ts`: `mockFetchPlugin` (a `wrapFetch` that answers by query id) and `createPluginRecorder` (records every observation event). `PLUGINS.md` shows them in use. It exports `createTestController(def, { deps, props, onError?, defaultQueryOptions? })`, equivalent to `createRootWithProps` but more ergonomic for tests. Each call builds its **own** root and therefore its own query cache, so two calls never share an entry. Cache-lifetime behavior such as gcTime and dedup must be tested inside one root, via `ctx.session` or `ctx.attach`.
 
 ## Ctx surface (Phase 0–12)
 

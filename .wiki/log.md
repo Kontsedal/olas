@@ -1747,3 +1747,28 @@ Wiki: new `decisions/infinite-query-parity.md`. Updated `flows/ssr.md`, `entitie
 BACKLOG: the four infinite items (SSR, `offlineFirst`, cross-tab, devtools) are removed. Snapshot rebase stays.
 
 Bundle cost: infinite parity added about 0.9 kB brotli to core's queries entry (14.95 → 15.84 kB) and to "everything" (20.34 → 21.23 kB). The budgets were raised on purpose, to 16.6 kB and 22.3 kB. The controllers-only and forms entries did not move.
+
+## [2026-09-25 04:20] ingest | 1.0 W11: dogfood the plugin contract — query-cache persistence, test plugins, tracing, authoring guide
+
+**persist.**
+- `StorageAdapter`, `LOCAL_STORAGE` and `localStorageAdapter()` moved to the new `storage.ts`, and `index.ts` re-exports them, so the new plugin module imports them without a cycle.
+- New `query-cache.ts`: `persistQueryCachePlugin` and `restoreQueryCache`. It augments `QueryMeta.persist`. The rules are in `modules/persist.md` ("The query cache"):
+  - canonical writes only;
+  - gc drops the entry;
+  - sync restore in `setup`;
+  - async restore fills only unbound keys and is `track`ed;
+  - `buster`, `maxAgeMs` and the shape check on restore.
+
+**core `/testing`.** New `test-plugins.ts` with `mockFetchPlugin` (`wrapFetch` keyed by query id) and `createPluginRecorder`, re-exported from `testing.ts`.
+
+**examples/kanban.** New `src/tracing.ts`, a `tracingPlugin` that times fetch and mutate attempts through middleware and provides a `Traces` scope. It is installed first in the root and in the test harness; `tests/tracing.test.ts` covers it.
+
+**Docs.** New `PLUGINS.md`, the plugin authoring guide: the contract, the host and hooks, four plugin shapes, a ten-point checklist, and testing.
+
+**Tests.** `packages/persist/tests/query-cache.test.ts` (9), `packages/core/tests/test-plugins.test.ts` (4), `examples/kanban/tests/tracing.test.ts` (1).
+
+**Wiki.**
+- `modules/persist.md` is rewritten around both persistence paths.
+- The W3 `create*` renames (`createPersisted`, `createRealtimePatcher`, `createLiveStream`, `createConnectionState`, `createZodForm`) are applied across the wiki pages that still used the `use*` names.
+- `modules/zod.md` shows the tracked `initial`.
+- `modules/controller.md` mentions the test plugins.

@@ -1,6 +1,6 @@
 ---
 name: zod
-description: "@kontsedal/olas-zod — zodValidator and formFromZod."
+description: "@kontsedal/olas-zod — zodValidator and createZodForm."
 type: module
 covers:
   - packages/zod/src/index.ts
@@ -16,9 +16,9 @@ confidence: high
 
 ## What an `extraValidators` path means (0.9 review)
 
-A path names a position in the SCHEMA, not in the value, and an array contributes no segment to it. So `'tags'` on `z.array(z.string())` attaches to EVERY tag field, and `'tags.name'` on `z.array(z.object({ name }))` attaches to every item's `name`. No path addresses the `FieldArray` itself: an array-level rule takes a `FieldArrayValidator` over the whole item list, a different signature that `formFromZod` does not wire — put those in the Zod schema (`z.array(...).min(3)`), where `zodValidator` enforces them on the parent. The doc claimed the opposite for both halves; the implementation never changed. `zod.test.ts` pins the element behavior.
+A path names a position in the SCHEMA, not in the value, and an array contributes no segment to it. So `'tags'` on `z.array(z.string())` attaches to EVERY tag field, and `'tags.name'` on `z.array(z.object({ name }))` attaches to every item's `name`. No path addresses the `FieldArray` itself: an array-level rule takes a `FieldArrayValidator` over the whole item list, a different signature that `createZodForm` does not wire — put those in the Zod schema (`z.array(...).min(3)`), where `zodValidator` enforces them on the parent. The doc claimed the opposite for both halves; the implementation never changed. `zod.test.ts` pins the element behavior.
 
-Four exports: `zodValidator(schema)`, `zodValidatorAsync(schema)`, `rootOnlyZodValidator(schema)`, and `formFromZod(ctx, schema, options?)`. Spec §8.7, §10.
+Four exports: `zodValidator(schema)`, `zodValidatorAsync(schema)`, `rootOnlyZodValidator(schema)`, and `createZodForm(ctx, schema, options?)`. Spec §8.7, §10.
 
 ## zodValidator / zodValidatorAsync
 
@@ -35,23 +35,29 @@ Wraps a Zod schema as an Olas `Validator`. `zodValidator` is now a thin alias ov
 rootOnlyZodValidator<T>(schema: z.ZodType<T>): Validator<T>
 ```
 
-Runs the schema and reports ONLY root-level issues (those with empty `path`) — leaf issues are dropped because each leaf already has its own `zodValidator(propSchema)`. Used by `formFromZod` to lift `z.object({...}).refine(fn)` rules into a form-level validator without double-reporting leaf failures.
+Runs the schema and reports ONLY root-level issues (those with empty `path`) — leaf issues are dropped because each leaf already has its own `zodValidator(propSchema)`. Used by `createZodForm` to lift `z.object({...}).refine(fn)` rules into a form-level validator without double-reporting leaf failures.
 
-## formFromZod
+## createZodForm
 
 ```ts
-formFromZod<T extends z.ZodObject<...>>(
+createZodForm<T extends z.ZodObject<...>>(
   ctx: Ctx,
   schema: T,
-  options?: { initials?: Partial<z.infer<T>>; extraValidators?: Record<string, Validator<any>> }
+  options?: {
+    initial?: DeepPartial<z.infer<T>> | (() => DeepPartial<z.infer<T>> | undefined)
+    resetOnInitialChange?: 'when-clean' | 'never' | 'always'
+    extraValidators?: Record<string, Validator<any>>
+  },
 ): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]> }>
 ```
+
+A function `initial` is tracked: the form re-seats when its signals change, as `createForm`'s does (1.0).
 
 Walks a `z.object` schema and builds the corresponding `Form`, `FieldArray` and `Field` tree with Zod validators auto-attached. Return type is structurally precise — no hand-written `Form<{...}>` shape required.
 
 - `z.object(...)` → `Form` (recurse). The root form gets `rootOnlyZodValidator(rootSchema)` attached so top-level `.refine(...)` rules surface as form-level errors.
 - `z.array(...)` → `FieldArray` (recurse on the element).
-- anything else → `Field` with `zodValidator(schema)`. A nested leaf can *look* like a zod schema, carrying a `def` or `_def`, and still fail every `instanceof` check. That is a **duplicate zod copy**, which cannot be introspected, so it degrades to a flat field. `formFromZod` dev-warns through `isForeignZod` and `warnDuplicateZod` (T6.5).
+- anything else → `Field` with `zodValidator(schema)`. A nested leaf can *look* like a zod schema, carrying a `def` or `_def`, and still fail every `instanceof` check. That is a **duplicate zod copy**, which cannot be introspected, so it degrades to a flat field. `createZodForm` dev-warns through `isForeignZod` and `warnDuplicateZod` (T6.5).
 
 `unwrap(schema)` strips outer `ZodDefault`, `ZodOptional` and `ZodNullable` wrappers (up to 5 deep) to find the inner type. The default initial is the Zod default when present, and otherwise the empty value for the type: `''` for string, `0` for number, `false` for boolean, `[]` for array and tuple, the first option for an enum, `0n` for bigint, `{}` for record, and `undefined` otherwise. **`ZodDate` maps to `undefined`** since T6.5. The old `null` flowed a non-Date into a `Date`-typed field. Pair it with `required()` for "must pick a date". A **`.transform()` and `.pipe()`** (`ZodPipe`) seeds from its INPUT schema's default via `def.in` — the field holds what the user edits, and the transform runs on parse; note the field TYPE still reflects `z.infer` (the output), a documented mismatch (T6.5).
 

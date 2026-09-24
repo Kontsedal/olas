@@ -1,27 +1,35 @@
 ---
 name: persist
-description: "@kontsedal/olas-persist — usePersisted composable, localStorage adapter, optional cross-tab sync."
+description: "@kontsedal/olas-persist — createPersisted for one value, persistQueryCachePlugin for the query cache, the storage adapters."
 type: module
 covers:
   - packages/persist/src/index.ts
+  - packages/persist/src/storage.ts
+  - packages/persist/src/query-cache.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/persist/tests/persist.test.ts }
   - { type: tested-by, target: ../../packages/persist/tests/indexeddb-adapter.test.ts }
+  - { type: tested-by, target: ../../packages/persist/tests/query-cache.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: controller.md }
-last_verified: 2026-09-21
-confidence: high
+last_verified: 2026-09-25
+confidence: medium
 ---
 
 # `@kontsedal/olas-persist`
 
-Single composable: `usePersisted(ctx, key, source, options?)`. Plus the `localStorageAdapter` default. Spec §13, §20.11.
+Two ways to persist, over one storage contract:
+
+- **`createPersisted(ctx, key, source, options?)`** persists one signal-like value. Spec §13, §20.11.
+- **`persistQueryCachePlugin(options?)`** persists the query cache: see "The query cache" below.
+
+`StorageAdapter`, the `localStorageAdapter()` default and its `LOCAL_STORAGE` object live in `storage.ts`, so the plugin module can import them without a cycle through `index.ts`. `indexedDbAdapter()` stays in `index.ts`.
 
 ## API
 
 ```ts
-usePersisted<T>(
+createPersisted<T>(
   ctx: Ctx,
   key: string,
   source: PersistableSource<T>,  // Signal<T> | Field<T> | anything with value+set+subscribe
@@ -71,9 +79,9 @@ The package ships two `StorageAdapter` implementations:
 
 - **`localStorageAdapter`** — sync `get`, `set` and `delete` via the browser `localStorage`. `onChange` listens to the `storage` event (fires only for writes in OTHER tabs — matches the platform). SSR-safe: no-ops when `localStorage` is undefined.
 - **`indexedDbAdapter(options?)`** — async `get`, `set` or `delete` via IndexedDB. Single key/value object store; database, store or channel names are configurable. IDB has no native change event, so `onChange` is layered via `BroadcastChannel`. Every write through this adapter posts a `{ key, value }` message. Other adapter instances on the same channel, including those in other tabs, dispatch it to their `onChange` handlers. Like `BroadcastChannel`, the message does **not** echo back to the sender's tab. SSR-safe: when no `IDBFactory` is available and no override is passed, every method resolves to a no-op. The `indexedDB` option lets callers inject a custom IDB factory (used by tests; useful for non-browser runtimes that ship their own implementation).
-  - **Commit-ack (T6.1):** `runRequest` resolves on the transaction's `oncomplete`, not the request's `onsuccess` — a write's `onsuccess` fires before the data is durably committed, so quota and disk failures only surface as `tx.onabort` at commit. `get`, `set` and `delete` **reject** on failure rather than swallowing it, so `usePersisted`'s `onError` fires. The cross-tab broadcast runs only after the commit lands. An `onversionchange` handler closes the connection and drops the cached promise, so a stale connection never blocks another tab's upgrade. The next op re-opens, and a failed re-open rejects rather than no-oping forever).
+  - **Commit-ack (T6.1):** `runRequest` resolves on the transaction's `oncomplete`, not the request's `onsuccess` — a write's `onsuccess` fires before the data is durably committed, so quota and disk failures only surface as `tx.onabort` at commit. `get`, `set` and `delete` **reject** on failure rather than swallowing it, so `createPersisted`'s `onError` fires. The cross-tab broadcast runs only after the commit lands. An `onversionchange` handler closes the connection and drops the cached promise, so a stale connection never blocks another tab's upgrade. The next op re-opens, and a failed re-open rejects rather than no-oping forever).
 
-Both adapters share the same `StorageAdapter` shape, so `usePersisted` is agnostic. IndexedDB is the right pick for larger payloads (above ~5MB localStorage quota), payloads with characters that bloat string serialization, or anywhere async storage is acceptable.
+Both adapters share the same `StorageAdapter` shape, so `createPersisted` is agnostic. IndexedDB is the right pick for larger payloads (above ~5MB localStorage quota), payloads with characters that bloat string serialization, or anywhere async storage is acceptable.
 
 ## `clearPersisted` names its own scope (0.9 review)
 
@@ -81,7 +89,17 @@ Both adapters share the same `StorageAdapter` shape, so `usePersisted` is agnost
 
 ## Persisted state and server rendering (0.9 review)
 
-`usePersisted` reads its adapter during controller construction, and `localStorageAdapter.get` is synchronous. On a returning visitor the stored values are therefore in the signals BEFORE `hydrateRoot` runs, while the server built its HTML from the defaults — a hydration mismatch, which React answers by discarding the server's markup. The fix belongs in the renderer, not here: hold persisted values back for one client render. `examples/reader-ssr/src/App.tsx` does it with a `useHydrated` built on `useSyncExternalStore`'s server-snapshot argument, and both `packages/persist/README.md` and the example README carry the pattern.
+`createPersisted` reads its adapter during controller construction, and `localStorageAdapter.get` is synchronous. On a returning visitor the stored values are therefore in the signals BEFORE `hydrateRoot` runs, while the server built its HTML from the defaults — a hydration mismatch, which React answers by discarding the server's markup. The fix belongs in the renderer, not here: hold persisted values back for one client render. `examples/reader-ssr/src/App.tsx` does it with a `useHydrated` built on `useSyncExternalStore`'s server-snapshot argument, and both `packages/persist/README.md` and the example README carry the pattern.
+
+## The query cache (`query-cache.ts`, 1.0)
+
+`persistQueryCachePlugin` writes the canonical writes of opted-in queries to one storage key, and restores them when a root starts. An opted-in query has `meta: { persist: true }`; the package augments `QueryMeta` with it. `include` overrides the rule.
+
+- **What is written.** `onWrite` keeps a map of the latest entry per `id` and key hash, and flushes the whole map as `{ v: 1, buster, entries }`, throttled (`throttleMs`, default 1000). A write whose source is `'optimistic'` or `'rollback'` is skipped: it is a guess. `onRemove` (gc) drops the entry. Dispose flushes a pending write. Infinite entries keep their `pageParams`.
+- **Restore, synchronous storage.** `setup` reads the key and `host.queries.hydrate`s the entries. Setup runs before any controller binds, so every entry is buffered and there on the first read.
+- **Restore, asynchronous storage.** The read lands after controllers may have bound entries and started fetching. The restore fills only keys `host.queries.keys(id)` does not list. A bound entry's fetch is newer than storage, and `applyHydration` would supersede it. The restore is `host.track`ed, so `waitForIdle` waits for it. An entry already in the plugin's map (a write that beat the restore) is not overwritten.
+- **Filters.** A payload under another `buster`, or with `v !== 1`, is dropped whole. An entry older than `maxAgeMs` (default 24 hours) is dropped. An entry that is not `{ id: string, key: array, lastUpdatedAt: number, pageParams?: array }` is dropped. A parse failure reports through `onError(err, 'restore')`, and the app starts cold.
+- **`restoreQueryCache(options)`** reads ahead of `createRoot`, for an app whose first render must see restored data from async storage. Pass the result as `RootOptions.hydrate`, and `restore: false` to the plugin.
 
 ## What's NOT included
 

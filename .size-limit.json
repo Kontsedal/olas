@@ -56,11 +56,18 @@
     "limit": "3 KB"
   },
   {
-    "name": "persist",
+    "name": "persist: createPersisted",
     "path": "packages/persist/dist/index.js",
-    "import": "*",
+    "import": "{ createPersisted, localStorageAdapter }",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "2.1 KB"
+    "limit": "1.05 KB"
+  },
+  {
+    "name": "persist: persistQueryCachePlugin",
+    "path": "packages/persist/dist/index.js",
+    "import": "{ persistQueryCachePlugin, restoreQueryCache }",
+    "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "1.25 KB"
   },
   {
     "name": "realtime",

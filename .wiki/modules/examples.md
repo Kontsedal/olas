@@ -35,9 +35,9 @@ and virtualization in isolation.
 
 | Path | UI | Demonstrates |
 |------|----|--------------|
-| `examples/kanban/` | **React (flagship)** | Multi-board project tracker. All three mutation concurrency modes (parallel move / latest-wins search / serial reorder), optimistic snapshot + auto-rollback, `formFromZod` + `FieldArray` + `debouncedValidator`, `defineScope` × 5, `ctx.emitter` + `ctx.on`, `selection<string>()`, **`entitiesPlugin`** (User + Label), **`crossTabPlugin`**, **`useRealtimePatcher`** + **`useLiveStream`** over BroadcastChannel, **`usePersisted`** × N (theme/density/sidebar/last-board), **`defineInfiniteQuery`** (archive), **`SuspendOnUnmount`** + **`useSuspendOnHidden`**, **`debounced`** + **`throttled`** + standalone **`effect()`**, root **`onError`** (`ErrorContext`) → toast bridge, `<DevtoolsLauncher>`. Feature-folder code structure; design system in `src/ui/` over the shared scales in `examples/_shared/ui/tokens.css`. |
-| `examples/stock-ticker/` | **None — vanilla TS** | `signal` / `computed` / `effect`, `ctx.emitter` + `ctx.on`, `debounced` / `throttled`, `defineQuery` + `refetchInterval`, `usePersisted` watchlist + alerts, SVG sparklines, alert evaluation via emitter. |
-| `examples/reader-ssr/` | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery` with reactive key, `useSuspendOnHidden`, persisted bookmarks + reading progress + theme (`usePersisted` × 3) behind a `useHydrated` gate, `ctx.attach` for the per-article composer, `ctx.emitter` analytics, `onError` root option + `ErrorContext`. |
+| `examples/kanban/` | **React (flagship)** | Multi-board project tracker. All three mutation concurrency modes (parallel move / latest-wins search / serial reorder), optimistic snapshot + auto-rollback, `createZodForm` + `FieldArray` + `debouncedValidator`, `defineScope` × 5, `ctx.emitter` + `ctx.on`, `selection<string>()`, **`entitiesPlugin`** (User + Label), **`crossTabPlugin`**, **`createRealtimePatcher`** + **`createLiveStream`** over BroadcastChannel, **`createPersisted`** × N (theme/density/sidebar/last-board), **`defineInfiniteQuery`** (archive), **`SuspendOnUnmount`** + **`useSuspendOnHidden`**, **`debounced`** + **`throttled`** + standalone **`effect()`**, root **`onError`** (`ErrorContext`) → toast bridge, `<DevtoolsLauncher>`. Feature-folder code structure; design system in `src/ui/` over the shared scales in `examples/_shared/ui/tokens.css`. |
+| `examples/stock-ticker/` | **None — vanilla TS** | `signal` / `computed` / `effect`, `ctx.emitter` + `ctx.on`, `debounced` / `throttled`, `defineQuery` + `refetchInterval`, `createPersisted` watchlist + alerts, SVG sparklines, alert evaluation via emitter. |
+| `examples/reader-ssr/` | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery` with reactive key, `useSuspendOnHidden`, persisted bookmarks + reading progress + theme (`createPersisted` × 3) behind a `useHydrated` gate, `ctx.attach` for the per-article composer, `ctx.emitter` analytics, `onError` root option + `ErrorContext`. |
 | `examples/virtualized-table/` | React | Virtualized list with row flash on update. |
 
 ## Shared scaffolding
@@ -101,7 +101,7 @@ share the channel; one acts as the remote actor:
    channel (`olas-kanban-cache`) → B's UI updates without a refetch.
 3. Window A's board controller `publish`es a `card.moved` event over the
    realtime channel (`olas-kanban-realtime`).
-4. Window B's `useRealtimePatcher` sees `event.by !== tabId` and emits a
+4. Window B's `createRealtimePatcher` sees `event.by !== tabId` and emits a
    "Another tab moved a card" entry into the activity scope.
 
 Two channels intentionally — mirrors the typical "cache transport ≠ realtime
@@ -120,12 +120,12 @@ they imply a library change.
    Only entries from regular `defineQuery` caches are written.
    See `packages/core/src/query/client.ts:246-260`. The kanban archive
    drawer keeps cursor-paged history per-tab; SSR is out of scope for it.
-3. **`formFromZod` does NOT promote array-level `.min(N)` rules** from the
+3. **`createZodForm` does NOT promote array-level `.min(N)` rules** from the
    outer Zod schema to a `FieldArray`-level validator. Leaf fields and nested
    object schemas walk correctly. Root-level `.refine(...)` on the top-level
    `z.object({...})` IS lifted (via `rootOnlyZodValidator`).
-4. **`formFromZod` accepts extra leaf validators** via
-   `formFromZod(ctx, schema, { extraValidators: { 'title': uniqueAsync } })`
+4. **`createZodForm` accepts extra leaf validators** via
+   `createZodForm(ctx, schema, { extraValidators: { 'title': uniqueAsync } })`
    — keyed by dotted path. Resolved against the kanban "title-is-unique"
    need.
 5. **`ctx.attach` returns `{ api, dispose, suspend, resume }`** — the

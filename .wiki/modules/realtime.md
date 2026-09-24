@@ -1,6 +1,6 @@
 ---
 name: realtime
-description: "@kontsedal/olas-realtime — useRealtimePatcher + useLiveStream over a consumer-supplied RealtimeService dep."
+description: "@kontsedal/olas-realtime — createRealtimePatcher + createLiveStream over a consumer-supplied RealtimeService dep."
 type: module
 covers:
   - packages/realtime/src/index.ts
@@ -19,9 +19,9 @@ confidence: medium
 
 Two thin composables over a consumer-supplied `RealtimeService` (`ctx.deps.realtime`):
 
-- `useRealtimePatcher(ctx, channel, handlers)` — subscribe, dispatch each event to a type-keyed handler. Wraps SPEC §16.5 lines 1364-1391.
-- `useLiveStream<TEvent>(ctx, channel, options?)` — tail-mode buffer with `capacity` + coalesced `flushMs` flushes, plus pause/resume/clear. Wraps SPEC §16.5 lines 1547-1597.
-- `useRealtimeConnection(ctx)` and `onReconnect(ctx, fn)` — connection-state signal + reconnect trigger (see "Connection state" below).
+- `createRealtimePatcher(ctx, channel, handlers)` — subscribe, dispatch each event to a type-keyed handler. Wraps SPEC §16.5 lines 1364-1391.
+- `createLiveStream<TEvent>(ctx, channel, options?)` — tail-mode buffer with `capacity` + coalesced `flushMs` flushes, plus pause/resume/clear. Wraps SPEC §16.5 lines 1547-1597.
+- `createConnectionState(ctx)` and `onReconnect(ctx, fn)` — connection-state signal + reconnect trigger (see "Connection state" below).
 
 The package ships **no default transport** — apps inject their own (WebSocket, Pusher, Ably, Supabase and SSE) through deps.
 
@@ -29,8 +29,8 @@ The package ships **no default transport** — apps inject their own (WebSocket,
 
 | Name | Signature | Notes |
 |---|---|---|
-| `useRealtimePatcher<TEvent>` | `(ctx, channel, handlers) => void` | Handlers run inside `untracked(...)` so accidental signal reads don't add deps to the surrounding effect. |
-| `useLiveStream<TEvent>` | `(ctx, channel, options?) => LiveStream<TEvent>` | `LiveStream = { events: ReadSignal<readonly TEvent[]>, isPaused: ReadSignal<boolean>, pause, resume, clear }` |
+| `createRealtimePatcher<TEvent>` | `(ctx, channel, handlers) => void` | Handlers run inside `untracked(...)` so accidental signal reads don't add deps to the surrounding effect. |
+| `createLiveStream<TEvent>` | `(ctx, channel, options?) => LiveStream<TEvent>` | `LiveStream = { events: ReadSignal<readonly TEvent[]>, isPaused: ReadSignal<boolean>, pause, resume, clear }` |
 | `RealtimeService` | `{ subscribe(channel, handler): { unsubscribe(): void } }` | Object form (not bare function) so it matches §16.5's example shape. |
 | `RealtimeDeps` | `{ realtime: RealtimeService }` | Slice of `ctx.deps` consumed by this package. |
 
@@ -43,7 +43,7 @@ type RealtimeService = {
     channel: string,
     handler: (event: TEvent) => void,
   ): RealtimeSubscription
-  // Optional — powers useRealtimeConnection / onReconnect. Absent → 'unknown'.
+  // Optional — powers createConnectionState / onReconnect. Absent → 'unknown'.
   onConnectionChange?(handler: (state: ConnectionState) => void): () => void
 }
 
@@ -61,13 +61,13 @@ After augmentation, `Ctx<AmbientDeps>` satisfies the `Ctx<RealtimeDeps>` paramet
 
 Both composables hold their subscription inside `ctx.effect(() => { ... return () => sub.unsubscribe() })`:
 
-- **Dispose**: effect cleanup unsubscribes; `useLiveStream` also `clearTimeout`s any pending flush. See `packages/realtime/src/index.ts:158-164`.
-- **Pause and resume**: `useLiveStream` reads `isPaused.value` at the top of the effect. The signal write triggered by `pause()` causes the effect to re-run with `isPaused === true`, which short-circuits before subscribing — the previous run's cleanup runs first and unsubscribes. `resume()` flips it back, the effect runs again, and a fresh subscription is established.
+- **Dispose**: effect cleanup unsubscribes; `createLiveStream` also `clearTimeout`s any pending flush. See `packages/realtime/src/index.ts:158-164`.
+- **Pause and resume**: `createLiveStream` reads `isPaused.value` at the top of the effect. The signal write triggered by `pause()` causes the effect to re-run with `isPaused === true`, which short-circuits before subscribing — the previous run's cleanup runs first and unsubscribes. `resume()` flips it back, the effect runs again, and a fresh subscription is established.
 - **Events during pause are LOST** (T6.7): `pause()` tears down the subscription, so nothing is received while paused — only *already-buffered* events survive. The `pending: TEvent[]` accumulator isn't cleared on pause (events buffered in the same tick as the pause still flush), but a genuine gap can't be recovered from the buffer — pair with `onReconnect(...)` + query `invalidate` to refetch authoritative state. The docstrings + README say this explicitly.
 
-## Connection state (`useRealtimeConnection` / `onReconnect`)
+## Connection state (`createConnectionState` / `onReconnect`)
 
-`useRealtimeConnection(ctx): ReadSignal<ConnectionState>` where `ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'`, backed by the optional `RealtimeService.onConnectionChange?(handler): () => void`. With a reporter it starts optimistically at `'connected'` and tracks changes; **without one it reports `'unknown'`** — the hook can't observe state, so it says so rather than lying `'connected'` (T6.7, `index.ts` `useRealtimeConnection`). `onReconnect(ctx, fn)` fires `fn` on a transition back to `'connected'` (not on the initial value), the canonical "invalidate queries that missed updates during the disconnect" trigger.
+`createConnectionState(ctx): ReadSignal<ConnectionState>` where `ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'`, backed by the optional `RealtimeService.onConnectionChange?(handler): () => void`. With a reporter it starts optimistically at `'connected'` and tracks changes; **without one it reports `'unknown'`** — the hook can't observe state, so it says so rather than lying `'connected'` (T6.7, `index.ts` `createConnectionState`). `onReconnect(ctx, fn)` fires `fn` on a transition back to `'connected'` (not on the initial value), the canonical "invalidate queries that missed updates during the disconnect" trigger.
 
 ## Tail-buffer semantics
 
@@ -84,7 +84,7 @@ If a handler reads `someQuery.data.value` to compute a patch, that read would ot
 
 Tracked in `BACKLOG.md`:
 
-- Multi-channel patcher sugar (today: call `useRealtimePatcher` per channel).
+- Multi-channel patcher sugar (today: call `createRealtimePatcher` per channel).
 - Backpressure beyond `capacity` + `flushMs` (sampling, downsampling, priority queues).
 - A default transport. Bring your own; the package is a behavior wrapper, not a transport.
 

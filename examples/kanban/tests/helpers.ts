@@ -19,6 +19,7 @@ import {
 import type { NotifyRef } from '../src/api/schema'
 import { appController } from '../src/app.controller'
 import { kanbanEntities } from '../src/entities'
+import { tracingPlugin } from '../src/tracing'
 
 /** In-memory `Map`-backed `StorageAdapter` for tests. */
 export function memoryStorage(): StorageAdapter {
@@ -109,6 +110,7 @@ export function createKanbanRoot(opts?: {
       storage: opts?.storage,
     },
     plugins: [
+      tracingPlugin(),
       kanbanEntities,
       crossTabPlugin({
         channelName: 'olas-kanban-cache',

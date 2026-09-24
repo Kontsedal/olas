@@ -8,6 +8,16 @@ import { computed, type ReadSignal, type Signal, signal } from './signals'
 // sub-path, NOT the public entry (T3.9). Lets tests reusing a `mutationId`
 // across cases avoid registry bleed.
 export { _unregisterMutationById } from './query/mutation-registry'
+export {
+  createPluginRecorder,
+  type MockFetchHandler,
+  type MockFetchOptions,
+  type MockFetchPlugin,
+  type MockFetchResponse,
+  mockFetchPlugin,
+  type PluginRecorder,
+  type RecordedEvent,
+} from './test-plugins'
 
 /**
  * Options for `createTestController`. Mirrors `RootOptions`, with two test
