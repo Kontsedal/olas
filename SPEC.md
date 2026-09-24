@@ -1733,7 +1733,7 @@ createRoot(appController, {
 ```
 
 **What crosses.**
-- Writes and invalidations the app made itself, with `origin: undefined` (§13.1). A write another plugin made is derived: a realtime push every tab receives, or an entity backprop every tab's own entities plugin re-derives. Mirroring it would deliver it twice. `origins: [name, …]` opts named origins in.
+- Writes and invalidations the app made itself, with `origin: undefined` (§13.1). A write another plugin made is usually derived: a realtime push every tab receives, or the entities a mirrored query write carries, which every tab's own entities plugin walks. Mirroring it would deliver it twice. `origins: [name, …]` opts named origins in. A direct `entities.update(...)` is the case to opt in for, because no peer re-derives it (§18.1).
 - `'optimistic'` and `'rollback'` writes by default, so a peer shows a pending edit before the server confirms it. `optimistic: false` limits the channel to canonical writes and invalidations.
 - Never `'fetch'` or `'hydrate'` writes. Every tab runs its own fetcher, and relaying results would be quadratic noise.
 
@@ -1744,6 +1744,8 @@ createRoot(appController, {
 **Channel-name versioning.** Channel names are user-supplied. Receivers drop messages whose protocol `v` they don't understand; users who want clean cross-deploy isolation should include a version suffix in their `channelName` (e.g. `'my-app/cache/v2'`).
 
 **Non-cloneable values.** `BroadcastChannel` uses structured clone. Cache data carrying a function or a symbol cannot cross the boundary, and a class instance arrives as a plain object without its prototype. The plugin catches the `DataCloneError`, calls `onWarn(...)`, and drops the message; the sender's cache is unaffected. `maxPayloadBytes` (default 512 KB) warns about an oversized message and still posts it. Without `BroadcastChannel`, as during SSR, the plugin installs no hooks.
+
+**Devtools lane.** In a development build (§23) the plugin reports through `host.debug` each message it posts and each message a peer sent on this protocol version. A payload names the direction (`kind: 'send' | 'receive'`), the message `type`, the `queryId` and key, the sender's `sourceId` as `from`, the `msgId`, and an `outcome`. A send is `posted` or `not-cloneable`. A receive is `applied`, `duplicate`, `malformed`, `ignored` (a query this tab has not bound or opted in), `rejected` (by `validate`) or `failed` (applying it threw).
 
 ### 13.3 Mutation queue — reload-safe replay
 
@@ -2401,7 +2403,7 @@ const patchPostEverywhere = (ctx: Ctx, id: string, patch: Partial<Post>) => {
 - `entitiesPlugin({ entities: [Post, User, ...] })` — install via `RootOptions.plugins`. Each root gets its own store.
 - The store, a service under the `Entities` scope: `ctx.inject(Entities)` in a controller, `root.inject(Entities)` outside one.
 - `entities.signal(Post, id) → ReadSignal<Post | undefined>` — reactive per-id reads. `entities.list(Post, { filter? })` reads every stored `Post` as one signal.
-- `entities.update(Post, id, patchOrUpdater, options?)` — accepts a `Partial<T>` patch or a `(prev: T) => T` updater. A patch shallow-merges by default; pass `{ merge: 'deep' }` to recursively merge plain objects, where arrays and non-plain values replace rather than merge. It backpropagates to every query holding the entity through `host.queries.write`, batched into one round of subscriber notifications. The writes carry the plugin's name as `origin`, so the plugin skips them when they come back through `onWrite`, and cross-tab does not mirror them (§13.2). Infinite queries are included, because the page arrays are walked transparently.
+- `entities.update(Post, id, patchOrUpdater, options?)` — accepts a `Partial<T>` patch or a `(prev: T) => T` updater. A patch shallow-merges by default; pass `{ merge: 'deep' }` to recursively merge plain objects, where arrays and non-plain values replace rather than merge. It backpropagates to every query holding the entity through `host.queries.write`, batched into one round of subscriber notifications. Each entry is patched as it is at the time of the call: the plugin replaces every node `idOf` claims with that id in the entry's current data, so a patch lands on an entity that moved since the entry was last walked, and an entry that no longer holds it gets no write. The writes carry the plugin's name as `origin`, so the plugin skips them when they come back through `onWrite`, and cross-tab does not mirror them (§13.2). Infinite queries are included, because the page arrays are walked transparently. In a development build (§23) each update reports on the plugin's devtools lane which entity it patched and how many entries it reached.
 - `entities.upsert`, `get`, `remove`, `entries` and `bindings` round out the surface (the last two are devtools snapshots). `remove` drops the entity from the store and patches no query.
 
 ```ts
@@ -4379,7 +4381,7 @@ Recommendation in §5.7: use Immer for any non-trivial nested update.
 
 ### Devtools and production builds
 
-The packages with dev-only code (core, entities, persist, react, vue and zod) each ship two builds from one source, behind export conditions:
+The packages with dev-only code (core, cross-tab, entities, persist, react, vue and zod) each ship two builds from one source, behind export conditions:
 
 | Condition | File | `__DEV__` |
 |---|---|---|

@@ -113,6 +113,13 @@ By default the plugin mirrors only the app's own writes: those whose `origin` is
 
 List an origin in `origins` to mirror its writes too. The entities plugin is the usual case: an `entities.update(...)` patch stays in its own tab until you opt in.
 
+The entities default is opt-in for two reasons:
+
+- An app write that crosses already reaches the peer's store. The peer's own entities plugin walks the mirrored write, as it walks any other write.
+- An update that every tab makes for itself, such as one realtime push each tab folds into its store, would cross from every tab. With two tabs that is two messages and a second, redundant write in each tab, where the default sends none.
+
+Opt in when one tab's UI makes the update and the other tabs have no other way to learn it.
+
 ```ts
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 import { ENTITIES_PLUGIN_NAME } from '@kontsedal/olas-entities'
@@ -160,6 +167,30 @@ const crossTab = crossTabPlugin({
     (typeof data === 'object' && data !== null && typeof (data as { name?: unknown }).name === 'string'),
 })
 ```
+
+## Devtools
+
+In a development build, the plugin reports every message on its lane in `@kontsedal/olas-devtools`, through `host.debug`. A tab reports each message it posts, and each message a peer sent on this protocol version:
+
+```ts nocheck
+{ kind: 'send', type: 'setData', queryId: 'app/user', outcome: 'posted', from: 'lq3k-7f2a', msgId: 4, key: ['user', 'me'] }
+{ kind: 'receive', type: 'setData', queryId: 'app/user', outcome: 'applied', from: 'lq3k-7f2a', msgId: 4, key: ['user', 'me'] }
+```
+
+`from` is the sending root's `sourceId`, so `from` and `msgId` name one message in the sender's lane and in every receiver's.
+
+| `outcome` | Meaning |
+|---|---|
+| `posted` | Sent. |
+| `not-cloneable` | `postMessage` threw, and the message was dropped. |
+| `applied` | Written or invalidated in this tab. |
+| `duplicate` | Its `msgId` is not above the last one this tab saw from that peer. |
+| `malformed` | A field has the wrong shape, or the message type is unknown. |
+| `ignored` | This tab has not bound the query, or has not opted it in. |
+| `rejected` | `validate` returned `false` or threw. |
+| `failed` | Applying it threw, such as on a key the engine cannot hash. |
+
+A payload that is not an object, a message on another protocol version, and a tab's own echoed message are dropped without a lane event. The default build strips the calls.
 
 ## Per-query opt-in
 

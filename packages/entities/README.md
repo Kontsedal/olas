@@ -120,24 +120,36 @@ type EntityStore = {
 | `entities.remove(Post, id)` | Remove from store. Does NOT touch queries. Pair it with a query `write` to drop the entity from a list too. |
 | `entities.list(Post, { filter })` | Live `ReadSignal<Post[]>` of every `Post` the store holds. It updates when any of them changes. |
 | `entities.entries(Post)` | Returns a fresh `Map<id, Post>` snapshot of the store. Mutating it does NOT affect the live store. |
-| `entities.bindings(Post, id)` | Returns the reverse-index entries `[{ queryId, keyArgs, paths }]` for that id. Frozen copies. Empty array when the entity isn't held by any query. |
+| `entities.bindings(Post, id)` | Returns the reverse-index entries `[{ queryId, keyArgs, paths }]` for that id. Frozen copies. Empty array when the entity isn't held by any query. In shared data, see [Memory characteristics](#memory-characteristics) for which paths it lists. |
 
 ## How it works
 
 The plugin's `onWrite` hook sees every cache write. For each one:
 
 1. Drops the previous reverse-index bindings for that query and key.
-2. Recursively walks the written data. For each subtree node, runs every registered entity's `idOf`. A non-null id means it's an entity.
+2. Recursively walks the entry's data as it is now. For each subtree node, runs every registered entity's `idOf`. A non-null id means it's an entity.
 3. Upserts the entity into the per-id signal AND records the path under the binding.
 
 On `entities.update(Post, id, patch)`:
 
 1. Compute `next = { ...current, ...patch }`.
 2. Write `next` into the entity slot.
-3. For each binding in the reverse index, call `host.queries.write` with an immutable patch at every path. All writes happen inside one `batch(...)` — subscribers see one notification per affected query, not one per path.
+3. For each query entry the reverse index lists, find every node `idOf` claims as `id` in the entry's current data, and replace it with `next`. The plugin writes the rebuilt data with `host.queries.write`. All writes happen inside one `batch(...)`, so subscribers see one notification per affected query, not one per path.
 4. Re-walk each patched entry, so a nested entity the patch brought in (a new author, say) is normalized too.
 
+Step 3 reads the data at the time of the call, not the paths the last walk recorded. Another plugin can change an entry before this plugin walks it. One earlier in the plugin list reacts to a write first, and one that reacts to a backprop write can rewrite another entry mid-update. The patch then lands where the entity is now, and never on whatever took its old place. An entry that no longer holds the entity gets no write, and its binding is dropped. The rebuild keeps every unchanged subtree by reference.
+
 The backprop writes carry `origin: 'olas-entities'`, and the plugin's `onWrite` skips its own origin, so an update does not re-trigger itself. When the cache garbage-collects an entry, the plugin drops that entry's bindings but keeps the entity values in the store. A detail view subscribed through `signal(Post, id)` keeps working, and a later fetch re-establishes the bindings.
+
+## Devtools
+
+In a development build, each `update` reports its backprop fan-out on the plugin's lane in `@kontsedal/olas-devtools`, through `host.debug`:
+
+```ts nocheck
+{ kind: 'update', entity: 'Post', id: 'p1', entries: 2, stale: 0, queries: ['feed', 'profile'] }
+```
+
+`entries` counts the query entries the patch was written into, and `queries` names their queries. `stale` counts the entries the reverse index listed that no longer held the entity. The default build strips the call.
 
 The deep merge copies own keys only, and writes a `__proto__` key as a plain property. A patch parsed from JSON therefore cannot change a prototype (SPEC §22).
 
@@ -153,14 +165,14 @@ The deep merge copies own keys only, and writes a `__proto__` key as a plain pro
 
 - **Per-id signal slots are allocated on first read** of `entities.signal(Post, id)`, or on first observation in a query. They live until the root disposes, unless the entity sets `maxSlots`. Calling `signal(Post, dynamicId)` with churning ids, such as per-render computed values, grows the slot map without bound. Dev builds emit a one-shot warning once any entity partition crosses 10k unique ids.
 - **`maxSlots` evicts orphans.** When a partition grows past the cap, the plugin evicts ids that no query references any more, least recently used first. An id a query still holds is kept, even past the cap. An evicted signal settles to `undefined` before it is dropped.
-- **Walk cost grows with the paths through the data** on every cache write. For tree-shaped data that is the node count. The walker uses one mutable path accumulator (push/pop on descent/ascent) and clones only at binding boundaries.
-- **Shared-reference DAGs** are handled correctly: a single `Post` reachable via two paths gets bindings recorded for both. The walker visits a shared object once per path, so heavily shared graphs cost more to walk. True cycles (a `Post` referencing itself) short-circuit on the second descent.
+- **Walk cost is linear in the data** on every cache write: one `idOf` call per entity type for each object and each reference to it. The walker uses one mutable path accumulator (push on descent, pop on ascent) and clones only at binding boundaries.
+- **Shared-reference DAGs** are handled correctly. The walker descends into each object once. A single `Post` object reachable via two keys gets a binding at both. An entity nested inside a shared object is bound at the path the walker first reached it by, so `bindings()` lists one path per reference into it, not every path. A chain of diamonds with 2^depth paths therefore costs depth, not 2^depth. `update` does not depend on the paths: it finds the entity in the data, rebuilds a shared object once, and keeps it shared. True cycles (a `Post` referencing itself) short-circuit on the second descent.
 
 ## Interaction with `@kontsedal/olas-cross-tab`
 
 A write another tab sent reaches this plugin like any other write, so the receiving tab's store follows the mirrored query data.
 
-The plugin's own backprop writes carry `origin: 'olas-entities'`, and `crossTabPlugin` mirrors only the app's own writes by default. So an `entities.update(...)` patch stays in its tab. To mirror it, list the plugin in cross-tab's `origins`:
+The plugin's own backprop writes carry `origin: 'olas-entities'`, and `crossTabPlugin` mirrors only the app's own writes by default. So an `entities.update(...)` patch stays in its tab. That default fits an update every tab makes for itself, such as a realtime push each tab receives. Mirroring it would send one message per tab and write every peer twice. When one tab's UI makes the update, list the plugin in cross-tab's `origins`, and the peer walks the mirrored write into its own store:
 
 ```ts
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'

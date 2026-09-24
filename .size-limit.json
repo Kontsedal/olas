@@ -60,7 +60,7 @@
     "path": "packages/entities/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "2.2 KB"
+    "limit": "2.4 KB"
   },
   {
     "name": "mutation-queue",

@@ -67,6 +67,17 @@ function makeSourceId(): string {
 }
 
 /**
+ * What became of a peer's message, as the devtools lane reports it:
+ * - `applied`: written or invalidated here;
+ * - `duplicate`: its `msgId` is not above the last one seen from that peer;
+ * - `malformed`: a field has the wrong shape, or the type is unknown;
+ * - `ignored`: this root has not bound the query, or has not opted it in;
+ * - `rejected`: `validate` returned `false` or threw;
+ * - `failed`: applying it threw, such as on a key the engine cannot hash.
+ */
+type Received = 'applied' | 'duplicate' | 'malformed' | 'ignored' | 'rejected' | 'failed'
+
+/**
  * Cross-tab cache sync over `BroadcastChannel`. Mirrors writes and
  * invalidations of opted-in queries across tabs of the same origin.
  *
@@ -148,11 +159,13 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
        * nesting deep enough to overflow) throws; it is reported through
        * `onWarn` instead of escaping the channel's event handler.
        */
-      const applying = (apply: () => void): void => {
+      const applying = (apply: () => void): Received => {
         try {
           apply()
+          return 'applied'
         } catch (cause) {
           onWarn('[olas/cross-tab] failed to apply a peer message', cause)
+          return 'failed'
         }
       }
       /** A `validate` that throws rejects the message. */
@@ -164,43 +177,38 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         }
       }
 
-      const listener = (event: { data: unknown }) => {
-        const msg = event.data as Partial<Message> | null
-        if (!msg || typeof msg !== 'object') return
-        // Layer 1 — protocol version drop.
-        if (msg.v !== PROTOCOL_VERSION) return
-        // Layer 2 — own-source drop (the transport echoed our own message).
-        if (msg.sourceId === sourceId) return
+      /** Check and apply one message a peer sent. Returns what became of it. */
+      const receive = (msg: Partial<Message>): Received => {
         // Layer 3 — out-of-order / duplicate drop.
         // A `msgId` that is not a counter value, such as `Number.MAX_VALUE` posted
         // under a real peer's `sourceId`, would silence that peer for good.
         const msgId = msg.msgId
-        if (typeof msg.sourceId !== 'string' || typeof msgId !== 'number') return
-        if (!Number.isSafeInteger(msgId) || msgId < 0) return
+        if (typeof msg.sourceId !== 'string' || typeof msgId !== 'number') return 'malformed'
+        if (!Number.isSafeInteger(msgId) || msgId < 0) return 'malformed'
         const last = seenByPeer.get(msg.sourceId) ?? -1
-        if (msgId <= last) return
+        if (msgId <= last) return 'duplicate'
         recordPeerMsg(msg.sourceId, msgId)
 
         if (typeof msg.queryId !== 'string' || !Array.isArray(msg.keyArgs)) {
           onWarn(`[olas/cross-tab] malformed ${String(msg.type)} message`)
-          return
+          return 'malformed'
         }
-        if (!accepts(msg.queryId)) return
+        if (!accepts(msg.queryId)) return 'ignored'
         if (msg.type === 'setData') {
           // Stamped with this plugin's name as `origin`, which is what keeps
           // the write from being mirrored straight back.
           const { data, pageParams } = msg as { data?: unknown; pageParams?: unknown }
           if (pageParams !== undefined && !Array.isArray(pageParams)) {
             onWarn('[olas/cross-tab] malformed setData message: pageParams is not an array')
-            return
+            return 'malformed'
           }
           if (validate !== undefined && !safely(() => validate(msg.queryId as string, data))) {
             onWarn('[olas/cross-tab] setData message rejected by validate')
-            return
+            return 'rejected'
           }
           // An infinite query's pages arrive with their params, so this tab can
           // keep paging from them.
-          applying(() =>
+          return applying(() =>
             queries.write(
               msg.queryId as string,
               msg.keyArgs as unknown[],
@@ -208,10 +216,37 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
               pageParams ? { pageParams } : undefined,
             ),
           )
-          return
         }
         if (msg.type === 'invalidate') {
-          applying(() => void queries.invalidate(msg.queryId as string, msg.keyArgs as unknown[]))
+          return applying(
+            () => void queries.invalidate(msg.queryId as string, msg.keyArgs as unknown[]),
+          )
+        }
+        // A type this version does not know.
+        return 'malformed'
+      }
+
+      const listener = (event: { data: unknown }) => {
+        const msg = event.data as Partial<Message> | null
+        if (!msg || typeof msg !== 'object') return
+        // Layer 1 — protocol version drop.
+        if (msg.v !== PROTOCOL_VERSION) return
+        // Layer 2 — own-source drop (the transport echoed our own message).
+        if (msg.sourceId === sourceId) return
+        const outcome = receive(msg)
+        // Every message a peer sent on this protocol goes on the devtools
+        // lane, whatever became of it. `from` and `msgId` name the message in
+        // the sender's lane too.
+        if (__DEV__) {
+          host.debug({
+            kind: 'receive',
+            type: msg.type,
+            queryId: msg.queryId,
+            outcome,
+            from: msg.sourceId,
+            msgId: msg.msgId,
+            key: msg.keyArgs,
+          })
         }
       }
       channel.addEventListener('message', listener)
@@ -234,14 +269,27 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
             )
           }
         }
+        let posted = true
         try {
           channel.postMessage(msg)
         } catch (cause) {
+          posted = false
           onWarn(
             `[olas/cross-tab] failed to broadcast ${msg.type} for queryId="${msg.queryId}": ` +
               'data is not structured-cloneable',
             cause,
           )
+        }
+        if (__DEV__) {
+          host.debug({
+            kind: 'send',
+            type: msg.type,
+            queryId: msg.queryId,
+            outcome: posted ? 'posted' : 'not-cloneable',
+            from: sourceId,
+            msgId: msg.msgId,
+            key: msg.keyArgs,
+          })
         }
       }
 

@@ -4,18 +4,26 @@ import {
   defineController,
   defineQuery,
   effect,
+  type OlasPlugin,
   queryEngine,
+  type WriteEvent,
 } from '@kontsedal/olas-core'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { defineEntity, Entities, type EntityStore, entitiesPlugin } from '../src'
+import {
+  defineEntity,
+  ENTITIES_PLUGIN_NAME,
+  Entities,
+  type EntityStore,
+  entitiesPlugin,
+} from '../src'
 
 /**
  * Edge coverage for `@kontsedal/olas-entities` that `entities.test.ts` does
  * not reach: the reactive `list()` read, `isCanonical` stub handling,
  * `entries()` value shapes, deep-merge corner cases, reverse-index cleanup
  * after `remove` / gc / a partial re-walk, the missing-engine guard, the
- * slot-bloat warning, and the defensive `setAtPath` bail-outs when a nested
- * entity's recorded path no longer exists in the query.
+ * slot-bloat warning, and an `update` whose reverse index is behind the
+ * entry it patches.
  *
  * Every query id is prefixed `ent-cov/` — the query registry is
  * process-global, so ids must not collide with the other entities suites.
@@ -453,34 +461,23 @@ describe('slot bloat warning', () => {
   })
 })
 
-describe('nested entity whose recorded path no longer exists', () => {
-  // A `Feed` entity that embeds `Post` entities. `update(Feed, …)` writes the
-  // query with the plugin's own origin, which the plugin does not re-walk —
-  // so the Post bindings recorded by the fetch still point into the old
-  // shape. A later `update(Post, …)` must leave the query alone where that
-  // path no longer leads anywhere.
-  type Feed = {
-    id: string
-    kind: 'feed'
-    posts?: Post[] | null
-    pinned?: { post: Post } | null
-  }
+describe('a nested entity its parent entity dropped', () => {
+  // A `Feed` entity that embeds `Post` entities. `update(Feed, …)` re-walks
+  // the entry it wrote, so a Post the patch dropped loses its binding, and a
+  // later `update(Post, …)` touches no query.
+  type Feed = { id: string; kind: 'feed'; posts: Post[] }
   const Feed = defineEntity<Feed>({
     name: 'Feed',
     idOf: (v) => (isRecord(v) && v.kind === 'feed' && typeof v.id === 'string' ? v.id : null),
   })
 
-  const p1 = { id: 'p1', title: 'A', likes: 0 }
-  const p2 = { id: 'p2', title: 'B', likes: 0 }
-  const p3 = { id: 'p3', title: 'C', likes: 0 }
-
-  const mount = async (id: string) => {
+  test('is unbound, and its update patches the store only', async () => {
+    const p1 = { id: 'p1', title: 'A', likes: 0 }
+    const p2 = { id: 'p2', title: 'B', likes: 0 }
     const q = defineQuery({
-      id,
+      id: 'ent-cov/parent-dropped',
       key: () => [],
-      fetcher: async () => ({
-        feed: { id: 'f1', kind: 'feed' as const, posts: [p1, p2], pinned: { post: p3 } },
-      }),
+      fetcher: async () => ({ feed: { id: 'f1', kind: 'feed' as const, posts: [p1, p2] } }),
       staleTime: 60_000,
     })
     const root = createRoot(
@@ -489,40 +486,179 @@ describe('nested entity whose recorded path no longer exists', () => {
     )
     const entities = root.inject(Entities)
     await settle()
-    const data = () => root.api.q.data.peek() as { feed: Feed }
-    return { root, entities, data }
-  }
 
-  test('an array index past the new end leaves the query unchanged', async () => {
-    const { root, entities, data } = await mount('ent-cov/stale-index')
     entities.update(Feed, 'f1', { posts: [p1] })
+    expect(entities.bindings(Post, 'p2')).toEqual([])
+    const before = root.api.q.data.peek()
     entities.update(Post, 'p2', { likes: 9 })
-    expect(data().feed.posts).toEqual([p1])
+    expect(root.api.q.data.peek()).toBe(before)
     expect(entities.get(Post, 'p2')?.likes).toBe(9)
     root.dispose()
   })
+})
 
-  test('an array index into a value that is no longer an array leaves the query unchanged', async () => {
-    const { root, entities, data } = await mount('ent-cov/stale-not-array')
-    entities.update(Feed, 'f1', { posts: null })
-    entities.update(Post, 'p1', { likes: 9 })
-    expect(data().feed.posts).toBeNull()
+describe('update patches each entry as it is now', () => {
+  // The reverse index says which entries hold an entity. It can be behind an
+  // entry: a plugin earlier in the list sees a write before this one walks
+  // it, and a plugin reacting to a backprop write can rewrite another entry
+  // mid-update. A patch that followed the recorded path would miss the entity
+  // or land on whatever took its place.
+  const p1 = { id: 'p1', title: 'A', likes: 0 }
+  const p2 = { id: 'p2', title: 'B', likes: 0 }
+
+  /**
+   * A root with one feed query, where a plugin installed before entities
+   * calls `react` on every write the app makes, before entities sees it.
+   */
+  const mountWithReactor = async (id: string, react: (store: EntityStore) => void) => {
+    const q = defineQuery({
+      id,
+      key: () => [],
+      fetcher: async (): Promise<{ posts: Post[] }> => ({ posts: [p1, p2] }),
+      staleTime: 60_000,
+    })
+    let store: EntityStore | undefined
+    const backprops: WriteEvent[] = []
+    const reactor: OlasPlugin = {
+      name: 'reactor',
+      setup: () => ({
+        onWrite: (e) => {
+          if (e.origin === ENTITIES_PLUGIN_NAME) backprops.push(e)
+          if (e.origin === undefined && e.source === 'write' && store) react(store)
+        },
+      }),
+    }
+    const root = createRoot(
+      defineController((ctx) => ({ q: createQuery(ctx, q, () => []) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [reactor, entitiesPlugin({ entities: [Post] })],
+      },
+    )
+    store = root.inject(Entities)
+    await settle()
+    expect(store.bindings(Post, 'p1')[0]?.paths).toEqual([['posts', 0]])
+    return { root, q, entities: store, backprops }
+  }
+
+  test('a patch made before the plugin walked a reorder lands on the entity, not its old index', async () => {
+    const { root, q, entities } = await mountWithReactor('ent-cov/now-reorder', (store) =>
+      store.update(Post, 'p1', { likes: 9 }),
+    )
+    q.write(() => ({ posts: [p2, p1] }))
+
+    // p2 now sits at p1's recorded index, and keeps its own value.
+    expect(root.api.q.data.peek()?.posts).toEqual([p2, { ...p1, likes: 9 }])
+    // The plugin then sees the app's write. It walks the entry as it is, so
+    // the store keeps the patch and the binding points at the new index.
+    expect(entities.get(Post, 'p1')?.likes).toBe(9)
+    expect(entities.get(Post, 'p2')).toBe(p2)
+    expect(entities.bindings(Post, 'p1')[0]?.paths).toEqual([['posts', 1]])
     root.dispose()
   })
 
-  test('an object key into a value that is no longer an object leaves the query unchanged', async () => {
-    const { root, entities, data } = await mount('ent-cov/stale-not-object')
-    entities.update(Feed, 'f1', { pinned: null })
-    entities.update(Post, 'p3', { likes: 9 })
-    expect(data().feed.pinned).toBeNull()
+  test('a patch for an entity that left the entry writes nothing, and drops the binding', async () => {
+    const { root, q, entities, backprops } = await mountWithReactor(
+      'ent-cov/now-removed',
+      (store) => store.update(Post, 'p1', { likes: 9 }),
+    )
+    q.write(() => ({ posts: [p2] }))
+
+    expect(root.api.q.data.peek()?.posts).toEqual([p2])
+    expect(backprops).toEqual([])
+    expect(entities.bindings(Post, 'p1')).toEqual([])
+    expect(entities.get(Post, 'p1')?.likes).toBe(9)
     root.dispose()
   })
 
-  test('an object key that was removed leaves the query unchanged', async () => {
-    const { root, entities, data } = await mount('ent-cov/stale-missing-key')
-    entities.update(Feed, 'f1', (prev) => ({ id: prev.id, kind: prev.kind }))
+  test('an entry a plugin rewrote in reaction to an earlier backprop is patched where the entity moved', async () => {
+    type Side = { posts: Post[]; pinned?: Post }
+    const feed = defineQuery({
+      id: 'ent-cov/now-feed',
+      key: () => [],
+      fetcher: async (): Promise<{ posts: Post[] }> => ({ posts: [p1] }),
+      staleTime: 60_000,
+    })
+    const side = defineQuery({
+      id: 'ent-cov/now-side',
+      key: () => [],
+      fetcher: async (): Promise<Side> => ({ posts: [p2, p1] }),
+      staleTime: 60_000,
+    })
+    // When the feed gets a backprop, the mover pins the side's second post.
+    const mover: OlasPlugin = {
+      name: 'mover',
+      setup: (host) => ({
+        onWrite: (e) => {
+          if (e.origin !== ENTITIES_PLUGIN_NAME || e.query.id !== 'ent-cov/now-feed') return
+          host.queries?.write('ent-cov/now-side', [], (prev) => {
+            const s = prev as Side
+            return { posts: s.posts.slice(0, 1), pinned: s.posts[1] }
+          })
+        },
+      }),
+    }
+    const root = createRoot(
+      defineController((ctx) => ({
+        feed: createQuery(ctx, feed, () => []),
+        side: createQuery(ctx, side, () => []),
+      })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [entitiesPlugin({ entities: [Post] }), mover],
+      },
+    )
+    const entities = root.inject(Entities)
+    await settle()
+    // The feed is patched first, so the side moves before its turn comes.
+    expect(entities.bindings(Post, 'p1').map((b) => b.queryId)).toEqual([
+      'ent-cov/now-feed',
+      'ent-cov/now-side',
+    ])
+
     entities.update(Post, 'p1', { likes: 9 })
-    expect(data().feed).toEqual({ id: 'f1', kind: 'feed' })
+
+    const next = { ...p1, likes: 9 }
+    expect(root.api.feed.data.peek()).toEqual({ posts: [next] })
+    expect(root.api.side.data.peek()).toEqual({ posts: [p2], pinned: next })
+    root.dispose()
+  })
+
+  test('an updater that returns the stored value writes nothing', async () => {
+    const { root, entities, backprops } = await mountWithReactor('ent-cov/now-same', () => {})
+    const before = root.api.q.data.peek()
+    entities.update(Post, 'p1', (prev) => prev)
+    expect(backprops).toEqual([])
+    expect(root.api.q.data.peek()).toBe(before)
+    root.dispose()
+  })
+
+  test('data with a cycle is patched, and the back reference keeps the original object', async () => {
+    type Box = { posts: Post[]; self?: Box }
+    const q = defineQuery({
+      id: 'ent-cov/now-cycle',
+      key: () => [],
+      fetcher: async (): Promise<Box> => {
+        const box: Box = { posts: [p1] }
+        box.self = box
+        return box
+      },
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ q: createQuery(ctx, q, () => []) })),
+      { queries: queryEngine(), deps: {}, plugins: [entitiesPlugin({ entities: [Post] })] },
+    )
+    const entities = root.inject(Entities)
+    await settle()
+    const before = root.api.q.data.peek() as Box
+
+    entities.update(Post, 'p1', { likes: 9 })
+    const after = root.api.q.data.peek() as Box
+    expect(after.posts).toEqual([{ ...p1, likes: 9 }])
+    expect(after.self).toBe(before)
     root.dispose()
   })
 })

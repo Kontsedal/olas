@@ -131,6 +131,10 @@ type Path = ReadonlyArray<string | number>
  * One binding of (entityId → location inside a query). A single entity can
  * have multiple paths within the same query (e.g. `data.posts[3]` and
  * `data.pinned` may both be the same Post by id).
+ *
+ * The reverse index uses a binding to know WHICH entries hold an entity.
+ * `update` does not follow `paths`: it finds the entity in the entry's
+ * current data (`replaceEntity`). The paths are for `bindings()`.
  */
 type Binding = {
   queryId: string
@@ -166,6 +170,15 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> => {
 }
 
 /**
+ * Set `key` on `out` as an own data property. An assignment `out[key] = v`
+ * with the key `__proto__` would replace the prototype instead, and a value
+ * parsed from JSON can carry that key.
+ */
+const defineOwn = (out: object, key: string, value: unknown): void => {
+  Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
+}
+
+/**
  * Recursive merge for `entities.update(..., { merge: 'deep' })`. Plain
  * objects merge key-by-key; arrays REPLACE (no deep-array merge — see
  * lodash debate); non-plain values replace. Returns a new top-level object.
@@ -183,8 +196,7 @@ const deepMerge = (current: object, patch: object): object => {
     // JSON can carry that key, so it is copied as the plain data it is.
     const a = Object.hasOwn(current, key) ? (current as Record<string, unknown>)[key] : undefined
     const b = (patch as Record<string, unknown>)[key]
-    const value = isPlainObject(a) && isPlainObject(b) ? deepMerge(a, b) : b
-    Object.defineProperty(out, key, { value, enumerable: true, writable: true, configurable: true })
+    defineOwn(out, key, isPlainObject(a) && isPlainObject(b) ? deepMerge(a, b) : b)
   }
   return out
 }
@@ -239,10 +251,12 @@ export type EntityStore = {
    *   non-plain values (Date, class instances, Map/Set) REPLACE; primitives
    *   replace. Cycles in the patch short-circuit at the cycle node.
    *
-   * Each query holding the entity gets a `setData` write that immutably
-   * replaces the entity at every path where it appears. Writes are wrapped
-   * in `batch(...)` so a single update produces one round of subscriber
-   * notifications, even when N queries are affected.
+   * Each query entry the reverse index lists gets one canonical write that
+   * replaces every node `idOf` claims with this id, found in the entry's
+   * current data, so a patch lands on an entity that moved since the entry
+   * was last walked. An entry that no longer holds the entity gets no
+   * write. Writes are wrapped in `batch(...)` so a single update produces
+   * one round of subscriber notifications, even when N queries are affected.
    *
    * When the entity isn't in the store, `update` is a no-op. A
    * `console.warn` fires in dev builds — production builds silently bail.
@@ -354,13 +368,21 @@ export function entitiesPlugin(options: EntitiesOptions): OlasPlugin {
             'createRoot(app, { queries: queryEngine(), plugins: [entitiesPlugin({ … })] })',
         )
       }
-      const { store, observe, forget, dispose } = createEntityStore(byName, queries)
+      const { store, observe, forget, dispose } = createEntityStore(byName, queries, (payload) =>
+        host.debug(payload),
+      )
       host.provide(Entities, store)
       return {
         onWrite(event) {
           // Its own backprop writes put values the store already holds.
           if (event.origin === ENTITIES_PLUGIN_NAME) return
-          observe(event.query.id, event.key, event.data)
+          // Walk what the entry holds now, not `event.data`. A plugin earlier
+          // in the list can write this entry again, or call `update`, before
+          // this hook sees the event; walking the older value would put stale
+          // entities back into the store and bind paths into data that is
+          // gone. `event.data` stands in when the engine cannot find the entry.
+          const current = queries.peek(event.query.id, event.key)
+          observe(event.query.id, event.key, current === undefined ? event.data : current)
         },
         onRemove(event) {
           // Entities referenced only by the removed entry drop out of the
@@ -379,6 +401,8 @@ export function entitiesPlugin(options: EntitiesOptions): OlasPlugin {
 function createEntityStore(
   byName: ReadonlyMap<string, EntityDef<unknown>>,
   queries: QueryHost,
+  /** The plugin's devtools lane (`host.debug`). Called only in development builds. */
+  debug: (payload: unknown) => void,
 ): {
   store: EntityStore
   observe: (queryId: string, keyArgs: readonly unknown[], data: unknown) => void
@@ -526,6 +550,20 @@ function createEntityStore(
   }
 
   /**
+   * Write `value` into the slot for (entityName, id). Re-setting the same
+   * reference is a no-op for the signal (`Object.is`), and that is what breaks
+   * the "auto-walk → upsert → setData → auto-walk" loop after `update()`.
+   */
+  const putSlot = (entityName: string, id: string, value: unknown): void => {
+    const part = store.get(entityName)
+    if (part === undefined) return
+    const slot = getSlot(part, entityName, id)
+    const prev = slot.peek()
+    slot.set(value)
+    if (!Object.is(prev, value)) bumpListVersion(entityName)
+  }
+
+  /**
    * Append a binding for (entityName, id) at `key` with `path`. We clone
    * `path` here (`.slice()`) because the walker reuses one mutable
    * accumulator array — without this clone, every binding would alias the
@@ -571,104 +609,6 @@ function createEntityStore(
   }
 
   /**
-   * Recursively walk `value` for entities. For every subtree node that any
-   * registered entity claims via `idOf`, upsert it into the store and
-   * record the path under the (queryId, keyArgs) binding.
-   *
-   * Cycle handling: `inProgress` is a `WeakSet` of objects currently being
-   * descended into. We add on entry, remove on exit. A true cycle hits a
-   * node already in `inProgress` and short-circuits. A shared-reference
-   * DAG (same Post object reached via two different paths) does NOT short-
-   * circuit, because the second visit happens AFTER the first has popped —
-   * so both paths get recorded.
-   *
-   * Path accumulator: `path` is one mutable array reused across the whole
-   * walk; we push on descent and pop on ascent. Callers that record the
-   * path (`addBinding`) must clone it.
-   *
-   * Cost: O(reachable-nodes). For most query payloads (KB-range JSON) this
-   * is negligible. Map / Set / Date / class instances are NOT walked into
-   * — we only recurse on Array and plain Object (own enumerable string
-   * keys). Non-enumerable / symbol keys are intentionally invisible.
-   */
-  const walk = (
-    value: unknown,
-    queryId: string,
-    keyArgs: readonly unknown[],
-    key: string,
-    path: Array<string | number>,
-    inProgress: WeakSet<object>,
-    foundIds: Map<string, Set<string>>,
-  ): void => {
-    if (value === null || typeof value !== 'object') return
-    if (inProgress.has(value as object)) return // true cycle — bail
-    inProgress.add(value as object)
-
-    // Entity-claim check first. We probe ALL registered entities (not just
-    // one) because the same object could plausibly satisfy multiple
-    // definitions (rare but legal).
-    for (const def of byName.values()) {
-      const id = def.idOf(value)
-      if (id == null) continue
-      addBinding(def.name, id, key, queryId, keyArgs, path)
-      // `isCanonical` guards stub-reference writes. A foreign-key embedding
-      // like `{ id: '1' }` should NOT overwrite the canonical Post stored
-      // by an earlier fully-hydrated fetch. The reverse-index binding is
-      // still recorded so backprop into this slot still works — only the
-      // store write is gated.
-      if (def.isCanonical !== undefined && !def.isCanonical(value)) {
-        let ids = foundIds.get(def.name)
-        if (ids === undefined) {
-          ids = new Set()
-          foundIds.set(def.name, ids)
-        }
-        ids.add(id)
-        continue
-      }
-      // Object.is dedup at the signal level — re-setting the same reference
-      // is a no-op. This is what breaks the "auto-walk → upsert → setData
-      // → auto-walk" loop after `update()`.
-      const part = store.get(def.name)
-      if (part !== undefined) {
-        const slot = getSlot(part, def.name, id)
-        const prev = slot.peek()
-        slot.set(value)
-        if (!Object.is(prev, value)) bumpListVersion(def.name)
-      }
-      let ids = foundIds.get(def.name)
-      if (ids === undefined) {
-        ids = new Set()
-        foundIds.set(def.name, ids)
-      }
-      ids.add(id)
-    }
-
-    if (Array.isArray(value)) {
-      for (let i = 0; i < value.length; i += 1) {
-        path.push(i)
-        walk(value[i], queryId, keyArgs, key, path, inProgress, foundIds)
-        path.pop()
-      }
-    } else {
-      for (const k of Object.keys(value as Record<string, unknown>)) {
-        path.push(k)
-        walk(
-          (value as Record<string, unknown>)[k],
-          queryId,
-          keyArgs,
-          key,
-          path,
-          inProgress,
-          foundIds,
-        )
-        path.pop()
-      }
-    }
-
-    inProgress.delete(value as object)
-  }
-
-  /**
    * The binding key for one query entry. Built from the engine's own key
    * hash, so an entities binding collides with the cache entry it points at
    * exactly when the same key would.
@@ -676,23 +616,96 @@ function createEntityStore(
   const bindingKey = (queryId: string, keyArgs: readonly unknown[]): string =>
     `${queryId}\u0000${queries.hashKey(keyArgs)}`
 
+  /**
+   * Walk one entry's `data` for entities: every node a registered entity
+   * claims is upserted into the store and its path recorded under the entry's
+   * binding. The bindings the previous walk of the entry recorded are dropped
+   * first, so an entity that left the query (a Post removed from a list) loses
+   * its reverse-index entry.
+   *
+   * Each object is descended into once per walk:
+   * - A node on the current descent path (`inProgress`) is a cycle back to
+   *   an ancestor. It is skipped, with no claim.
+   * - A node already walked (`walked`) is a shared reference, such as one
+   *   Post object at `posts[3]` and at `pinned`. Its own claims are recorded
+   *   at this path too, but its subtree is not walked again. An entity nested
+   *   inside it is bound at the path the walk first reached it by.
+   *
+   * The second rule keeps a DAG linear. A chain of diamonds, where each level
+   * points at the next through two keys, has 2^depth paths to its bottom, and
+   * walking every path would take that long. `update` does not need the paths:
+   * it finds the entity in the entry's current data (`replaceEntity`).
+   *
+   * Path accumulator: `path` is one mutable array reused across the whole
+   * walk; we push on descent and pop on ascent. Callers that record the
+   * path (`addBinding`) must clone it.
+   *
+   * Regular and infinite entries are both walked. For an infinite one, `data`
+   * is `TPage[]`, so a path starts with the page index.
+   *
+   * Cost: O(reachable objects + the references between them) `idOf` calls
+   * per registered entity. Only arrays and objects are descended into, by
+   * their own enumerable string keys (`Object.keys`), so a Map, a Set or a
+   * Date contributes no children. Symbol keys are invisible.
+   */
   const observe = (queryId: string, keyArgs: readonly unknown[], data: unknown): void => {
-    // Regular and infinite entries are both walked. For an infinite one,
-    // `data` is `TPage[]` — the walker's path accumulator records
-    // `[pageIdx, ...inPagePath]` automatically, and `queries.write` routes a
-    // backprop write into the pages the same way.
     const key = bindingKey(queryId, keyArgs)
-    // Drop the previous walk's bindings for this entry first. Entities that
-    // disappeared from the query (e.g. a Post removed from a list) lose
-    // their reverse-index entry here.
     removeBindingsForKey(key)
-
     const foundIds = new Map<string, Set<string>>()
-    walk(data, queryId, keyArgs, key, [], new WeakSet(), foundIds)
+    const path: Array<string | number> = []
+    const inProgress = new Set<object>()
+    const walked = new Set<object>()
 
-    if (foundIds.size > 0) {
-      forwardIndex.set(key, foundIds)
+    // Record the claims on one node at `path`: a binding for every registered
+    // entity whose `idOf` claims it, and a store write unless `isCanonical`
+    // rejects it. All entities are probed, because one object can satisfy
+    // several definitions (rare but legal).
+    const claim = (node: object): void => {
+      for (const def of byName.values()) {
+        const id = def.idOf(node)
+        if (id == null) continue
+        addBinding(def.name, id, key, queryId, keyArgs, path)
+        let ids = foundIds.get(def.name)
+        if (ids === undefined) {
+          ids = new Set()
+          foundIds.set(def.name, ids)
+        }
+        ids.add(id)
+        // `isCanonical` guards stub-reference writes. A foreign-key embedding
+        // like `{ id: '1' }` should NOT overwrite the canonical Post stored
+        // by an earlier fully-hydrated fetch. The binding is still recorded,
+        // so a backprop still reaches the stub; only the store write is gated.
+        if (def.isCanonical !== undefined && !def.isCanonical(node)) continue
+        putSlot(def.name, id, node)
+      }
     }
+
+    const walk = (value: unknown): void => {
+      if (value === null || typeof value !== 'object') return
+      const node = value as object
+      if (inProgress.has(node)) return
+      claim(node)
+      if (walked.has(node)) return
+      walked.add(node)
+      inProgress.add(node)
+      if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i += 1) {
+          path.push(i)
+          walk(node[i])
+          path.pop()
+        }
+      } else {
+        for (const k of Object.keys(node)) {
+          path.push(k)
+          walk((node as Record<string, unknown>)[k])
+          path.pop()
+        }
+      }
+      inProgress.delete(node)
+    }
+
+    walk(data)
+    if (foundIds.size > 0) forwardIndex.set(key, foundIds)
   }
 
   /**
@@ -708,12 +721,7 @@ function createEntityStore(
         const id = def.idOf(value)
         if (id == null) continue
         if (def.isCanonical !== undefined && !def.isCanonical(value)) continue
-        const part = store.get(def.name)
-        if (part === undefined) continue
-        const slot = getSlot(part, def.name, id)
-        const prev = slot.peek()
-        slot.set(value)
-        if (!Object.is(prev, value)) bumpListVersion(def.name)
+        putSlot(def.name, id, value)
       }
     }
     const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>)
@@ -721,31 +729,59 @@ function createEntityStore(
   }
 
   /**
-   * Immutably replace the value at `path` inside `root`. Returns a new
-   * structure that shares siblings by reference — unchanged subtrees stay
-   * `===` to their original, which is what the signal-equality dedup
-   * relies on to terminate the post-`update` walk.
+   * `root` with every node that `def` claims as `id` replaced by `value`, plus
+   * how many distinct nodes matched. It reads the data as it is now, so a
+   * patch lands on an entity that moved after the entry was last walked, and
+   * never on whatever took its old place.
    *
-   * Defensive: if the path doesn't lead anywhere (e.g., the array slot
-   * was removed by an earlier write), we return `root` unchanged.
+   * The rebuild is immutable and structural. An unchanged subtree keeps its
+   * reference, which is what the signal-equality dedup relies on to end the
+   * post-`update` walk, and `root` itself comes back when nothing changed.
+   * A shared subtree is rebuilt once and stays shared, so the cost is one
+   * `idOf` call per reachable object, however many paths lead to it. A cycle
+   * back to an ancestor keeps pointing at the original object. The traversal
+   * matches `walk`: arrays, and objects by `Object.keys`.
    */
-  const setAtPath = (root: unknown, path: Path, value: unknown): unknown => {
-    if (path.length === 0) return value
-    const head = path[0] as string | number
-    const rest = path.slice(1)
-    if (typeof head === 'number') {
-      if (!Array.isArray(root)) return root
-      if (head < 0 || head >= root.length) return root
-      const next = root.slice()
-      next[head] = setAtPath(root[head], rest, value)
-      return next
+  const replaceEntity = (
+    root: unknown,
+    def: EntityDef<unknown>,
+    id: string,
+    value: unknown,
+  ): { data: unknown; matched: number } => {
+    const done = new Map<object, unknown>()
+    let matched = 0
+    const visit = (node: unknown): unknown => {
+      if (node === null || typeof node !== 'object') return node
+      if (done.has(node)) return done.get(node)
+      if (def.idOf(node) === id) {
+        matched += 1
+        done.set(node, value)
+        return value
+      }
+      // Set before descending, so a cycle back here resolves to the original.
+      done.set(node, node)
+      let out: unknown[] | Record<string, unknown> | undefined
+      if (Array.isArray(node)) {
+        for (let i = 0; i < node.length; i += 1) {
+          const child = visit(node[i])
+          if (Object.is(child, node[i])) continue
+          out ??= node.slice()
+          ;(out as unknown[])[i] = child
+        }
+      } else {
+        const record = node as Record<string, unknown>
+        for (const k of Object.keys(record)) {
+          const child = visit(record[k])
+          if (Object.is(child, record[k])) continue
+          out ??= { ...record }
+          defineOwn(out, k, child)
+        }
+      }
+      const result = out ?? node
+      done.set(node, result)
+      return result
     }
-    if (root === null || typeof root !== 'object' || Array.isArray(root)) return root
-    if (!(head in (root as Record<string, unknown>))) return root
-    return {
-      ...(root as Record<string, unknown>),
-      [head]: setAtPath((root as Record<string, unknown>)[head], rest, value),
-    }
+    return { data: visit(root), matched }
   }
 
   const entityStore: EntityStore = {
@@ -766,13 +802,10 @@ function createEntityStore(
     },
 
     upsert<T>(entity: EntityDef<T>, value: T): void {
-      const part = assertRegistered(entity, 'upsert')
+      assertRegistered(entity, 'upsert')
       const id = entity.idOf(value as unknown)
       if (id == null) return
-      const slot = getSlot(part, entity.name, id)
-      const prev = slot.peek()
-      slot.set(value as unknown)
-      if (!Object.is(prev, value)) bumpListVersion(entity.name)
+      putSlot(entity.name, id, value)
     },
 
     update<T extends object>(
@@ -815,6 +848,10 @@ function createEntityStore(
       // backprop write can re-enter this store synchronously and reshape the
       // live Map mid-iteration.
       const bindingsSnapshot = bindingsMap === undefined ? [] : Array.from(bindingsMap.values())
+      // For the devtools lane: the query id of each entry the patch was
+      // written into, and how many listed entries no longer held the entity.
+      const reached: string[] = []
+      let stale = 0
 
       // Wrap store + backprop writes in a single batch so subscribers see
       // one round of notifications across the entity store and every
@@ -823,24 +860,46 @@ function createEntityStore(
         slot.set(next as unknown)
         if (!Object.is(current, next)) bumpListVersion(entity.name)
         for (const binding of bindingsSnapshot) {
-          const paths = binding.paths
+          const { queryId, keyArgs } = binding
+          // Patch the entry as it is now. The binding says which entry holds
+          // the entity, not where: the entry can have changed since its last
+          // walk (a plugin earlier in the list rewrote it, or reacted to a
+          // backprop write), and a recorded path would miss the entity or
+          // land on what took its place.
+          const prev = queries.peek(queryId, keyArgs)
+          const { data, matched } = replaceEntity(prev, entity, id, next)
+          if (matched === 0) {
+            // The entry no longer holds the entity. Nothing to patch; the
+            // re-walk drops the binding.
+            if (__DEV__) stale += 1
+            observe(queryId, keyArgs, prev)
+            continue
+          }
+          // An updater that returned the stored value changes nothing.
+          if (data === prev) continue
           // Stamped with this plugin's name as `origin`, so its own `onWrite`
           // skips it; the re-walk below stands in for that walk.
-          queries.write(binding.queryId, binding.keyArgs, (prev) => {
-            let result: unknown = prev
-            for (const path of paths) {
-              result = setAtPath(result, path, next as unknown)
-            }
-            return result
-          })
+          queries.write(queryId, keyArgs, () => data)
+          if (__DEV__) reached.push(queryId)
           // Re-walk the entry: a nested entity the patch brought in (a new
           // author, say) is normalized, and the entry's bindings follow the
           // patch instead of keeping the entity it replaced. The walk writes
           // nothing back to the cache, so it cannot loop.
-          observe(binding.queryId, binding.keyArgs, queries.peek(binding.queryId, binding.keyArgs))
+          observe(queryId, keyArgs, queries.peek(queryId, keyArgs))
         }
         if (bindingsSnapshot.length === 0) absorbNested(next, new WeakSet(), true)
       })
+      // The backprop fan-out, on the plugin's devtools lane.
+      if (__DEV__) {
+        debug({
+          kind: 'update',
+          entity: entity.name,
+          id,
+          entries: reached.length,
+          stale,
+          queries: reached,
+        })
+      }
     },
 
     remove<T>(entity: EntityDef<T>, id: string): void {

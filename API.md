@@ -2637,7 +2637,8 @@ type CrossTabOptions = {
 ```
 
 - Only queries with `meta: { crossTab: true }` sync, on both the send and the receive side. That includes infinite queries, whose pages travel with their `pageParams`.
-- The plugin mirrors the app's own writes and invalidations. A write another plugin made is derived, and every tab makes it itself, such as a realtime push or an entity backprop. `origins` lists the plugin names whose writes cross too.
+- The plugin mirrors the app's own writes and invalidations. A write another plugin made is usually derived, and every tab makes it itself, such as a realtime push. `origins` lists the plugin names whose writes cross too. A direct `entities.update(...)` happens in one tab, so list `ENTITIES_PLUGIN_NAME` there when the other tabs should see it.
+- In a development build, each message the plugin posts and each one a peer sent reach its devtools lane, with the peer's `sourceId`, the message type and what became of it.
 - Fetches and hydration stay in their tab, because every tab runs its own fetcher.
 - `validate(queryId, data)` guards the receive side: any same-origin script can post on the channel. A `false` drops the message and reports it through `onWarn`.
 - Without `BroadcastChannel` and without a `channelFactory`, as on a server, the plugin installs no hooks.
@@ -2678,7 +2679,7 @@ root.api.rename('p1', 'Renamed')
 // every query whose data contains p1 is patched and notified (one batched write).
 ```
 
-The store has `signal(entity, id)`, `get`, `upsert`, `update(entity, id, patch, { merge })`, `remove`, `list`, `entries` and `bindings`. `remove` drops the entity from the store and leaves the queries that hold it as they are. Regular and infinite queries are both walked, and each root gets its own store. Full surface: [package README](packages/entities/README.md).
+The store has `signal(entity, id)`, `get`, `upsert`, `update(entity, id, patch, { merge })`, `remove`, `list`, `entries` and `bindings`. `remove` drops the entity from the store and leaves the queries that hold it as they are. `update` finds the entity in each entry's current data, so a patch lands where the entity is now. Regular and infinite queries are both walked, and each root gets its own store. In a development build, each update reports its fan-out on the plugin's devtools lane. Full surface: [package README](packages/entities/README.md).
 
 ---
 

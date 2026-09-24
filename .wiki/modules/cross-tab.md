@@ -1,24 +1,30 @@
 ---
 name: cross-tab
-description: "@kontsedal/olas-cross-tab — an OlasPlugin that mirrors the app's own writes and invalidations of opted-in queries across same-origin tabs over BroadcastChannel."
+description: "@kontsedal/olas-cross-tab — an OlasPlugin that mirrors the app's own writes and invalidations of opted-in queries across same-origin tabs over BroadcastChannel, why an entities patch stays in its tab by default, and the devtools lane."
 type: module
 covers:
   - packages/cross-tab/src/index.ts
   - packages/cross-tab/src/plugin.ts
   - packages/cross-tab/src/protocol.ts
   - packages/cross-tab/src/channel.ts
+  - packages/cross-tab/tsdown.config.ts
 edges:
   - { type: related, target: ../decisions/trust-model.md }
   - { type: related, target: ../decisions/plugin-host-v2.md }
+  - { type: related, target: ../decisions/esm-only-build.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/cross-tab/tests/plugin.test.ts }
   - { type: tested-by, target: ../../packages/cross-tab/tests/coverage-edges.test.ts }
   - { type: tested-by, target: ../../packages/cross-tab/tests/security.test.ts }
   - { type: tested-by, target: ../../packages/cross-tab/tests/ssr.test.ts }
   - { type: tested-by, target: ../../packages/cross-tab/tests/non-cloneable.test.ts }
+  - { type: tested-by, target: ../../packages/cross-tab/tests/devtools-lane.test.ts }
+  - { type: tested-by, target: ../../packages/integration/tests/cross-tab-entities.test.ts }
   - { type: uses, target: ../flows/plugin-lifecycle.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: persist.md }
+  - { type: related, target: entities.md }
+  - { type: related, target: devtools-panel.md }
 last_verified: 2026-09-25
 confidence: high
 ---
@@ -41,7 +47,7 @@ crossTabPlugin({
 }): OlasPlugin
 ```
 
-The options type is `CrossTabOptions` (`packages/cross-tab/src/plugin.ts:11-55`). The plugin's name is `CROSS_TAB_PLUGIN_NAME = 'olas-cross-tab'` (`plugin.ts:6`), and it is the `origin` of every write the plugin applies from a peer.
+The options type is `CrossTabOptions` (`packages/cross-tab/src/plugin.ts:11-57`). The plugin's name is `CROSS_TAB_PLUGIN_NAME = 'olas-cross-tab'` (`plugin.ts:6`), and it is the `origin` of every write the plugin applies from a peer.
 
 Install it and opt a query in:
 
@@ -65,7 +71,7 @@ export const root = createRoot(app, {
 })
 ```
 
-`index.ts:6-15` adds `crossTab?: boolean` to `QueryMeta` through `declare module`. `setup` throws without a query engine (`plugin.ts:108-114`), so `createRoot` fails before any channel opens. Pinned by `coverage-edges.test.ts`, "a root without a query engine fails to construct, before any channel opens".
+`index.ts:6-15` adds `crossTab?: boolean` to `QueryMeta` through `declare module`. `setup` throws without a query engine (`plugin.ts:123-129`), so `createRoot` fails before any channel opens. Pinned by `coverage-edges.test.ts`, "a root without a query engine fails to construct, before any channel opens".
 
 ## Message protocol
 
@@ -81,29 +87,39 @@ type Message =
 
 ## What crosses: the send gate
 
-`onWrite` and `onInvalidate` (`plugin.ts:252-280`) share one gate, `mirrors` (`plugin.ts:245-249`):
+`onWrite` and `onInvalidate` (`plugin.ts:303-332`) share one gate, `mirrors` (`plugin.ts:297-301`):
 
 1. **Origin.** An event with `origin: undefined`, the app's own write, crosses. An origin named in `options.origins` crosses too. The plugin's own name never crosses, even when listed. This is the first echo layer: a write this tab applied from a peer carries `origin: 'olas-cross-tab'`, so it is not sent back. The same rule keeps out a write another plugin made. A realtime push reaches every tab by itself, so mirroring it would deliver it twice.
 2. **Opt-in.** `event.query.meta.crossTab === true`, for a regular or an infinite query.
-3. **Source.** `onWrite` drops `'fetch'` and `'hydrate'` (`plugin.ts:254`). Each tab runs its own fetcher and hydrates its own payload, so mirroring those would be N-tab noise that changes no cache. With `optimistic: false` it also drops `'optimistic'` and `'rollback'` (`plugin.ts:255-257`).
+3. **Source.** `onWrite` drops `'fetch'` and `'hydrate'` (`plugin.ts:306`). Each tab runs its own fetcher and hydrates its own payload, so mirroring those would be N-tab noise that changes no cache. With `optimistic: false` it also drops `'optimistic'` and `'rollback'` (`plugin.ts:307-309`).
 
-So by default `setData`, its rollback, `write` and `replace` cross. An infinite write carries its `pageParams` (`plugin.ts:266`). `onInvalidate` passes through the origin and opt-in gates only.
+So by default `setData`, its rollback, `write` and `replace` cross. An infinite write carries its `pageParams` (`plugin.ts:318`). `onInvalidate` passes through the origin and opt-in gates only.
 
-An `entities.update(...)` backprop carries `origin: 'olas-entities'`, so by default it stays in the tab that made it. The default fits an update every tab makes for itself, such as one realtime push each tab folds into its own store. An app that updates entities from one tab's UI lists `ENTITIES_PLUGIN_NAME` in `origins`, as the package README shows under "Whose writes cross".
+An `entities.update(...)` backprop carries `origin: 'olas-entities'`, so by default it stays in the tab that made it. An app that updates entities from one tab's UI lists `ENTITIES_PLUGIN_NAME` in `origins`, as the package README shows under "Whose writes cross".
+
+### Decision: the entities origin stays opt-in (1.0)
+
+The 1.0 backlog asked whether cross-tab should mirror the entities origin by default. It does not, for three reasons, each pinned by `packages/integration/tests/cross-tab-entities.test.ts`:
+
+1. **A mirrored app write already reaches the peer's store.** The peer applies it with `origin: 'olas-cross-tab'`, and its entities plugin walks that write like any other. The peer's store follows, its reverse index binds the mirrored data, and its own `update` then reaches it. No entities traffic is needed. Pinned by "an app write that crosses is walked by the peer's entities plugin".
+2. **An update every tab makes for itself would cross from every tab.** A realtime push reaches each tab, and each folds it into its own store. Opted in, each of N tabs sends its backprop and receives the other N−1, so every tab writes the entry a second time for nothing. With two tabs, the test counts two messages and two feed changes per tab, against none and one. Pinned by "opting in doubles the traffic when every tab makes the same update itself".
+3. **Opting in works when it is wanted.** A patch from one tab's UI crosses as one message per affected entry, and the peer walks it into its store. There is no echo, because the peer applies it with cross-tab's own origin. Pinned by "with origins: [ENTITIES_PLUGIN_NAME] the patch crosses, and the peer walks it into its store".
+
+The tests found no reason to change the default. "by default an entities.update patch stays in the tab that made it" pins it. `../decisions/plugin-host-v2.md` has the origin model this rests on.
 
 Pinned by `plugin.test.ts`: "2. no echo", "11a. fetch-success writes are NOT broadcast", "14. writes another plugin or a tagged handle made are not mirrored", "15. optimistic: false mirrors only canonical writes", "3. crossTab: false queries stay isolated" and the three infinite-query cases. `coverage-edges.test.ts` pins that listing the plugin's own name in `origins` still sends nothing back.
 
 ## The receive side
 
-The channel `listener` (`plugin.ts:163-212`) drops a message at the first check it fails:
+The channel `listener` (`plugin.ts:229-251`) drops a non-object, another protocol version and its own echo silently. It hands every other message to `receive` (`plugin.ts:181-227`), which returns what became of it. Together they drop a message at the first check it fails:
 
 1. a payload that is not an object, or a `v` other than `PROTOCOL_VERSION`;
 2. its own `sourceId`, for a transport that echoes to the sender;
-3. a `sourceId` that is not a string, or a `msgId` that is not a safe non-negative integer or is not above the last one seen from that peer. The per-peer cursors keep 64 peers and evict the oldest (`plugin.ts:125-134`).
+3. a `sourceId` that is not a string, or a `msgId` that is not a safe non-negative integer or is not above the last one seen from that peer. The per-peer cursors keep 64 peers and evict the oldest (`plugin.ts:140-149`).
 4. a `queryId` that is not a string or `keyArgs` that is not an array, with an `onWarn`;
-5. a query this root has not used or has not opted in (`accepts`, `plugin.ts:137-140`). `host.queries.get` knows only queries this root has bound, so the receive gate mirrors the send gate.
+5. a query this root has not used or has not opted in (`accepts`, `plugin.ts:152-155`). `host.queries.get` knows only queries this root has bound, so the receive gate mirrors the send gate.
 
-A `setData` message then also fails on a `pageParams` that is not an array, or on a `validate` that returns `false` or throws. It lands through `queries.write(queryId, keyArgs, () => data, { pageParams })` (`plugin.ts:199-206`), and an `invalidate` through `queries.invalidate` (`plugin.ts:209-211`).
+A `setData` message then also fails on a `pageParams` that is not an array, or on a `validate` that returns `false` or throws. It lands through `queries.write(queryId, keyArgs, () => data, { pageParams })` (`plugin.ts:210-219`), and an `invalidate` through `queries.invalidate` (`plugin.ts:220-224`).
 
 Pinned by "10. out-of-order / duplicate messages are deduped", "13. receive-side filter — inbound writes for locally non-opted queries are ignored (T6.4)", and the `coverage-edges.test.ts` groups "inbound guards" and "per-peer cursor cap".
 
@@ -115,13 +131,28 @@ A peer's write lands here as a canonical `'write'`, whatever its source was on t
 
 ## Non-cloneable and oversized payloads
 
-`BroadcastChannel` uses structured clone, so functions, class instances and symbols throw `DataCloneError` at `postMessage`. `send` catches it, calls `onWarn` and drops the broadcast (`plugin.ts:233-241`). The sender's cache is unaffected, because the write completed before the broadcast. Pinned by "6. non-cloneable data triggers onWarn; sender cache unaffected" and `non-cloneable.test.ts`.
+`BroadcastChannel` uses structured clone, so functions, class instances and symbols throw `DataCloneError` at `postMessage`. `send` catches it, calls `onWarn` and drops the broadcast (`plugin.ts:272-282`). The sender's cache is unaffected, because the write completed before the broadcast. Pinned by "6. non-cloneable data triggers onWarn; sender cache unaffected" and `non-cloneable.test.ts`.
 
-Before posting, `send` estimates the size as the message's JSON length. Over `maxPayloadBytes` it warns and still posts (`plugin.ts:218-232`). `Infinity` turns the check off. Pinned by the `coverage-edges.test.ts` "outbound payload estimate" group.
+Before posting, `send` estimates the size as the message's JSON length. Over `maxPayloadBytes` it warns and still posts (`plugin.ts:254-271`). `Infinity` turns the check off. Pinned by the `coverage-edges.test.ts` "outbound payload estimate" group.
 
 ## SSR no-op
 
-`channelFactory` defaults to `defaultChannelFactory`, which returns `undefined` when `typeof BroadcastChannel === 'undefined'` (`packages/cross-tab/src/channel.ts:21-41`). `setup` then returns no hooks (`plugin.ts:115-117`), and the root boots with cross-tab off. The root still needs a query engine, because the engine check comes first. Pinned by "7. SSR — channelFactory returning undefined yields a no-op plugin" and `ssr.test.ts`.
+`channelFactory` defaults to `defaultChannelFactory`, which returns `undefined` when `typeof BroadcastChannel === 'undefined'` (`packages/cross-tab/src/channel.ts:21-41`). `setup` then returns no hooks (`plugin.ts:130-132`), and the root boots with cross-tab off. The root still needs a query engine, because the engine check comes first. Pinned by "7. SSR — channelFactory returning undefined yields a no-op plugin" and `ssr.test.ts`.
+
+## Devtools lane (1.0)
+
+A development build reports each message on the plugin's lane through `host.debug`:
+
+- `send` reports every message it posts, after `postMessage` (`plugin.ts:283-293`). The `outcome` is `posted`, or `not-cloneable` when `postMessage` threw.
+- The listener reports every message that reaches `receive`, with the outcome `receive` returned (`plugin.ts:236-250`): `applied`, `duplicate`, `malformed`, `ignored`, `rejected` or `failed`. The `Received` type lists them (`plugin.ts:69-78`).
+
+```ts nocheck
+{ kind: 'send', type: 'setData', queryId: 'app/user', outcome: 'posted', from: 'lq3k-7f2a', msgId: 4, key: ['user', 'me'] }
+```
+
+`from` is the message's `sourceId`, the sender's in both directions, so `from` and `msgId` name one message in the sender's lane and in each receiver's. The payload carries no `data`: the `cache:set-data` event on the core lane has it. A non-object, a message on another protocol version and the tab's own echo send no lane event. They are not traffic between peers on this protocol.
+
+Both calls sit in `if (__DEV__)`, so the default build strips them. `host.debug` is a no-op in core's default build anyway (`packages/core/src/plugin/host.ts:166-169`). The plugin had no `__DEV__` code before 1.0, so it now ships a `development` build like entities (`packages/cross-tab/tsdown.config.ts`, `src/__dev__.d.ts`, `../decisions/esm-only-build.md`). Pinned by `tests/devtools-lane.test.ts`, which runs a send and receive pair on two roots, a failed post, and every receive outcome.
 
 ## Interaction with `@kontsedal/olas-persist`
 
@@ -149,4 +180,4 @@ No consensus and no clocks: each tab applies incoming writes in delivery order. 
 
 ## Receiving untrusted messages (1.0)
 
-Any same-origin script can post on the channel. The listener ignores a `msgId` that is not a safe non-negative integer (`plugin.ts:173-175`), since `Number.MAX_VALUE` under a real peer's `sourceId` would silence that peer. It applies a message inside a try that reports to `onWarn` (`plugin.ts:147-153`). A key the engine cannot hash, such as a cycle, therefore does not throw out of the event handler. The `validate(queryId, data)` option rejects a payload shape the tab does not expect. Pinned by `tests/security.test.ts`; see `../decisions/trust-model.md`.
+Any same-origin script can post on the channel. The listener ignores a `msgId` that is not a safe non-negative integer (`plugin.ts:183-187`), since `Number.MAX_VALUE` under a real peer's `sourceId` would silence that peer. It applies a message inside a try that reports to `onWarn` (`plugin.ts:162-170`). A key the engine cannot hash, such as a cycle, therefore does not throw out of the event handler. The `validate(queryId, data)` option rejects a payload shape the tab does not expect. Pinned by `tests/security.test.ts`; see `../decisions/trust-model.md`.

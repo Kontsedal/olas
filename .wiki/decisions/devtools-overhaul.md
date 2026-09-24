@@ -216,7 +216,7 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   the structural-dirty flag (T5.1), validation events in the timeline. **Sensitive-value
   elision:** field values render only on click-to-reveal, and `form:field-change` events
   carry paths, not values, unless reveal is on.
-- **T8.8 — plugin lens.** *The lanes landed 2026-09-24 over the existing `plugin:event` and `host.debug`. The per-plugin payloads below are open.* The generic `plugin:event` envelope (T8.1) gets a dedicated
+- **T8.8 — plugin lens.** *The lanes landed 2026-09-24 over the existing `plugin:event` and `host.debug`. Cross-tab's and entities' payloads landed in 1.0: messages sent and received with peer ids (`../modules/cross-tab.md`), and the backprop fan-out of each update (`../modules/entities.md`). The mutation queue's is open.* The generic `plugin:event` envelope (T8.1) gets a dedicated
   timeline lane per plugin: cross-tab shows sent/received/deduped with peer ids; entities
   shows walk/backprop counts per set-data (surfacing the "walk cost on every event" tax);
   mutation-queue shows enqueue/replay/attempt lifecycles with durable-entry contents.

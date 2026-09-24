@@ -211,6 +211,6 @@ The older suites still pin the rest: `store.test.ts`, `panel.test.tsx`, `diff.te
 ## What's NOT included / follow-ups
 
 - **`cache:subscribed`** wiring, for subscriber counts. It needs subscriber-path threading through `use → acquire`, which is overhaul T8.5. Declared in the union, not emitted.
-- **Per-plugin lane payloads** from cross-tab, entities and mutation-queue. The lanes exist; those plugins do not call `host.debug` yet.
+- **A lane payload from mutation-queue.** Cross-tab and entities call `host.debug` since 1.0 (`cross-tab.md`, `entities.md`). The mutation queue does not yet.
 - The rest of the overhaul: T8.5 tracing, T8.6 live actions, T8.7 environment simulation and the forms inspector, T8.9 session export and import, and the T8.10 UX pass. See [../decisions/devtools-overhaul.md](../decisions/devtools-overhaul.md).
 - Signal dependency graph view.

@@ -18,7 +18,7 @@ edges:
   - { type: tested-by, target: ../../packages/mutation-queue/tests/security.test.ts }
   - { type: related, target: ../pitfalls/stream-chunks-split-tags.md }
   - { type: related, target: ../pitfalls/proto-key-assignment.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -64,7 +64,7 @@ It reproduced each finding against the built `dist` with probe scripts outside t
 - `<` was already escaped across each streamed batch, so `</script>` and `<!--` in data could not end the script. The mid-tag placement was the real hole.
 - `structuralShare` already handled `__proto__`, through `defineOwn` and `Object.hasOwn`.
 - `JSON.parse` and structured clone both keep `__proto__` as an own data property, and nothing in persist, the queue or devtools copied parsed keys onto a fresh `{}`.
-- The entities store and its indexes are `Map`s, and `setAtPath` writes with a computed key and spread.
+- The entities store and its indexes are `Map`s. A backprop rebuilds query data with spread and `Object.defineProperty`, so an own `__proto__` key in the data stays data (`packages/entities/tests/merge-security.test.ts`).
 - Cross-tab writes reach only bound entries of opted-in queries, and the receiving tab stamps its own `Date.now()`, so a peer cannot forge freshness.
 - There is no `eval`, `new Function` or `innerHTML` in any package source.
 

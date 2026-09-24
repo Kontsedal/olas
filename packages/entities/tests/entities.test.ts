@@ -4,11 +4,13 @@ import {
   defineController,
   defineInfiniteQuery,
   defineQuery,
+  type OlasPlugin,
   type Query,
   queryEngine,
+  type WriteEvent,
 } from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
-import { defineEntity, Entities, entitiesPlugin } from '../src'
+import { defineEntity, ENTITIES_PLUGIN_NAME, Entities, entitiesPlugin } from '../src'
 
 /**
  * End-to-end coverage for `@kontsedal/olas-entities`. Each test mounts a
@@ -243,8 +245,8 @@ describe('entitiesPlugin', () => {
     const after = root.api.feed.data.peek()
     expect(after?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 99 })
     expect(after?.pinned).toEqual({ id: 'p1', title: 'A', likes: 99 })
-    // Same reference at both paths after the patch — internally setAtPath
-    // collapsed both writes onto `next`.
+    // Same reference at both paths after the patch: the backprop replaced
+    // every node that is p1 with the one `next` value.
     expect(after?.posts[0]).toBe(after?.pinned)
 
     root.dispose()
@@ -356,7 +358,6 @@ describe('entitiesPlugin', () => {
   })
 
   test('reverse index drops bindings when an entity disappears from a query', async () => {
-    // Two distinct posts; we'll setData to replace the list so p1 is removed.
     const feedQuery = defineQuery({
       id: 'ent-test/8',
       key: () => [],
@@ -368,27 +369,40 @@ describe('entitiesPlugin', () => {
       }),
       staleTime: 60_000,
     })
-    const plugin = entitiesPlugin({ entities: [Post] })
+    // Records every backprop write, so the test can see that none was made.
+    const backprops: WriteEvent[] = []
+    const spy: OlasPlugin = {
+      name: 'spy',
+      setup: () => ({
+        onWrite: (e) => {
+          if (e.origin === ENTITIES_PLUGIN_NAME) backprops.push(e)
+        },
+      }),
+    }
     const def = defineController((ctx) => ({ feed: createQuery(ctx, feedQuery, () => []) }))
     const root = createRoot(def, {
       queries: queryEngine(),
       deps: {},
-      plugins: [plugin],
+      plugins: [entitiesPlugin({ entities: [Post] }), spy],
     })
     const entities = root.inject(Entities)
     await settle()
+    // The fetch bound both posts, so there is a binding to drop.
+    expect(entities.bindings(Post, 'p1').map((b) => b.paths)).toEqual([[['posts', 0]]])
+    expect(entities.bindings(Post, 'p2').map((b) => b.paths)).toEqual([[['posts', 1]]])
 
-    // Now drop p1 from the feed.
     feedQuery.setData(() => ({ posts: [{ id: 'p2', title: 'B', likes: 0 }] }))
-    await settle()
 
-    // Update p1 — there should be NO query to patch (p1 no longer lives
-    // anywhere in feed). The store still holds the old value, but the
-    // backprop should not raise an error and should not touch the feed.
+    // p1 left the feed, so it has no binding. p2's binding is rebuilt at its
+    // new index, not added to the old one.
+    expect(entities.bindings(Post, 'p1')).toEqual([])
+    expect(entities.bindings(Post, 'p2').map((b) => b.paths)).toEqual([[['posts', 0]]])
+
+    // With no binding, an update of p1 patches the store and writes no query.
+    const feedBefore = root.api.feed.data.peek()
     entities.update(Post, 'p1', { likes: 999 })
-
-    expect(root.api.feed.data.peek()?.posts).toEqual([{ id: 'p2', title: 'B', likes: 0 }])
-    // Store keeps the patched value (we updated it directly).
+    expect(backprops).toEqual([])
+    expect(root.api.feed.data.peek()).toBe(feedBefore)
     expect(entities.get(Post, 'p1')?.likes).toBe(999)
 
     root.dispose()
@@ -542,6 +556,67 @@ describe('entitiesPlugin', () => {
     const bindings = entities.bindings(Post, 'p1')
     expect(bindings).toHaveLength(1)
     expect(bindings[0]?.paths).toEqual([[]])
+    root.dispose()
+  })
+
+  test('a chain of diamonds is walked and patched in linear time, and stays shared', async () => {
+    // Each level points at the next through two keys, so the Post at the
+    // bottom is at the end of 2^DEPTH paths. A walk that follows every path
+    // calls idOf about 2^(DEPTH + 1) times; one that descends into each object
+    // once calls it about twice per level.
+    const DEPTH = 16
+    let calls = 0
+    const Counted = defineEntity<Post>({
+      name: 'Post',
+      idOf: (v) => {
+        calls += 1
+        return Post.idOf(v)
+      },
+    })
+    type Level = { a: Level | Post; b: Level | Post }
+    const diamonds = (): Level => {
+      let node: Level | Post = { id: 'leaf', title: 'L', likes: 0 }
+      for (let i = 0; i < DEPTH; i += 1) node = { a: node, b: node }
+      return node as Level
+    }
+    const q: Query<[], Level> = defineQuery({
+      id: 'ent-test/diamond-chain',
+      key: () => [],
+      fetcher: async () => diamonds(),
+      staleTime: 60_000,
+    })
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q, () => []) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [entitiesPlugin({ entities: [Counted] })],
+    })
+    const entities = root.inject(Entities)
+    await settle()
+
+    expect(entities.get(Counted, 'leaf')).toEqual({ id: 'leaf', title: 'L', likes: 0 })
+    // One call per reference: the root, then two per level.
+    expect(calls).toBeLessThanOrEqual(2 * DEPTH + 1)
+    // The leaf is bound once per reference into it, from the first path to
+    // its parent: `a` all the way down, then `a` or `b`.
+    const paths = entities.bindings(Counted, 'leaf')[0]?.paths.map((p) => p.join('.'))
+    const parent = Array.from({ length: DEPTH - 1 }, () => 'a').join('.')
+    expect(paths).toEqual([`${parent}.a`, `${parent}.b`])
+
+    calls = 0
+    entities.update(Counted, 'leaf', { likes: 1 })
+    // The patch finds the leaf once per object, and the re-walk once per
+    // reference, so the update is linear too.
+    expect(calls).toBeLessThanOrEqual(3 * DEPTH + 2)
+    let node: Level | Post = root.api.q.data.peek() as Level
+    for (let i = 0; i < DEPTH; i += 1) {
+      const level = node as Level
+      // The rebuilt chain keeps one object per level, shared by both keys.
+      expect(level.a).toBe(level.b)
+      node = level.a
+    }
+    expect(node).toEqual({ id: 'leaf', title: 'L', likes: 1 })
+
     root.dispose()
   })
 
