@@ -21,8 +21,8 @@ of all features doubles as a coverage map for the library.
 | Async title-uniqueness check | `debouncedValidator()` |
 | Assignee picker with shared user data | `entitiesPlugin` + `defineEntity<User>` |
 | Label picker with shared label data | `entitiesPlugin` + `defineEntity<Label>` |
-| Comments thread | `useLiveStream` over a BroadcastChannel realtime |
-| "Another tab just moved a card" log | `useRealtimePatcher` |
+| Comments thread | `createLiveStream` over a BroadcastChannel realtime |
+| "Another tab just moved a card" log | `createRealtimePatcher` |
 | Two-tab cache convergence | `crossTabPlugin` |
 | Persisted theme / density / sidebar / last-open board | `createPersisted` × N |
 | Theme + density mirror to `<html>` | standalone `effect()` |
@@ -54,7 +54,7 @@ src/
 │   ├── card-detail/         # SuspendOnUnmount panel + form + async validator
 │   ├── search/              # debounced search bar
 │   ├── filters/             # chip picker (priority/label/assignee)
-│   ├── comments/            # useLiveStream thread
+│   ├── comments/            # createLiveStream thread
 │   ├── activity/            # emitter feed + remote-actor events
 │   ├── notifications/       # ErrorContext-driven toasts
 │   ├── archive/             # defineInfiniteQuery drawer
@@ -78,7 +78,7 @@ two browser windows and one acts as a remote actor:
    a refetch.
 3. After success, the board controller `publish`es a `card.moved` event over
    the *realtime* channel (`olas-kanban-realtime`).
-4. Window B's `useRealtimePatcher` picks it up, sees `event.by !== tabId`,
+4. Window B's `createRealtimePatcher` picks it up, sees `event.by !== tabId`,
    and emits an "Another tab moved a card" entry into the activity scope —
    visible in the activity panel with a distinct accent.
 

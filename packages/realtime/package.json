@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-realtime",
   "version": "0.8.0",
-  "description": "Olas realtime composables — useRealtimePatcher, useLiveStream, and useRealtimeConnection over a pluggable RealtimeService.",
+  "description": "Olas realtime composables — createRealtimePatcher, createLiveStream and createConnectionState over a pluggable RealtimeService.",
   "keywords": [
     "olas",
     "controller-tree",

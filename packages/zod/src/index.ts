@@ -95,10 +95,10 @@ function isForeignZod(s: unknown): boolean {
 let warnedDuplicateZod = false
 
 function warnDuplicateZod(): void {
-  // Not gated on NODE_ENV: this package has no build-time dev flag (`__DEV__`
-  // is core-only), and the warning fires ONLY on a genuine misconfiguration (a
-  // schema from a foreign zod copy) that's broken in every environment — so
-  // there's no prod-noise concern.
+  // Not gated on `__DEV__`, on purpose: the warning fires ONLY on a genuine
+  // misconfiguration (a schema from a foreign zod copy) that's broken in every
+  // environment, so the production build keeps it too. It costs nothing when
+  // there is no foreign copy.
   if (warnedDuplicateZod) return
   warnedDuplicateZod = true
   console.warn(
