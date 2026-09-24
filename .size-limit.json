@@ -32,7 +32,21 @@
     "path": "packages/react/dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom", "@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "2.7 KB"
+    "limit": "3.2 KB"
+  },
+  {
+    "name": "vue",
+    "path": "packages/vue/dist/index.js",
+    "import": "*",
+    "ignore": ["vue", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "0.9 KB"
+  },
+  {
+    "name": "svelte",
+    "path": "packages/svelte/dist/index.js",
+    "import": "*",
+    "ignore": ["svelte", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "0.85 KB"
   },
   {
     "name": "cross-tab",

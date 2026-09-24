@@ -6,9 +6,10 @@ covers:
   - SPEC.md:1571-1600
 edges:
   - { type: related, target: ../modules/react.md }
+  - { type: related, target: framework-adapters.md }
   - { type: related, target: ../modules/signals.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -16,9 +17,9 @@ confidence: high
 
 ## The decision
 
-Olas ships no vanilla DOM adapter. `@kontsedal/olas-react` is the only UI adapter, and a
-consumer who wants a smaller runtime uses it through `preact/compat` rather than a second
-package.
+Olas ships no vanilla DOM adapter. The UI adapters are React, Vue and Svelte, one per
+framework (`framework-adapters.md`), and a consumer who wants a smaller React-shaped runtime
+uses the React adapter through `preact/compat` rather than a second package.
 
 SPEC §16 listed "vanilla" beside React, Vue and Svelte from the first draft. That line was
 a promise nobody had costed. It is now removed.

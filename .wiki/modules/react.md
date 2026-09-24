@@ -1,6 +1,6 @@
 ---
 name: react
-description: "@kontsedal/olas-react — Provider, useRoot, useValue/useQuery/useSuspenseQuery/useField/useFieldInput/useMutation, SuspendOnUnmount, HydrationBoundary, streaming SSR hydrator. Built on useSyncExternalStore."
+description: "@kontsedal/olas-react — Provider, useRoot, useValue/useQuery/useInfiniteQuery/useSuspenseQuery/useField/useFieldInput/useMutation, SuspendOnUnmount, HydrationBoundary, streaming SSR hydrator. Built on useSyncExternalStore; runs under preact/compat."
 type: module
 covers:
   - packages/react/src/index.ts
@@ -14,6 +14,9 @@ edges:
   - { type: tested-by, target: ../../packages/react/tests/ssr-hydration.test.tsx }
   - { type: tested-by, target: ../../packages/react/tests/keep-alive.test.tsx }
   - { type: tested-by, target: ../../packages/react/tests/hooks-surface.test.tsx }
+  - { type: tested-by, target: ../../packages/react/tests/fine-grained.test.tsx }
+  - { type: tested-by, target: ../../packages/react/tests/preact-compat.test.tsx }
+  - { type: related, target: ../decisions/framework-adapters.md }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/ctx.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
@@ -43,6 +46,8 @@ function useValue<T>(signal: ReadSignal<T>): T      // any ReadSignal: signal, c
 function useValue<T, U>(signal, { select, isEqual? }): U
 function useQuery<T>(sub: AsyncState<T>): UseQueryResult<T>
     // every AsyncState signal as a value (incl. isPaused, isEnabled) + refetch, reset, cancel
+function useInfiniteQuery<P, I>(sub: InfiniteQuerySubscription<P, I>, opts?): UseInfiniteQueryResult<P, I>
+    // useQuery's fields + pages, flat, hasNext/PreviousPage, isFetchingNext/PreviousPage + fetchNextPage, fetchPreviousPage
 function useSuspenseQuery<T>(sub): UseSuspenseQueryResult<T>   // throws sub.firstValue() until data lands;
     // a disabled query suspends until enabled + loaded (dev warns) — decisions/disabled-subscriptions.md
 function useField<T>(field: Field<T>): UseFieldResult<T>
@@ -75,11 +80,24 @@ Olas's `signal.subscribe(handler)` fires the handler **synchronously with the cu
 
 The fix is core's `subscribeChanges`, which skips that first fire. `useValue` calls it through `subscribeOnChange` (`hooks.ts:24-26`), and the multi-signal hooks call it on their snapshot computed.
 
-## `useQuery` / `useField` — multi-signal batching
+## `useQuery` and `useInfiniteQuery` re-render only for what the component reads (1.0)
+
+Both hooks go through `useTrackedSnapshot` and `trackedView` in `hooks.ts`. The returned object has one getter per snapshot field, and a getter read during render adds its field to a tracked set, kept for the component's life. The `subscribeChanges` handler compares the tracked fields of the previous and next snapshot and calls React's `onChange` only when one moved. So `const { data } = useQuery(sub)` does not re-render while a background refetch flips `isFetching`.
+
+Three rules keep it safe:
+- **Until anything is read, every change notifies.** A consumer that has read nothing cannot have been shown a stale value, and `renderHook(() => useQuery(sub))` followed by `result.current.data` keeps working.
+- **A read after commit is live.** A `rendering` flag is set on each render and cleared in an isomorphic layout effect. A getter read outside render (an event handler, an effect, a test) returns `snapshot.peek()[key]`, not the rendered value, and starts tracking the field.
+- **Suspense tracks `data` and `status` itself**, whatever the component reads, because the suspend decision reads them.
+
+Spreading the result (`{ ...useQuery(sub) }`) calls every getter, so it tracks every field. Pinned by `packages/react/tests/fine-grained.test.tsx`; against the pre-1.0 hooks, the tests for the new behaviour fail and the four pinning old behaviour pass.
+
+`useInfiniteQuery` is the same hook over sixteen fields: `useQuery's` ten plus `pages`, `flat` and the four paging flags. It takes `{ suspense: true }` with `useQuery's` rules.
+
+## `useField` / `useMutation` — multi-signal batching
 
 A naive `useQuery` would call `useSyncExternalStore` once per signal in `AsyncState<T>`. That works but means N re-render triggers when several signals change in a `batch()`, and the version-counter shortcut it originally used defeated uSES's tear detection (see below).
 
-The pattern (`hooks.ts`, shared by `useQuery`, `useField`, `useFieldInput` and `useMutation`):
+The pattern (`hooks.ts`, shared by every multi-signal hook; `useQuery` and `useInfiniteQuery` add the tracked filter above in step 2):
 
 1. A memoized core `computed(() => ({ …read every relevant signal's `.value`… }))`, keyed on the subscription target via `useMemo`. Reading each `.value` inside makes the computed re-evaluate — and mint a NEW plain-values object — exactly when any dep changes, and return the SAME object reference when nothing did.
 2. `subscribe(onChange)` = `snapshot.subscribeChanges(onChange)` — one subscription on the computed.
@@ -132,6 +150,10 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 `packages/react/tests/ssr-hydration.test.tsx` is the only test that puts `renderToString` and `hydrateRoot` on the same markup. Server: build a root, `waitForIdle`, render to a string, `dehydrate`. Client: build a root with `{ hydrate: state }`, hydrate over that HTML, and assert `onRecoverableError` was never called — React funnels a hydration mismatch there before discarding the server's DOM. A second case, hydrating the same HTML against a root whose query never settles, asserts the check has teeth by watching it fire.
 
 Everything else covers one half: `hydration-boundary.test.tsx` covers the boundary's lifecycle, `packages/core/tests/ssr.test.ts` covers dehydrate/hydrate, and `examples/reader-ssr/tests/ssr.test.ts` covers the cache hit without React.
+
+## Preact, through `preact/compat` (1.0)
+
+The adapter imports only hooks, `createContext` and three types from `react`, and never imports `react-dom`, so a Preact app aliases `react` to `preact/compat` and uses this package as it is. `packages/react/tests/preact-compat.test.tsx` mocks `react` and both JSX runtimes onto compat, renders with preact's `render`, and asserts the mock is live before anything else. It covers the provider, `useValue`, the fine-grained `useQuery` under compat's `useSyncExternalStore` shim, `useInfiniteQuery`, `useSuspenseQuery` under compat's `Suspense`, `useFieldInput`, `useMutation` and `SuspendOnUnmount`. `HydrationBoundary`'s StrictMode path is not covered: compat's `StrictMode` does nothing. The parity suite runs Preact as a fourth renderer too (`decisions/framework-adapters.md`).
 
 ## Fakes for UI tests
 

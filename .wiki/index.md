@@ -26,9 +26,11 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/mutation-queue.md](modules/mutation-queue.md) — `@kontsedal/olas-mutation-queue`: best-effort persistent replay queue for `persist:true` mutations (reload + reconnect + cross-tab-coordinated)
 - [modules/router.md](modules/router.md) — `@kontsedal/olas-router`: `createRouterAdapter` bridging TanStack Router and React Router v6 into `RouteParams`/`Search`/`Pathname` scopes
 - [modules/entities.md](modules/entities.md) — `@kontsedal/olas-entities`: `defineEntity` + auto-walk + reverse-index backprop over `QueryClientPlugin`
-- [modules/react.md](modules/react.md) — `@kontsedal/olas-react`: provider + `useSyncExternalStore`-backed hooks
+- [modules/react.md](modules/react.md) — `@kontsedal/olas-react`: provider + `useSyncExternalStore`-backed hooks; fine-grained `useQuery`, `useInfiniteQuery`, runs under `preact/compat`
+- [modules/vue.md](modules/vue.md) — `@kontsedal/olas-vue`: `olasPlugin` + signals as read-only refs
+- [modules/svelte.md](modules/svelte.md) — `@kontsedal/olas-svelte`: `setRoot`/`getRoot` + store views; a signal is a Svelte store as it is
 - [modules/devtools-panel.md](modules/devtools-panel.md) — `@kontsedal/olas-devtools`: in-app `<DevtoolsPanel>` over `root.__debug`
-- [modules/examples.md](modules/examples.md) — the four runnable example apps in `examples/`
+- [modules/examples.md](modules/examples.md) — the five runnable example apps in `examples/`
 
 ## Entities
 
@@ -57,6 +59,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/no-react-adapter-yet.md](decisions/no-react-adapter-yet.md) — why `@kontsedal/olas-react` is an empty shell
 - [decisions/canonical-vs-optimistic-writes.md](decisions/canonical-vs-optimistic-writes.md) — why `Query` has two write methods (`setData` optimistic, `write` canonical) rather than one with an options bag
 - [decisions/no-vanilla-adapter.md](decisions/no-vanilla-adapter.md) — why olas ships no vanilla DOM adapter: one was built, measured and dropped
+- [decisions/framework-adapters.md](decisions/framework-adapters.md) — why React, Vue and Svelte (and Preact through compat), how each maps a signal, and what the adapter-parity suite proves
 - [decisions/ctx-primitives-are-free-functions.md](decisions/ctx-primitives-are-free-functions.md) — why `createField`/`createQuery` take `ctx` instead of hanging off it, and why `createRoot` takes an explicit query engine
 - [decisions/root-handle-separate.md](decisions/root-handle-separate.md) — why `createRoot` returns a handle with the app api on `.api` instead of the api with root controls mixed in
 - [decisions/disabled-subscriptions.md](decisions/disabled-subscriptions.md) — what a subscription does while `enabled` is false: `isEnabled`, `QueryDisabledError`, a `firstValue` that waits (suspense on a dependent query)

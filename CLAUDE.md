@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: ten published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 911 tests across 63 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker and virtualized-table. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
+Current implementation status: twelve published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 911 tests across 63 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -54,6 +54,8 @@ Merging the version PR does **not** release. Someone has to run the publish work
 packages/
   core/            # @kontsedal/olas-core           — signals, controllers, queries, mutations, forms, SSR + streaming SSR
   react/           # @kontsedal/olas-react          — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden, HydrationBoundary, streaming hydrator
+  vue/             # @kontsedal/olas-vue            — olasPlugin, useRoot, useValue/useQuery/useInfiniteQuery/useField/useMutation as refs
+  svelte/          # @kontsedal/olas-svelte         — setRoot/getRoot, queryStore/infiniteQueryStore/fieldStore/mutationStore; signals are stores
   persist/         # @kontsedal/olas-persist        — usePersisted + localStorageAdapter + indexedDbAdapter
   zod/             # @kontsedal/olas-zod            — zodValidator, formFromZod
   devtools/        # @kontsedal/olas-devtools       — in-app DevtoolsPanel + floating launcher

@@ -1840,3 +1840,35 @@ Wiki: `entities/mutation.md`, `flows/mutation-concurrency.md`, `entities/entry.m
 - New `pitfalls/node-localstorage-shadows-jsdom.md`, a trap two agents hit independently.
 
 **BACKLOG.** One new idea: a no-op field reset hides a form-level error.
+
+## [2026-09-24 21:30] ingest | 1.0 W12: Vue and Svelte adapters, fine-grained React hooks, Preact, adapter parity
+
+**New packages.**
+- `@kontsedal/olas-vue` (`packages/vue/src/index.ts`): `olasPlugin`, `useRoot`, `useValue`, `useQuery`, `useInfiniteQuery`, `useField`, `useMutation`. A signal becomes a read-only `customRef` whose getter reads `peek()`, and the subscription ends through `onScopeDispose`. New `modules/vue.md`.
+- `@kontsedal/olas-svelte` (`packages/svelte/src/index.ts`): `setRoot`, `getRoot`, `queryStore`, `infiniteQueryStore`, `fieldStore`, `mutationStore`. A signal satisfies the store contract as it is. New `modules/svelte.md`.
+
+**react (`packages/react/src/hooks.ts`).**
+- `useQuery` and the new `useInfiniteQuery` go through `useTrackedSnapshot`: getters record the fields read during render, and the subscription notifies only when a tracked field moves. A read after commit is live. Nothing read means every change notifies.
+- `useValue`'s `isEqual` applies across a selector change, so an inline selector keeps its reference across a parent re-render.
+- The React bundle budget rose from 2.7 to 3.2 kB, on purpose: the tracked snapshot and `useInfiniteQuery` measure 2.99 kB. New budgets: vue 0.9 kB (821 B) and svelte 0.85 kB (772 B).
+
+**Preact.** `packages/react/tests/preact-compat.test.tsx` mocks `react` and its JSX runtimes onto `preact/compat` and runs the hooks there. It closes the BACKLOG verification item: the compat `useSyncExternalStore` shim keeps the fine-grained `useQuery`, compat `Suspense` retries `useSuspenseQuery`, and `SuspendOnUnmount` suspends on unmount.
+
+**Adapter parity.** `packages/integration/tests/adapter-parity/` runs six scenarios through React, Preact, Vue and Svelte and asserts the same DOM: 24 tests. Breaking one adapter's change notification at a time failed that adapter's runs only. New `decisions/framework-adapters.md`.
+
+**Test infrastructure.**
+- `vitest.config.ts` gains two projects. `svelte` adds the compiler plugin and the `browser` resolve condition for the Svelte tests only, and `default` runs everything else. Coverage gates cover the two new packages.
+- `vitest.stryker.config.ts` drops the projects.
+- `biome.json` turns off the unused-variable rules for `.svelte` and `.vue` files, where the template uses what the script declares.
+
+**Example.** New `examples/vue-tasks`: one controller with a query, an optimistic toggle, a canonical write and a validated form, in SFCs over the shared tokens. `typecheck` is `vue-tsc --noEmit`. It was driven in headless Chrome (optimistic toggle, rollback on a failed write, validation, add, filter, dark theme), and the pass moved the checkboxes onto the accent with `accent-color`.
+
+**Wiki.**
+- `modules/react.md`: the fine-grained section, `useInfiniteQuery`, a Preact section.
+- `modules/examples.md`: five examples.
+- `overview.md`: the package table.
+- `decisions/no-vanilla-adapter.md`: it said React was the only UI adapter.
+
+**BACKLOG.** Removed as landed: the Preact verification, the cross-adapter parity test, the Vue adapter, the Svelte adapter, `useQuery` re-rendering on `isFetching`, and the missing `useInfiniteQuery`. New ideas: a dev warning for a Vue hook called outside an effect scope; `svelte-check` for the `.svelte` fixtures.
+
+For the W6 docs pass: README (adapters list), API.md (the React section gains `useInfiniteQuery` and the fine-grained rule), SPEC §16 and §20.10 (three adapters; `useQuery`'s tracked re-render), the React package README (`useInfiniteQuery`, Preact setup), and CLAUDE.md's package roster.

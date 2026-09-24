@@ -1,0 +1,56 @@
+{
+  "name": "@kontsedal/olas-vue",
+  "version": "0.0.0",
+  "description": "Olas Vue adapter — olasPlugin, useRoot, useValue, useQuery, useInfiniteQuery, useField, useMutation.",
+  "keywords": [
+    "olas",
+    "controller-tree",
+    "signals",
+    "reactive",
+    "state-management",
+    "vue",
+    "composables"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
+  "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/vue#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kontsedal/olas.git",
+    "directory": "packages/vue"
+  },
+  "bugs": {
+    "url": "https://github.com/Kontsedal/olas/issues"
+  },
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "@kontsedal/olas-core": ">=0.3.0 <1.0.0",
+    "vue": ">=3.4"
+  },
+  "devDependencies": {
+    "@kontsedal/olas-core": "workspace:^",
+    "vue": "^3.5.43"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

@@ -1,12 +1,13 @@
 ---
 name: examples
-description: Four runnable example apps demonstrating Olas's API breadth. The kanban example is the flagship and exercises essentially every public primitive across every package.
+description: Five runnable example apps demonstrating Olas's API breadth, in React, Vue and vanilla TS. The kanban example is the flagship and exercises essentially every public primitive across every package.
 type: module
 covers:
   - examples/kanban
   - examples/stock-ticker
   - examples/reader-ssr
   - examples/virtualized-table
+  - examples/vue-tasks
   - examples/_shared/aliases.ts
 edges:
   - { type: documented-in, target: ../../README.md }
@@ -20,16 +21,16 @@ edges:
   - { type: uses, target: ../modules/persist.md }
   - { type: uses, target: ../flows/ssr.md }
   - { type: uses, target: ../flows/mutation-concurrency.md }
-last_verified: 2026-09-21
+last_verified: 2026-09-24
 confidence: high
 ---
 
 # Examples
 
-`examples/` contains four runnable apps. The **kanban** app is the flagship —
+`examples/` contains five runnable apps. The **kanban** app is the flagship —
 it exercises nearly every public primitive across every package. The
-remaining three are focused single-purpose demos that cover SSR, vanilla TS,
-and virtualization in isolation.
+remaining four are focused single-purpose demos that cover SSR, vanilla TS,
+virtualization and the Vue adapter in isolation.
 
 ## Inventory
 
@@ -39,6 +40,7 @@ and virtualization in isolation.
 | `examples/stock-ticker/` | **None — vanilla TS** | `signal` / `computed` / `effect`, `ctx.emitter` + `ctx.on`, `debounced` / `throttled`, `defineQuery` + `refetchInterval`, `createPersisted` watchlist + alerts, SVG sparklines, alert evaluation via emitter. |
 | `examples/reader-ssr/` | React + SSR | `waitForIdle → dehydrate → hydrate` round-trip, paginated `defineQuery` with reactive key, `useSuspendOnHidden`, persisted bookmarks + reading progress + theme (`createPersisted` × 3) behind a `useHydrated` gate, `ctx.attach` for the per-article composer, `ctx.emitter` analytics, `onError` root option + `ErrorContext`. |
 | `examples/virtualized-table/` | React | Virtualized list with row flash on update. |
+| `examples/vue-tasks/` | **Vue 3** | A task list whose state is one controller: `defineQuery` through `deps.api`, an optimistic toggle (`cancel` → `setData` → returned snapshot, rolled back on failure), a canonical `write` for the added task, `createForm` + `required` / `maxLength` bound with `v-model` through `useField`, and a `Register`-typed `useRoot()`. SFCs with scoped styles on the shared tokens. `typecheck` is `vue-tsc --noEmit`, not `tsc`. |
 
 ## Shared scaffolding
 

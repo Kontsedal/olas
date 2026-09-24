@@ -39,14 +39,6 @@ Deferred out of the change that introduced it because it needs a scheduling poli
 
 `@kontsedal/olas-mutation-queue` (shipped 0.0.5) covers durable enqueue + reload-replay for `defineMutation({ persist: true })`. The remaining offline layer would add navigator-online detection, a connection-state signal, conflict-resolution helpers, an exponential-backoff schedule for inter-attempt waits, and an opinionated mid-session retry policy. Today the queue only retries across page loads. Likely a thin package layered on top of `mutation-queue` + `@kontsedal/olas-persist`.
 
-### [planned] Verify `@kontsedal/olas-react` under `preact/compat`
-
-The adapter imports only `createContext`, `useContext`, `useCallback`, `useMemo`, `useRef`, `useSyncExternalStore`, `useEffect` and `useLayoutEffect`, plus three types, and never imports `react-dom` (`streaming.ts` names `renderToPipeableStream` only in doc comments; its exports are a bootstrap string and a `TransformStream`). Every one of those is in `preact/compat`, so preact support is likely an aliasing exercise rather than a package.
-
-Three things to verify before claiming it: `useSyncExternalStore` in compat is a shim, so the mount-consistency path `.wiki/modules/react.md` documents may not be exercised the same way; `useSuspenseQuery` throws `subscription.promise()` and preact's Suspense retry semantics differ from React's; and compat's `StrictMode` is a no-op, so `HydrationBoundary`'s double-construct handling never fires. Shape of the work: a second vitest project running `packages/react/tests/**` under a `preact/compat` alias, then either widen the peer range and document the setup or document which hooks do not survive.
-
-This replaces the `@kontsedal/olas-preact` package idea. A second adapter is the wrong shape when the first one already compiles against compat. See `.wiki/decisions/no-vanilla-adapter.md`.
-
 ### [idea] Framework-agnostic `bindField(el, field, opts)`
 
 The one piece worth salvaging from the dropped vanilla adapter. 156 lines covering what no framework supplies and what `useFieldInput` only covers in a React props-spread shape:
@@ -57,20 +49,6 @@ The one piece worth salvaging from the dropped vanilla adapter. 156 lines coveri
 - `transform` parity with `useFieldInput`, plus `blur` calling `markTouched()` and `aria-invalid` from `touched && errors.length`.
 
 Would live in `@kontsedal/olas-core` or alongside the React adapter, taking a real `Element` and returning a disposer. Reference implementation and its tests are recoverable from this session's history if picked up.
-
-### [idea] Cross-adapter parity test — React and preact, one controller tree
-
-Demonstrates SPEC promise 4 ("swap frameworks by swapping a thin adapter") as a test rather than a claim: one controller tree, one set of DOM assertions, two renderers. A version of this existed briefly against React and the dropped vanilla adapter. Pointed at React and `preact/compat` it is better evidence, because both are real frameworks. Depends on the preact verification item above.
-
-Two things such a test must not overclaim: importing React at module level means it shows the *mount path* is framework-free, not the dependency graph; and rows binding a plain string prove less than rows whose content updates.
-
-### [idea] `@kontsedal/olas-vue` — Vue adapter
-
-Signal/ref interop. Out of scope for v1; the architecture is framework-neutral, so it's additive.
-
-### [idea] `@kontsedal/olas-svelte` — Svelte adapter
-
-Signal-as-store. Same scoping as Vue.
 
 ### [idea] `@kontsedal/olas-eslint-plugin` — lint rules that catch correctness issues we can't enforce at the type level
 
@@ -87,14 +65,6 @@ Examples:
 ### [idea] Devtools browser extension
 
 [SPEC §14] An out-of-page extension that consumes `root.__debug.subscribe(...)` — controller tree inspector, cache timeline, mutation log, signal dependency graph, subscription view. The in-app `@kontsedal/olas-devtools` panel already covers the same surfaces; the extension would make them available without instrumenting the page.
-
-### [idea] `useQuery` re-renders on every `isFetching` flip
-
-[from the 0.9 review] `useQuery` snapshots all eight signals on an `AsyncState`, so a component that reads only `data` still re-renders when a background refetch starts and again when it ends. TanStack answers this with `select` (derive and compare) and `notifyOnChangeProps` (subscribe to a subset). A related finding in the same hook: `useValue`'s `isEqual` short-circuit is gated on selector identity, so an inline selector, the common case, never reaches it.
-
-### [idea] No `useInfiniteQuery`
-
-[from the 0.9 review] `defineInfiniteQuery` exists in core, and the React adapter has no hook for it. `examples/kanban/src/features/archive/ArchiveDrawer.tsx` hand-rolls five separate `use(...)` subscriptions to cover what one hook should return. That example is the evidence for the shape the hook needs.
 
 ### [idea] Three gaps in `@kontsedal/olas-realtime`
 
@@ -291,6 +261,14 @@ better than an EOF check — e.g. store a hash of the cited range, or require ci
 symbol the range must contain.
 
 ## Loose ends
+
+### [idea] A Vue hook called outside an effect scope never unsubscribes
+
+[from W12] `@kontsedal/olas-vue` ties each subscription to the current effect scope with `onScopeDispose`. Called outside any scope, from a plain module or a `setTimeout`, a hook still returns a working ref, and nothing ends its subscription. The README says so. A development-build warning when `getCurrentScope()` is `undefined` would catch the mistake where it happens.
+
+### [idea] The `.svelte` test fixtures are not typechecked
+
+[from W12] `tsc` checks the Svelte test files, through the `*.svelte` declaration Svelte ships, but not the `<script lang="ts">` inside the fixtures in `packages/svelte/tests/fixtures/` and `packages/integration/tests/adapter-parity/svelte/`. The compiler strips those types at test time without checking them. `svelte-check` in the Svelte package's `typecheck` script would close the gap, for the cost of one more dev dependency.
 
 ### Internal peer ranges have no upper bound
 

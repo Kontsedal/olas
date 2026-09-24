@@ -10,7 +10,7 @@ covers:
 edges:
   - { type: documented-in, target: ../SPEC.md }
   - { type: related, target: glossary.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -42,7 +42,9 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 | Package | Status | Purpose |
 |---------|--------|---------|
 | `@kontsedal/olas-core` | Implemented | Signals, controllers, queries, mutations, forms, scopes, SSR + streaming SSR, devtools event bus, `defineScope` |
-| `@kontsedal/olas-react` | Implemented | `OlasProvider`, `useRoot`, `useValue`/`useQuery`/`useSuspenseQuery`/`useField`/`useFieldInput`/`useMutation`, `SuspendOnUnmount`, `useSuspendOnHidden`, `HydrationBoundary` + streaming hydrator |
+| `@kontsedal/olas-react` | Implemented | `OlasProvider`, `useRoot`, `useValue`/`useQuery`/`useInfiniteQuery`/`useSuspenseQuery`/`useField`/`useFieldInput`/`useMutation`, `SuspendOnUnmount`, `useSuspendOnHidden`, `HydrationBoundary` + streaming hydrator. Runs under `preact/compat` |
+| `@kontsedal/olas-vue` | Implemented | `olasPlugin`, `useRoot`, `useValue`/`useQuery`/`useInfiniteQuery`/`useField`/`useMutation`: signals as read-only refs |
+| `@kontsedal/olas-svelte` | Implemented | `setRoot`/`getRoot` plus `queryStore`/`infiniteQueryStore`/`fieldStore`/`mutationStore`; a signal is a Svelte store as it is |
 | `@kontsedal/olas-zod` | Implemented | `zodValidator` + `zodValidatorAsync` + `rootOnlyZodValidator` + `createZodForm` (takes `{ extraValidators }`) |
 | `@kontsedal/olas-persist` | Implemented | `createPersisted` + `localStorageAdapter` + `indexedDbAdapter` |
 | `@kontsedal/olas-devtools` | Implemented | `<DevtoolsPanel>` + `<DevtoolsLauncher>` + `DevtoolsStore` over `root.__debug` |
@@ -52,7 +54,7 @@ Spec §1–3 describe the principles; §20 declares the full type-level API; §2
 | `@kontsedal/olas-mutation-queue` | Implemented | `mutationQueuePlugin` — durable persist + reload-safe replay for `defineMutation({ persist: true })` |
 | `@kontsedal/olas-router` | Implemented | `createRouterAdapter` + `RouteParams/Search/Pathname` scopes — TanStack Router / React Router v6 |
 
-Polish and docs landed: a README for every published package, `MIGRATING.md`, `RECIPES.md`, TSDoc, four runnable example apps, and a cross-package `packages/integration` test suite. The examples are kanban as the flagship, plus stock-ticker, reader-ssr and virtualized-table. A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
+Polish and docs landed: a README for every published package, `MIGRATING.md`, `RECIPES.md`, TSDoc, five runnable example apps, and a cross-package `packages/integration` test suite. The examples are kanban as the flagship, plus stock-ticker, reader-ssr, virtualized-table and vue-tasks. The integration suite includes an adapter-parity run of one set of scenarios through React, `preact/compat`, Vue and Svelte (`decisions/framework-adapters.md`). A browser-extension wrapper around the same `root.__debug` bus is the remaining stretch item.
 
 ## Core module map
 
