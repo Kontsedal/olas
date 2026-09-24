@@ -369,3 +369,33 @@ describe('createZodForm — a function initial is tracked', () => {
     root.dispose()
   })
 })
+
+describe('createZodForm — initial values match what Zod parses', () => {
+  test('a default under .optional() or .nullable() seeds the field', () => {
+    const schema = z.object({
+      a: z.string().default('a').optional(),
+      b: z.number().default(5).nullable(),
+    })
+    const def = defineController((ctx) => ({ form: createZodForm(ctx, schema) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.form.value).toEqual(schema.parse({}))
+    root.dispose()
+  })
+
+  test('a function-valued default seeds the function, not its result', () => {
+    const cb = () => 7
+    const schema = z.object({ fn: z.custom<() => number>().default(() => cb) })
+    const def = defineController((ctx) => ({ form: createZodForm(ctx, schema) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect((root.api.form.value as { fn: unknown }).fn).toBe(cb)
+    root.dispose()
+  })
+
+  test('a numeric enum seeds its first option', () => {
+    const schema = z.object({ level: z.enum({ Low: 1, High: 2 }) })
+    const def = defineController((ctx) => ({ form: createZodForm(ctx, schema) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.form.value).toEqual({ level: 1 })
+    root.dispose()
+  })
+})

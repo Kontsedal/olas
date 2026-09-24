@@ -14,8 +14,17 @@ type Sub = () => void
 const focusSubs = new Set<Sub>()
 const onlineSubs = new Set<Sub>()
 
-function fireFocus(): void {
-  for (const fn of focusSubs) {
+/**
+ * Call every subscriber present when the event fired, as the DOM dispatches:
+ * one added during the dispatch waits for the next event, and one removed
+ * before its turn is skipped. Iterating the live set instead visits entries
+ * added mid-loop. An entry parked offline re-subscribes from inside its
+ * handler, so one `online` event that arrived while `navigator.onLine` still
+ * read false spun without end.
+ */
+function fire(subs: Set<Sub>): void {
+  for (const fn of [...subs]) {
+    if (!subs.has(fn)) continue
     try {
       fn()
     } catch {
@@ -24,14 +33,12 @@ function fireFocus(): void {
   }
 }
 
+function fireFocus(): void {
+  fire(focusSubs)
+}
+
 function fireOnline(): void {
-  for (const fn of onlineSubs) {
-    try {
-      fn()
-    } catch {
-      // ditto
-    }
-  }
+  fire(onlineSubs)
 }
 
 // A tab-return commonly fires BOTH `focus` and `visibilitychange` in the same

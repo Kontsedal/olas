@@ -150,10 +150,20 @@ function unwrap(schema: AnyZodType): AnyZodType {
 }
 
 function defaultInitial(schema: AnyZodType): unknown {
-  // Honor Zod default if present.
-  if (schema instanceof z.ZodDefault) {
-    const raw = (schema as unknown as { def: { defaultValue: unknown } }).def.defaultValue
-    return typeof raw === 'function' ? (raw as () => unknown)() : raw
+  // Honor a Zod default, including one under `.optional()` / `.nullable()`:
+  // a missing key reaches the inner default, as `schema.parse({})` shows.
+  let s: AnyZodType = schema
+  const seen = new Set<AnyZodType>()
+  while (!seen.has(s)) {
+    seen.add(s)
+    if (s instanceof z.ZodDefault) {
+      // Zod 4's `def.defaultValue` is a getter that already runs a function
+      // default, so this is the default itself — even when it is a function.
+      return (s as unknown as { def: { defaultValue: unknown } }).def.defaultValue
+    }
+    if (s instanceof z.ZodOptional) s = (s as z.ZodOptional<AnyZodType>).unwrap() as AnyZodType
+    else if (s instanceof z.ZodNullable) s = (s as z.ZodNullable<AnyZodType>).unwrap() as AnyZodType
+    else break
   }
   const inner = unwrap(schema)
   // A `.transform(...)` / `.pipe(...)` is a `ZodPipe`. The form field holds the
@@ -172,7 +182,8 @@ function defaultInitial(schema: AnyZodType): unknown {
     // runtime values are still iterable; pick the first.
     const opts = (inner as unknown as { options: readonly unknown[] }).options
     const first = opts[0]
-    return typeof first === 'string' ? first : ''
+    // A record-style enum can have numeric values: seed the first either way.
+    return typeof first === 'string' || typeof first === 'number' ? first : ''
   }
   // A Date field starts EMPTY — `null` was wrong (it flows a non-Date into a
   // `Date`-typed field). `undefined` + a required() validator is the clean

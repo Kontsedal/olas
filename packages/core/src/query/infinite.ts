@@ -123,8 +123,8 @@ export type InfiniteQueryActions<Args extends unknown[], TPage, TItem> = Omit<
  * with paginated controls: `fetchNextPage` / `fetchPreviousPage`,
  * `hasNextPage` / `hasPreviousPage`, and per-direction `isFetching` signals.
  *
- * `flat` is a convenience: present when the query spec provides `itemsOf` —
- * otherwise it's an empty array.
+ * `flat` is a convenience: the pages' items, flattened through the spec's
+ * `itemsOf`. Without `itemsOf`, `flat` equals `pages` (spec §5.11).
  */
 export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
   pages: ReadSignal<TPage[]>
@@ -311,6 +311,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.isFetching.set(true)
       this.isLoading.set(previousPages.length === 0)
       this.isPaused.set(false)
+      // The paging flags follow the request that owns the entry: a refetch
+      // supersedes any page request in flight.
+      this.isFetchingNextPage.set(false)
+      this.isFetchingPreviousPage.set(false)
     })
     this.announceFetchStart()
 
@@ -351,7 +355,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             break
           } catch (err) {
             // Superseded or disposed: the newer request owns the entry's state.
-            if (myId !== this.currentFetchId || this.disposed) throw err
+            // Its caller hears the supersede, not the stale error — see `Entry`.
+            if (myId !== this.currentFetchId || this.disposed) {
+              throw new DOMException('Superseded', 'AbortError')
+            }
             // offlineFirst: a network-shaped failure while offline parks the
             // entry until reconnect instead of surfacing the error. The drain
             // re-runs the whole refetch, so the pages fetched so far are dropped.
@@ -445,7 +452,11 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.currentAbort = abort
     batch(() => {
       this.isFetchingNextPage.set(true)
+      this.isFetchingPreviousPage.set(false) // superseded, if it was in flight
       this.isFetching.set(true)
+      // Pages exist, so nothing is loading for the first time, even when this
+      // request supersedes a first load that a write filled in meanwhile.
+      this.isLoading.set(false)
     })
     this.announceFetchStart()
 
@@ -493,7 +504,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.currentAbort = abort
     batch(() => {
       this.isFetchingPreviousPage.set(true)
+      this.isFetchingNextPage.set(false) // superseded, if it was in flight
       this.isFetching.set(true)
+      this.isLoading.set(false) // see fetchNextPage
     })
     this.announceFetchStart()
 
@@ -544,7 +557,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           this.announceFetchSuccess()
           return page
         } catch (err) {
-          if (myId !== this.currentFetchId || this.disposed) throw err
+          if (myId !== this.currentFetchId || this.disposed) {
+            throw new DOMException('Superseded', 'AbortError')
+          }
           // offlineFirst park — see `runRefetchAll`. The drain re-runs this
           // direction once the network is back.
           if (this.parksOnOffline(err)) {
@@ -581,10 +596,15 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       // `applyFailure`-equivalent branch above; this guarantees that an
       // aborted-mid-flight `fetchNextPage` (e.g., user calls `invalidate()`
       // while paging) doesn't wedge the spinner.
+      // A superseded request leaves the flags alone: its superseder set them.
+      // Clearing here would hide a newer request of the same direction, and
+      // `fetchNextPage` would stop deduplicating against it.
       if (!succeeded) {
         batch(() => {
-          if (direction === 'next') this.isFetchingNextPage.set(false)
-          if (direction === 'prev') this.isFetchingPreviousPage.set(false)
+          if (myId === this.currentFetchId) {
+            if (direction === 'next') this.isFetchingNextPage.set(false)
+            if (direction === 'prev') this.isFetchingPreviousPage.set(false)
+          }
           // Status repair (T3.3): a superseded fetch must never leave the
           // entry wedged at 'pending' when data is present and nothing is
           // fetching. The superseding fetch normally owns the final status
@@ -701,6 +721,15 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       }
     }
 
+    // A canonical write rebases live optimistic snapshots onto itself, as
+    // `Entry.setData` does: a later rollback must restore these pages, not a
+    // baseline from before they arrived (spec §6.4).
+    if (!track) {
+      for (const sn of this.snapshots) {
+        sn.prev = next
+        sn.prevParams = nextParams
+      }
+    }
     batch(() => {
       this.pages.set(next)
       if (nextParams !== prevParams) this.pageParams.set(nextParams)
@@ -861,6 +890,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.currentFetchId += 1
     this.currentAbort?.abort()
     this.currentAbort = null
+    for (const sn of this.snapshots) {
+      sn.prev = pages
+      sn.prevParams = pageParams
+    }
     batch(() => {
       this.pages.set(pages)
       this.pageParams.set(pageParams)

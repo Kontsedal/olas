@@ -209,6 +209,9 @@ export class ClientEntry<T> {
   readonly client: QueryClient
   readonly query: AnyQuery
   private subscriberCount = 0
+  /** Set by `dispose`. A late `release()` (a prefetch settling after the root
+   *  went away) must not arm a gc timer for a dead entry. */
+  private disposed = false
   /** Cancellation closure from `scheduleExpiry`; `null` = no gc pending. */
   private gcTimer: (() => void) | null = null
   /** Cancellation closure from `scheduleExpiry`; `null` = chain stopped. */
@@ -299,6 +302,7 @@ export class ClientEntry<T> {
   }
 
   release(): void {
+    if (this.disposed) return
     this.subscriberCount -= 1
     if (this.subscriberCount <= 0) {
       if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
@@ -426,6 +430,7 @@ export class ClientEntry<T> {
   }
 
   dispose(): void {
+    this.disposed = true
     if (this.gcTimer != null) {
       this.gcTimer()
       this.gcTimer = null
@@ -443,6 +448,9 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   readonly client: QueryClient
   readonly query: AnyInfiniteQuery
   private subscriberCount = 0
+  /** Set by `dispose`. A late `release()` (a prefetch settling after the root
+   *  went away) must not arm a gc timer for a dead entry. */
+  private disposed = false
   /** Cancellation closure from `scheduleExpiry`; `null` = no gc pending. */
   private gcTimer: (() => void) | null = null
   /** Cancellation closure from `scheduleExpiry`; `null` = chain stopped. */
@@ -543,6 +551,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   }
 
   release(): void {
+    if (this.disposed) return
     this.subscriberCount -= 1
     if (this.subscriberCount <= 0) {
       if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
@@ -624,6 +633,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   }
 
   dispose(): void {
+    this.disposed = true
     if (this.gcTimer != null) {
       this.gcTimer()
       this.gcTimer = null
@@ -852,10 +862,7 @@ export class QueryClient implements PluginEngine {
         this.emitInvalidated(found.entry.query, found.entry.keyArgs, origin)
         return settled
       },
-      hydrate: (state) => {
-        if (!this.acceptsState(state)) return
-        for (const e of state.entries) this.applyDehydratedEntry(e, origin)
-      },
+      hydrate: (state) => this.hydrateLive(state, origin),
       dehydrate: () => this.dehydrate(),
       hashKey: (key) => stableHash(key),
     }
@@ -1037,6 +1044,16 @@ export class QueryClient implements PluginEngine {
     // and clear the slot. Namespaced by queryId so a colliding-key query can't
     // steal it (spec §15, T1.2).
     this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt, origin, pageParams })
+  }
+
+  /**
+   * Apply a payload to a running root (`root.hydrate`, `host.queries.hydrate`):
+   * bound entries take it now, unbound ones buffer it. A payload of another
+   * version is dropped with a warning, as at `createRoot`.
+   */
+  hydrateLive(state: DehydratedState, origin?: string): void {
+    if (!this.acceptsState(state)) return
+    for (const e of state.entries) this.applyDehydratedEntry(e, origin)
   }
 
   /** Buffer a payload for entries not bound yet (`RootOptions.hydrate`). */
@@ -1803,16 +1820,6 @@ export class QueryClient implements PluginEngine {
       })
     })()
     return promise.finally(() => entry.release())
-  }
-
-  inflightCount(): number {
-    let count = 0
-    for (const [, map] of this.maps) {
-      for (const [, entry] of map) {
-        if (entry.entry.isFetching.peek()) count++
-      }
-    }
-    return count
   }
 
   dispose(): void {

@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../entities/mutation.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-09-22
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -95,12 +95,12 @@ So `reset()` on a `serial` mutation broke both halves of the guarantee: two runs
 See `../entities/mutation.md` for the full implementation walkthrough. The key shape:
 
 ```
-1. snapshot = onMutate(vars)
-2. inflight.add({ abort, snapshot })
+1. inflight.add({ abort })           # before onMutate: an abort it triggers cancels this run
+2. snapshot = onMutate(vars); if signal.aborted: rollback; throw AbortError
 3. inflightCounter.update(n => n+1)  # client.mutationsInflight$
 4. await raceAbort(runWithRetry(vars, abort.signal), abort.signal)
 5. on success: data=result; onSuccess; onSettled
-   on supersede (AbortError / signal.aborted): snapshot.rollback(); throw — no callbacks
+   on supersede (signal.aborted): snapshot.rollback(); throw — no callbacks
    on error: error=err; onError(err, vars, snapshot); onSettled(undefined, err, vars)
 6. finally: inflight.delete; inflightCounter.update(n => n-1); maybe isPending=false
 ```

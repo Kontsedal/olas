@@ -867,3 +867,100 @@ describe('Form and FieldArray are ReadSignals of their value, like Field', () =>
     root.dispose()
   })
 })
+
+describe('form validity during async validation (spec §8.2, §8.3)', () => {
+  test('a form holds its settled isValid while a field runs an async check', async () => {
+    vi.useFakeTimers()
+    try {
+      const def = defineController((ctx) => ({
+        form: createForm(ctx, {
+          u: createField<string>(ctx, 'ada', {
+            validators: [async () => null],
+          }),
+        }),
+      }))
+      const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+      await vi.advanceTimersByTimeAsync(0)
+      const seen: boolean[] = []
+      const stop = root.api.form.isValid.subscribe((v) => seen.push(v))
+      root.api.form.fields.u.set('ada2')
+      expect(root.api.form.fields.u.isValidating.value).toBe(true)
+      expect(root.api.form.isValid.value).toBe(true) // no flicker to false
+      await vi.advanceTimersByTimeAsync(0)
+      expect(seen.every((v) => v)).toBe(true)
+      stop()
+      root.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('an invalid form stays invalid while its own async validator re-runs', async () => {
+    let release: (v: string | null) => void = () => {}
+    const def = defineController((ctx) => ({
+      form: createForm(
+        ctx,
+        { a: createField<string>(ctx, 'x') },
+        {
+          validators: [
+            () =>
+              new Promise<string | null>((resolve) => {
+                release = resolve
+              }),
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    release('taken')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.api.form.isValid.value).toBe(false)
+    root.api.form.fields.a.set('y') // re-runs the form validator
+    expect(root.api.form.isValidating.value).toBe(true)
+    expect(root.api.form.isValid.value).toBe(false) // holds, no flicker to true
+    release(null)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.api.form.isValid.value).toBe(true)
+    root.dispose()
+  })
+
+  test('a rejected async form-level or array-level validator is an error, as on a field', async () => {
+    const down = () => Promise.reject(new Error('down'))
+    const def = defineController((ctx) => ({
+      form: createForm(ctx, { a: createField<string>(ctx, 'x') }, { validators: [down] }),
+      tags: createFieldArray(ctx, (t?: string) => createField<string>(ctx, t ?? ''), {
+        initial: ['a'],
+        validators: [down],
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.form.topLevelErrors.value).toEqual(['down']))
+    expect(root.api.form.isValid.value).toBe(false)
+    expect(root.api.tags.topLevelErrors.value).toEqual(['down'])
+    expect(root.api.tags.isValid.value).toBe(false)
+    root.dispose()
+  })
+})
+
+describe('FieldArray — a no-op edit leaves the array clean', () => {
+  test('remove / move out of range, or move to the same index, do not mark it dirty', () => {
+    const def = defineController((ctx) => ({
+      tags: createFieldArray(ctx, (t?: string) => createField<string>(ctx, t ?? ''), {
+        initial: ['a', 'b'],
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    root.api.tags.remove(5)
+    root.api.tags.remove(-1)
+    root.api.tags.move(9, 0)
+    root.api.tags.move(1, 1)
+    expect(root.api.tags.value).toEqual(['a', 'b'])
+    expect(root.api.tags.isDirty.value).toBe(false)
+    root.api.tags.move(0, 1)
+    expect(root.api.tags.value).toEqual(['b', 'a'])
+    expect(root.api.tags.isDirty.value).toBe(true)
+    root.dispose()
+  })
+})

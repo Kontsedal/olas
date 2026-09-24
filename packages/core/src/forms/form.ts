@@ -1,10 +1,10 @@
 import type { Field } from '../controller/types'
 import { batch, computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
+import { isAbortError } from '../utils'
 import {
   bindFieldDevtoolsOwner,
   bindFieldValidatorErrorReporter,
-  createField,
   type ValidatorErrorReporter,
 } from './field'
 import type {
@@ -33,14 +33,33 @@ const brand = (node: object, key: symbol): void => {
   ;(node as Record<symbol, unknown>)[key] = true
 }
 
+const messageOf = (reason: unknown): string =>
+  reason instanceof Error ? reason.message : String(reason)
+
+/**
+ * `isValid` for an aggregate node: the live answer when nothing below it is
+ * validating, and the last settled answer while something is. An effect keeps
+ * the settled answer current even when nothing reads `isValid`.
+ */
+function holdWhileValidating(
+  isValidating: ReadSignal<boolean>,
+  live: ReadSignal<boolean>,
+  keepStop: (stop: () => void) => void,
+): ReadSignal<boolean> {
+  const settled = signal(true)
+  keepStop(
+    effect(() => {
+      if (!isValidating.value) settled.set(live.value)
+    }),
+  )
+  return computed(() => (isValidating.value ? settled.value : live.value))
+}
+
 const isForm = (x: unknown): x is Form<FormSchema> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FORM_BRAND] === true
 
 const isFieldArray = (x: unknown): x is FieldArray<Field<unknown> | Form<FormSchema>> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FIELD_ARRAY_BRAND] === true
-
-const isField = (x: unknown): x is Field<unknown> =>
-  typeof x === 'object' && x !== null && !isForm(x) && !isFieldArray(x)
 
 /** Any node that can receive parent-form-validator-routed errors (T5.2). */
 type FormErrorTarget = { setFormErrors?: (msgs: ReadonlyArray<string>) => void }
@@ -172,6 +191,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   private readonly validators: ReadonlyArray<FormValidator<S>>
   private readonly options: FormOptions<S> | undefined
   private validatorDispose: (() => void) | null = null
+  private validityDispose: (() => void) | null = null
   private initialDispose: (() => void) | null = null
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
@@ -242,15 +262,20 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       }
       return false
     })
-    this.isValid = computed(() => {
-      // Merged view: this form's own top-level validators AND any errors an
-      // ancestor form-level validator routed onto this node (T5.2).
+    // Merged view: this form's own top-level validators, any errors an
+    // ancestor form-level validator routed onto this node (T5.2), and every
+    // child. While anything in the subtree validates, the last settled answer
+    // holds, as a field's does (spec §8.2), so a bound submit button doesn't
+    // flicker.
+    const liveValid = computed(() => {
       if (this.topLevelErrors.value.length > 0) return false
-      if (this.isValidating.value) return false
       for (const child of Object.values(this.fields)) {
         if (!(child as { isValid: ReadSignal<boolean> }).isValid.value) return false
       }
       return true
+    })
+    this.isValid = holdWhileValidating(this.isValidating, liveValid, (stop) => {
+      this.validityDispose = stop
     })
     this.flatErrors = computed(() => this.computeFlatErrors())
     this.dirtyFields = computed(() => {
@@ -563,6 +588,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     if (this.disposed) return
     this.disposed = true
     this.validatorDispose?.()
+    this.validityDispose?.()
     this.initialDispose?.()
     this.currentValidatorAbort?.abort()
     for (const child of Object.values(this.fields)) {
@@ -645,6 +671,8 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       const issues: FormIssue[] = []
       for (const r of results) {
         if (r.status === 'fulfilled') appendIssues(issues, r.value)
+        // A rejected check is an error on this node, as it is on a field.
+        else if (!isAbortError(r.reason)) issues.push({ path: [], message: messageOf(r.reason) })
       }
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
@@ -791,6 +819,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
   private validatorDispose: (() => void) | null = null
+  private validityDispose: (() => void) | null = null
   private disposed = false
   private onValidatorError: ((err: unknown) => void) | null = null
 
@@ -852,15 +881,16 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       }
       return false
     })
-    this.isValid = computed(() => {
-      // Merged view: the array's own top-level validators AND any errors an
-      // ancestor form-level validator routed onto this node (T5.2).
+    // Same merged view and the same hold as `FormImpl.isValid`.
+    const liveValid = computed(() => {
       if (this.topLevelErrors.value.length > 0) return false
-      if (this.isValidating.value) return false
       for (const item of this.items$.value) {
         if (!(item as { isValid: ReadSignal<boolean> }).isValid.value) return false
       }
       return true
+    })
+    this.isValid = holdWhileValidating(this.isValidating, liveValid, (stop) => {
+      this.validityDispose = stop
     })
 
     if (this.validators.length > 0) {
@@ -916,6 +946,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   remove(index: number): void {
     if (this.disposed) return
+    // Out of range changes nothing, so it must not mark the array dirty.
+    if (index < 0 || index >= this.items$.peek().length) return
     const next = [...this.items$.peek()]
     const [removed] = next.splice(index, 1)
     if (removed) {
@@ -927,6 +959,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   move(from: number, to: number): void {
     if (this.disposed) return
+    if (from < 0 || from >= this.items$.peek().length || from === to) return
     const next = [...this.items$.peek()]
     const [item] = next.splice(from, 1)
     if (item) next.splice(to, 0, item)
@@ -1024,6 +1057,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     if (this.disposed) return
     this.disposed = true
     this.validatorDispose?.()
+    this.validityDispose?.()
     this.currentValidatorAbort?.abort()
     for (const item of this.items$.peek()) {
       ;(item as { dispose?: () => void }).dispose?.()
@@ -1105,6 +1139,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       const issues: FormIssue[] = []
       for (const r of results) {
         if (r.status === 'fulfilled') appendIssues(issues, r.value)
+        // A rejected check is an error on this node, as it is on a field.
+        else if (!isAbortError(r.reason)) issues.push({ path: [], message: messageOf(r.reason) })
       }
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
@@ -1261,8 +1297,3 @@ export function bindTreeValidatorErrorReporter(
   }
   bindFieldValidatorErrorReporter(node as Field<unknown>, reporter)
 }
-
-// Quiet unused-import linter without exporting these symbols publicly.
-void createField
-void untracked
-void isField

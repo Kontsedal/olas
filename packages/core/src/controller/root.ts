@@ -169,9 +169,7 @@ function buildRootHandle<Api>(
       }
       return
     }
-    for (const entry of state.entries) {
-      queryClient.applyDehydratedEntry(entry)
-    }
+    queryClient.hydrateLive(state)
   }
 
   const root: Root<Api> = {

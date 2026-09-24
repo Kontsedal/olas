@@ -103,18 +103,11 @@ type LifecycleNode = {
 class LifecycleList {
   private head: LifecycleNode | null = null
   private tail: LifecycleNode | null = null
-  private _size = 0
-
-  get size(): number {
-    return this._size
-  }
-
   push(entry: LifecycleEntry): LifecycleNode {
     const node: LifecycleNode = { entry, prev: this.tail, next: null, unlinked: false }
     if (this.tail !== null) this.tail.next = node
     else this.head = node
     this.tail = node
-    this._size += 1
     return node
   }
 
@@ -125,13 +118,11 @@ class LifecycleList {
     else this.head = node.next
     if (node.next !== null) node.next.prev = node.prev
     else this.tail = node.prev
-    this._size -= 1
   }
 
   clear(): void {
     this.head = null
     this.tail = null
-    this._size = 0
   }
 
   /** Yield entries in insertion order. */
@@ -345,6 +336,9 @@ export class ControllerInstance {
     this.state = 'suspended'
 
     for (const entry of this.entries.reverse()) {
+      // An `onSuspend` handler that disposed or resumed the controller owns
+      // what happens next; the rest of this pass would act on a stale state.
+      if (this.state !== 'suspended') break
       try {
         switch (entry.kind) {
           case 'effect':
@@ -373,7 +367,7 @@ export class ControllerInstance {
       }
     }
 
-    if (__DEV__) {
+    if (__DEV__ && this.state === 'suspended') {
       this.rootShared.devtools.emit({ type: 'controller:suspended', path: this.path })
     }
   }
@@ -383,6 +377,10 @@ export class ControllerInstance {
     this.state = 'active'
 
     for (const entry of this.entries.forward()) {
+      // An `onResume` handler that disposed or re-suspended the controller
+      // owns what happens next. Carrying on would switch effects and
+      // subscriptions back on for a controller that is no longer active.
+      if (this.state !== 'active') break
       try {
         switch (entry.kind) {
           case 'effect':
@@ -425,7 +423,7 @@ export class ControllerInstance {
       }
     }
 
-    if (__DEV__) {
+    if (__DEV__ && this.state === 'active') {
       this.rootShared.devtools.emit({ type: 'controller:resumed', path: this.path })
     }
   }

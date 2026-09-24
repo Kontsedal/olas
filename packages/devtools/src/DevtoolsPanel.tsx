@@ -79,11 +79,14 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   // The input stays responsive (`value={filter}`), but the expensive filtering
   // (a JSON.stringify per entry) runs against a DEBOUNCED value so typing
   // doesn't re-filter the whole log on every keystroke (T6.3).
-  const [debouncedFilter, setDebouncedFilter] = useState(filter)
+  // Keyed by tab: switching tabs applies that tab's own stored filter at once,
+  // and only typing waits out the debounce.
+  const [debounced, setDebounced] = useState({ tab, value: filter })
   useEffect(() => {
-    const id = setTimeout(() => setDebouncedFilter(filter), 150)
+    const id = setTimeout(() => setDebounced({ tab, value: filter }), 150)
     return () => clearTimeout(id)
-  }, [filter])
+  }, [tab, filter])
+  const debouncedFilter = debounced.tab === tab ? debounced.value : filter
 
   // Persist tab + filters back to the URL hash on every change.
   useEffect(() => {
@@ -268,10 +271,16 @@ function Tab(props: {
   )
 }
 
-function countLiveControllers(node: ControllerNode): number {
-  let total = node.state !== 'disposed' ? 1 : 0
-  for (const c of node.children) total += countLiveControllers(c)
-  return Math.max(total - 1, 0) // exclude the placeholder root wrapper
+function countLiveControllers(tree: ControllerNode): number {
+  // Only the placeholder root wrapper is excluded: count its descendants.
+  const live = (node: ControllerNode): number => {
+    let total = node.state !== 'disposed' ? 1 : 0
+    for (const c of node.children) total += live(c)
+    return total
+  }
+  let total = 0
+  for (const c of tree.children) total += live(c)
+  return total
 }
 
 // ===========================================================================
@@ -312,8 +321,12 @@ function rollupPending(entries: readonly MutationEntry[]): Map<string, number> {
       inFlight.set(key, (inFlight.get(key) ?? 0) + 1)
       out.set(pathKey, (out.get(pathKey) ?? 0) + 1)
     } else if (e.kind === 'success' || e.kind === 'error') {
+      // Only a settle for a (path, name) with a run in flight lowers the
+      // path's count: the run may predate the panel, a Clear, or the log's
+      // window, and another mutation's badge must not drop with it.
       const n = inFlight.get(key) ?? 0
-      if (n > 0) inFlight.set(key, n - 1)
+      if (n === 0) continue
+      inFlight.set(key, n - 1)
       const p = out.get(pathKey) ?? 0
       if (p > 0) out.set(pathKey, p - 1)
     }

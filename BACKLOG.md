@@ -158,7 +158,19 @@ Each of the four could be a separate change; they share one question, which is w
 
 [noticed during T5.2] Core's `validator()` now returns `FormIssue[]` with paths, and form-level validators route them onto fields. But `formFromZod` still lifts root refines via `rootOnlyZodValidator`, which keeps only **empty-path** issues — so `z.object({...}).refine(fn, { path: ['confirm'] })` is dropped rather than landing on `confirm`. Routing them means distinguishing "root refine targeting a field" from a leaf-schema failure at the same path (leaf validators already own the latter), else the message double-reports. Options: filter root issues to `code: 'custom'` refinements and return them as `FormIssue[]`, or drop per-leaf `zodValidator`s and drive everything from one whole-form `validator(schema)` (bigger change — affects per-leaf `validateOn` and async semantics). Needs its own tests.
 
+### [idea] A no-op field reset can hide a form-level error until the next change
+
+[from the 1.0 coverage pass] `field.reset()` or `setAsInitial()` with an unchanged value clears an error a form-level validator routed onto the field, and the form does not re-run, because nothing it tracks changed. `form.isValid` can then read true while a form-level rule still fails, until the next edit. `submit()` is safe, since it re-validates first. A fix would re-route the form's last issues after a reset, or re-run the form validators when a routed target is cleared.
+
 ## Queries / data layer
+
+### [idea] A `retry` or `retryDelay` callback that throws wedges `isFetching`
+
+[from the 1.0 Stryker triage] `Entry` and `InfiniteEntry` call the query's `retry(attempt, err)` and `retryDelay(attempt)` inside their fetch loop's `catch`. A throw there escapes the loop: the fetch promise rejects, but `isFetching` stays true, which also hangs `waitForIdle()`. An infinite page request clears its page flag and still leaves `isFetching` set. It takes a bug in user code, and it is the same wedge the fetcher-originated `AbortError` fix closed. Shape: treat a throwing policy callback as the attempt's failure, settled through `applyFailure` with the thrown error.
+
+### [idea] `ctx.debug` while suspended stores the value but sends no devtools event
+
+[from the 1.0 Stryker triage] The panel shows the stale value until the controller resumes and the next `ctx.debug` call lands. Either emit while suspended or re-emit the stored values on resume.
 
 ### [dropped] A React hook that creates a query subscription (`useQuery(query, { key })`)
 

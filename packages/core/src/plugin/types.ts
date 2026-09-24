@@ -92,7 +92,10 @@ export type QueryRef = {
  * name as their `origin`.
  */
 export type QueryHost = {
-  /** A query this root has used, by id. `undefined` until one of its entries is bound. */
+  /**
+   * A query this root has used, by id: one it holds an entry for, or one a
+   * `bindQuery` reached. `undefined` for a query this root has never touched.
+   */
   get(id: string): QueryRef | undefined
   /** Keys of every entry this root holds for the query. */
   keys(id: string): ReadonlyArray<readonly unknown[]>

@@ -262,8 +262,12 @@ export class Entry<T> {
         // Superseded or disposed: a newer fetch (or `cancel` / `applyHydration`
         // / `dispose`) owns the entry's state now and has already set it, so
         // this one must write nothing — §5.6, "errors from outdated fetches are
-        // also dropped".
-        if (myId !== this.currentFetchId || this.disposed) throw err
+        // also dropped". Its caller hears the supersede, not the stale error,
+        // exactly as when the outdated request succeeds: an `invalidate()` would
+        // otherwise report it to `onError`, and a `prefetch()` would reject.
+        if (myId !== this.currentFetchId || this.disposed) {
+          throw new DOMException('Superseded', 'AbortError')
+        }
         if (isAbortError(err)) {
           // Still the latest fetch, yet the request aborted. Nothing in the
           // engine did it — every engine-side abort bumps `currentFetchId` or
@@ -411,6 +415,10 @@ export class Entry<T> {
       this.staleTimer = null
     }
     const alreadyStale = this.staleTime === 0 || Date.now() - lastUpdatedAt >= this.staleTime
+    // Hydrated data is server truth, like a fetch result: rebase live
+    // optimistic snapshots onto it, so a later rollback restores it rather
+    // than a baseline from before it arrived (spec §6.4, as in `applySuccess`).
+    for (const s of this.snapshots) s.prev = data
     batch(() => {
       this.data.set(data)
       this.error.set(undefined)

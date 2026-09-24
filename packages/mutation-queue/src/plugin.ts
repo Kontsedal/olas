@@ -292,8 +292,9 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       // Guards concurrent replay runs (startup / reconnect / `replayNow` all
       // funnel through `runReplay`) so a set of entries isn't replayed twice at once.
       let replaying = false
-      // Outstanding backoff sleepers — `dispose()` triggers each so the
-      // per-mutationId driver short-circuits the wait.
+      // Outstanding backoff sleepers, by their wake function — `dispose()`
+      // calls each, which resolves the wait so the per-mutationId driver
+      // bails out at once.
       const backoffSleepers = new Set<() => void>()
       // Outstanding `waitForOnline` waiters — `dispose()` triggers each so a
       // pass that parked while offline releases the cross-tab replay lock and
@@ -554,34 +555,20 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       }
 
       /**
-       * Sleep that resolves early when `bail()` returns true. Used by the
-       * per-mutationId driver to short-circuit backoff windows when the
-       * plugin disposes mid-wait — without this, `dispose()` would still
-       * have to wait out the longest backoff to escape.
+       * The backoff wait between replay attempts. `dispose()` wakes every
+       * sleeper at once, so a disposing tab releases the cross-tab replay
+       * lock now, not after up to `maxBackoffMs`.
        */
-      const sleep = (ms: number, bail: () => boolean): Promise<void> => {
+      const sleep = (ms: number): Promise<void> => {
+        if (disposed) return Promise.resolve()
         return new Promise((resolve) => {
-          if (bail()) {
+          const wake = (): void => {
+            clearTimeout(timer)
+            backoffSleepers.delete(wake)
             resolve()
-            return
           }
-          const t = setTimeout(() => {
-            cleanup()
-            resolve()
-          }, ms)
-          const tick = () => {
-            if (bail()) {
-              clearTimeout(t)
-              cleanup()
-              resolve()
-            }
-          }
-          const interval = setInterval(tick, 100)
-          const cleanup = () => {
-            clearInterval(interval)
-            backoffSleepers.delete(cleanup)
-          }
-          backoffSleepers.add(cleanup)
+          const timer = setTimeout(wake, ms)
+          backoffSleepers.add(wake)
         })
       }
 
@@ -721,7 +708,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
                 // and so on, capped at maxBackoffMs.
                 if (backoffMs > 0 && entry.attempts > 0) {
                   const delay = Math.min(backoffMs * 2 ** (entry.attempts - 1), maxBackoffMs)
-                  await sleep(delay, () => disposed)
+                  await sleep(delay)
                   if (disposed) return
                 }
                 await replayEntry(entry)

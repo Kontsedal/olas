@@ -696,6 +696,31 @@ function createEntityStore(
   }
 
   /**
+   * Put every entity nested inside `value` into the store, but not `value`
+   * itself. For an `update` whose entity no query holds: nothing re-walks it,
+   * and a nested entity the patch brought in would otherwise never land.
+   */
+  const absorbNested = (value: unknown, seen: WeakSet<object>, isRoot: boolean): void => {
+    if (value === null || typeof value !== 'object' || seen.has(value as object)) return
+    seen.add(value as object)
+    if (!isRoot) {
+      for (const def of byName.values()) {
+        const id = def.idOf(value)
+        if (id == null) continue
+        if (def.isCanonical !== undefined && !def.isCanonical(value)) continue
+        const part = store.get(def.name)
+        if (part === undefined) continue
+        const slot = getSlot(part, def.name, id)
+        const prev = slot.peek()
+        slot.set(value)
+        if (!Object.is(prev, value)) bumpListVersion(def.name)
+      }
+    }
+    const children = Array.isArray(value) ? value : Object.values(value as Record<string, unknown>)
+    for (const child of children) absorbNested(child, seen, false)
+  }
+
+  /**
    * Immutably replace the value at `path` inside `root`. Returns a new
    * structure that shares siblings by reference — unchanged subtrees stay
    * `===` to their original, which is what the signal-equality dedup
@@ -799,8 +824,8 @@ function createEntityStore(
         if (!Object.is(current, next)) bumpListVersion(entity.name)
         for (const binding of bindingsSnapshot) {
           const paths = binding.paths
-          // Stamped with this plugin's name as `origin`: the store already
-          // holds `next`, so its own `onWrite` skips re-walking the result.
+          // Stamped with this plugin's name as `origin`, so its own `onWrite`
+          // skips it; the re-walk below stands in for that walk.
           queries.write(binding.queryId, binding.keyArgs, (prev) => {
             let result: unknown = prev
             for (const path of paths) {
@@ -808,7 +833,13 @@ function createEntityStore(
             }
             return result
           })
+          // Re-walk the entry: a nested entity the patch brought in (a new
+          // author, say) is normalized, and the entry's bindings follow the
+          // patch instead of keeping the entity it replaced. The walk writes
+          // nothing back to the cache, so it cannot loop.
+          observe(binding.queryId, binding.keyArgs, queries.peek(binding.queryId, binding.keyArgs))
         }
+        if (bindingsSnapshot.length === 0) absorbNested(next, new WeakSet(), true)
       })
     },
 

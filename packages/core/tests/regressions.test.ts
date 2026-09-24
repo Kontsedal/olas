@@ -7,12 +7,14 @@
  */
 import { describe, expect, test, vi } from 'vitest'
 import {
+  bindQuery,
   createCache,
   createField,
   createFieldArray,
   createForm,
   createMutation,
   createQuery,
+  type Mutation,
 } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import type { FormIssue, StandardSchemaV1 } from '../src/forms'
@@ -2187,6 +2189,375 @@ describe('regression: a fetcher-originated AbortError settles an infinite entry'
     expect(root.api.list.isFetching.value).toBe(false)
     expect(root.api.list.status.value).toBe('error')
     expect(root.api.list.pages.value).toEqual([{ n: 0, next: 1 }])
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// W9 — three query bugs the 1.0 coverage pass found.
+// ---------------------------------------------------------------------------
+describe('W9 query regressions', () => {
+  test('resume honours an enabled that turned false during suspension (§5.7)', async () => {
+    const on = signal(true)
+    const q = defineQuery({ id: 'w9/resume-disabled', key: () => ['k'], fetcher: async () => 'v' })
+    const def = defineController((ctx) => ({
+      s: createQuery(ctx, q, { enabled: () => on.value }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await root.waitForIdle()
+    expect(root.api.s.data.value).toBe('v')
+    root.suspend()
+    on.set(false)
+    root.resume()
+    expect(root.api.s.isEnabled.value).toBe(false)
+    expect(root.api.s.status.value).toBe('idle')
+    expect(root.api.s.data.value).toBeUndefined()
+    await expect(root.api.s.refetch()).rejects.toMatchObject({ name: 'QueryDisabledError' })
+    on.set(true) // and it re-enables normally afterwards
+    await root.waitForIdle()
+    expect(root.api.s.data.value).toBe('v')
+    root.dispose()
+  })
+
+  test('an infinite query without itemsOf keeps flat equal to pages while retained pages show', async () => {
+    const key = signal('a')
+    let release: (v: { n: number }) => void = () => {}
+    const q = defineInfiniteQuery({
+      id: 'w9/flat-retained',
+      key: (k: string) => [k],
+      fetcher: async ({ pageParam }: { pageParam: number }, k: string) =>
+        k === 'a'
+          ? { n: pageParam }
+          : new Promise<{ n: number }>((resolve) => {
+              release = resolve
+            }),
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      keepPreviousData: true,
+    })
+    const def = defineController((ctx) => ({
+      feed: createQuery(ctx, q, () => [key.value] as [string]),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await root.waitForIdle()
+    expect(root.api.feed.flat.value).toEqual([{ n: 0 }])
+    key.set('b') // pending: the previous pages stay on screen
+    expect(root.api.feed.pages.value).toEqual([{ n: 0 }])
+    expect(root.api.feed.flat.value).toEqual(root.api.feed.pages.value)
+    release({ n: 9 })
+    await root.waitForIdle()
+    root.dispose()
+  })
+
+  test('root.hydrate drops a payload of another version, as createRoot does', () => {
+    const q = defineQuery({
+      id: 'w9/hydrate-version',
+      key: () => [],
+      fetcher: async () => 'fetched',
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    root.hydrate({
+      version: 2,
+      entries: [{ id: 'w9/hydrate-version', key: [], data: 'from-v2', lastUpdatedAt: Date.now() }],
+    } as unknown as Parameters<typeof root.hydrate>[0])
+    expect(root.api.q.data.value).not.toBe('from-v2')
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// W9 — bugs the Stryker survivor triage found.
+// ---------------------------------------------------------------------------
+describe('W9 mutation-testing regressions', () => {
+  const phaseRecorder = (phases: string[]) =>
+    definePlugin({
+      name: 'phases',
+      setup: () => ({
+        onMutation: (e) => {
+          phases.push(e.phase)
+        },
+      }),
+    })
+
+  test('dispose() inside onMutate cancels the run: mutate never runs and the guess rolls back', async () => {
+    const calls: unknown[] = []
+    const phases: string[] = []
+    const q = defineQuery({ id: 'w9m/dispose-in-onmutate', key: () => [], fetcher: async () => 1 })
+    const root = createRoot(
+      defineController((ctx) => {
+        const sub = createQuery(ctx, q)
+        const cached = bindQuery(ctx, q)
+        const m: Mutation<number, number> = createMutation(ctx, {
+          id: 'w9m/dispose-in-onmutate/m',
+          mutate: async (v: number) => {
+            calls.push(v)
+            return v
+          },
+          onMutate: () => {
+            const snap = cached.setData(() => 99)
+            m.dispose()
+            return snap
+          },
+        })
+        return { sub, m }
+      }),
+      { queries: queryEngine(), deps: emptyDeps, plugins: [phaseRecorder(phases)] },
+    )
+    await root.waitForIdle()
+    const outcome = await root.api.m.run(1).then(
+      () => 'resolved',
+      (err: unknown) => (isAbortError(err) ? 'aborted' : 'other'),
+    )
+    expect(outcome).toBe('aborted')
+    expect(calls).toEqual([])
+    expect(root.api.m.status.value).not.toBe('pending')
+    expect(root.api.m.isPending.value).toBe(false)
+    expect(root.api.sub.data.value).toBe(1)
+    expect(phases).toEqual([])
+    root.dispose()
+  })
+
+  test('an AbortError thrown by mutate itself is a failure, not a cancellation', async () => {
+    const phases: string[] = []
+    const onError = vi.fn()
+    const inner = new DOMException('inner', 'AbortError')
+    const q = defineQuery({ id: 'w9m/own-abort', key: () => [], fetcher: async () => 1 })
+    const root = createRoot(
+      defineController((ctx) => ({
+        sub: createQuery(ctx, q),
+        m: createMutation(ctx, {
+          id: 'w9m/own-abort/m',
+          mutate: async () => {
+            throw inner
+          },
+          onMutate: () => bindQuery(ctx, q).setData(() => 99),
+          onError,
+        }),
+      })),
+      { queries: queryEngine(), deps: emptyDeps, plugins: [phaseRecorder(phases)] },
+    )
+    await root.waitForIdle()
+    await expect(root.api.m.run()).rejects.toBe(inner)
+    expect(root.api.m.isPending.value).toBe(false)
+    expect(root.api.m.status.value).toBe('error')
+    expect(root.api.m.error.value).toBe(inner)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(root.api.sub.data.value).toBe(1)
+    expect(phases).toEqual(['start', 'error'])
+    root.dispose()
+  })
+
+  test('an onResume handler that disposes the controller leaves no live effect', () => {
+    const count = signal(0)
+    const runs: number[] = []
+    const holder: { root?: { dispose(): void } } = {}
+    const root = createRoot(
+      defineController((ctx) => {
+        ctx.onResume(() => holder.root?.dispose())
+        ctx.effect(() => {
+          runs.push(count.value)
+        })
+        return {}
+      }),
+      { deps: emptyDeps },
+    )
+    holder.root = root
+    root.suspend()
+    root.resume()
+    count.set(1)
+    expect(runs).toEqual([0])
+  })
+
+  test('an onResume handler that suspends again leaves the controller suspended', () => {
+    const count = signal(0)
+    const runs: number[] = []
+    const holder: { again: boolean; root?: { suspend(): void } } = { again: false }
+    const root = createRoot(
+      defineController((ctx) => {
+        ctx.onResume(() => {
+          if (holder.again) holder.root?.suspend()
+        })
+        ctx.effect(() => {
+          runs.push(count.value)
+        })
+        return {}
+      }),
+      { deps: emptyDeps },
+    )
+    holder.root = root
+    root.suspend()
+    holder.again = true
+    root.resume()
+    count.set(1)
+    expect(runs).toEqual([0])
+    root.dispose()
+  })
+
+  test('an onSuspend handler that disposes the controller stops the remaining handlers', () => {
+    const fired: string[] = []
+    const holder: { root?: { dispose(): void } } = {}
+    const root = createRoot(
+      defineController((ctx) => {
+        // Suspend walks entries in reverse, so `second` runs first.
+        ctx.onSuspend(() => fired.push('first'))
+        ctx.onSuspend(() => {
+          fired.push('second')
+          holder.root?.dispose()
+        })
+        return {}
+      }),
+      { deps: emptyDeps },
+    )
+    holder.root = root
+    root.suspend()
+    expect(fired).toEqual(['second'])
+  })
+})
+
+describe('W9 mutation-testing regressions: outdated fetches and late releases', () => {
+  test('an outdated fetch that fails reaches no onError, as one that succeeds does not (§5.6)', async () => {
+    const onError = vi.fn()
+    let gate: ReturnType<typeof deferred<string>> | null = null
+    const q = defineQuery({
+      id: 'w9m/outdated-error',
+      key: () => ['k'],
+      fetcher: () => (gate ? gate.promise : Promise.resolve('a')),
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ s: createQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+        onError,
+      },
+    )
+    await root.waitForIdle()
+    gate = deferred<string>()
+    const handle = root.bindQuery(q)
+    const invalidated = handle.invalidate()
+    handle.replace('b') // supersedes the refetch the invalidate started
+    gate.reject(new Error('late'))
+    await invalidated
+    expect(root.api.s.data.value).toBe('b')
+    expect(onError).not.toHaveBeenCalled()
+    root.dispose()
+  })
+
+  test('a prefetch whose request is superseded resolves with the value that won', async () => {
+    let gate: ReturnType<typeof deferred<string>> | null = null
+    const q = defineQuery({
+      id: 'w9m/outdated-prefetch',
+      key: () => ['k'],
+      fetcher: () => (gate ? gate.promise : Promise.resolve('a')),
+    })
+    const root = createRoot(
+      defineController(() => ({})),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+      },
+    )
+    gate = deferred<string>()
+    const handle = root.bindQuery(q)
+    const prefetched = handle.prefetch()
+    handle.replace('b')
+    gate.reject(new Error('late'))
+    await expect(prefetched).resolves.toBe('b')
+    root.dispose()
+  })
+
+  test('a prefetch in flight when the root is disposed leaves no timer behind', async () => {
+    vi.useFakeTimers()
+    try {
+      const q = defineQuery({
+        id: 'w9m/prefetch-dispose-timer',
+        key: () => ['k'],
+        fetcher: ({ signal }) =>
+          new Promise<string>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new DOMException('x', 'AbortError')))
+          }),
+      })
+      const root = createRoot(
+        defineController(() => ({})),
+        {
+          queries: queryEngine(),
+          deps: emptyDeps,
+        },
+      )
+      const prefetched = root
+        .bindQuery(q)
+        .prefetch()
+        .catch(() => {})
+      root.dispose()
+      await prefetched
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('W9 mutation-testing regressions: infinite queries', () => {
+  test('a page that succeeds after a write superseded the first load clears isLoading', async () => {
+    const gates: Array<(p: { n: number }) => void> = []
+    const inf = defineInfiniteQuery({
+      id: 'w9m/loading-wedge',
+      key: () => ['feed'],
+      fetcher: ({ pageParam }: { pageParam: number }) =>
+        new Promise<{ n: number }>((resolve) => {
+          gates[pageParam] = resolve
+        }),
+      initialPageParam: 0,
+      getNextPageParam: (p: { n: number }) => (p.n < 2 ? p.n + 1 : null),
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, inf), h: bindQuery(ctx, inf) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const { feed, h } = root.api
+    expect(feed.isLoading.value).toBe(true)
+    h.write(() => [{ n: 0 }]) // a realtime patch lands during the first load
+    const paging = feed.fetchNextPage()
+    expect(feed.isLoading.value).toBe(false)
+    gates[1]?.({ n: 1 })
+    await paging
+    expect(feed.status.value).toBe('success')
+    expect(feed.isFetching.value).toBe(false)
+    expect(feed.isLoading.value).toBe(false)
+    root.dispose()
+  })
+
+  test('an outdated infinite fetch that fails reaches no onError (§5.6)', async () => {
+    const onError = vi.fn()
+    let gate: ReturnType<typeof deferred<number[]>> | null = null
+    const inf = defineInfiniteQuery({
+      id: 'w9m/infinite-outdated-error',
+      key: () => ['k'],
+      fetcher: () => (gate ? gate.promise : Promise.resolve([1])),
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, inf) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+        onError,
+      },
+    )
+    await root.waitForIdle()
+    gate = deferred<number[]>()
+    const handle = root.bindQuery(inf)
+    const invalidated = handle.invalidate()
+    handle.replace([[2]])
+    gate.reject(new Error('late'))
+    await invalidated
+    expect(root.api.feed.pages.value).toEqual([[2]])
+    expect(onError).not.toHaveBeenCalled()
     root.dispose()
   })
 })

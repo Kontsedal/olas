@@ -1155,3 +1155,54 @@ describe('entitiesPlugin', () => {
     root.dispose()
   })
 })
+
+describe('update — nested entities the patch brings in', () => {
+  type Article = { id: string; title: string; author: User }
+
+  test('a new nested entity is normalized, and the binding follows the patch', async () => {
+    const q = defineQuery({
+      id: 'ent-test/nested-update',
+      key: () => [],
+      fetcher: async (): Promise<Article> => ({
+        id: 'p1',
+        title: 'T',
+        author: { id: 'u1', name: 'Ada' },
+      }),
+      staleTime: 60_000,
+    })
+    const def = defineController((ctx) => ({ article: createQuery(ctx, q) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [entitiesPlugin({ entities: [Post, User] })],
+    })
+    const entities = root.inject(Entities)
+    await root.waitForIdle()
+
+    entities.update(Post, 'p1', { author: { id: 'u2', name: 'Bob' } } as Partial<Post>)
+    expect(entities.get(User, 'u2')).toEqual({ id: 'u2', name: 'Bob' })
+    // u1 no longer appears in the query, so updating it must not reach it.
+    entities.update(User, 'u1', { name: 'Ada Lovelace' })
+    expect((root.api.article.data.value as Article).author).toEqual({ id: 'u2', name: 'Bob' })
+    // And an update to the new author reaches the query.
+    entities.update(User, 'u2', { name: 'Bobby' })
+    expect((root.api.article.data.value as Article).author.name).toBe('Bobby')
+    root.dispose()
+  })
+
+  test('an entity no query holds still absorbs the nested entities of its patch', () => {
+    const root = createRoot(
+      defineController(() => ({})),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [entitiesPlugin({ entities: [Post, User] })],
+      },
+    )
+    const entities = root.inject(Entities)
+    entities.upsert(Post, { id: 'p9', title: 'Solo', likes: 0 })
+    entities.update(Post, 'p9', { author: { id: 'u9', name: 'Cy' } } as Partial<Post>)
+    expect(entities.get(User, 'u9')).toEqual({ id: 'u9', name: 'Cy' })
+    root.dispose()
+  })
+})

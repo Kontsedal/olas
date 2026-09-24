@@ -143,3 +143,7 @@ vite.config.ts.timestamp-*
 .vite/
 .idea
 .npmrc
+
+# Stryker mutation runs
+.stryker-tmp/
+reports/mutation/

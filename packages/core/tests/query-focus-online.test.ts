@@ -459,3 +459,48 @@ describe('refetchInterval — hidden tab', () => {
     root.dispose()
   })
 })
+
+describe('reconnect dispatch', () => {
+  afterEach(() => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true })
+  })
+
+  test('an online event while navigator still reports offline defers once, and does not spin', async () => {
+    let reads = 0
+    // Offline for the first 1,000 reads, so a spin terminates instead of hanging.
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => ++reads > 1_000 })
+    let count = 0
+    const q = defineQuery({
+      id: 'query-focus-online/reconnect-spin',
+      key: () => [],
+      fetcher: async () => ++count,
+    })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.x.isPaused.value).toBe(true)
+    const before = reads
+    window.dispatchEvent(new Event('online'))
+    // The drain re-checks the network once, parks again, and waits for the next event.
+    expect(reads - before).toBeLessThan(10)
+    expect(root.api.x.isPaused.value).toBe(true)
+    expect(count).toBe(0)
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => true })
+    window.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
+    root.dispose()
+  })
+
+  test('a subscriber removed during a dispatch does not fire in that dispatch', async () => {
+    const { subscribeReconnect } = await import('../src/query/focus-online')
+    const fired: string[] = []
+    let offB = (): void => {}
+    const offA = subscribeReconnect(() => {
+      fired.push('a')
+      offB()
+    })
+    offB = subscribeReconnect(() => fired.push('b'))
+    window.dispatchEvent(new Event('online'))
+    expect(fired).toEqual(['a'])
+    offA()
+  })
+})

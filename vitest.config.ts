@@ -1,6 +1,8 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
 
+const satellite = { statements: 94, branches: 90, functions: 94, lines: 96 }
+
 export default defineConfig({
   define: {
     __DEV__: 'true',
@@ -30,15 +32,28 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.{ts,tsx}'],
       exclude: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.d.ts'],
-      // Ratchet: seeded a few points below the current measured levels
-      // (~83 stmts / 71 branch / 86 funcs / 87 lines as of the T7.2 pass) so CI
-      // fails on a real regression without flaking on measurement jitter. Raise
-      // these as coverage improves — never lower them to make a red build pass.
+      // Gates, set a little below the levels the 1.0 coverage pass reached
+      // (2026-09-25: core 99.4 lines / 94.9 branches; every satellite >= 99
+      // lines, >= 90 branches), so CI fails on a real regression without
+      // flaking on measurement jitter. Raise them as coverage improves; never
+      // lower them to make a red build pass. What is left uncovered is listed,
+      // with a reason per branch, in `.wiki/decisions/engine-assurance.md`.
       thresholds: {
-        statements: 80,
-        branches: 68,
-        functions: 82,
-        lines: 83,
+        statements: 96,
+        branches: 92,
+        functions: 96,
+        lines: 97,
+        'packages/core/src/**': { statements: 96, branches: 92, functions: 96, lines: 97 },
+        // One gate per satellite, so a package cannot slip while others carry it.
+        'packages/cross-tab/src/**': satellite,
+        'packages/devtools/src/**': satellite,
+        'packages/entities/src/**': satellite,
+        'packages/mutation-queue/src/**': satellite,
+        'packages/persist/src/**': satellite,
+        'packages/react/src/**': satellite,
+        'packages/realtime/src/**': satellite,
+        'packages/router/src/**': satellite,
+        'packages/zod/src/**': satellite,
       },
     },
   },

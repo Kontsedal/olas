@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-react",
   "version": "0.8.0",
-  "description": "Olas React adapter — OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.",
+  "description": "Olas React adapter — OlasProvider, useRoot, useValue, useQuery, useField, useMutation, SuspendOnUnmount, SSR hydration and streaming.",
   "keywords": [
     "olas",
     "controller-tree",
@@ -10,7 +10,6 @@
     "state-management",
     "react",
     "hooks",
-    "keep-alive",
     "concurrent-react"
   ],
   "license": "MIT",

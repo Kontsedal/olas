@@ -53,11 +53,13 @@ export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
 
   // Persist on change.
   useEffect(() => {
-    if (typeof localStorage === 'undefined') return
+    // Reading `localStorage` itself can throw (a sandboxed iframe, blocked
+    // site data), so the check sits inside the try.
     try {
+      if (typeof localStorage === 'undefined') return
       localStorage.setItem(storageKey, JSON.stringify(state))
     } catch {
-      /* swallow */
+      /* storage unavailable: the window just doesn't persist */
     }
   }, [state, storageKey])
 
@@ -238,8 +240,9 @@ function loadState(
     open: false,
     minimized: false,
   }
-  if (typeof localStorage === 'undefined') return defaults
   try {
+    // Inside the try: reading `localStorage` can throw a SecurityError.
+    if (typeof localStorage === 'undefined') return defaults
     const raw = localStorage.getItem(storageKey)
     if (!raw) return defaults
     const parsed = JSON.parse(raw) as Partial<WindowState>

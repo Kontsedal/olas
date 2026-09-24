@@ -231,7 +231,9 @@ export function createLiveStream<TEvent>(
       return
     }
     if (rafFlush) {
-      if (rafHandle !== null) return
+      // One pending frame (or its setTimeout stand-in) at a time: a second
+      // event before it fires joins the same flush.
+      if (rafHandle !== null || flushTimer !== null) return
       if (typeof requestAnimationFrame === 'function') {
         rafHandle = requestAnimationFrame(() => {
           rafHandle = null

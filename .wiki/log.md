@@ -1772,3 +1772,71 @@ Bundle cost: infinite parity added about 0.9 kB brotli to core's queries entry (
 - The W3 `create*` renames (`createPersisted`, `createRealtimePatcher`, `createLiveStream`, `createConnectionState`, `createZodForm`) are applied across the wiki pages that still used the `use*` names.
 - `modules/zod.md` shows the tracked `initial`.
 - `modules/controller.md` mentions the test plugins.
+
+## [2026-09-25 07:40] ingest | 1.0 W9: engine assurance — property models, coverage gates, mutation testing, 29 bugs fixed
+
+**How the work was done.** Five parallel agents wrote tests only, with `src/` off limits and each real bug reported rather than patched:
+- core `query/`;
+- the rest of core;
+- devtools;
+- the other satellites;
+- `fast-check` property models.
+
+Each bug was then fixed here, with a regression test confirmed to fail against the old source.
+
+**New tests.**
+- About 600 coverage tests (`packages/*/tests/coverage-*.test.ts*`).
+- Three property files in `packages/core/tests/property/`, at 1,000 runs per property.
+- The coverage pass took the suite from 1,017 to 1,549 tests, and coverage from 89.5% lines / 76.5% branches to 99.6% / 95.7%.
+
+**Bugs fixed.**
+- **core engine:**
+  - hydration rebases live snapshots (`Entry` and `InfiniteEntry`);
+  - an infinite canonical write rebases;
+  - infinite paging flags follow the owning request;
+  - a mutation that fails in the abort gap reports `'error'` and rejects with `AbortError`;
+  - `serial` queued runs count toward `waitForIdle`;
+  - a disposed pending mutation goes `'idle'`;
+  - `resume()` honours a disabled `enabled`;
+  - retained `flat` without `itemsOf` equals `pages`;
+  - `root.hydrate` checks the payload version through the new `QueryClient.hydrateLive`.
+- **core forms:**
+  - aggregate `isValid` holds while validating (`holdWhileValidating`);
+  - a rejected form or array validator is an error;
+  - a no-op `remove` / `move` leaves the array clean.
+- **zod:** a default under optional/nullable; a function default; numeric enums.
+- **realtime:** the `rafFlush` fallback timer leak.
+- **entities:** `update` re-walks bound entries (new `absorbNested` for unbound ones).
+- **mutation-queue:** dispose wakes the backoff sleepers.
+- **devtools:**
+  - the tree count;
+  - the pending rollup;
+  - the per-tab filter debounce;
+  - storage reads inside a `try` in the launcher.
+
+**Removed.** Dead code: `isField`, `LifecycleList.size` and `QueryClient.inflightCount`. The `Query.write` TSDoc now names the `'write'` source.
+
+**Gates.** `vitest.config.ts` thresholds: global, core, and one per satellite. Stryker config added (`pnpm mutation`, `vitest.stryker.config.ts`), and outputs are gitignored.
+
+**Mutation testing.** The first Stryker run over `query/{client,entry,infinite,mutation}.ts` and `controller/instance.ts` scored 76.5%. Five agents, one per file, triaged the 815 surviving or uncovered mutants into GAP, EQUIVALENT, NOT-WORTH and BUG. They wrote 167 tests for the 400 GAP mutants in `packages/core/tests/mutants-*.test.ts`, and checked every kill against a mutated scratch copy. The second run scored 87.8%. Per-file numbers and the classes are in `decisions/engine-assurance.md`.
+
+The triage found seven more engine bugs, each fixed with a regression test confirmed to fail on the old code:
+- `dispose()` / `reset()` inside `onMutate` did not cancel the run. The handle is now registered before `onMutate`.
+- An `AbortError` from `mutate` itself counted as a cancellation. Only the run's own signal makes one now.
+- A lifecycle handler that changed the controller's state did not end the `suspend` / `resume` pass.
+- One `online` event spun without end while `navigator.onLine` read false. `focus-online.ts` now dispatches over a snapshot.
+- An outdated fetch rethrew its own error, which reached `onError` through `invalidate()` and rejected `prefetch()`. `Entry` and `InfiniteEntry` now throw the supersede.
+- A `prefetch()` in flight at dispose armed a gc timer afterwards. A late `release()` is inert once the entry is disposed.
+- An infinite page request left `isLoading` stuck after a write filled the first load. A page request clears it when it starts.
+
+**Benchmarks.** `packages/core/bench/engine.bench.ts` and `pnpm bench` (`vitest bench --run`) land here, ahead of W15: signal fan-out, 10,000 observed subscribers on one entry, a fetch cycle, structural sharing over a large payload, and a 500-field form. They never gate CI. The baselines against other libraries follow in W15.
+
+Two harness findings: `mergeConfig` concatenates `include` arrays, so `vitest.stryker.config.ts` had been running every package's tests; and deleting a live run's sandbox turns the rest of the run into false survivors.
+
+Wiki: `entities/mutation.md`, `flows/mutation-concurrency.md`, `entities/entry.md`, `entities/controller-instance.md` and `entities/query-client.md` describe the fixed behaviour. BACKLOG gains two ideas from the triage: a throwing `retry` / `retryDelay` callback wedges `isFetching`, and `ctx.debug` while suspended sends no devtools event.
+
+**Wiki.**
+- New `decisions/engine-assurance.md`.
+- New `pitfalls/node-localstorage-shadows-jsdom.md`, a trap two agents hit independently.
+
+**BACKLOG.** One new idea: a no-op field reset hides a form-level error.

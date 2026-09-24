@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../flows/mutation-concurrency.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -49,9 +49,10 @@ type Mutation<V, R> = {
 ## `executeRun(vars)` — the core path
 
 ```
-1. onMutate(vars) → snapshot
-2. handle = { abort, snapshot }; inflight.add(handle)
-3. inflightCounter.update(n => n+1)   # routes to client.mutationsInflight$
+1. handle = { abort }; inflight.add(handle)   # before onMutate, so a dispose/reset/supersede it triggers aborts this run
+2. onMutate(vars) → snapshot
+   if signal.aborted: snapshot?.rollback(); leave(handle); throw AbortError   # mutate never runs, no plugin event
+3. handle.snapshot = snapshot; inflightCounter.update(n => n+1)   # routes to client.mutationsInflight$
 4. isPending = true; status = 'pending'; lastVariables = vars
 5. try:
    result = await raceAbort(runWithRetry(vars, abort.signal), abort.signal)
@@ -61,13 +62,13 @@ type Mutation<V, R> = {
    onSettled(result, undefined, vars)
    return result
 6. catch err:
-   if AbortError or signal.aborted: snapshot?.rollback(); throw   # supersede — no error/status/onError/onSettled
-   error = err; status = 'error'
+   if signal.aborted: snapshot?.rollback(); throw   # supersede — no error/status/onError/onSettled
+   error = err; status = 'error'                   # includes an AbortError mutate threw with the signal live
    onError(err, vars, snapshot)
    onSettled(undefined, err, vars)
    throw
 7. finally:
-   inflight.delete(handle)
+   leave(handle)   # inflight.delete; the last one out clears isPending
    inflightCounter.update(n => n-1)
    if inflight.size === 0: isPending = false
 ```
@@ -75,6 +76,8 @@ type Mutation<V, R> = {
 Notes:
 - **`raceAbort(promise, signal)`** — if the user's `mutate` ignores its `AbortSignal`, the wrapper still rejects with AbortError when superseded. Without this, misbehaving fetchers could leave runs hanging forever. See `../pitfalls/raceabort-for-misbehaving-mutate.md`.
 - **Supersede ≠ failure.** AbortError doesn't populate `mutation.error`, doesn't invoke `onError`, doesn't invoke `onSettled`. Spec §6.1 is explicit.
+- **Only the run's own signal makes it a supersede (1.0).** An `AbortError` that `mutate` throws while the run's signal is still live came from the work itself, for example a request it cancelled on its own. It is a failure: `status: 'error'`, `onError`, rollback, and `'error'` to plugins. The classifier used to test `isAbortError(err)` first. Such a run then counted as a cancellation, left `status` at `'pending'`, and told the mutation queue to keep the entry for replay. `Entry` makes the same split for fetchers (`entry.md`). Pinned by `regressions.test.ts`, "W9 mutation-testing regressions".
+- **The handle is registered before `onMutate` (1.0).** A `dispose()`, `reset()` or `latest-wins` supersede triggered from inside `onMutate` therefore aborts the run: the optimistic write rolls back, `mutate` is never called, and plugins hear nothing, since no `start` was reported. Registered after `onMutate`, the abort found nothing to cancel, `mutate` ran with a signal that never fired, and `status` stayed `'pending'`.
 - **`onMutate` runs synchronously in `run()`** before the await. Snapshots are recorded before any I/O.
 - **A run that COMPLETED is never rolled back** (2026-09-03). Reaching the post-await branch means `raceAbort` *resolved* — the work finished and the abort landed in the gap before the continuation. You cannot cancel what already happened, so the branch finalizes instead of rolling back. A rollback would commit a knowingly stale value to a cache that outlives the mutation, and the `onSuccess` that normally invalidates is skipped on this path. A persistable run settles `'success'` rather than `'cancelled'`, because `'cancelled'` tells `@kontsedal/olas-mutation-queue` to KEEP the durable entry and replay it next load. That would be a second write of a request the server accepted. The promise still rejects with `AbortError`. A `latest-wins` supersede consumed its snapshot back in `run()`, so the finalize is a no-op there. Pinned in `mutation.test.ts` ("a run that COMPLETED before dispose finalizes its snapshot") and `mutation-queue/tests/plugin.test.ts`.
 - **Snapshots are wrapped single-consume.** `wrapSnapshot` makes `rollback()` and `finalize()` idempotent across each other, so whichever fires first wins. On success the path auto-calls `snapshot.finalize()`, which clears `hasPendingMutations`. On error it auto-calls `snapshot.rollback()` after the user's `onError`, and that is a no-op when `onError` already called `rollback`. Spec §6.4.

@@ -10,7 +10,7 @@ edges:
   - { type: uses, target: ctx.md }
   - { type: uses, target: ../flows/construction-rollback.md }
   - { type: related, target: ../modules/controller.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-24
 confidence: high
 ---
 
@@ -62,6 +62,8 @@ type LifecycleEntry =
 | any non-disposed | disposed | `dispose()` | reverse-iterate: dispatch by entry kind |
 
 `dispose` is idempotent — re-entries return early.
+
+**A handler that changes the state ends the pass (1.0).** Both loops re-check `state` before each entry: `suspend()` stops once it is no longer `'suspended'`, and `resume()` once it is no longer `'active'`. An `onResume` handler that disposed the controller, or suspended it again, used to let the loop carry on and switch the later effects back on. An `onSuspend` handler that disposed it let the remaining `onSuspend` handlers fire. The `controller:suspended` / `controller:resumed` devtools events are sent only if the pass ended in its own state. Pinned by `regressions.test.ts`, "W9 mutation-testing regressions".
 
 **Resume re-activation guard (T2.2).** `resume()` sets `state = 'active'` before the forward loop. An effect registered *during* resume, such as one from an `onResume` handler calling `ctx.effect`, is therefore activated immediately by `ctx.effect`, and its `dispose` is non-null. The loop then reaches that freshly-pushed node. The `effect` case re-activates **only when `entry.dispose === null`**, meaning only effects that `suspend()` cleared, so it never overwrites a live `dispose` ref. Without the guard the effect ran twice per change and one copy survived `dispose()`. Pinned by `regressions.test.ts` R-L2.2 (and B9 covers the symmetric `onSuspend`-registered case).
 

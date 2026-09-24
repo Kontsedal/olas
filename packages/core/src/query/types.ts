@@ -365,9 +365,9 @@ export type Query<Args extends unknown[], T> = {
    * and no mutation to settle it, which is why using `setData` for one leaks a
    * live snapshot per call.
    *
-   * Same entry (created if absent) and same `source: 'set'` plugin/devtools event
-   * as `setData`, so cross-tab and entity plugins treat it as any other local
-   * write. Guard with `peek(...)` when patching an absent key would produce
+   * Same entry as `setData` (created if absent). It reports a `source: 'write'`
+   * plugin and devtools event, where `setData` reports `'optimistic'`, so
+   * cross-tab and entity plugins mirror it as canonical data. Guard with `peek(...)` when patching an absent key would produce
    * nonsense (a merge over `undefined` usually does).
    *
    * It rebases live optimistic snapshots onto the written value, so a mutation

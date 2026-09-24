@@ -324,7 +324,15 @@ export function createUse<Args extends unknown[], T, U = T>(
     // re-fire the effect on its own — force a sync rebind through the same
     // code path.
     const isEnabled = enabledFn ? enabledFn() : true
-    if (!isEnabled) return
+    if (!isEnabled) {
+      // Disabled while suspended: settle into the disabled state now, exactly
+      // as the effect would have on the change (§5.7). The entry was released
+      // at suspend.
+      sub.setEnabled(false)
+      sub.detach(keepDataWhileDisabled)
+      return
+    }
+    sub.setEnabled(true)
     const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
     const entry = client.bindEntry<Args, T>(query, args)
     entry.acquire()
@@ -407,7 +415,7 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     // those, so the two never disagree about what is on screen.
     this.flat = computed(() => {
       const kept = retained.value
-      if (kept !== undefined) return itemsOf ? kept.flatMap(itemsOf) : []
+      if (kept !== undefined) return itemsOf ? kept.flatMap(itemsOf) : (kept as unknown as TItem[])
       return this.current$.value?.entry.flat.value ?? []
     })
     this.error = computed(() => this.current$.value?.entry.error.value)
@@ -604,7 +612,13 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
     if (!suspended) return
     suspended = false
     const isEnabled = enabledFn ? enabledFn() : true
-    if (!isEnabled) return
+    if (!isEnabled) {
+      // See the regular-query variant: settle into the disabled state now.
+      sub.setEnabled(false)
+      sub.detach(keepDataWhileDisabled)
+      return
+    }
+    sub.setEnabled(true)
     const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
     const entry = client.bindInfiniteEntry<Args, TPage, TItem>(query, args)
     entry.acquire()
