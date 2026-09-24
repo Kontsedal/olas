@@ -12,7 +12,7 @@ allocates zero controllers.
 | Per-row fine-grained reactivity | Edit one row's status — only that row's render counter ticks. The other ~30 visible rows hold flat. |
 | Selection composable at scale | Shift-click two rows hundreds apart to select the range; ⌘/Ctrl-click to toggle. Bulk-edit applies to thousands at once. |
 | The controller boundary belongs at the list level | The controller tree (open the devtools panel) has exactly one node for the whole table — no `Row[N]` children. Scrolling allocates zero controllers. |
-| Optimistic + manual rollback | Edits are applied to the row signal synchronously; the mutation's `onError` restores the prior value if the fake API rejects. |
+| Optimistic edit + rollback | An edit writes the row signal synchronously. `onMutate` returns a snapshot, so a rejected write puts the prior value back. The fake API rejects only when a test sets `failNextWrite`, so `tests/controller.test.ts` is where to see the rollback. |
 
 ## Architecture in one paragraph
 
@@ -20,9 +20,10 @@ allocates zero controllers.
 of ordered ids. The view is `@tanstack/react-virtual` over the ordered ids;
 each `<Row id={id} />` calls `api.table.rowSignal(id)` and `useValue(...)` to
 subscribe to its own row. Status edits go through a `parallel` mutation that
-writes the row signal in `onMutate` and restores it in `onError`. Selection
-is the standard `@kontsedal/olas-core` `selection<string>()` composable; bulk actions
-loop selected ids through the same single-row mutation.
+writes the row signal in `onMutate` and returns a snapshot, which rolls the row
+back if the write fails. Selection is the standard `@kontsedal/olas-core`
+`createSelection<string>()` composable; bulk actions loop selected ids through
+the same single-row mutation, so one failed write rolls back one row.
 
 ## Why not a controller per row?
 
@@ -39,13 +40,14 @@ dispose on commit/cancel. The kanban example demonstrates that with
 ## Files
 
 - `src/controllers/table.ts` — `tableController`: the `Map<id, Signal<Issue>>`, the ordered-id signal, the title filter, `selection`, and the per-row `parallel` mutation. The whole app's behavior; no DOM imports.
-- `src/api.ts` — fake backend: `generateIssues(n)` plus a per-row update that randomly rejects (to exercise rollback), and the `Issue` and `Status` types.
+- `src/api.ts` — fake backend: `generateIssues(n)` plus a per-row update that rejects once after a test sets `failNextWrite`, and the `Issue` and `Status` types.
 - `src/View/Table.tsx` — `@tanstack/react-virtual` over the ordered ids; mounts ~30 rows at a time.
 - `src/View/Row.tsx` — one row. Calls `api.table.rowSignal(id)` + `useValue(...)` to subscribe to its own signal and nothing else.
 - `src/View/App.tsx` — toolbar, bulk-action buttons, and the per-row render counters that prove fine-grained reactivity.
 - `src/View/useApi.ts` — typed `useRoot` accessor for the table api.
 - `src/app.ts` — composes the root controller.
 - `src/main.tsx` — bootstrap: `createRoot` + `<OlasProvider>` + render.
+- `tests/controller.test.ts` — drives `tableController` through `createTestController` in plain Node: row writes, the optimistic edit and its rollback, selection ranges and bulk apply, and the title filter.
 
 ## Run it
 
@@ -54,6 +56,7 @@ pnpm install
 pnpm --filter @kontsedal/olas-example-virtualized-table dev        # vite dev server
 pnpm --filter @kontsedal/olas-example-virtualized-table build      # vite build → dist/
 pnpm --filter @kontsedal/olas-example-virtualized-table typecheck  # tsc --noEmit
+pnpm --filter @kontsedal/olas-example-virtualized-table test       # controller tests, no DOM
 ```
 
 Open the printed local URL, scroll hard, and watch the per-row render counters stay still.

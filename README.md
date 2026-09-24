@@ -667,7 +667,7 @@ pnpm --filter @kontsedal/olas-example-kanban dev      # or stock-ticker, reader-
 pnpm --filter @kontsedal/olas-example-kanban test
 ```
 
-Most of the examples' tests build a root or call `createTestController` from `@kontsedal/olas-core/testing`, and drive the api in Node. A few render a component, where the rendered output is the thing under test.
+Every example ships a `tests/` suite, and CI runs all five with `pnpm --filter "./examples/*" test`. Most of those tests build a root or call `createTestController` from `@kontsedal/olas-core/testing`, and drive the api in Node. A few render a component, where the rendered output is the thing under test.
 
 ---
 

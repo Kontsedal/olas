@@ -28,6 +28,17 @@
   color: var(--color-fg-dim);
 }
 .olas-detail-head-spacer { flex: 1; }
+/* The controller's `isPaused`. A tag hugs the top of a column it sits in; in
+ * this row it centres on the id beside it. */
+.olas-detail-state { align-self: center; }
+
+/* What stands in for the details while they are collapsed. Same treatment as
+ * every other empty state in the app. */
+.olas-detail-collapsed {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--color-fg-dim);
+}
 
 .olas-detail-title-row {
   display: flex; gap: 6px; align-items: center;

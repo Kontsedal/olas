@@ -6,9 +6,13 @@
  *  - `createZodForm` + `FieldArray` for subtasks (already covered elsewhere,
  *    here we exercise async validators on a leaf field).
  *  - `debouncedValidator` — async "is this title already used?" check.
- *  - The controller exposes its own `suspend` / `resume` so a
- *    `<SuspendOnUnmount>` wrapper can freeze it when the panel unmounts
- *    (the form keeps its state; only effects pause).
+ *  - The controller exposes its own `suspend` / `resume`, the shape a
+ *    `<SuspendOnUnmount>` wrapper calls when the panel's details unmount and
+ *    mount again. They flip `isPaused`, and the panel head renders it. This
+ *    controller is a `ctx.child`, so it lives as long as the app and its form
+ *    keeps an unsaved draft across a collapse. A controller made with
+ *    `ctx.attach` would hand the wrapper a `suspend` that pauses its effects
+ *    and cache subscriptions too.
  */
 
 import {
@@ -53,6 +57,8 @@ export const cardDetailController = defineController(
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
 
+    // True between a `suspend()` and the next `resume()`. The panel head's
+    // state tag reads it, so the wrapper's effect is visible.
     const isPaused = signal(false)
 
     // Subscribe to the active board so we can pull the selected card's

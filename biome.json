@@ -65,12 +65,27 @@
   },
   "overrides": [
     {
+      "includes": ["examples/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noArrayIndexKey": "error"
+          },
+          "correctness": {
+            "useExhaustiveDependencies": "error",
+            "useHookAtTopLevel": "error"
+          }
+        }
+      }
+    },
+    {
       "includes": ["**/*.svelte", "**/*.vue"],
       "linter": {
         "rules": {
           "correctness": {
             "noUnusedVariables": "off",
-            "noUnusedImports": "off"
+            "noUnusedImports": "off",
+            "useHookAtTopLevel": "off"
           },
           "style": {
             "useConst": "off",

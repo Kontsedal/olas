@@ -137,6 +137,7 @@ export function Board() {
       {boardQuery.isLoading && boardQuery.data === undefined ? (
         <div className="olas-board-skeleton">
           {Array.from({ length: 4 }, (_, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: four fixed placeholders that never reorder, add or delete; the position is the identity
             <Card key={i} variant="flat" className="olas-column">
               <Skeleton height={18} width="50%" />
               <Skeleton height={120} />
