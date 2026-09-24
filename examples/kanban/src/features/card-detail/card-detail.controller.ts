@@ -73,20 +73,8 @@ export const cardDetailController = defineController(
       return data?.cards[id] ?? null
     })
 
-    /**
-     * Build a single form upfront — its initial values reflect whatever
-     * card is selected at construction (or blank). On every selection
-     * change we re-anchor via `setAsInitial`, which doesn't dirty the form.
-     */
-    const form = createZodForm(ctx, cardFormSchema, { initial: blankInitials })
-
-    // Attach the async unique-title validator to the title field. Imperatively
-    // pushing into the existing validator list isn't supported; instead we
-    // wire a manual effect that re-runs the check.
-    //
-    // The simpler `debouncedValidator` approach is to declare it at form
-    // construction. Since `createZodForm` doesn't accept extra leaf validators
-    // today, we hand-roll one here that mirrors `debouncedValidator`'s shape.
+    // The async unique-title check. `debouncedValidator` waits 400 ms after the
+    // last keystroke, and the field aborts a check a newer value supersedes.
     const titleValidator = debouncedValidator<string>(async (value, signal) => {
       const cardId = selectedCardId.peek()
       if (value.trim() === '') return null
@@ -99,30 +87,18 @@ export const cardDetailController = defineController(
       return available ? null : 'Title is already used on this board'
     }, 400)
 
-    // Track the validator's last run so we surface it in the field's errors.
-    // Manual since `createZodForm` doesn't accept extra leaf validators today.
-    const titleAsyncError = signal<string | null>(null)
-    const isTitleChecking = signal(false)
-
-    let titleCheckAborter: AbortController | null = null
-    ctx.effect(() => {
-      const value = form.fields.title.value
-      titleCheckAborter?.abort()
-      const aborter = new AbortController()
-      titleCheckAborter = aborter
-      isTitleChecking.set(true)
-      Promise.resolve(titleValidator(value, aborter.signal)).then(
-        (result) => {
-          if (aborter.signal.aborted) return
-          titleAsyncError.set(result)
-          isTitleChecking.set(false)
-        },
-        () => {
-          // Aborted — leave as-is.
-        },
-      )
+    /**
+     * Build a single form upfront — its initial values reflect whatever
+     * card is selected at construction (or blank). On every selection
+     * change we re-anchor via `setAsInitial`, which doesn't dirty the form.
+     * `extraValidators` puts the title check next to the schema's own rule,
+     * so its message lands on `form.fields.title.errors` and its progress on
+     * `form.fields.title.isValidating`.
+     */
+    const form = createZodForm(ctx, cardFormSchema, {
+      initial: blankInitials,
+      extraValidators: { title: titleValidator },
     })
-    ctx.onDispose(() => titleCheckAborter?.abort())
 
     // Watch the resolved card signal and refresh form initials when the
     // user picks a different card OR the card's data lands later.
@@ -152,7 +128,7 @@ export const cardDetailController = defineController(
         if (id === null) throw new Error('No card open')
         form.markAllTouched()
         const ok = await form.validate()
-        if (!ok || titleAsyncError.peek() !== null) {
+        if (!ok) {
           throw new Error('Form has errors')
         }
         const value = form.value as CardFormValue
@@ -201,8 +177,6 @@ export const cardDetailController = defineController(
       form,
       save,
       close,
-      titleAsyncError,
-      isTitleChecking,
       // SuspendableController shape for `<SuspendOnUnmount>`.
       suspend: () => isPaused.set(true),
       resume: () => isPaused.set(false),

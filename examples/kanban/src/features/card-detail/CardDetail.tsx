@@ -94,11 +94,9 @@ function DetailBody({ card }: { card: Card }) {
   const descField = useField(app.cardDetail.form.fields.description)
   const priorityField = useField(app.cardDetail.form.fields.priority)
   const dueField = useField(app.cardDetail.form.fields.dueDate)
-  const titleAsync = useValue(app.cardDetail.titleAsyncError)
-  const isChecking = useValue(app.cardDetail.isTitleChecking)
   const isSaving = useValue(app.cardDetail.save.isPending)
 
-  const titleError = titleField.touched ? (titleAsync ?? titleField.errors[0]) : undefined
+  const titleError = titleField.touched ? titleField.errors[0] : undefined
   const columns = board.data?.columns ?? []
 
   const moveTo = (toColumnId: string): void => {
@@ -125,7 +123,7 @@ function DetailBody({ card }: { card: Card }) {
               aria-invalid={titleError !== undefined ? 'true' : undefined}
               className="olas-detail-title-input"
             />
-            {isChecking && (
+            {titleField.isValidating && (
               <span className="olas-detail-spinner" role="status" aria-label="Checking title">
                 <Loader2 size={14} />
               </span>
@@ -193,7 +191,7 @@ function DetailBody({ card }: { card: Card }) {
         <Button
           variant="primary"
           onClick={() => void app.cardDetail.save.run()}
-          disabled={isSaving || !!titleAsync}
+          disabled={isSaving || !titleField.isValid}
           leading={isSaving ? <Loader2 size={14} className="olas-spin" /> : <MoveRight size={14} />}
         >
           {isSaving ? 'Saving…' : 'Save changes'}
