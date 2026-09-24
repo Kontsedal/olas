@@ -195,6 +195,14 @@ Keep this entry as a reference: future contributors will ask "why not Next?" and
 
 [from W6] `defineController` types its factory's `ctx` as `Ctx<AmbientDeps>`, one app-wide deps type. A factory typed with a narrower `Ctx<MyDeps>` does not compile, which SPEC §20.3's old "Style B" example assumed it would. Two roots with different deps have to share the augmentation or reach deps through a helper parameter, as `@kontsedal/olas-realtime` does. A `defineController<Props, Api, TDeps>` overload would type them per root.
 
+### [idea] `createRoot` does not check `deps` against `AmbientDeps`
+
+[from W14] `createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>` infers `TDeps` from the `deps` it is given, so `deps: {}` compiles in an app whose `AmbientDeps` requires an `api`. The docs now advise `satisfies AmbientDeps`. Checking by default means typing `deps` as `AmbientDeps` whenever the app augments it. That is a type-level breaking change for a root that passes less, so it belongs in a major.
+
+### [idea] `root.waitForIdle()` does not count `createCache` fetches
+
+[from W14] A local cache is not a query-client entry, so SSR code that awaits `waitForIdle()` can render before a `createCache` fetch settles. The docs say to await `cache.firstValue()`. Counting local-cache fetches in the root's in-flight total would remove the special case.
+
 ### [idea] `root.replaceController(path, newDef)` — in-place HMR-friendly swap
 
 [from SPEC §16.5] Surgically replace one controller while preserving siblings and cache subscriptions. Significant complexity (subscription rebinding, prop reconciliation). The current recommended HMR shape (full root rebuild) sidesteps this; revisit only if rebuild ergonomics turn out to be a real friction point.
@@ -299,6 +307,10 @@ The other three examples (kanban, reader-ssr, stock-ticker) each ship a `tests/`
 ### [idea] Run the codemod over the 0.8 example apps in CI
 
 [from W15c] `@kontsedal/olas-codemod` was checked once over the four example apps taken from the 0.8 tag: 208 sites in 47 files, 11 TODOs, and the migrated controllers typecheck against 1.0. A CI job could repeat that on every change: extract the tag with `git archive`, run the built CLI, and typecheck the result. It would catch a transform that a later 1.0 rename breaks.
+
+### [idea] The generated reference loses exports whose names differ only in case
+
+[from W14] api-documenter names each reference page after the lowercased export, so core's `validator()` function and its `Validator` type both map to `docs/reference/olas-core.validator.md`, and the function gets no page. A post-pass in `scripts/docs-sync.mjs` could detect the collision, or the function could take a distinct name in the next major.
 
 ### [idea] `packages/core/src/query/index.ts` is a barrel nothing imports
 

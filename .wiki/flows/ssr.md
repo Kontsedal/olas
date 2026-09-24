@@ -161,22 +161,25 @@ declare const appDef: ControllerDef<void, unknown>
 declare const App: () => null
 -->
 ```tsx
-import { queryEngine } from '@kontsedal/olas-core'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import {
   createStreamingHydrator,
   createStreamingTransform,
-  HydrationBoundary,
   OLAS_BOOTSTRAP_SCRIPT,
+  OlasProvider,
 } from '@kontsedal/olas-react'
 import { renderToReadableStream } from 'react-dom/server'
 
 export async function handle(nonce: string): Promise<Response> {
   const { plugin, flush } = createStreamingHydrator({ nonce })
-  // The plugin goes on the SAME root that renders, through the boundary's options.
+  // The plugin goes on the SAME root that renders: one root per request,
+  // rendered through OlasProvider. A HydrationBoundary would build its root in
+  // render and dispose it in an effect, and effects never run on the server.
+  const root = createRoot(appDef, { deps: {}, queries: queryEngine(), plugins: [plugin] })
   const stream = await renderToReadableStream(
-    <HydrationBoundary def={appDef} options={{ deps: {}, queries: queryEngine(), plugins: [plugin] }}>
+    <OlasProvider root={root}>
       <App />
-    </HydrationBoundary>,
+    </OlasProvider>,
     { bootstrapScriptContent: OLAS_BOOTSTRAP_SCRIPT, nonce },
   )
   return new Response(stream.pipeThrough(createStreamingTransform(flush)), {

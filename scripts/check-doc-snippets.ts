@@ -40,6 +40,15 @@ const readmes = (dir: string) =>
   readdirSync(join(root, dir))
     .map((name) => `${dir}/${name}/README.md`)
     .filter((p) => existsSync(join(root, p)))
+// The docs site's hand-written pages. `scripts/docs-sync.mjs` generates the
+// rest from the files above, so checking those again would add nothing.
+const sitePages = (dir: string): string[] =>
+  existsSync(join(root, dir))
+    ? readdirSync(join(root, dir))
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => `${dir}/${f}`)
+        .filter((p) => !readFileSync(join(root, p), 'utf8').includes('by scripts/docs-sync.mjs'))
+    : []
 
 type Snippet = {
   source: string
@@ -108,7 +117,16 @@ function extract(source: string): Snippet[] {
 const args = process.argv.slice(2)
 const keep = args.includes('--keep')
 const named = args.filter((a) => a !== '--keep')
-const files = named.length > 0 ? named : [...DOCS, ...readmes('packages'), ...readmes('examples')]
+const files =
+  named.length > 0
+    ? named
+    : [
+        ...DOCS,
+        ...readmes('packages'),
+        ...readmes('examples'),
+        ...sitePages('docs'),
+        ...sitePages('docs/guide'),
+      ]
 const snippets = files.flatMap(extract)
 
 rmSync(outDir, { recursive: true, force: true })

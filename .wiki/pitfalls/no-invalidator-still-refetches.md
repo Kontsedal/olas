@@ -12,7 +12,7 @@ edges:
   - { type: uses, target: ../entities/query-client.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: related, target: ../modules/eslint-plugin.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -58,18 +58,19 @@ onMutate: (vars) => {
 },
 ```
 
-## The adjacent trap, and why it is no longer one
+## The adjacent trap: `replace` supersedes, `write` does not
 
-The same reasoning error used to have a sibling: assuming a *canonical* write was safe from this race. It was not, and every `write` call site had to remember `cancel()` exactly as an optimistic one does. A consumer app paid for that twice in a day: a result grid blanked a moment after its query finished, and a tab, split or panel-close undid itself. So **`write` supersedes the in-flight fetch itself now** (spec §6.4; pinned in `query.test.ts`, "supersedes an in-flight fetch when the entry already holds data").
+The same reasoning error has a sibling: assuming a *canonical* write is safe from this race. A consumer app paid for it twice in a day: a result grid blanked a moment after its query finished, and a tab, split or panel-close undid itself.
 
-The trap above is unchanged for `setData`, and deliberately so. The asymmetry is the point:
+**`replace(...)` supersedes the in-flight fetch itself** (spec §6.4; pinned in `query.test.ts:1108`, "replace supersedes an in-flight fetch when the entry already holds data"). A whole value from the server is newer than any request issued before it. **`write(...)` does not.** It patches, and a patch has no claim on the fields it left alone, so a response that lands after it overwrites it. 0.7.2 moved the supersede from `write` to `replace` for that reason. A `write` that must survive an in-flight fetch still needs `cancel()` first, as `setData` does.
 
 | | is it newer than an outstanding request? | so |
 |---|---|---|
-| `write` | **yes, by definition** — the server already said this | supersedes it itself |
+| `replace` | **yes** — the whole value, from the server | supersedes it itself |
+| `write` | only for the fields it touched | a response may overwrite it; cancel first when that matters |
 | `setData` | no — it is a guess | a response may overrule it; cancel first |
 
-**The one thing `write` still will not do is cancel a fetch when the entry holds no data.** That fetch is what will produce the first value, not a stale answer to discard. Cancelling it strands the entry at `status: 'success'` over `undefined`, with nothing to refetch it until `staleTime` lapses. The two edges pull opposite ways, and "is anything cached?" separates them. That is the same `peek` guard the recipe below already uses for a different reason.
+**The one thing `replace` will not do is cancel when the new value is `undefined`** (`packages/core/src/query/client.ts:1555-1568`). A write flips an idle or pending entry to `status: 'success'` whatever it is handed. Replacing with `undefined` and cancelling as well would strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. So that fetch is left to produce the first value.
 
 ## Where it's documented
 

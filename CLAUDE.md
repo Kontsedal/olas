@@ -26,6 +26,11 @@ pnpm build                                         # tsdown per package → dist
 pnpm smoke:dist                                    # after build: dist imports, require()s, tree-shakes
 pnpm check:public-types                            # after build: every type in a public signature is exported
 pnpm size                                          # after build: bundle-size budgets (.size-limit.json)
+pnpm api:check                                     # after build: packages/*/etc/*.api.md match the built .d.ts
+pnpm api:update                                    # after build: rewrite the API reports after an intended surface change
+
+pnpm docs:build                                    # build, api:check, sync the repo docs into docs/, build the VitePress site
+pnpm docs:dev                                      # sync, then serve the site (needs a prior build + api:check)
 
 pnpm vitest run packages/core/tests/query.test.ts  # run one test file
 pnpm vitest run -t "race protection"               # run by test-name substring
@@ -34,7 +39,7 @@ pnpm wiki:lint                                     # check .wiki/ for broken cit
 pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
-CI = `install → build → typecheck → lint → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`.
+CI = `install → build → typecheck → lint → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
 
 ## Releasing
 

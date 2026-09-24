@@ -2065,3 +2065,45 @@ Where SPEC and code disagreed, SPEC now follows the code. Suspended controllers 
 - The two release items are `[planned]` for W7.
 
 CLAUDE.md: the roster and the gotcha now use 1.0 names, and the doc-snippets command and CI step are added. Test count: 2,012 tests across 158 files.
+
+## [2026-09-25 13:00] ingest | 1.0 W14: the docs site and the API reports
+
+New page `decisions/docs-site.md` explains the site and the reports.
+
+**API reports.** New `scripts/api-report.mjs` drives api-extractor through its programmatic API, one config per published entry built from `package.json` `exports`. It writes `packages/*/etc/*.api.md`: 15 reports, including core's `/testing`. `pnpm api:check` runs in CI after `check:public-types`, and `pnpm api:update` rewrites the reports.
+- Four messages are turned off: `ae-missing-release-tag`, `ae-undocumented` (TSDoc coverage is a BACKLOG item), `ae-wrong-input-file-type`, and `ae-forgotten-export` on sub-paths.
+- A forgotten export on a main entry fails the run.
+- The script counts the warnings it prints, because `warningCount` includes the notices it silences.
+- It pins `newlineKind: 'lf'`.
+- api-extractor bundles TypeScript 5.9 and reads the 6.0 output.
+- It found one real warning: core's `DebugEventMeta.seq` linked the unexported `DevtoolsEmitter`.
+
+**The site.** VitePress in `docs/`, served under `/olas/`:
+- **Written pages:** the home page and eight guides (getting-started, concepts, queries, mutations, forms, ssr, testing, performance), written by three agents from one brief. `pnpm check:doc-snippets` covers them: 233 blocks in 34 files, 0 errors.
+- **Synced pages:** `scripts/docs-sync.mjs` copies RECIPES, PLUGINS, MIGRATING and every package README in, and rewrites their relative links, to site routes or to GitHub.
+- **Reference:** `api-documenter` renders it from the doc model (383 pages), and the sync lifts each page's H2 into its title.
+- **Fixes the build needed:** inline code is marked `v-pre`, because Vue read `{{ … }}` in JSX props as interpolation. The dead-link check stays on; only api-documenter's member links are exempt.
+- **Scripts:** `docs:sync`, `docs:dev`, `docs:build` and `docs:preview`.
+- **Workflow:** `.github/workflows/docs.yml` builds the site on every PR, and it deploys to Pages only from a manual dispatch with `deploy` ticked. Pages is not enabled, and nothing has been deployed.
+
+API.md stays. The plan had the generated reference replacing its reference sections, but API.md carries checked examples and prose that api-documenter cannot produce. It is the narrative reference, next to the generated one.
+
+**Found while writing the guides, all fixed:**
+- **Streaming examples:** API.md, RECIPES and `flows/ssr.md` rendered a `HydrationBoundary` on the server. They now use a per-request root through `OlasProvider`, since a server render never runs the effect that disposes the boundary's root.
+- **API.md, the mutation gotcha:** it said rollback is automatic only on abort. A failed run rolls back after `onError`.
+- **SPEC:**
+  - §5.2 gave the query `retryDelay` default as `1000`; it is exponential.
+  - §5.5 listed a key change as aborting a shared query's fetch; that holds only for a local cache.
+  - §4's "skips the network" holds only within `staleTime`.
+  - §17.3 seeded with `write`, which leaves construction's fetch to land over the seed; it now uses `replace`.
+  - §23's size rows read as cumulative.
+  - The cross-tab clone note said a class instance throws; it arrives as a plain object. The README and hover doc said the same and are fixed too.
+- **Wiki:**
+  - `pitfalls/no-invalidator-still-refetches.md` said `write` supersedes an in-flight fetch. `replace` does (`client.ts:1555-1568`), and `write` has not since 0.7.2.
+  - `decisions/ctx-primitives-are-free-functions.md` still listed `ctx.session`, `signal` and `computed` and the 8.2 KB figure; the figure is now 5.9 KB.
+- **Hover docs:** `Form.submitError` misdescribed a validation failure. Two `streaming.ts` comments said Node 18. Both are in `hover-docs-1-0.md`.
+- **Now documented:** `createRoot` does not check `deps` against `AmbientDeps` (use `satisfies`), and `waitForIdle()` does not count `createCache` fetches.
+
+**BACKLOG.** New: the reference's case collision (`validator` / `Validator`), the `deps` check, and `waitForIdle` for local caches.
+
+Before W7, the open questions for the user: enabling Pages and the first deploy, devtools against the npm core, and the peer ranges.

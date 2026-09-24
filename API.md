@@ -269,7 +269,7 @@ type RootOptions<TDeps> = {
 }
 ```
 
-- `deps` — required object; available everywhere as `ctx.deps`. Use it for api clients, routers, services, the current time.
+- `deps` — required object; available everywhere as `ctx.deps`. Use it for api clients, routers, services, the current time. `createRoot` infers the type from what you pass and does not check it against `AmbientDeps`, so a missing service compiles. Write `deps: { api } satisfies AmbientDeps` to have the compiler check it.
 - `onError` — sink for *uncaught* errors from effects, mutations, caches, emitter handlers, plugins and construction. Throws inside `onError` are swallowed. Without it, errors go to `console.error`.
 - `hydrate` — replay a `DehydratedState` produced on the server. It needs `queries`: without an engine, development builds warn and the payload is discarded.
 - `queries` — the query engine, `queryEngine(options?)`. Root-wide query defaults are configured on it. Omit it for a root with no cache.
@@ -344,7 +344,7 @@ type Root<Api> = {
 - `suspend()` and `resume()` — pause the tree without disposing it. Effects stop and subscriptions release their entries. With `maxIdleTime` (ms), the root disposes itself if it is not resumed in time.
 - `dehydrate()` — serialize the cache into a `DehydratedState`. A root without an engine returns an empty state.
 - `hydrate(state)` — apply dehydrated entries to the live cache. See [SSR](#ssr--dehydrate-and-hydrate).
-- `waitForIdle()` — Promise that resolves when no fetch, no mutation and no work a plugin `track`ed is in flight.
+- `waitForIdle()` — Promise that resolves when no fetch, no mutation and no work a plugin `track`ed is in flight. A `createCache` local cache is not a query-client entry, so its fetch is not counted; await `cache.firstValue()` for it.
 - `debug` — devtools event bus; see [Devtools event bus](#devtools-event-bus).
 
 ### Type: `ControllerDef<Props, Api>`
@@ -924,7 +924,7 @@ type MutationHooks<V, R> =        // what createMutation(ctx, def, hooks) adds
 ```
 
 - **`mutate(vars, { signal, deps })`** — the write. Honor `signal` so superseded and disposed runs can abort. `deps` is the owning controller's, or the root's on a plugin replay.
-- **`onMutate(vars)`** — runs *before* `mutate`. Return a `Snapshot` from `query.setData(...)` to apply an optimistic update; the snapshot is auto-rolled-back on abort, manually rolled back via `snapshot.rollback()` on `onError`.
+- **`onMutate(vars)`** — runs *before* `mutate`. Return a `Snapshot` from `query.setData(...)` to apply an optimistic update. The snapshot rolls back on its own when the run fails or is aborted, and `finalize()` commits it on success.
 - **Concurrency modes:**
   - `parallel` *(default)* — runs are independent. `isPending` is true if any are in-flight.
   - `latest-wins` — a new `.run()` aborts the in-flight one.
@@ -932,7 +932,7 @@ type MutationHooks<V, R> =        // what createMutation(ctx, def, hooks) adds
 - **`meta`** — settings the installed plugins read, such as `meta: { persist: true }` for the mutation queue. Nothing persists by default.
 - **`detached`** — when `true`, `dispose()` stops cancelling: in-flight runs finish, queued `serial` runs drain, `run(...)` still works afterwards, and `onSuccess`, `onError` and `onSettled` still fire. Use it for **writes** whose completion the user has already been promised. Two examples: a licence activation behind a modal the user can close, and a destructive action whose confirm may be answered after its panel is gone. The callbacks then run after the controller is torn down, so keep them to client-level work such as `query.invalidate()` or a toast, and away from the controller's own signals and children. SPEC §6.5.
 
-**Gotcha:** rollback is **automatic only on abort** (latest-wins supersede, dispose). For normal `mutate` rejections, call `snapshot?.rollback()` in `onError` explicitly. See [`.wiki/pitfalls/latest-wins-rollback-order.md`](.wiki/pitfalls/latest-wins-rollback-order.md).
+**Rollback is automatic.** A failed run rolls its snapshot back after `onError` returns, and an aborted run (latest-wins supersede, dispose) rolls back too. The snapshot is single-use, so an `onError` that calls `snapshot?.rollback()` itself makes the automatic call a no-op. A superseded `latest-wins` run is rolled back before the new run's `onMutate`, so the new optimistic write does not stack on the old one. See [`.wiki/pitfalls/latest-wins-rollback-order.md`](.wiki/pitfalls/latest-wins-rollback-order.md).
 
 **A run that already finished is never rolled back.** If `mutate` resolves and the abort lands before the run's continuation, the snapshot is *finalized* rather than rolled back. The work happened, and rolling back would commit a knowingly stale value to a cache that outlives the mutation. The promise still rejects with `AbortError`. SPEC §6.2.
 
@@ -2225,12 +2225,12 @@ const STREAMING_GLOBAL: '__OLAS_HYDRATION__'
 The hydrator's plugin captures every committed write on the server root, meaning a fetch resolving or a canonical `write` or `replace`. `flush()` drains them as one `<script>` tag. On the client, a `HydrationBoundary` routes each streamed batch into its root through `root.hydrate`. An infinite query's entry carries its `pageParams`.
 
 ```tsx
-import { queryEngine } from '@kontsedal/olas-core'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import {
   createStreamingHydrator,
   createStreamingTransform,
-  HydrationBoundary,
   OLAS_BOOTSTRAP_SCRIPT,
+  OlasProvider,
 } from '@kontsedal/olas-react'
 import { renderToReadableStream } from 'react-dom/server'
 import { App } from './App'
@@ -2238,13 +2238,11 @@ import { appController } from './app-controller'
 
 export async function handle(nonce: string): Promise<Response> {
   const { plugin, flush } = createStreamingHydrator({ nonce })
+  const root = createRoot(appController, { deps: {}, queries: queryEngine(), plugins: [plugin] })
   const stream = await renderToReadableStream(
-    <HydrationBoundary
-      def={appController}
-      options={{ deps: {}, queries: queryEngine(), plugins: [plugin] }}
-    >
+    <OlasProvider root={root}>
       <App />
-    </HydrationBoundary>,
+    </OlasProvider>,
     { bootstrapScriptContent: OLAS_BOOTSTRAP_SCRIPT, nonce },
   )
   return new Response(stream.pipeThrough(createStreamingTransform(flush)), {
@@ -2253,7 +2251,8 @@ export async function handle(nonce: string): Promise<Response> {
 }
 ```
 
-- Install `plugin` on the root that renders, through `HydrationBoundary`'s `options`. On a separate root it captures nothing.
+- Install `plugin` on the root that renders. On a separate root it captures nothing.
+- On the server, build one root per request and render it through `OlasProvider`. A `HydrationBoundary` builds its root during render and disposes it in an effect, and a server render runs no effects, so that root would never be disposed. Dispose the root, and call the hydrator's `dispose()`, once the response has finished.
 - Pipe the render through `createStreamingTransform(flush)`. A stream chunk can end inside a tag or an attribute, so the transform writes a batch only where the HTML so far ends between elements. It drains once more when the stream closes. With Node's `renderToPipeableStream`, render with `renderToReadableStream` instead, or write `flush()` only after the stream has ended. See [`.wiki/pitfalls/stream-chunks-split-tags.md`](.wiki/pitfalls/stream-chunks-split-tags.md).
 - `nonce` puts a Content-Security-Policy nonce on the emitted tags. Pass the same nonce to React for its own scripts.
 - `OLAS_BOOTSTRAP_SCRIPT` primes the client's intake before hydration runs. Pass it as `bootstrapScriptContent`.

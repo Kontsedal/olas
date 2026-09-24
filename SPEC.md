@@ -291,7 +291,7 @@ Register the hook before the effect and `flush()` emits into nothing.
 
 **After dispose, `ctx` is dead.** Calling any `ctx.*` factory or `ctx`-taking primitive after the owning controller has been disposed **throws** `[olas] <name>() called after the controller was disposed`. That covers `ctx.effect`, `createQuery`, `ctx.child`, `ctx.attach`, `ctx.collection`, `createMutation`, `createForm`, `ctx.onDispose` and the rest, and the message names the call, as `effect()` or `createQuery()`. A captured `ctx` used past its owner's lifetime is a programming error; silently pushing into a torn-down lifecycle list would leak a live child or subscription. (Reads — `ctx.deps`, `ctx.inject` — do not throw.)
 
-**For "user navigated away, might come back."** Dispose. The query client's `gcTime` retains shared data for ~5 min by default; re-construction finds it warm and skips the network. This is the right tool for route caches, closed tabs, hidden panels you might re-open.
+**For "user navigated away, might come back."** Dispose. The query client's `gcTime` retains shared data for ~5 min by default, so re-construction finds it warm and renders it at once. It skips the network only while the entry is fresh (within `staleTime`). Past that, and with the default `staleTime: 0`, it refetches in the background (§5.5). This is the right tool for route caches, closed tabs, hidden panels you might re-open.
 
 ### 4.1 Advanced — suspend & resume
 
@@ -319,7 +319,7 @@ Two states preserve a controller's identity past "not currently active." Pick de
 |---|---|---|
 | Tab UI where the user is *very likely* coming back within seconds | `suspend()` | Controller state preserved; entries still inside `staleTime` need no re-fetch on return |
 | Modal in the background while you peek at something else briefly | `suspend()` | Same |
-| Route navigation away — user *might* come back in 5 minutes, *might* not | `dispose()` | Drops subscriptions; query client's `gcTime` retains shared data for ~5 min; return navigation re-constructs the controller and finds data warm (no network) |
+| Route navigation away — user *might* come back in 5 minutes, *might* not | `dispose()` | Drops subscriptions; query client's `gcTime` retains shared data for ~5 min; return navigation re-constructs the controller and finds data warm (no request while it is within `staleTime`) |
 | Closing a tab / panel for good | `dispose()` | Terminal |
 
 **The pitfall to avoid.** Using `suspend()` for "user navigated away" cases is a memory leak in disguise. The cache entries age out through `gcTime` as they would after a dispose. The controllers themselves stay alive for the rest of the session, with their signals, fields and children. Over a long session you accumulate dozens of suspended subtrees consuming memory.
@@ -370,7 +370,7 @@ export const userQuery = defineQuery({
 
   // retry on failure
   retry: 3,                             // number | (attempt, err) => boolean; default 0
-  retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000),  // exponential, capped; default 1000
+  retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 30_000),  // exponential, capped: the default
 
   // settings for installed plugins, typed by the plugins that augment QueryMeta (§13.1)
   meta: { crossTab: true },             // mirror this query across tabs (§13.2)
@@ -387,8 +387,8 @@ export const userQuery = defineQuery({
 - `retry: false | 0` (default) — never retry.
 - `retry: number` — retry up to N times.
 - `retry: (attempt, err) => boolean` — decide per-attempt; lets you skip retries on 4xx errors.
-- `retryDelay: number | (attempt) => number` — ms between attempts; default `1000`.
-- Retries respect `AbortSignal` — controller dispose and key change cancels the whole retry chain.
+- `retryDelay: number | (attempt) => number` — ms between attempts. The default for a query is exponential, `min(1000 * 2 ** attempt, 30_000)`. A mutation's default is a constant `1000`.
+- Retries respect `AbortSignal`: any cancellation in §5.5 ends the whole retry chain.
 - A retried fetch counts as one logical fetch for `isFetching` and race protection and inflight counter; only the final outcome (success after retries, or final error) reaches consumers.
 - Mutations support the same `retry` and `retryDelay` fields on `MutationSpec`.
 
@@ -483,7 +483,7 @@ The thunk runs inside an auto-tracking scope. When any signal read inside change
 Every fetcher receives an `AbortSignal` as `signal` on its first argument, the fetch context `{ signal, deps }` (§5.2). The cache aborts an in-flight fetch when:
 
 - The cache is disposed (controller disposal).
-- The key changes (subscription swaps to a different entry).
+- The key of a `createCache` local cache changes. For a shared query, a key change releases the old entry instead, and its fetch keeps running for the entry's other subscribers and its gc window.
 - `refetch()` is called while a previous fetch is still pending — the previous one is aborted.
 - The subscriber count drops to 0 *and* `gcTime` is `0` (immediate gc).
 
@@ -1734,7 +1734,7 @@ createRoot(appController, {
 
 **Channel-name versioning.** Channel names are user-supplied. Receivers drop messages whose protocol `v` they don't understand; users who want clean cross-deploy isolation should include a version suffix in their `channelName` (e.g. `'my-app/cache/v2'`).
 
-**Non-cloneable values.** `BroadcastChannel` uses structured clone. Cache data carrying functions, class instances, or symbols cannot cross the boundary. The plugin catches the `DataCloneError`, calls `onWarn(...)`, and drops the message; the sender's cache is unaffected. `maxPayloadBytes` (default 512 KB) warns about an oversized message and still posts it. Without `BroadcastChannel`, as during SSR, the plugin installs no hooks.
+**Non-cloneable values.** `BroadcastChannel` uses structured clone. Cache data carrying a function or a symbol cannot cross the boundary, and a class instance arrives as a plain object without its prototype. The plugin catches the `DataCloneError`, calls `onWarn(...)`, and drops the message; the sender's cache is unaffected. `maxPayloadBytes` (default 512 KB) warns about an oversized message and still posts it. Without `BroadcastChannel`, as during SSR, the plugin installs no hooks.
 
 ### 13.3 Mutation queue — reload-safe replay
 
@@ -2315,9 +2315,11 @@ test('liking a post optimistically updates then rolls back on error', async () =
   const api = { likePost: vi.fn().mockRejectedValue(new Error('500')) }
   const ctrl = createTestController(postController, { deps: { api }, props: { id: 'p1' } })
 
-  // seed cache — `write`, not `setData`: a seed is not an optimistic guess,
-  // and a fire-and-forget `setData` would leave a snapshot pending (§6.4)
-  ctrl.bindQuery(postQuery).write('p1', () => ({ id: 'p1', likes: 10, liked: false }))
+  // seed cache — `replace`, not `setData` or `write`: a seed is not an
+  // optimistic guess, and a fire-and-forget `setData` would leave a snapshot
+  // pending. `replace` also supersedes the fetch construction started, which
+  // a `write` would leave running to land over the seed (§6.4).
+  ctrl.bindQuery(postQuery).replace('p1', { id: 'p1', likes: 10, liked: false })
 
   await expect(ctrl.api.like.run()).rejects.toThrow('500')
   expect(ctrl.api.post.data.value).toEqual({ id: 'p1', likes: 10, liked: false }) // rolled back
@@ -4289,8 +4291,8 @@ Honest estimates so users know what they're paying for. All numbers are order-of
 | Entry | Budget, brotli |
 |---|---|
 | core: `createRoot`, `defineController`, `signal`, `computed` | 5.4 kB |
-| core: + `createField`, `createForm`, `createFieldArray` | 9.2 kB |
-| core: + `queryEngine`, `defineQuery`, `createQuery`, `createMutation` | 16.6 kB |
+| core: controllers + `createField`, `createForm`, `createFieldArray` | 9.2 kB |
+| core: controllers + `queryEngine`, `defineQuery`, `createQuery`, `createMutation` | 16.6 kB |
 | core: everything | 22.3 kB |
 | react | 3.8 kB |
 | vue | 0.9 kB |

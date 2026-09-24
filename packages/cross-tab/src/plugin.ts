@@ -91,9 +91,11 @@ function makeSourceId(): string {
  * cleanly with cross-tab off.
  *
  * **Non-cloneable data.** `BroadcastChannel` uses structured clone. Cache
- * data containing functions, class instances, or symbols throws a
+ * data containing a function or a symbol throws a
  * `DataCloneError` at `postMessage`. The plugin catches it, calls
  * `onWarn(...)`, and drops the message — the sender's cache is unaffected.
+ * A class instance does not throw: it arrives as a plain object, without its
+ * prototype.
  */
 export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
   const channelName = options.channelName

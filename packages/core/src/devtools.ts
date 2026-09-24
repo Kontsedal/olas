@@ -6,7 +6,7 @@
  */
 export type DebugEventMeta = {
   /**
-   * Monotonic per-root sequence number, stamped by {@link DevtoolsEmitter.emit}.
+   * Monotonic per-root sequence number, stamped by the root's devtools emitter.
    * Strictly increasing in delivery order — the canonical sort key for a
    * timeline, since wall-clock `t` can tie under a burst and is approximate
    * for events replayed to a late subscriber.

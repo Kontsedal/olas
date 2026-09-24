@@ -78,6 +78,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`
 - [decisions/plugin-host-v2.md](decisions/plugin-host-v2.md) — plugins as per-root `setup(host)` definitions: the host, the write vocabulary and origins, middleware, services via scopes, and what the old `QueryClientPlugin` got wrong
 - [decisions/prose-rules.md](decisions/prose-rules.md) — the writing rules every `.md` follows, what `pnpm prose:lint` enforces, and what it flags that we leave alone
+- [decisions/docs-site.md](decisions/docs-site.md) — the VitePress site: guides written in `docs/`, the repo docs synced in with their links rewritten, the api-documenter reference, the checked-in API reports, and why deploying is manual
 - [decisions/typechecked-doc-snippets.md](decisions/typechecked-doc-snippets.md) — why every ts/tsx block in the user-facing docs compiles in CI, one program per doc, and the `snippet-prelude` / `file=` / `nocheck` annotations
 - [decisions/ui-rules.md](decisions/ui-rules.md) — the ten rules every interface follows, the scales they are picked from, what makes a screen read as generated, and which of the ten anything checks
 

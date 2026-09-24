@@ -29,12 +29,20 @@
     "check:public-types": "tsx scripts/check-public-types.ts",
     "bench": "vitest bench --run",
     "mutation": "stryker run",
-    "check:doc-snippets": "tsx scripts/check-doc-snippets.ts"
+    "check:doc-snippets": "tsx scripts/check-doc-snippets.ts",
+    "api:check": "node scripts/api-report.mjs",
+    "api:update": "node scripts/api-report.mjs --local",
+    "docs:sync": "node scripts/docs-sync.mjs",
+    "docs:dev": "node scripts/docs-sync.mjs && vitepress dev docs",
+    "docs:build": "pnpm build && pnpm api:check && node scripts/docs-sync.mjs && vitepress build docs",
+    "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.4.15",
     "@changesets/cli": "^2.31.0",
+    "@microsoft/api-documenter": "^7.30.16",
+    "@microsoft/api-extractor": "^7.59.2",
     "@size-limit/preset-small-lib": "^14.0.0",
     "@stryker-mutator/core": "^10.0.0",
     "@stryker-mutator/vitest-runner": "^10.0.0",
@@ -52,6 +60,7 @@
     "tsx": "^4.22.2",
     "typescript": "^6.0.3",
     "unrun": "^0.3.0",
+    "vitepress": "^1.6.4",
     "vitest": "^4.1.6",
     "yaml": "^2.9.0"
   }

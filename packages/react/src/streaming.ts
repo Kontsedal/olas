@@ -70,7 +70,7 @@ export type StreamingHydratorOptions = {
  * close the attribute. Let `createStreamingTransform` place the tags: it
  * writes one only where the HTML so far sits between elements. With Node's
  * `renderToPipeableStream`, render with `renderToReadableStream` instead
- * (Node 18+ has Web Streams) and pipe through the transform, or write
+ * (Node has Web Streams) and pipe through the transform, or write
  * `flush()` yourself only after the stream has ended.
  *
  * ```tsx
@@ -327,7 +327,7 @@ export class HtmlBoundary {
  * a chunk ends at a boundary. Entries keep collecting in the hydrator
  * meanwhile, so the held batch goes out whole.
  *
- * Works in Node 18+, the Edge runtime, Cloudflare Workers, Deno, and
+ * Works in Node, the Edge runtime, Cloudflare Workers, Deno, and
  * the browser — anywhere Web Streams are available.
  *
  * ```tsx

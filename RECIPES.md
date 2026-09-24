@@ -628,12 +628,12 @@ A client root without `queries` has no cache to seed. It discards the payload, a
 
 ```tsx
 // server.tsx — Web Streams: Node, Deno, Workers
-import { queryEngine } from '@kontsedal/olas-core'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import {
   createStreamingHydrator,
   createStreamingTransform,
-  HydrationBoundary,
   OLAS_BOOTSTRAP_SCRIPT,
+  OlasProvider,
 } from '@kontsedal/olas-react'
 import { renderToReadableStream } from 'react-dom/server'
 import { App } from './App'
@@ -643,11 +643,17 @@ import { createDeps } from './deps'
 export async function handle(request: Request): Promise<Response> {
   const nonce = crypto.randomUUID()
   const { plugin, flush } = createStreamingHydrator({ nonce })
-  const options = { deps: createDeps(request), queries: queryEngine(), plugins: [plugin] }
+  // One root per request. On the server, render it through OlasProvider: a
+  // HydrationBoundary disposes its root in an effect, and effects never run here.
+  const root = createRoot(appController, {
+    deps: createDeps(request),
+    queries: queryEngine(),
+    plugins: [plugin],
+  })
   const stream = await renderToReadableStream(
-    <HydrationBoundary def={appController} options={options}>
+    <OlasProvider root={root}>
       <App />
-    </HydrationBoundary>,
+    </OlasProvider>,
     { bootstrapScriptContent: OLAS_BOOTSTRAP_SCRIPT, nonce },
   )
   return new Response(stream.pipeThrough(createStreamingTransform(flush)), {

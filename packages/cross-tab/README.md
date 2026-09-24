@@ -137,7 +137,7 @@ Messages carry `v: PROTOCOL_VERSION`. Receivers drop messages with a `v` they do
 
 ### Non-cloneable data
 
-`BroadcastChannel` uses structured clone. Cache data containing functions, class instances, or symbols throws `DataCloneError` at `postMessage`. The plugin catches the throw, calls `onWarn(...)`, and drops the message. **The sender's cache is unaffected** — only the cross-tab echo is lost.
+`BroadcastChannel` uses structured clone. Cache data containing a function or a symbol throws `DataCloneError` at `postMessage`. A class instance does not throw; it arrives as a plain object without its prototype. The plugin catches the throw, calls `onWarn(...)`, and drops the message. **The sender's cache is unaffected** — only the cross-tab echo is lost.
 
 ### Messages from other scripts
 

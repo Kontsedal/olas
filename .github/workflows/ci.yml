@@ -58,6 +58,11 @@ jobs:
       # can write down what a hover shows them.
       - run: pnpm check:public-types
 
+      # The checked-in API reports (packages/*/etc/*.api.md) match the built
+      # declarations, so a public-surface change shows up as a reviewable diff.
+      # After an intended change: pnpm api:update, and commit the reports.
+      - run: pnpm api:check
+
       # Bundle-size budgets, per entry, against the built dist (.size-limit.json).
       - run: pnpm size
 

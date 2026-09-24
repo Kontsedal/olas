@@ -143,9 +143,9 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
   /**
    * The thrown value from the most recent failed submission, if any.
    * Cleared at the start of each new `submit(...)` call and on `reset()`.
-   * Note that a validation failure ("submit blocked because the form is
-   * invalid") is NOT a thrown error — `submitError` stays whatever it
-   * was, and the returned promise resolves with `{ ok: false, reason: 'invalid' }`.
+   * A validation failure ("submit blocked because the form is invalid") is
+   * NOT a thrown error: `submitError` stays `undefined` after that clear, and
+   * the returned promise resolves with `{ ok: false, reason: 'invalid' }`.
    */
   readonly submitError: ReadSignal<unknown>
 

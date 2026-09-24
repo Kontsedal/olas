@@ -13,7 +13,7 @@ edges:
   - { type: related, target: ../entities/ctx.md }
   - { type: related, target: ../entities/query-client.md }
   - { type: related, target: per-root-query-client.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -27,7 +27,7 @@ Two changes, shipped together as one pre-1.0 major.
 
 **The query engine is explicit.** `createRoot(def, { deps, queries: queryEngine() })`. A root built without it has no cache: `createQuery`, `createMutation` and `bindQuery` throw a message naming the fix.
 
-`ctx` keeps everything that binds to the controller's *tree and lifetime*: `emitter`, `child`, `attach`, `collection`, `session`, `lazyChild`, `effect`, `on`, `provide`, `inject`, `debug`, the lifecycle hooks, plus `signal` and `computed` for discoverability.
+`ctx` keeps everything that binds to the controller's *tree and lifetime*: `emitter`, `child`, `attach`, `collection`, `lazyChild`, `effect`, `on`, `provide`, `inject`, `debug` and the lifecycle hooks. This change first kept `session`, `signal` and `computed` on it too. 1.0 removed all three: `ctx.attach` covers `session`, and `signal` and `computed` are imported like the rest.
 
 ## What it bought
 
@@ -43,9 +43,9 @@ Measured with `esbuild --bundle --minify --define:__DEV__=false`, gzipped, `@pre
 
 A consumer who imports everything pays 0.8 KB more, for the engine indirection and the internals plumbing. That trade is the point: the cost moved onto the people who use the features.
 
-**What consumers actually get today: 19.9 KB → 8.2 KB, not 4.8.** Bundling the published `dist/` rather than `src/`, the query engine is excluded as designed but the forms subsystem is not. `tsdown` flattens the package into one shared chunk, so exclusion inside it depends on statement-level dead-code elimination — and `FormImpl`/`FieldArrayImpl` declare their brand markers as computed class-field keys (`[FORM_BRAND] = true`), which esbuild refuses to drop. A signals-only dist bundle still contains `olas.form`, verified by grep.
+**What consumers got at first: 19.9 KB → 8.2 KB, not 4.8.** Bundling the published `dist/` rather than `src/`, the query engine is excluded as designed but the forms subsystem is not. `tsdown` flattens the package into one shared chunk, so exclusion inside it depends on statement-level dead-code elimination — and `FormImpl`/`FieldArrayImpl` declare their brand markers as computed class-field keys (`[FORM_BRAND] = true`), which esbuild refuses to drop. A signals-only dist bundle still contains `olas.form`, verified by grep.
 
-So the structural work is done and half the payoff is stuck in the build. Fixing it means assigning brands in the constructor instead of as computed field keys, or preserving module structure in the tsdown output. Tracked in `BACKLOG.md`. The honest summary: **2.5x today, 4.2x once the build stops retaining forms.**
+So the structural work was done and half the payoff was stuck in the build. 1.0's W5 closed it by assigning the brands in the constructor (`esm-only-build.md`). A controllers-only bundle from the published `dist` is now 5.9 KB gzipped against 0.8's 19.9 KB, measured the same way, and `pnpm smoke:dist` fails a build that retains forms or the engine again.
 
 ## Why the old shape could not be fixed in place
 
@@ -55,9 +55,11 @@ The same argument defeats the obvious fix for the query engine. Constructing the
 
 "Entirely" is load-bearing and was not true at first. Both `instance.ts` and `root.ts` need to throw the "you forgot the engine" error, and that helper originally lived in `engine.ts` — so `createRoot` still held a value edge into the module that constructs the client, and the exclusion rested on a bundler's export-level dead-code elimination rather than on the graph. The helper now lives in `query/missing-engine.ts`, which imports nothing. `tests/tree-shaking.test.ts` pins that neither `instance.ts` nor `root.ts` reaches `query/engine.ts`.
 
-## Why the engine is adopted eagerly
+## Why the engine was adopted eagerly
 
-`QueryClient`'s constructor runs plugin `init` (`query/client.ts`). Deferring construction would defer every plugin's startup side effects, and one of them cannot tolerate that: `mutationQueuePlugin` replays mutations persisted by a **previous session** at `init`. That is a startup obligation, not a response to anything the current session does, and the "any app with the plugin uses a mutation somewhere" argument fails because that code can be route-gated or code-split. A user's offline write would sit in storage until something happened to touch a query — possibly never.
+Plugin host v2 has since moved plugin startup out of the engine: `createRoot` sets each plugin up per root, engine or not (`plugin/host.ts`, `flows/plugin-lifecycle.md`). The constraint below shaped this change and no longer binds it.
+
+At the time, `QueryClient`'s constructor ran plugin `init` (`query/client.ts`). Deferring construction would defer every plugin's startup side effects, and one of them cannot tolerate that: `mutationQueuePlugin` replays mutations persisted by a **previous session** at `init`. That is a startup obligation, not a response to anything the current session does, and the "any app with the plugin uses a mutation somewhere" argument fails because that code can be route-gated or code-split. A user's offline write would sit in storage until something happened to touch a query — possibly never.
 
 So `createRoot` adopts the engine eagerly, before the factory runs, and plugin `init` fires at exactly the moment it always did. The bundle win comes from *where the constructor lives*, not from *when it runs*.
 
@@ -81,7 +83,7 @@ Bare names were rejected: `const form = form(ctx, schema)` and `const field = fi
 
 ## What SPEC said before
 
-SPEC recorded rejecting a `ctx` split into `CtxQuery`, `CtxForm` and `CtxLifecycle`. **That rejection stands and is not what happened here.** It targeted splitting `ctx` into three *parameters*, on the grounds that most helpers mix concerns and three parameters are worse than one. `ctx` is still one parameter. What changed is that primitives which never needed to be methods stopped being methods — which SPEC §3.3 already endorsed for every composable outside core (`usePersisted(ctx, …)`, `useRealtimePatcher(ctx, …)`). Core now follows its own rule.
+SPEC recorded rejecting a `ctx` split into `CtxQuery`, `CtxForm` and `CtxLifecycle`. **That rejection stands and is not what happened here.** It targeted splitting `ctx` into three *parameters*, on the grounds that most helpers mix concerns and three parameters are worse than one. `ctx` is still one parameter. What changed is that primitives which never needed to be methods stopped being methods — which SPEC §3.3 already endorsed for every composable outside core (`usePersisted(ctx, …)` and `useRealtimePatcher(ctx, …)`, since renamed `createPersisted` and `createRealtimePatcher`). Core now follows its own rule.
 
 ## What would reopen this
 
