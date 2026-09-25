@@ -33,6 +33,9 @@ jobs:
 
       - run: pnpm lint
 
+      # Every internal peer range keeps an upper bound (scripts/pin-peer-ranges.mjs).
+      - run: pnpm check:peer-ranges
+
       # Every TypeScript block in the README, API, RECIPES, PLUGINS, MIGRATING
       # and package READMEs compiles against the current sources, so a copied
       # example does not fail for the reader.

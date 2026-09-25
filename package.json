@@ -21,6 +21,8 @@
     "smoke:dist": "node scripts/verify-dist.mjs",
     "verify:dist": "pnpm build && pnpm publint && pnpm attw && pnpm smoke:dist && pnpm check:public-types && pnpm size",
     "changeset": "changeset",
+    "version-packages": "changeset version && node scripts/pin-peer-ranges.mjs",
+    "check:peer-ranges": "node scripts/pin-peer-ranges.mjs --check",
     "release": "pnpm build && changeset publish",
     "wiki:lint": "tsx scripts/wiki-lint.ts",
     "prose:lint": "node scripts/prose-lint.mjs",

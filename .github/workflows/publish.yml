@@ -63,6 +63,7 @@ jobs:
       - run: pnpm build
       - run: pnpm typecheck
       - run: pnpm lint
+      - run: pnpm check:peer-ranges
       - run: pnpm test:coverage
       - run: pnpm --filter "./examples/*" test
       - run: pnpm publint

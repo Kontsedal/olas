@@ -48,7 +48,9 @@ jobs:
       - name: Create or update the version PR
         uses: changesets/action@v1
         with:
-          version: pnpm changeset version
+          # `changeset version` strips the upper bound off every internal peer
+          # range it rewrites; `version-packages` puts it back.
+          version: pnpm version-packages
           title: 'chore: version packages'
           commit: 'chore: version packages'
         env:

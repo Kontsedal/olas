@@ -47,9 +47,11 @@ Packages version **independently** — `.changeset/config.json` has no `fixed` g
 
 Every user-visible change needs a changeset (`pnpm changeset`) naming the packages it touches. A docs-only change to a package README needs none.
 
+Internal peer ranges carry an upper bound at the next major (`>=1.0.0 <2.0.0`). `changeset version` writes only a floor when it rewrites one, so `pnpm version-packages` runs it and then `scripts/pin-peer-ranges.mjs`, which puts the bound back. CI and the publish workflow run `pnpm check:peer-ranges`, which fails on a range without one.
+
 The pipeline is two workflows, deliberately split:
 
-1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`changeset version`). **Never publishes.**
+1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`pnpm version-packages`). **Never publishes.**
 2. `.github/workflows/publish.yml` — `workflow_dispatch` only, from `main`, with a typed confirmation. Re-runs the full verify chain, then `pnpm release`.
 
 Merging the version PR does **not** release. Someone has to run the publish workflow. That split is the point: merging is routine and reversible, pushing to npm is neither — a version number can never be reused. `changeset publish` skips packages already on npm, so re-running after a partial failure resumes safely.
