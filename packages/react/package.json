@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-react",
-  "version": "0.8.0",
+  "version": "1.0.0",
   "description": "Olas React adapter — OlasProvider, useRoot, useValue, useQuery, useField, useMutation, SuspendOnUnmount, SSR hydration and streaming.",
   "keywords": [
     "olas",
@@ -45,7 +45,7 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ambient-deps.json"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": ">=0.3.0 <1.0.0",
+    "@kontsedal/olas-core": ">=1.0.0 <2.0.0",
     "react": ">=18"
   },
   "devDependencies": {

@@ -1,5 +1,396 @@
 # @kontsedal/olas-react
 
+## 1.0.0
+
+### Major Changes
+
+- f9b34a7: **The last API consistency pass before 1.0.**
+  
+  **core.**
+  - `createField(ctx, initial, options?)` takes an options bag, `{ validators, validateOn }`, like `createForm` and `createFieldArray`. `FieldOptions` is exported. `npx @kontsedal/olas-codemod 1.0` rewrites the positional form.
+  - `ctx.session` is removed. Use `ctx.attach(def, props)`, which returns `{ api, dispose, suspend, resume }`.
+  - `root.suspend({ maxIdle })` is renamed `suspend({ maxIdleTime })`, and `SuspendOptions` is exported. Every duration is in milliseconds. Core's lifetime policies end in `Time` (`staleTime`, `gcTime`, `maxIdleTime`), and every other duration option ends in `Ms`.
+  - `AsyncState` gains `isEnabled`, `false` while a subscription's `enabled` returns `false`, and always `true` for a local cache.
+  - `refetch()` on a disabled subscription rejects with the new exported `QueryDisabledError`, which carries `queryId`. Before, it was an anonymous error you had to blanket-catch.
+  - `firstValue()` on a disabled subscription waits until the subscription is enabled and loaded, instead of rejecting at once. It rejects on dispose. While pending it returns the same promise.
+  
+  **react.**
+  - `useRoot()` is typed through a `Register` interface the app augments once, so call sites drop the type argument:
+  
+    ```ts
+    declare module '@kontsedal/olas-react' {
+      interface Register { root: typeof root }
+    }
+    ```
+  - `useQuery` returns `isEnabled`.
+  - `useQuery(sub, { suspense: true })` on a disabled query suspends until the query is enabled and loads, which is what a dependent query needs. Development builds warn once when it starts. Before, it re-threw an already-rejected promise and never resolved.
+  - A `HydrationBoundary` whose `def` changes no longer re-hydrates the new root from the first root's server payload.
+- af217d0: **ESM only, Node >= 20.19.** Every package ships one format: `dist/*.js` with `dist/*.d.ts`. The CommonJS build (`.cjs` and `.d.cts`) is gone. A CommonJS consumer can still `require()` the packages on Node 20.19 or later, which loads ES modules through `require()`. `engines.node` is `>=20.19`.
+  
+  **Types.**
+  - Internal members no longer ship in the `.d.ts` files. That includes `Ctx`'s internals and the whole `QueryClient` class, which reached the declarations through them.
+  - Every type that appears in a public signature is exported. New core exports: `DebugEventBody`, `DefineControllerOptions`, `StandardSchemaV1Issue`, `StandardSchemaV1Result`, `QuerySelectOptions` and `TimingOptions`.
+  - New exports elsewhere:
+    - react: `OlasProviderProps`, `HydrationBoundaryProps`, `SuspendOnUnmountProps`, `OlasContext`, `UseValueOptions`, `UseValueSelectOptions` and `UseFieldInputOptions`;
+    - entities: `EntityOptions`;
+    - zod: `UnwrapZod`.
+  - `isStandardSchema` and `ErrorContextInput` are no longer exported from core.
+  - `createQuery`'s `select` form accepts `keepDataWhileDisabled`, like the other forms.
+  
+  **Bundle size.** A bundle built from the published files that imports only controllers and signals carries no forms code. The forms classes had set their brands as class fields, which kept them in every bundle.
+- 1648b9a: **`HydrationBoundary`'s `options.deps` is checked against `AmbientDeps`,** as `createRoot`'s now are. `options` is typed `RootOptions<AmbientDeps>`, so in an app whose `AmbientDeps` names a service, `<HydrationBoundary options={{ deps: {} }}>` no longer compiles. Before, the prop took any object, and the missing service showed up at runtime.
+- 2174dce: **Plugin host v2.** A plugin is a definition with a per-root `setup`, and it gets a host, typed events, middleware and a way to expose services.
+  
+  ```ts
+  const logger = definePlugin({
+    name: 'logger',
+    setup(host) {
+      return {
+        onWrite: (e) => console.log(e.query.id, e.source, e.origin),
+        wrapFetch: async (ctx, next) => {
+          const t = performance.now()
+          try {
+            return await next()
+          } finally {
+            console.log(ctx.query.id, 'took', performance.now() - t)
+          }
+        },
+      }
+    },
+  })
+  
+  createRoot(app, { deps, queries: queryEngine(), plugins: [logger] })
+  ```
+  
+  **Core (`@kontsedal/olas-core`)**
+  
+  - **Definitions, not instances.** `setup(host)` runs once per root, in `plugins` order, before the root controller's factory. One plugin value can serve any number of roots. `QueryClientPlugin`, `QueryClientPluginApi` and their events are removed.
+  - **The host** offers several things:
+    - `deps`;
+    - `provide(scope, value)`, a service a controller reads with `ctx.inject(scope)` and outside code reads with `root.inject(scope)`;
+    - `reportError`, `onDispose`, and `track(promise)`, which makes `root.waitForIdle()` wait;
+    - `network`, for online state and focus;
+    - `queries` (`get`, `keys`, `peek`, `write`, `replace`, `invalidate`, `hydrate`, `dehydrate`, `hashKey`), addressed by query `id` and entry key;
+    - `mutations` (`has`, `get`, and `run(id, vars)`, which runs a `defineMutation` through the engine's runner with its retry and the root's `deps`).
+  - **Hooks:**
+    - `onWrite` takes `source`: `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'` or `'replace'`. It also carries `origin` and `updatedAt`.
+    - The other observation hooks are `onInvalidate`, `onRemove`, `onActivate`/`onDeactivate` (an entry's first and last subscriber), and `onMutation` (every run of every mutation: `start`, then `success`, `error` or `cancel`).
+    - Middleware: `wrapFetch` and `wrapMutate` wrap every attempt, with the first plugin outermost.
+  - **Origins.** A write made through a plugin's host carries the plugin's name as `origin`. `bindQuery(ctx, query, { origin })` tags a handle's writes the same way. The client-wide `isRemote` flag is gone.
+  - **Lifecycle:**
+    - A `setup` throw aborts `createRoot`, after disposing the plugins already set up, in reverse.
+    - No hook runs once the root starts disposing.
+    - Plugins dispose in reverse order.
+    - A hook throw reaches `onError` as `{ kind: 'plugin', pluginName }`, and the next plugin still runs.
+    - Plugins work without a query engine; `host.queries` is then `null`.
+  - **Fixed:**
+    - Hydrating a bound entry reported two writes. It now reports one `'hydrate'` write.
+    - A peer's invalidation refetched entries nobody subscribed to.
+    - Hooks fired after `dispose()`.
+    - The query registry was process-global. It is per root now, and a duplicate `id` warns when one root binds both queries.
+  - **Other changes:**
+    - `stableHash`, `lookupRegisteredQuery` and `lookupRegisteredMutation` leave the public surface.
+    - Devtools `cache:*` events carry `queryId`, and `cache:set-data` uses the `WriteSource` vocabulary.
+    - New `plugin:event` debug events come from `host.debug`.
+  
+  **`@kontsedal/olas-cross-tab`** mirrors only the app's own writes (origin `undefined`) by default. Other origins opt in through `origins`. New options: `optimistic: false` mirrors only canonical writes. The reuse guard is gone.
+  
+  **`@kontsedal/olas-entities`:** `entitiesPlugin({ entities: [Post, User] })` returns a plugin. The store is a per-root service: `ctx.inject(Entities)` / `root.inject(Entities)`. `entities.invalidate` is renamed `remove`, because it never refetched. Backprop writes carry the plugin's origin, so cross-tab no longer rebroadcasts N payloads per patch.
+  
+  **`@kontsedal/olas-mutation-queue`:**
+  - `mutationQueuePlugin({ storage, keyPrefix })`; `adapter` is renamed `storage`.
+  - Runs persist when `meta: { persist: true }`.
+  - Replays go through the engine's runner: the definition's retry applies, `mutate` gets `deps`, and `waitForIdle()` sees them.
+  - `replayNow()` is `ctx.inject(MutationQueue).replayNow()`.
+  - `onReplaySettle(entry, result, queries)` receives the root's `QueryHost`.
+  - The startup replay is tracked, so `root.waitForIdle()` waits for it.
+  
+  **`@kontsedal/olas-react`:** `createStreamingHydrator().plugin` is a v2 plugin. It captures committed writes only (fetch, write, replace) and uses each write's real `updatedAt`.
+- a29b4ea: **The React hooks, renamed and completed; the aliases are gone.**
+  
+  **react.**
+  - `use(signal)` is renamed `useValue(signal)`. `use` shadowed React 19's `React.use`, which takes a promise or a context.
+  - `useMutation` returns `mutate` and `run`. `mutate(vars)` returns nothing and is the call for an event handler: a failure lands on `error`, `status` and `onError`, and never becomes an unhandled rejection. `run(vars)` returns the run's promise, and the caller owns the rejection. `mutateAsync` is removed. The result also carries `status`.
+  - An aborted run no longer fires `useMutation`'s `onError` or `onSettled`. That covers a superseded `latest-wins` run, `reset()` and dispose. The mutation's own hooks in core already skipped aborts.
+  - `useQuery` returns every `AsyncState` value, now including `isPaused`, plus `reset` and `cancel` beside `refetch`.
+  - `useField` adds `setAsInitial`. Its actions, and `useMutation`'s, keep their identity across renders.
+  - The result types are exported: `UseQueryResult`, `UseSuspenseQueryResult`, `UseFieldResult`, `UseFieldInputResult`, `UseMutationResult`, `UseMutationCallbacks` and `MutateFn`.
+  - `KeepAlive` is removed. Use `SuspendOnUnmount`, which it aliased.
+  
+  **core.**
+  - `AsyncState.promise()` is removed. Use `firstValue()`, which it aliased.
+  - `AsyncState` gains `cancel()`, so a `LocalCache` can abort its in-flight fetch the way a query subscription could.
+  - `ctx.signal` and `ctx.computed` are removed. Import `signal` and `computed`, which they re-exported.
+  - `selection()` is renamed `createSelection()`, like the rest of the `create*` family.
+  - `UseOptions` is renamed `QuerySubscriptionOptions`.
+  
+  `npx @kontsedal/olas-codemod 1.0` rewrites the `use` and `KeepAlive` imports and their references, `mutateAsync` → `run`, and every awaited `mutate(...)` → `run(...)`.
+- 20473ba: **The root is a handle, and your api lives on `root.api`.**
+  
+  ```ts
+  const root = createRoot(app, { deps, queries: queryEngine() })
+  root.api.increment()  // was root.increment()
+  root.dispose()
+  ```
+  
+  Before 1.0, `createRoot` returned the controller's api with the root controls mixed in. That reserved eight names in every app's namespace: `dispose`, `suspend`, `resume`, `bindQuery`, `dehydrate`, `waitForIdle`, `applyDehydratedEntry` and `__debug`. An api using one of them threw at startup. It also meant any root control added later would break someone. Now the api and the controls never share a namespace:
+  
+  - A controller may return anything, including a primitive, and members named `dispose` or `suspend`.
+  - `root.inject(scope)` is new. It resolves a scope as the root controller would.
+  - `root.hydrate(state)` replaces `root.applyDehydratedEntry(id, key, data, lastUpdatedAt)`. It takes a whole `DehydratedState`.
+  - `root.debug` replaces `root.__debug`. The devtools components take `root: Pick<Root, 'debug'>`.
+  - `createTestController` returns the same handle (`const { api } = createTestController(def, { deps })`). `props` may be omitted for a controller that takes none, and the helper accepts `plugins`, `scopes` and `hydrate`.
+  - In `@kontsedal/olas-react`, `useRoot()` and `createOlasContext().useRoot()` still return the api. `useController(root)` is removed: it was an identity function, and `root.api` says the same thing.
+
+### Minor Changes
+
+- 360120c: **A development build behind a `development` export condition.** Devtools now work against the published packages.
+  
+  Until now, the release build inlined `__DEV__ = false`, so the core on npm emitted no devtools events at all. `@kontsedal/olas-devtools` showed an empty controller tree and timeline against it, and the dev-only warnings in core, entities, persist, react and zod never fired in an app.
+  
+  Each of these packages now ships two builds:
+  - `dist/` is the default, a production build with every dev-only branch stripped;
+  - `dist/dev/` sits behind the `development` condition, with the devtools events and the dev warnings kept.
+  
+  Vite's dev server, webpack and Rspack in development mode, and Next.js in dev resolve `development` without configuration, and their production builds resolve the default. With esbuild or Rollup, add `conditions: ['development']` to the dev config; in Node, `--conditions=development`. A browser with no bundler, or a CDN, gets the default build, as before.
+  
+  The production build is unchanged, and so are the bundle sizes. SPEC §23 has the details.
+- 06b715f: **Vue and Svelte adapters; React gains `useInfiniteQuery`, a fine-grained `useQuery`, and verified Preact support.**
+  
+  **New: `@kontsedal/olas-vue`.**
+  - `app.use(olasPlugin(root))` provides a root to the app, and `useRoot()` reads its api, typed through an augmented `Register`.
+  - `useValue(signal)` returns a read-only ref over any `ReadSignal`. A read sees a write at once, and the subscription ends with the component's effect scope.
+  - `useQuery`, `useInfiniteQuery`, `useField` and `useMutation` return one ref per signal plus the target's actions. `useField`'s `value` is writable, for `v-model`. `useMutation`'s `mutate` is fire-and-forget, and `run` returns the promise.
+  
+  **New: `@kontsedal/olas-svelte`.**
+  - An Olas signal already satisfies Svelte's store contract, so `$count` works on a signal with no wrapper. A `Field` is a writable store, so `bind:value={$name}` writes through `field.set`.
+  - `setRoot(root)` and `getRoot()` carry the root through Svelte context, typed through an augmented `Register`.
+  - `queryStore`, `infiniteQueryStore`, `fieldStore` and `mutationStore` give one store per multi-signal object, with its actions.
+  
+  **react.**
+  - New `useInfiniteQuery(subscription, { suspense? })`. One subscription covers `pages`, `flat`, the paging flags, `fetchNextPage` and `fetchPreviousPage`.
+  - `useQuery` re-renders only for the fields a component reads. `const { data } = useQuery(sub)` no longer re-renders when a background refetch flips `isFetching`. A field read in an event handler or an effect returns its current value, and until anything is read, every change re-renders as before.
+  - `useValue`'s `isEqual` now keeps the previous reference across an inline selector, which is a new function on every render.
+  - The adapter runs under `preact/compat`. Alias `react` to it the way a Preact app does. The provider, every hook, `Suspense` and `SuspendOnUnmount` are tested there; `HydrationBoundary`'s StrictMode handling is not, because compat's `StrictMode` does nothing.
+  
+  One set of scenarios runs through React, `preact/compat`, Vue and Svelte, and each adapter renders the same DOM for it.
+- b0f1c41: **Infinite queries reach parity with regular queries.**
+  
+  - **SSR.** `root.dehydrate()` includes infinite queries. A dehydrated entry for one carries its pages in `data` and one param per page in the new `pageParams` field. The client seeds the pages without refetching them and pages on from there. The streaming hydrator captures and delivers infinite queries too.
+  - **Focus and reconnect.** `refetchOnWindowFocus` and `refetchOnReconnect` apply to infinite queries, on the query or as engine defaults. A refetch re-fetches every loaded page.
+  - **Offline.** In `networkMode: 'offlineFirst'`, a network failure while offline parks an infinite query's fetch, including `fetchNextPage` and `fetchPreviousPage`, and retries it on reconnect, instead of surfacing an error. `isPaused` reports it.
+  - **Cross-tab.** An infinite query with `meta: { crossTab: true }` syncs across tabs, its pages together with their params.
+  - **Devtools.** Infinite queries show on the devtools timeline: fetch start and settle for each direction, and optimistic snapshot layers. The `cache:fetch-*` events carry `queryId` for every query.
+  - **Plugins.** `WriteEvent` carries `pageParams` for an infinite query. `host.queries.write` and `replace` accept `{ pageParams }` (the new `WriteOptions` type).
+- 38cf416: **Security pass: streamed SSR, stored state, and prototype keys.** SPEC §22 now states what Olas trusts and what it checks.
+  
+  **react.**
+  - **XSS fix: `createStreamingTransform` writes a hydration batch only between elements.** React writes its stream in fixed-size chunks, so a chunk can end inside a tag or an attribute value. The transform used to write a `<script>` after every chunk. The payload's quotes could then close the attribute and turn query data into new attributes, such as an event handler. The transform now tracks the markup it passes through, and holds a batch until a chunk ends between elements.
+  - **The streamed payload is `JSON.parse("…")` over a fully escaped string.** An own `__proto__` key in query data stays a property on the client. Before, it became the object's prototype. No quote, angle bracket, `=`, U+2028 or U+2029 reaches the script raw.
+  - **New: `createStreamingHydrator({ nonce })`** puts a CSP nonce on every tag it emits.
+  - **A page element with the id `__OLAS_HYDRATION__` no longer breaks streamed hydration.** The bootstrap and each batch check that the global is the intake.
+  
+  **core.**
+  - **New: `serializeForScript(value)`**, the escaping the streaming hydrator uses, for any state an app inlines into a page: `<script>window.__OLAS_STATE__ = ${serializeForScript(root.dehydrate())}</script>`.
+  - **New: `host.mutations.get(id)`** returns a registered definition's `id` and `meta`.
+  - **Hydration skips an entry it cannot read**, such as `null` or a key nested too deep to hash, and hydrates the rest. Before, one bad entry made `createRoot({ hydrate })` throw.
+  - **`Form.set` and `setAsInitial` ignore keys the form does not own.** A partial parsed from JSON with a `__proto__`, `constructor` or `toString` key used to throw.
+  
+  **mutation-queue.**
+  - **Replay runs only mutations whose definition has `meta.persist: true`.** An entry in storage could name any registered mutation and have it run on the next load.
+  - **An entry stored under a key its contents do not name is dropped.** Every later write and delete used the contents' key. So such an entry stayed in storage and replayed on every load. A `migrate` that renames the mutation hit the same loop; the migrated entry is now rewritten under its new key and the old one deleted.
+  - **Entries are checked in full.** The attempt count must be a whole, non-negative number, `seq` finite, and `enqueuedAt` no later than a few minutes from now, so a future timestamp cannot escape `ttlMs`.
+  
+  **persist.**
+  - **`persistQueryCachePlugin` drops a stored entry dated in the future.** It passed `maxAgeMs` and stayed fresh for any `staleTime`, so planted data never refetched.
+  - **An async restore that fails now reaches `onError`**, as a sync one does.
+  - **`createPersisted` reports a stored value its source refuses as `'deserialize'`**, and still settles `ready`. It used to leave `ready` false and stop persisting.
+  
+  **cross-tab.**
+  - **A peer message the engine cannot apply is reported through `onWarn`**, not thrown out of the channel's handler.
+  - **A `msgId` that is not a safe non-negative integer is ignored.** `Number.MAX_VALUE` posted under a peer's id used to silence that peer.
+  - **New: `validate(queryId, data)` option** to reject a payload shape this tab does not expect.
+  
+  **entities.** **`entities.update(…, { merge: 'deep' })` keeps a `__proto__` key in the patch as data.** It used to replace the merged entity's prototype.
+
+### Patch Changes
+
+- 6e154ef: **The satellite packages follow the `create*` rule, and the router installs as a plugin.**
+  
+  A function that takes `ctx` and builds something is named `create*`. The `use*` names read as React hooks to people and to `eslint-plugin-react-hooks`, which reports them inside a controller factory.
+  
+  | Package | 0.8 | 1.0 |
+  |---|---|---|
+  | persist | `usePersisted(ctx, key, source, opts)` | `createPersisted(ctx, key, source, opts)` |
+  | persist | `localStorageAdapter` (an object) | `localStorageAdapter()` (a factory, like `indexedDbAdapter()`) |
+  | persist | `clearPersisted(storage, prefix, onError)` | `clearPersisted(storage, { prefix, onError })` |
+  | realtime | `useRealtimePatcher` | `createRealtimePatcher` |
+  | realtime | `useLiveStream` | `createLiveStream` |
+  | realtime | `useRealtimeConnection` | `createConnectionState` |
+  | zod | `formFromZod(ctx, schema, { initials })` | `createZodForm(ctx, schema, { initial })` |
+  | router | `createRoot(def, { scopes: adapter.scopes })` | `createRoot(def, { plugins: [adapter.plugin] })` |
+  
+  **router.** `createRouterAdapter()` returns `{ plugin, Bridge }`. The plugin provides `RouteParamsScope`, `RouteSearchScope` and `RoutePathnameScope` to the root it is installed on. `ROUTER_PLUGIN_NAME` is exported.
+  
+  **persist.** `throttleMs` is documented as what it always was: a trailing throttle, at most one write per window, carrying the latest value.
+  
+  **zod.** `createZodForm`'s `initial` also accepts a function. The form tracks it the way `createForm` tracks a function `initial`, so a form seeded from a query re-seats when the data arrives. `resetOnInitialChange` passes through.
+  
+  **mutation-queue.** The queue writes a run's entry before the run's first `mutate` call, from `wrapMutate`. A reload during the request no longer loses the run. The write adds one storage round trip before the first request. A write that fails is reported through `onWarn`, and the run proceeds without durability, as before.
+  
+  **core.** `MutateContext.origin` names the plugin that started a run through `host.mutations.run`, or is `undefined` for an app run. A run whose `mutate` resolved and whose abort landed in the same tick reported both `success` and `cancel` to plugins. It now reports `success` only.
+  
+  **react.** Streamed hydration reached only the first `HydrationBoundary`: a second boundary, or a StrictMode remount's new root, took the intake away from it. Every installed root now receives the batches that already arrived and each one that follows.
+- 518f5d9: **Query defaults live on the engine, and one engine can serve many roots.**
+  
+  ```ts
+  createRoot(app, {
+    deps,
+    queries: queryEngine({ defaults: { staleTime: 30_000, retry: 1, refetchOnWindowFocus: true } }),
+    hydrate: window.__OLAS_STATE__,
+    plugins: [crossTabPlugin({ channelName: 'app' })],
+  })
+  ```
+  
+  - **`queryEngine({ defaults })` is the one place for root-wide query defaults.** Before, focus refetch alone could be configured in five places, and `queryEngine`'s docstring disagreed with the code about which one won. The following are all removed:
+    - `RootOptions.defaultQueryOptions`
+    - the flat `RootOptions.refetchOnWindowFocus` / `refetchOnReconnect` shorthands
+    - `QueryEngineOptions.defaultQueryOptions`, `plugins` and `hydrate`
+  - **`hydrate` and `plugins` belong to the root.** They are per-instance: a payload for this render, installations for this root.
+  - **An engine is a reusable definition.** It used to throw "already adopted" the second time a root took it. `HydrationBoundary` rebuilds its root from the same options under StrictMode and on a `def` change, so every StrictMode app that hydrated through it crashed. Each root now gets its own client from the same engine value, and it is safe to hoist one to module scope.
+  - `DefaultQueryOptions` is renamed `QueryDefaults`.
+  - `createTestController`'s `defaultQueryOptions` option is removed; pass `queries: queryEngine({ defaults })`.
+- fea5505: **Hover docs that described 0.8, or claimed what the code does not do, are corrected.** No behaviour changes.
+  
+  - **cross-tab:** `meta.crossTab` said infinite queries do not sync. They do, with their page params. The `origins` doc now says an `entities.update(...)` patch stays in its tab unless `origins` names the entities plugin. The clone note no longer says a class instance throws at `postMessage`: it arrives as a plain object.
+  - **react:** the streaming examples rendered a `HydrationBoundary` on the server without a query engine. A server render runs no effects, so nothing disposes the boundary's root, and without an engine there is no cache to capture. They now build one root per request and render it through `OlasProvider`.
+  - **mutation-queue:** the serialization notes said functions and symbols throw at enqueue. JSON drops them silently. A `BigInt` or a cycle is what throws.
+  - **realtime:** a connection state with no reporter is `'unknown'`, not `'connected'`, and the composables are named `create*`.
+  - **core:** `AsyncState` lists its ten signals, including `isEnabled`. `DehydratedEntry.id` no longer mentions anonymous queries. The subscription docs name `createQuery`, not `ctx.use`. `createSelection` cites SPEC §16.5.
+  - **devtools:** the store's doc names `useValue`.
+  - **core:** `DebugEventMeta.seq` no longer links a type that is not exported. `Form.submitError` no longer says a validation failure leaves it as it was: every `submit(...)` clears it first.
+- 254b79b: **`HydrationBoundary` no longer refetches forever when its parent re-creates it below an outer `<Suspense>`.**
+  
+  A retry of a discarded render found its root by the element's props object. A component below an outer `<Suspense>` that renders the boundary with inline options creates a new element on every retry, so each retry built a new root, refetched what the child suspended on, and suspended again. A retry now also reuses an unclaimed root built from the same `def`, the same `hydrate` object and `deps` with the same members. When those options change between attempts, the retry still builds a new root, and a development build warns once, naming the fix.
+- 008d8ef: **A development build warns when `HydrationBoundary` renders on the server.**
+  
+  `HydrationBoundary` builds its root during render and disposes it in an effect cleanup. A server render runs no effects, so each request left a root alive, with its timers and plugins. The boundary now warns once per process when it renders without a `window`. The warning names the fix: on the server, create a root per request, render it through `<OlasProvider root={root}>`, and call `root.dispose()` after the response. Production builds carry no warning.
+- da5829d: **A `<Suspense>` above `HydrationBoundary` no longer disposes the app root when it shows its fallback.**
+  
+  The boundary disposed its root in a layout-effect cleanup. React runs those cleanups when a Suspense boundary hides content it already showed, so a later suspension above the boundary, such as a `useSuspenseQuery` after a key change, disposed the live root, and the fallback stayed up. The dispose is a passive effect again, which a hide leaves alone.
+  
+  Two smaller changes to the same boundary:
+  
+  - a root that no commit claims and that never goes idle, such as one with a hung fetch, is disposed after a minute;
+  - on the server, each render builds its own root. An element hoisted to module scope no longer hands one request's root to the next.
+- affe2b0: **`HydrationBoundary` no longer leaks the root of a render that never commits.**
+  
+  The boundary builds its root during render, so its children can read hydrated data in the first render. Its effects dispose that root. A child that suspended or threw before the boundary's first commit made React discard the render, and no effect ran. The root stayed alive, with its fetches, timers and controller effects, and each retry built another one. A child calling `useSuspenseQuery` under a `<Suspense>` above the boundary never loaded: each retry's new root fetched again and suspended again.
+  
+  Now:
+  
+  - a retry of the same element reuses the root its earlier attempt built;
+  - a root that no commit claims is disposed about ten seconds after its work goes idle;
+  - a render for a new `def` no longer disposes the committed root, so a transition that suspends keeps the old tree working. The old root is disposed when the new one commits.
+  
+  A retry of an element that the parent re-created cannot find the earlier root, and builds a new one. Put a `<Suspense>` boundary inside `HydrationBoundary`, around the part that suspends.
+- d0b11ef: **Member docs on object types now show in editor hover.** The declaration bundler moved every one-line member doc (`/** … */` on one line) onto the end of the previous member's line, where TypeScript attaches it to nothing. About 135 member docs were missing from the published `.d.ts` files, such as `ScopeOptions.name`, `PersistOptions.serialize` and most of the devtools and query option types. The sources now write member docs as multi-line blocks, which keep their own line, and the dist smoke check fails if a stranded doc comment comes back.
+- 6a561d9: `useSuspendOnHidden` now resumes the controller when its effect goes.
+  
+  Unmounting a subtree while the tab was hidden left the controller suspended for good. The hook had suspended it, and its `visibilitychange` listener was the only thing that would resume it. That listener went with the same cleanup. Swapping the `controller` argument while hidden stranded the outgoing one the same way. The cleanup now resumes whichever controller it is the reason for suspending, and leaves a controller it never suspended alone.
+  
+  The package README's API table now covers every export, grouped by what it is for. It listed 8 of them before.
+- 8791b0e: **A `useQuery` result read after commit stays live when React throws a later render away.**
+  
+  The fine-grained `useQuery` and `useInfiniteQuery` return getters that give the rendered snapshot during render and the live value afterwards. They told the two apart by a flag each render set and each commit cleared. A render that never commits, such as a transition whose sibling suspends, left the flag set. The committed result then kept returning its rendered values, so a field the component never read in render was read stale from an event handler or an effect. The hooks now count commits instead, and a discarded render cannot hold the count.
+- 8791b0e: **`<SuspendOnUnmount>` and `useSuspendOnHidden` on one controller no longer undo each other.**
+  
+  Unmounting a wrapped subtree while the tab was hidden ran the wrapper's cleanup, which suspended the controller, and then the hook's cleanup, which resumed it. The unmounted screen's controller was left running. The two helpers now share one record of why each controller is suspended, and the controller resumes only when no reason is left. A wrapper that first mounts on a hidden tab waits for the tab to show. A tab that shows does not resume a controller whose last wrapper has unmounted.
+- 02b45f2: Correct hover docs that described the wrong code, or showed an example that does not work.
+  
+  In core:
+  
+  - The `createField` example called `createField(ctx, '', { validators })`, which infers `Field<''>`, so the field's `set` then rejects every other string. The example now names the type, `createField<string>(...)`, as `API.md` does.
+  - The `createFieldArray` example used a factory that ignored its argument, so `add('x')` built an empty field. The factory now uses its `initial`.
+  - The `TimingSignal` doc sat above `TimingOptions`, so a hover on `TimingSignal` showed nothing. It is now on `TimingSignal`.
+  
+  In React:
+  
+  - The docs of `OlasProvider`, `createOlasContext`, `HydrationBoundary` and `SuspendOnUnmount` sat above their props types, so a hover on the component showed nothing. Each doc is now on its component.
+  - The `HydrationBoundary` example passed `hydrate` without a query engine, so a development build warned and discarded the payload. It now passes `queries: queryEngine()`.
+  
+  No behavior changed.
+- Updated dependencies [beab02a]
+- Updated dependencies [f9b34a7]
+- Updated dependencies [d5642d5]
+- Updated dependencies [ae18408]
+- Updated dependencies [008d8ef]
+- Updated dependencies [008d8ef]
+- Updated dependencies [1c6964e]
+- Updated dependencies [360120c]
+- Updated dependencies [a2b8b14]
+- Updated dependencies [008d8ef]
+- Updated dependencies [325ecf3]
+- Updated dependencies [6e154ef]
+- Updated dependencies [153261f]
+- Updated dependencies [518f5d9]
+- Updated dependencies [af217d0]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [008d8ef]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [3d95f3c]
+- Updated dependencies [fea5505]
+- Updated dependencies [cb08097]
+- Updated dependencies [b0f1c41]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a328f3a]
+- Updated dependencies [a328f3a]
+- Updated dependencies [8aaf0e7]
+- Updated dependencies [d0b11ef]
+- Updated dependencies [023eaf3]
+- Updated dependencies [0ce21f3]
+- Updated dependencies [2174dce]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a29b4ea]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [20473ba]
+- Updated dependencies [1299818]
+- Updated dependencies [38cf416]
+- Updated dependencies [4c47f81]
+- Updated dependencies [38cf416]
+- Updated dependencies [02b45f2]
+  - @kontsedal/olas-core@1.0.0
+
 ## 0.8.0
 
 ## 0.7.2
