@@ -9,25 +9,47 @@
 // API:
 //   <DevtoolsLauncher root={root} />
 //
-// Optional props mirror DevtoolsPanel's. The launcher manages the window
-// chrome and ferries the rest through.
+// Optional props mirror DevtoolsPanel's. The launcher owns the store and the
+// window chrome, and ferries the rest through.
 
 import type { Root } from '@kontsedal/olas-core'
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
-import { DevtoolsPanel, type DevtoolsTab } from './DevtoolsPanel'
+import { Boundary, DevtoolsPanel, type DevtoolsTab, usePanelStore } from './DevtoolsPanel'
 import { DEVTOOLS_CSS } from './styles'
 
+/**
+ * Props of `<DevtoolsLauncher>`: the panel's props, plus where the window
+ * keeps its state and where it first opens.
+ */
 export type DevtoolsLauncherProps = {
-  root: Pick<Root<unknown>, '__debug'>
-  /** Default panel tab. */
+  /**
+   * The root to inspect. The launcher subscribes to `root.debug` on mount and
+   * records until it unmounts, with the window closed or minimized too.
+   */
+  root: Pick<Root<unknown>, 'debug'>
+  /**
+   * Default panel tab.
+   */
   defaultTab?: DevtoolsTab
-  /** Cap on each event log. */
+  /**
+   * Cap on each event log.
+   */
   maxEntries?: number
-  /** Persist tab+filter state under this key (independent of window state). */
+  /**
+   * Capacity of the timeline's ring buffer. Default 10,000.
+   */
+  maxTimelineEntries?: number
+  /**
+   * Persist tab+filter state under this key (independent of window state).
+   */
   urlHashKey?: string
-  /** localStorage key for window state (position/size/open/minimized). */
+  /**
+   * localStorage key for window state (position/size/open/minimized).
+   */
   storageKey?: string
-  /** Initial position if no persisted state. */
+  /**
+   * Initial position if no persisted state.
+   */
   initial?: { x?: number; y?: number; w?: number; h?: number }
 }
 
@@ -47,17 +69,39 @@ const DEFAULT_W = 520
 const DEFAULT_H = 520
 const MARGIN = 16
 
+/**
+ * A floating devtools window for one root, behind a launcher button in the
+ * bottom-right corner. The window's header drags it and its corner grip
+ * resizes it. Position, size, and open and minimized state persist to
+ * `localStorage` under `storageKey`. Render `<DevtoolsLauncher root={root} />`
+ * once, near the app's root, typically only in development builds.
+ *
+ * The launcher owns the panel's store: it records from mount, and the
+ * history survives closing and minimizing the window. A devtools error
+ * never unmounts the host app; a failure outside the panel hides the launcher.
+ */
 export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
+  return (
+    <Boundary quiet>
+      <Launcher {...props} />
+    </Boundary>
+  )
+}
+
+function Launcher(props: DevtoolsLauncherProps): ReactElement {
+  const store = usePanelStore(props.root, props.maxEntries, props.maxTimelineEntries)
   const storageKey = props.storageKey ?? 'olas-devtools-window'
   const [state, setState] = useState<WindowState>(() => loadState(storageKey, props.initial))
 
   // Persist on change.
   useEffect(() => {
-    if (typeof localStorage === 'undefined') return
+    // Reading `localStorage` itself can throw (a sandboxed iframe, blocked
+    // site data), so the check sits inside the try.
     try {
+      if (typeof localStorage === 'undefined') return
       localStorage.setItem(storageKey, JSON.stringify(state))
     } catch {
-      /* swallow */
+      /* storage unavailable: the window just doesn't persist */
     }
   }, [state, storageKey])
 
@@ -88,8 +132,8 @@ export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
             <div className="olas-devtools-floating-body">
               <DevtoolsPanel
                 root={props.root}
+                store={store}
                 defaultTab={props.defaultTab}
-                maxEntries={props.maxEntries}
                 urlHashKey={props.urlHashKey}
               />
             </div>
@@ -108,7 +152,6 @@ function LauncherButton({ open, onClick }: { open: boolean; onClick: () => void 
       onClick={onClick}
       className={`olas-devtools-launcher ${open ? 'olas-devtools-launcher-active' : ''}`}
     >
-      <span aria-hidden="true" className="olas-devtools-launcher-dot" />
       <span className="olas-devtools-launcher-label">Olas devtools</span>
     </button>
   )
@@ -239,8 +282,9 @@ function loadState(
     open: false,
     minimized: false,
   }
-  if (typeof localStorage === 'undefined') return defaults
   try {
+    // Inside the try: reading `localStorage` can throw a SecurityError.
+    if (typeof localStorage === 'undefined') return defaults
     const raw = localStorage.getItem(storageKey)
     if (!raw) return defaults
     const parsed = JSON.parse(raw) as Partial<WindowState>

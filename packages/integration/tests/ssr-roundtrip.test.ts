@@ -16,14 +16,16 @@
  */
 
 import {
+  createMutation,
+  createQuery,
   createRoot,
   type DehydratedState,
   defineController,
   defineQuery,
-  type Mutation,
   type QuerySubscription,
+  queryEngine,
 } from '@kontsedal/olas-core'
-import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
+import { defineEntity, Entities, entitiesPlugin } from '@kontsedal/olas-entities'
 import { describe, expect, test, vi } from 'vitest'
 import { settle } from './_helpers'
 
@@ -48,18 +50,18 @@ describe('integration: SSR roundtrip', () => {
   test('dehydrate → JSON → hydrate restores cached data; client does not re-fetch', async () => {
     const fetchSpy = vi.fn(async (id: string) => ({ id, name: `User ${id}` }))
     const userQuery = defineQuery({
-      queryId: 'int/ssr/user',
+      id: 'int/ssr/user',
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string) => fetchSpy(id),
       staleTime: 60_000,
     })
 
     const def = defineController((ctx) => ({
-      user: ctx.use(userQuery, () => ['u1']),
+      user: createQuery(ctx, userQuery, () => ['u1']),
     }))
 
     // --- Server ----------------------------------------------------------
-    const server = createRoot(def, { deps: {} })
+    const server = createRoot(def, { queries: queryEngine(), deps: {} })
     await server.waitForIdle()
     expect(fetchSpy).toHaveBeenCalledTimes(1)
     const dehydrated = server.dehydrate()
@@ -73,10 +75,10 @@ describe('integration: SSR roundtrip', () => {
     expect(onWire.entries[0]?.data).toEqual({ id: 'u1', name: 'User u1' })
 
     // --- Client ----------------------------------------------------------
-    const client = createRoot(def, { deps: {}, hydrate: onWire })
+    const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: onWire })
     await settle()
     type Api = { user: QuerySubscription<{ id: string; name: string }> }
-    const c = client as unknown as Api & { dispose: () => void }
+    const c = { ...(client.api as unknown as Api), dispose: client.dispose }
     expect(c.user.data.value).toEqual({ id: 'u1', name: 'User u1' })
     // staleTime: 60s — no refetch needed.
     expect(fetchSpy).toHaveBeenCalledTimes(1)
@@ -84,8 +86,8 @@ describe('integration: SSR roundtrip', () => {
   })
 
   test('entities plugin populates from hydrated data and supports backprop', async () => {
-    const feedQuery = defineQuery({
-      queryId: 'int/ssr/feed-hydrate',
+    const feedQuery = defineQuery<[], { posts: Post[]; pinned: Post }>({
+      id: 'int/ssr/feed-hydrate',
       key: () => [],
       fetcher: async () => {
         throw new Error('fetcher must not run when hydrated')
@@ -116,26 +118,26 @@ describe('integration: SSR roundtrip', () => {
       ],
     }
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => ({
-      feed: ctx.use(feedQuery, () => []),
+      feed: createQuery(ctx, feedQuery, () => []),
     }))
-    type Api = { feed: QuerySubscription<{ posts: Post[]; pinned: Post }> }
     const client = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [plugin],
       hydrate: dehydrated,
-    }) as unknown as Api & { dispose: () => void }
+    })
 
     // First paint — entity store already populated from the hydrated data.
-    expect(client.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
-    expect(plugin.get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
+    expect(client.api.feed.data.peek()?.posts[0]).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(client.inject(Entities).get(Post, 'p1')).toEqual({ id: 'p1', title: 'A', likes: 0 })
+    expect(client.inject(Entities).get(Post, 'p2')).toEqual({ id: 'p2', title: 'B', likes: 0 })
 
     // Backprop reaches both paths the hydrated value covers (posts.0 + pinned).
-    plugin.update(Post, 'p1', { likes: 7 })
-    expect(client.feed.data.peek()?.posts[0]?.likes).toBe(7)
-    expect(client.feed.data.peek()?.pinned?.likes).toBe(7)
+    client.inject(Entities).update(Post, 'p1', { likes: 7 })
+    expect(client.api.feed.data.peek()?.posts[0]?.likes).toBe(7)
+    expect(client.api.feed.data.peek()?.pinned?.likes).toBe(7)
 
     client.dispose()
   })
@@ -143,7 +145,7 @@ describe('integration: SSR roundtrip', () => {
   test('only success entries dehydrate; client re-fetches on mount', async () => {
     let fetches = 0
     const flaky = defineQuery({
-      queryId: 'int/ssr/flaky',
+      id: 'int/ssr/flaky',
       key: () => [],
       fetcher: async () => {
         fetches += 1
@@ -153,8 +155,8 @@ describe('integration: SSR roundtrip', () => {
       staleTime: 60_000,
     })
 
-    const def = defineController((ctx) => ({ flaky: ctx.use(flaky, () => []) }))
-    const server = createRoot(def, { deps: {}, onError: () => {} })
+    const def = defineController((ctx) => ({ flaky: createQuery(ctx, flaky, () => []) }))
+    const server = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
     await server.waitForIdle()
     const dehydrated = server.dehydrate()
     // Failed fetch produced no entry.
@@ -162,10 +164,10 @@ describe('integration: SSR roundtrip', () => {
     server.dispose()
 
     // Client mounts fresh; the fetcher runs again and now succeeds.
-    const client = createRoot(def, { deps: {}, hydrate: dehydrated })
+    const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: dehydrated })
     await settle()
     type Api = { flaky: QuerySubscription<{ ok: boolean }> }
-    const c = client as unknown as Api & { dispose: () => void }
+    const c = { ...(client.api as unknown as Api), dispose: client.dispose }
     expect(c.flaky.data.value).toEqual({ ok: true })
     expect(fetches).toBe(2)
     c.dispose()
@@ -177,7 +179,7 @@ describe('integration: SSR roundtrip', () => {
     // refetching the list.
     type Card = { id: string; title: string; likes: number }
     const cardsQuery = defineQuery({
-      queryId: 'int/ssr/cards',
+      id: 'int/ssr/cards',
       key: () => [],
       fetcher: async (): Promise<Card[]> => {
         throw new Error('fetcher must not run after hydration')
@@ -201,8 +203,8 @@ describe('integration: SSR roundtrip', () => {
     }
 
     const def = defineController((ctx) => {
-      const cards = ctx.use(cardsQuery, () => [])
-      const like = ctx.mutation<string, void>({
+      const cards = createQuery(ctx, cardsQuery, () => [])
+      const like = createMutation<string, void>(ctx, {
         mutate: async (id) => {
           cardsQuery.setData(() => {
             const prev = cards.data.peek() ?? []
@@ -212,20 +214,17 @@ describe('integration: SSR roundtrip', () => {
       })
       return { cards, like }
     })
+    const client = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      hydrate: dehydrated,
+    })
 
-    type Api = {
-      cards: QuerySubscription<Array<{ id: string; title: string; likes: number }>>
-      like: Mutation<string, void>
-    }
-    const client = createRoot(def, { deps: {}, hydrate: dehydrated }) as unknown as Api & {
-      dispose: () => void
-    }
+    expect(client.api.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 0 })
 
-    expect(client.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 0 })
-
-    await client.like.run('c1')
-    expect(client.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 1 })
-    expect(client.cards.data.peek()?.[1]).toEqual({ id: 'c2', title: 'Second', likes: 0 })
+    await client.api.like.run('c1')
+    expect(client.api.cards.data.peek()?.[0]).toEqual({ id: 'c1', title: 'First', likes: 1 })
+    expect(client.api.cards.data.peek()?.[1]).toEqual({ id: 'c2', title: 'Second', likes: 0 })
 
     client.dispose()
   })
@@ -233,7 +232,7 @@ describe('integration: SSR roundtrip', () => {
   test('hydrated entries with staleTime: 0 still refetch on subscribe', async () => {
     let fetches = 0
     const q = defineQuery({
-      queryId: 'int/ssr/stale-zero',
+      id: 'int/ssr/stale-zero',
       key: () => [],
       fetcher: async () => {
         fetches += 1
@@ -242,14 +241,14 @@ describe('integration: SSR roundtrip', () => {
       // No staleTime — default 0.
     })
 
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const server = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const server = createRoot(def, { queries: queryEngine(), deps: {} })
     await server.waitForIdle()
     expect(fetches).toBe(1)
     const dehydrated = wireTransport(server.dehydrate())
     server.dispose()
 
-    const client = createRoot(def, { deps: {}, hydrate: dehydrated })
+    const client = createRoot(def, { queries: queryEngine(), deps: {}, hydrate: dehydrated })
     await settle()
     // staleTime: 0 → subscribe triggers refetch; we end up at 2.
     expect(fetches).toBe(2)

@@ -6,17 +6,18 @@ covers:
   - packages/core/src/timing/debounced.ts
   - packages/core/src/timing/throttled.ts
   - packages/core/src/timing/index.ts
+  - packages/core/src/expiry-timer.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/timing.test.ts }
   - { type: uses, target: signals.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-25
 confidence: high
 ---
 
 # `timing/`
 
-`debounced(source, ms, options?)` and `throttled(source, ms, options?)` — return a `TimingSignal<T>` (a `ReadSignal<T>` plus `cancel()` / `flush()` / `dispose()`) that mirrors `source` with the corresponding timing. Spec §9, §20.1.
+`debounced(source, ms, options?)` and `throttled(source, ms, options?)` — return a `TimingSignal<T>` (a `ReadSignal<T>` plus `cancel()`, `flush()` or `dispose()`) that mirrors `source` with the corresponding timing. Spec §9, §20.1.
 
 ## Lifecycle
 
@@ -33,6 +34,12 @@ Without either, the effect keeps `source` subscribed for the process lifetime (G
 - `leading: true` emits on the first change of a quiet window; `trailing: true` emits the coalesced latest value when the window settles. `{ leading: true, trailing: false }` = "leading edge only"; the reverse = "trailing edge only".
 - `{ leading: false, trailing: false }` never emits and **throws** at construction.
 - With `trailing: false`, no trailing timer is scheduled and nothing is left pending, so `flush()` emits nothing (it previously leaked a value the option said should never fire). Pinned by the `timing.test.ts` options matrix (T2.7).
+
+## Timers go through `scheduleExpiry`
+
+Both windows are scheduled with `scheduleExpiry` from `expiry-timer.ts`, like every user-supplied duration (spec §21.5). The handle holds its cancellation closure, and `null` means no timer is pending. A window of `Infinity` schedules nothing: `debounced` never fires on its own, `flush()` still emits, and a leading-edge cooldown never ends. A finite window past the 32-bit `setTimeout` limit is walked in chunks and waits its full length. Both used a raw `setTimeout` before, which fires a non-finite delay after about a millisecond and overflows a larger one into an immediate fire. `debounced` calls `scheduleExpiry` at `debounced.ts:130-136`, and `throttled` at `throttled.ts:86`. Pinned by `timing.test.ts`, "durations go through scheduleExpiry".
+
+**A `NaN` window runs as 0 (1.0, second pass).** `scheduleExpiry` schedules nothing for any non-finite delay, `NaN` included. The move to it therefore turned a `NaN` window, such as a failed `Number(...)` parse, from "fire at once" into "never emit". Both functions now pass the window through `timingWindow` (`debounced.ts:54-62`), which reads `NaN` as `0` and warns in development. The fix stays out of `expiry-timer.ts`, because its other callers read `NaN` differently: a `gcTime` or `maxIdleTime` of 0 drops or disposes at once, which is no safer a reading of a misconfiguration than never. Pinned by `timing.test.ts`, "a NaN window runs as 0".
 
 ## Throttled semantics
 

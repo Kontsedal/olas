@@ -1,169 +1,212 @@
-/* Primitive component styles — scoped via .olas-* classes. */
+/* Primitive component styles — scoped via .olas-* classes.
+ *
+ * Every size, corner and colour below comes from a named step in
+ * `examples/_shared/ui/tokens.css`. If a value here is a literal, it is
+ * because it is that component's own geometry and belongs to no scale — and
+ * it says so.
+ */
 
-/* ───────── Button ───────── */
+/* ───────── Button ─────────
+ * A control beside a control shares its box: the height, the corner and the
+ * border token are the ones Input, Select and IconButton take, so a row of
+ * four mixed controls cannot drift apart. */
 
 .olas-btn {
   display: inline-flex; align-items: center; justify-content: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
+  gap: var(--space-3);
+  height: var(--control-md);
+  padding: 0 var(--space-5);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
   background: var(--color-bg-elev);
   color: var(--color-fg);
-  font-weight: 500;
-  font-size: 0.8125rem;
-  letter-spacing: -0.003em;
-  transition: background var(--motion-fast), border-color var(--motion-fast), color var(--motion-fast);
+  font-weight: var(--weight-medium);
+  font-size: var(--text-body);
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
   white-space: nowrap;
   user-select: none;
 }
-.olas-btn:hover { background: var(--color-bg-hover); border-color: var(--color-border-strong); }
+.olas-btn:hover { background: var(--color-bg-hover); }
 .olas-btn:active { background: var(--color-bg-sunk); }
 .olas-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
+/* The accent on a fill means "this is what happens next". It is the one job
+ * the accent has here, and the reason it is not spent on a hover anywhere. */
 .olas-btn-primary {
   background: var(--color-accent);
   color: var(--color-accent-fg);
-  border-color: transparent;
+  border-color: var(--color-accent);
 }
-.olas-btn-primary:hover { background: var(--color-accent-hover); border-color: transparent; }
-.olas-btn-primary:disabled { background: var(--color-accent); }
+.olas-btn-primary:hover {
+  background: var(--color-accent-hover);
+  border-color: var(--color-accent-hover);
+}
+.olas-btn-primary:disabled { background: var(--color-accent); border-color: var(--color-accent); }
 
 .olas-btn-ghost { background: transparent; border-color: transparent; color: var(--color-fg-mute); }
 .olas-btn-ghost:hover { background: var(--color-bg-hover); color: var(--color-fg); border-color: transparent; }
 
 .olas-btn-danger {
   background: var(--color-danger);
-  color: oklch(0.99 0.01 var(--hue-danger));
-  border-color: transparent;
+  color: var(--color-accent-fg);
+  border-color: var(--color-danger);
 }
-.olas-btn-danger:hover { background: var(--color-danger); filter: brightness(0.95); }
+.olas-btn-danger:hover { background: var(--color-danger); filter: brightness(0.94); }
 
-.olas-btn-sm { height: 24px; padding: 0 8px; font-size: 0.75rem; }
-.olas-btn-lg { height: 36px; padding: 0 14px; font-size: 0.875rem; }
+.olas-btn-sm { height: var(--control-sm); padding: 0 var(--space-4); font-size: var(--text-meta); }
+.olas-btn-lg { height: var(--control-lg); padding: 0 var(--space-6); }
 
 /* ───────── IconButton ───────── */
 
 .olas-iconbtn {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px;
+  width: var(--control-md); height: var(--control-md);
   border: 1px solid transparent;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--color-fg-mute);
-  transition: background var(--motion-fast), color var(--motion-fast);
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
 }
 .olas-iconbtn:hover { background: var(--color-bg-hover); color: var(--color-fg); }
+/* Pressed IS a state — the thing you chose — so the accent is allowed here.
+ * The wash carries it and the glyph stays on --color-fg: an accent glyph on a
+ * tint of the accent puts ground and mark on a collision course. */
 .olas-iconbtn[aria-pressed="true"] {
   background: var(--color-accent-soft);
-  color: var(--color-accent);
+  color: var(--color-fg);
 }
-:root[data-theme="dark"] .olas-iconbtn[aria-pressed="true"],
-:root[data-theme="auto"] .olas-iconbtn[aria-pressed="true"] {
-  background: var(--color-accent-soft);
-  color: var(--color-accent);
-}
-.olas-iconbtn-sm { width: 22px; height: 22px; border-radius: var(--radius-sm); }
-.olas-iconbtn-lg { width: 36px; height: 36px; }
+.olas-iconbtn-sm { width: var(--control-sm); height: var(--control-sm); border-radius: var(--radius-mark); }
+.olas-iconbtn-lg { width: var(--control-lg); height: var(--control-lg); }
 
-/* ───────── Card (surface) ───────── */
+/* ───────── Card (surface) ─────────
+ * An edge or an elevation, never both. The plain card takes the edge; only
+ * the lifted one, which actually floats, takes the shadow — and then drops
+ * its border. */
 
 .olas-card {
   background: var(--color-bg-elev);
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-surface);
 }
 .olas-card-flat { box-shadow: none; }
-.olas-card-lifted { box-shadow: var(--shadow-lift); }
+.olas-card-lifted { border-color: transparent; box-shadow: var(--shadow-float); }
 .olas-card-pad { padding: var(--space-6); }
 
 /* ───────── Input / Textarea / Select ───────── */
 
 .olas-input, .olas-textarea, .olas-select {
   display: block; width: 100%;
-  padding: 6px 9px;
-  font-size: 0.8125rem;
-  line-height: 1.4;
+  height: var(--control-md);
+  padding: 0 var(--space-4);
+  font-size: var(--text-body);
   color: var(--color-fg);
   background: var(--color-bg-elev);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  transition: border-color var(--motion-fast), box-shadow var(--motion-fast);
+  border: 1px solid var(--color-border-control);
+  border-radius: var(--radius-control);
+  transition: border-color var(--motion-fast) var(--ease-out);
 }
 .olas-input::placeholder, .olas-textarea::placeholder { color: var(--color-fg-dim); }
-.olas-input:hover, .olas-textarea:hover, .olas-select:hover { border-color: var(--color-border-strong); }
+.olas-input:hover, .olas-textarea:hover, .olas-select:hover { border-color: var(--color-fg-dim); }
+/* An outline rather than a ring: a box-shadow halo has to name the colour
+ * behind it, and this field sits on four different surfaces. */
 .olas-input:focus, .olas-textarea:focus, .olas-select:focus {
-  outline: none; border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px oklch(0.55 0.22 var(--hue-accent) / 0.16);
+  outline: var(--focus-width) solid var(--color-accent);
+  outline-offset: var(--focus-offset);
+  border-color: var(--color-accent);
 }
 .olas-input[aria-invalid="true"], .olas-textarea[aria-invalid="true"], .olas-select[aria-invalid="true"] {
   border-color: var(--color-danger);
 }
-.olas-input[aria-invalid="true"]:focus, .olas-textarea[aria-invalid="true"]:focus, .olas-select[aria-invalid="true"]:focus {
-  box-shadow: 0 0 0 3px oklch(0.58 0.21 var(--hue-danger) / 0.18);
-}
-.olas-textarea { min-height: 76px; resize: vertical; line-height: 1.5; }
+.olas-input[aria-invalid="true"]:focus,
+.olas-textarea[aria-invalid="true"]:focus,
+.olas-select[aria-invalid="true"]:focus { outline-color: var(--color-danger); }
+/* A textarea is the one field with no fixed height: it holds lines, not a value. */
+.olas-textarea { height: auto; min-height: 76px; padding: var(--space-3) var(--space-4); resize: vertical; line-height: var(--font-line); }
 
+/* A label names one value, so it is Capitalized with no transform, and it is
+ * prose — which is why it sits at the meta step and not below it. */
 .olas-field-label {
   display: block;
-  font-size: 0.72rem;
-  font-weight: 500;
+  font-size: var(--text-meta);
+  font-weight: var(--weight-medium);
   color: var(--color-fg-mute);
-  margin-bottom: 4px;
-  letter-spacing: 0.005em;
+  margin-bottom: var(--space-2);
 }
-.olas-field-help { font-size: 0.72rem; color: var(--color-fg-dim); margin-top: 4px; }
-.olas-field-error { font-size: 0.72rem; color: var(--color-danger); margin-top: 4px; }
+.olas-field-help { font-size: var(--text-meta); color: var(--color-fg-dim); margin-top: var(--space-2); }
+.olas-field-error { font-size: var(--text-meta); color: var(--color-danger); margin-top: var(--space-2); }
 
-/* ───────── Tag / Badge ───────── */
+/* ───────── Tag / Badge ─────────
+ * A tag used to paint its label in a status colour and its ground in a mix of
+ * that same colour, which moves the ground toward the label every time and
+ * spends the whole of the headroom the status tokens were solved to have. No
+ * ground; the edge is --color-border-control, which is solved per theme. */
 
 .olas-tag {
-  display: inline-flex; align-items: center; gap: 4px;
-  height: 18px;
-  padding: 0 6px;
-  font-size: 0.6875rem;
-  font-weight: 500;
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-sunk);
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  /* A tag is inline, and it sits inside flex columns that stretch their
+     children. Without this it becomes a full-width box that reads as a field. */
+  align-self: flex-start;
+  width: fit-content;
+  height: 18px; /* the tag's own geometry: one line of chrome type plus its padding */
+  padding: 0 var(--space-3);
+  font-size: var(--text-chrome);
+  font-weight: var(--weight-medium);
+  border-radius: var(--radius-mark);
+  background: transparent;
   color: var(--color-fg-mute);
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-control);
   white-space: nowrap;
-  letter-spacing: 0.005em;
 }
-.olas-tag-dot { width: 5px; height: 5px; border-radius: 999px; background: currentColor; }
-.olas-tag-accent  { background: var(--color-accent-soft); color: var(--color-accent); border-color: transparent; }
-.olas-tag-success { background: var(--color-success-soft); color: var(--color-success); border-color: transparent; }
-.olas-tag-warning { background: var(--color-warning-soft); color: var(--color-warning); border-color: transparent; }
-.olas-tag-danger  { background: var(--color-danger-soft); color: var(--color-danger); border-color: transparent; }
-.olas-tag-info    { background: var(--color-info-soft); color: var(--color-info); border-color: transparent; }
+/* For a state tag the dot is a second carrier of the tone the text already
+   has, so it is only rendered when asked for. For a LABEL tag it is the only
+   carrier of which label this is, which is why it takes an identity slot. */
+.olas-tag-dot {
+  width: 5px; height: 5px;
+  border-radius: var(--radius-pill);
+  background: var(--tag-dot-color, currentColor);
+  flex-shrink: 0;
+}
+.olas-tag-accent  { color: var(--color-accent); }
+.olas-tag-success { color: var(--color-success); }
+.olas-tag-warning { color: var(--color-warning); }
+.olas-tag-danger  { color: var(--color-danger); }
+.olas-tag-info    { color: var(--color-info); }
 
 .olas-badge {
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 16px; height: 16px;
-  padding: 0 4px;
-  font-size: 0.625rem; font-weight: 600;
-  border-radius: 999px;
+  padding: 0 var(--space-2);
+  font-size: var(--text-mark); font-weight: var(--weight-semibold);
+  border-radius: var(--radius-pill);
   background: var(--color-accent);
   color: var(--color-accent-fg);
 }
 
-/* ───────── Avatar ───────── */
+/* ───────── Avatar ─────────
+ * The identity colour is the RING, and the initials are --color-fg on the
+ * surface underneath. Painting a white initial on an identity ground would
+ * force every one of the eight hues dark enough to carry 4.5:1, which drives
+ * the family down to near grey. A ring is a non-text mark and needs 3:1, so
+ * the palette gets to stay chromatic. */
 
 .olas-avatar {
   display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px;
-  border-radius: 999px;
-  font-size: 0.62rem;
-  font-weight: 600;
-  color: oklch(0.99 0 0);
-  background: oklch(0.55 0.16 var(--avatar-hue, 270));
-  border: 2px solid var(--color-bg-elev);
+  width: var(--avatar-md); height: var(--avatar-md);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-mark);
+  font-weight: var(--weight-semibold);
+  color: var(--color-fg);
+  background: var(--color-bg-elev);
+  box-shadow: inset 0 0 0 2px var(--avatar-color, var(--color-border-control));
   flex: 0 0 auto;
-  letter-spacing: 0.01em;
 }
-.olas-avatar-sm { width: 18px; height: 18px; font-size: 0.55rem; border-width: 1.5px; }
-.olas-avatar-lg { width: 30px; height: 30px; font-size: 0.78rem; }
+.olas-avatar-sm { width: var(--avatar-sm); height: var(--avatar-sm); box-shadow: inset 0 0 0 1.5px var(--avatar-color, var(--color-border-control)); }
+.olas-avatar-lg { width: var(--avatar-lg); height: var(--avatar-lg); font-size: var(--text-chrome); }
 
 .olas-avatar-stack { display: inline-flex; isolation: isolate; }
 .olas-avatar-stack > .olas-avatar { margin-left: -6px; }
@@ -172,40 +215,39 @@
 .olas-avatar-stack > .olas-avatar:nth-child(3) { z-index: 3; }
 .olas-avatar-stack > .olas-avatar:nth-child(4) { z-index: 4; }
 
-/* ───────── Toast ───────── */
+/* ───────── Toast ─────────
+ * A toast floats, so it takes the shadow and no border. Its severity is
+ * carried by the icon — a shape and a colour, which is already two marks.
+ * The coloured left rule that used to sit beside them was a third. */
 
 .olas-toast-region {
   position: fixed;
-  right: 14px; bottom: 14px;
-  display: flex; flex-direction: column; gap: 8px;
+  right: var(--space-6); bottom: var(--space-6);
+  display: flex; flex-direction: column; gap: var(--space-4);
   z-index: 1000;
   pointer-events: none;
 }
 
 .olas-toast {
   pointer-events: auto;
-  min-width: 280px; max-width: 360px;
+  min-width: 280px; max-width: 360px; /* the toast's own measure */
   display: grid;
   grid-template-columns: auto 1fr auto;
-  gap: 10px;
+  gap: var(--space-5);
   align-items: start;
-  padding: 10px 12px;
+  padding: var(--space-5);
   background: var(--color-bg-elev);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-pop);
-  animation: olas-toast-in var(--motion-base);
-  font-size: 0.8125rem;
+  border-radius: var(--radius-surface);
+  box-shadow: var(--shadow-float);
+  animation: olas-toast-in var(--motion-base) var(--ease-out);
+  font-size: var(--text-body);
 }
 .olas-toast-icon { color: var(--color-fg-mute); margin-top: 1px; }
-.olas-toast-body { display: grid; gap: 2px; }
-.olas-toast-title { font-weight: 600; font-size: 0.8125rem; }
-.olas-toast-message { font-size: 0.75rem; color: var(--color-fg-mute); line-height: 1.4; }
-.olas-toast-action { display: flex; gap: 6px; }
+.olas-toast-body { display: grid; gap: var(--space-1); }
+.olas-toast-title { font-weight: var(--weight-semibold); font-size: var(--text-body); }
+.olas-toast-message { font-size: var(--text-meta); color: var(--color-fg-mute); line-height: var(--font-line); }
+.olas-toast-action { display: flex; gap: var(--space-3); }
 
-.olas-toast-error   { border-left: 2px solid var(--color-danger); }
-.olas-toast-success { border-left: 2px solid var(--color-success); }
-.olas-toast-info    { border-left: 2px solid var(--color-info); }
 .olas-toast-error .olas-toast-icon   { color: var(--color-danger); }
 .olas-toast-success .olas-toast-icon { color: var(--color-success); }
 .olas-toast-info .olas-toast-icon    { color: var(--color-info); }
@@ -214,40 +256,40 @@
 
 .olas-dialog-backdrop {
   position: fixed; inset: 0;
-  background: oklch(0 0 0 / 0.30);
-  backdrop-filter: blur(2px);
+  background: oklch(0 0 0 / 0.35);
   z-index: 800;
-  animation: olas-fade-in var(--motion-fast);
+  animation: olas-fade-in var(--motion-fast) var(--ease-out);
 }
 .olas-dialog {
   position: fixed; inset: 0;
   display: grid; place-items: center;
   z-index: 801;
-  padding: 24px;
+  padding: var(--space-7);
 }
+/* The one element that genuinely floats: shadow, no border. `overflow: hidden`
+ * is what rounds the footer, so the footer needs no corner of its own. */
 .olas-dialog-panel {
-  width: 100%; max-width: 460px;
+  width: 100%; max-width: 460px; /* the dialog's own measure */
   background: var(--color-bg-elev);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-lift);
-  animation: olas-pop-in var(--motion-base);
+  border-radius: var(--radius-surface);
+  box-shadow: var(--shadow-float);
+  animation: olas-pop-in var(--motion-base) var(--ease-out);
   display: grid; grid-template-rows: auto 1fr auto;
   max-height: calc(100vh - 48px);
+  overflow: hidden;
 }
 .olas-dialog-header {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px 10px;
+  padding: var(--space-5) var(--space-6) var(--space-4);
   border-bottom: 1px solid var(--color-border);
 }
-.olas-dialog-title { font-size: 0.9375rem; font-weight: 600; letter-spacing: -0.005em; }
-.olas-dialog-body { padding: 14px 16px; overflow: auto; }
+.olas-dialog-title { font-size: var(--text-title); font-weight: var(--weight-semibold); }
+.olas-dialog-body { padding: var(--space-5) var(--space-6); overflow: auto; }
 .olas-dialog-footer {
-  display: flex; gap: 8px; justify-content: flex-end;
-  padding: 10px 14px;
+  display: flex; gap: var(--space-4); justify-content: flex-end;
+  padding: var(--space-4) var(--space-5);
   border-top: 1px solid var(--color-border);
   background: var(--color-bg-sunk);
-  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 }
 
 /* ───────── Tooltip (legacy — kept for API stability) ───────── */
@@ -255,30 +297,33 @@
 .olas-tooltip-wrap { display: contents; }
 .olas-tooltip { display: none; }
 
-/* ───────── Skeleton ───────── */
+/* ───────── Skeleton ─────────
+ * A flat block that breathes, not a gradient sweeping across it. The sweep
+ * was a moving decoration on a surface whose only job is to say "not yet",
+ * and it had no reduced-motion answer. */
 
 .olas-skeleton {
   display: block;
-  background: linear-gradient(90deg,
-    oklch(0.55 0.01 270 / 0.05) 25%,
-    oklch(0.55 0.01 270 / 0.12) 37%,
-    oklch(0.55 0.01 270 / 0.05) 63%);
-  background-size: 400% 100%;
-  animation: olas-shimmer 1.4s ease infinite;
-  border-radius: var(--radius-md);
+  background: var(--color-bg-sunk);
+  border-radius: var(--radius-mark);
   height: 1em;
+  animation: olas-skeleton-pulse 1.4s var(--ease-out) infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The block still shows; only the breathing stops. */
+  .olas-skeleton { animation: none; }
 }
 
 /* ───────── Kbd ───────── */
 
 .olas-kbd {
   display: inline-flex; align-items: center;
-  padding: 1px 5px;
+  padding: 1px var(--space-3);
   background: var(--color-bg-sunk);
   border: 1px solid var(--color-border);
   border-bottom-width: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-mark);
   font-family: var(--font-mono);
-  font-size: 0.62rem;
+  font-size: var(--text-mark);
   color: var(--color-fg-mute);
 }

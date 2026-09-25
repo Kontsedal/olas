@@ -1,0 +1,114 @@
+[
+  {
+    "name": "core: controllers + signals",
+    "path": "packages/core/dist/index.js",
+    "import": "{ createRoot, defineController, signal, computed }",
+    "ignore": ["@preact/signals-core"],
+    "limit": "5.7 KB"
+  },
+  {
+    "name": "core: + forms",
+    "path": "packages/core/dist/index.js",
+    "import": "{ createRoot, defineController, createField, createForm, createFieldArray }",
+    "ignore": ["@preact/signals-core"],
+    "limit": "10.35 KB"
+  },
+  {
+    "name": "core: + queries and mutations",
+    "path": "packages/core/dist/index.js",
+    "import": "{ createRoot, defineController, queryEngine, defineQuery, createQuery, createMutation }",
+    "ignore": ["@preact/signals-core"],
+    "limit": "18.5 KB"
+  },
+  {
+    "name": "core: everything",
+    "path": "packages/core/dist/index.js",
+    "import": "*",
+    "ignore": ["@preact/signals-core"],
+    "limit": "25.1 KB"
+  },
+  {
+    "name": "react",
+    "path": "packages/react/dist/index.js",
+    "import": "*",
+    "ignore": ["react", "react-dom", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "4.2 KB"
+  },
+  {
+    "name": "vue",
+    "path": "packages/vue/dist/index.js",
+    "import": "*",
+    "ignore": ["vue", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "0.9 KB"
+  },
+  {
+    "name": "svelte",
+    "path": "packages/svelte/dist/index.js",
+    "import": "*",
+    "ignore": ["svelte", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "0.87 KB"
+  },
+  {
+    "name": "cross-tab",
+    "path": "packages/cross-tab/dist/index.js",
+    "import": "*",
+    "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "1.5 KB"
+  },
+  {
+    "name": "entities",
+    "path": "packages/entities/dist/index.js",
+    "import": "*",
+    "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "2.7 KB"
+  },
+  {
+    "name": "mutation-queue",
+    "path": "packages/mutation-queue/dist/index.js",
+    "import": "*",
+    "ignore": ["@kontsedal/olas-core", "@kontsedal/olas-persist", "@preact/signals-core"],
+    "limit": "3.75 KB"
+  },
+  {
+    "name": "persist: createPersisted",
+    "path": "packages/persist/dist/index.js",
+    "import": "{ createPersisted, localStorageAdapter }",
+    "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "1.21 KB"
+  },
+  {
+    "name": "persist: persistQueryCachePlugin",
+    "path": "packages/persist/dist/index.js",
+    "import": "{ persistQueryCachePlugin, restoreQueryCache }",
+    "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "1.25 KB"
+  },
+  {
+    "name": "realtime",
+    "path": "packages/realtime/dist/index.js",
+    "import": "*",
+    "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "1.05 KB"
+  },
+  {
+    "name": "router",
+    "path": "packages/router/dist/index.js",
+    "import": "*",
+    "ignore": ["react", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "0.65 KB"
+  },
+  {
+    "name": "zod",
+    "path": "packages/zod/dist/index.js",
+    "import": "*",
+    "ignore": ["zod", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "1.8 KB"
+  },
+  {
+    "name": "devtools",
+    "path": "packages/devtools/dist/index.js",
+    "import": "*",
+    "ignore": ["react", "react-dom", "@kontsedal/olas-core", "@preact/signals-core"],
+    "limit": "19.7 KB"
+  }
+]

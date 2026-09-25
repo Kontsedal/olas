@@ -3,10 +3,10 @@
  *
  * `createKanbanRoot` builds a root with the same plugin set as production, but
  * lets each test inject its own broadcaster (for cross-tab + realtime
- * isolation) and storage adapter (for usePersisted).
+ * isolation) and storage adapter (for createPersisted).
  */
 
-import { createRoot } from '@kontsedal/olas-core'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import {
@@ -18,7 +18,8 @@ import {
 } from '../src/api'
 import type { NotifyRef } from '../src/api/schema'
 import { appController } from '../src/app.controller'
-import { createEntitiesPlugin } from '../src/entities'
+import { kanbanEntities } from '../src/entities'
+import { tracingPlugin } from '../src/tracing'
 
 /** In-memory `Map`-backed `StorageAdapter` for tests. */
 export function memoryStorage(): StorageAdapter {
@@ -97,20 +98,20 @@ export function createKanbanRoot(opts?: {
   const broadcaster =
     opts?.broadcaster ??
     createBroadcaster({ channelFactory: opts?.channelFactory, tabId: opts?.tabId })
-  const entities = createEntitiesPlugin()
   const notifyRef: NotifyRef = { current: () => {} }
   const root = createRoot(appController, {
+    queries: queryEngine(),
     deps: {
       api,
       broadcaster,
       realtime: broadcaster.realtime,
       tabId: broadcaster.tabId,
-      entities,
       notifyRef,
       storage: opts?.storage,
     },
     plugins: [
-      entities,
+      tracingPlugin(),
+      kanbanEntities,
       crossTabPlugin({
         channelName: 'olas-kanban-cache',
         channelFactory: opts?.channelFactory,

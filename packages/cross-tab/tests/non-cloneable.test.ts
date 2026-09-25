@@ -1,4 +1,10 @@
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import {
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { describe, expect, test, vi } from 'vitest'
 import type { ChannelLike } from '../src/channel'
 import { crossTabPlugin } from '../src/plugin'
@@ -15,8 +21,8 @@ import { crossTabPlugin } from '../src/plugin'
  */
 
 const nonCloneableQuery = defineQuery({
-  queryId: 'non-cloneable-test/q',
-  crossTab: true,
+  id: 'non-cloneable-test/q',
+  meta: { crossTab: true },
   key: (id: string) => ['nc', id],
   fetcher: async (_ctx, id: string) => ({ id }),
 })
@@ -54,10 +60,11 @@ describe('crossTabPlugin non-cloneable data', () => {
 
     const onWarnA = vi.fn()
     const def = defineController((ctx) => {
-      const q = ctx.use(nonCloneableQuery, () => ['1' as string])
+      const q = createQuery(ctx, nonCloneableQuery, () => ['1' as string])
       return { q }
     })
     const a = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         crossTabPlugin({
@@ -73,7 +80,7 @@ describe('crossTabPlugin non-cloneable data', () => {
     nonCloneableQuery.setData('1', () => ({ id: '1', cb: () => 'nope' }))
     // Sender cache: the write went through locally (no `postMessage`
     // failure stops the cache write — the plugin runs AFTER setData).
-    expect((a as unknown as Sub).q.data.peek()?.id).toBe('1')
+    expect((a.api as unknown as Sub).q.data.peek()?.id).toBe('1')
     // The warning was raised on the sender.
     expect(onWarnA).toHaveBeenCalled()
     expect(onWarnA.mock.calls[0]![0]).toContain('not structured-cloneable')

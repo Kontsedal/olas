@@ -1,9 +1,13 @@
 import {
+  bindQuery,
+  createQuery,
   createRoot,
   defineController,
+  defineInfiniteQuery,
   defineQuery,
   type Query,
   type QuerySubscription,
+  queryEngine,
 } from '@kontsedal/olas-core'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import type { ChannelLike } from '../src/channel'
@@ -16,17 +20,13 @@ import { type Message, PROTOCOL_VERSION } from '../src/protocol'
  * Strategy: a fake `BroadcastChannel` bus shared across two `QueryClient`s
  * — same channelName routes to the same bus.
  *
- * Module-graph caveat: in real life each tab is its own process with its
- * own `defineQuery` call, so `query.__clients` has only the local client.
- * In a single-process test, if both tabs share one `defineQuery` value,
- * `query.__clients` holds BOTH clients and `query.setData(...)` writes to
- * both synchronously — masking the cross-tab path. To preserve isolation,
- * each test mounts each "tab" with its OWN `defineQuery` value that
- * shares only the `queryId`. The registry's "last write wins" semantics
- * mean the most-recent definition routes inbound messages — that's fine
- * because every tab's `applyRemoteSetData` only applies if the LOCAL
- * `QueryClient` has an entry for the key, and each tab's local entries
- * are bound against its OWN query object.
+ * Module-graph caveat: in real life each tab evaluates its own modules, so
+ * a query's `__clients` holds only the local client. In a single-process
+ * test, two roots that bind one `defineQuery` value both land in it, and an
+ * unbound `query.setData(...)` throws as ambiguous. The `mountTabs` cases
+ * therefore mint one `defineQuery` value per tab with the same `id`, so each
+ * unbound call reaches one client. Inbound messages route by id through each
+ * root's own `host.queries`, so the routing is per root either way.
  */
 
 // ---- shared in-memory bus -------------------------------------------------
@@ -98,8 +98,8 @@ function makeUsersQuery(
   opts?: { crossTab?: boolean },
 ): Query<[string], { id: string; name: string }> {
   return defineQuery({
-    queryId,
-    crossTab: opts?.crossTab ?? true,
+    id: queryId,
+    meta: { crossTab: opts?.crossTab ?? true },
     key: (id: string) => ['user', id],
     fetcher: async (_ctx, id: string) => ({ id, name: 'fetcher' }),
     staleTime: 60_000, // suppress focus/reconnect refetch noise
@@ -119,15 +119,16 @@ function mountTabs(opts: {
   const factory = busChannelFactory()
 
   const defA = defineController((ctx) => {
-    const user = ctx.use(opts.queryA, () => ['1' as string])
+    const user = createQuery(ctx, opts.queryA, () => ['1' as string])
     return { user } as { user: QuerySubscription<unknown> }
   })
   const defB = defineController((ctx) => {
-    const user = ctx.use(opts.queryB, () => ['1' as string])
+    const user = createQuery(ctx, opts.queryB, () => ['1' as string])
     return { user } as { user: QuerySubscription<unknown> }
   })
 
   const tabA = createRoot(defA, {
+    queries: queryEngine(),
     deps: {},
     plugins: [
       crossTabPlugin({
@@ -138,6 +139,7 @@ function mountTabs(opts: {
     ],
   })
   const tabB = createRoot(defB, {
+    queries: queryEngine(),
     deps: {},
     plugins: [
       crossTabPlugin({
@@ -170,8 +172,8 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabA as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
+    expect((tabs.tabA.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'Alice' })
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
@@ -186,8 +188,8 @@ describe('crossTabPlugin', () => {
     queryA.setData('1', () => ({ id: '1', name: 'X' }))
     await settle()
 
-    // tabA broadcast once. tabB applied as remote (isRemote: true → no
-    // outbound). Total postCount: 1.
+    // tabA broadcast once. tabB applied it with the plugin's origin, which
+    // the default `origins` does not mirror. Total postCount: 1.
     expect(tabs.postCount()).toBe(1)
     tabs.tabA.dispose()
     tabs.tabB.dispose()
@@ -203,51 +205,14 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabA as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
+    expect((tabs.tabA.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
     // queryB.__clients only has tabB, queryA.setData('1', ...) wrote to
     // queryA.__clients (only tabA) — tabB is untouched. No outbound msg.
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
     expect(getBus('iso').postCount).toBe(0)
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
-  })
-
-  test('4. crossTab: true without queryId warns and is skipped at core level', async () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    // Build a query without a queryId.
-    const noIdQuery = defineQuery({
-      crossTab: true,
-      key: (id: string) => ['noid', id],
-      fetcher: async (_ctx, id: string) => ({ id }),
-      staleTime: 60_000,
-    })
-
-    const factory = busChannelFactory()
-    const def = defineController((ctx) => {
-      const u = ctx.use(noIdQuery, () => ['1' as string])
-      return { user: u }
-    })
-    const a = createRoot(def, {
-      deps: {},
-      plugins: [crossTabPlugin({ channelName: 'noid-chan', channelFactory: factory })],
-    })
-    await settle()
-
-    noIdQuery.setData('1', () => ({ id: 'tab-a' }))
-    await settle()
-
-    // No queryId → core skips firing onSetData → plugin never broadcasts.
-    expect(getBus('noid-chan').postCount).toBe(0)
-    // Dev-warning fired (from defineQuery's queryId check).
-    expect(
-      warnSpy.mock.calls.some(
-        (c) => typeof c[0] === 'string' && c[0].includes('requires a stable `queryId`'),
-      ),
-    ).toBe(true)
-
-    warnSpy.mockRestore()
-    a.dispose()
   })
 
   test('5. invalidation propagates → receiving tab refetches', async () => {
@@ -262,13 +227,13 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'pre' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'pre' })
 
     // Invalidate via tabA. Tab B applies the invalidation remotely and
     // refetches (fetcher returns `{ id: '1', name: 'fetcher' }`).
     queryA.invalidate('1')
     await settle()
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
@@ -298,14 +263,15 @@ describe('crossTabPlugin', () => {
     }
 
     const defA = defineController((ctx) => {
-      const u = ctx.use(queryA, () => ['1' as string])
+      const u = createQuery(ctx, queryA, () => ['1' as string])
       return { user: u }
     })
     const defB = defineController((ctx) => {
-      const u = ctx.use(queryB, () => ['1' as string])
+      const u = createQuery(ctx, queryB, () => ['1' as string])
       return { user: u }
     })
     const tabA = createRoot(defA, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         crossTabPlugin({
@@ -316,6 +282,7 @@ describe('crossTabPlugin', () => {
       ],
     })
     const tabB = createRoot(defB, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'nc-chan', channelFactory: factory })],
     })
@@ -333,9 +300,9 @@ describe('crossTabPlugin', () => {
 
     // Sender cache: write succeeded locally (the setData ran BEFORE the
     // broadcast; the throw on postMessage is caught + warned).
-    expect((tabA as unknown as Sub).user.data.peek()?.name).toBe('with-fn')
+    expect((tabA.api as unknown as Sub).user.data.peek()?.name).toBe('with-fn')
     // Receiver: never got a message (postMessage threw and was caught).
-    expect((tabB as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
+    expect((tabB.api as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
     expect(onWarnA).toHaveBeenCalled()
     expect(onWarnA.mock.calls[0]![0]).toContain('not structured-cloneable')
 
@@ -347,6 +314,7 @@ describe('crossTabPlugin', () => {
     const def = defineController(() => ({}))
     expect(() =>
       createRoot(def, {
+        queries: queryEngine(),
         deps: {},
         plugins: [crossTabPlugin({ channelName: 'unused', channelFactory: () => undefined })],
       }).dispose(),
@@ -358,18 +326,20 @@ describe('crossTabPlugin', () => {
     const queryB = makeUsersQuery('xtab-test/8')
     const factory = busChannelFactory()
     const defA = defineController((ctx) => {
-      const u = ctx.use(queryA, () => ['1' as string])
+      const u = createQuery(ctx, queryA, () => ['1' as string])
       return { user: u }
     })
     const defB = defineController((ctx) => {
-      const u = ctx.use(queryB, () => ['1' as string])
+      const u = createQuery(ctx, queryB, () => ['1' as string])
       return { user: u }
     })
     const a = createRoot(defA, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'dispose-test', channelFactory: factory })],
     })
     const b = createRoot(defB, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'dispose-test', channelFactory: factory })],
     })
@@ -383,7 +353,7 @@ describe('crossTabPlugin', () => {
     queryB.setData('1', () => ({ id: '1', name: 'after-a-gone' }))
     await settle()
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((b as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'after-a-gone' })
+    expect((b.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'after-a-gone' })
 
     b.dispose()
   })
@@ -403,8 +373,8 @@ describe('crossTabPlugin', () => {
     await settle()
 
     type Sub = { user: { data: { peek(): unknown } } }
-    expect((tabs.tabA as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
-    expect((tabs.tabB as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    expect((tabs.tabA.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'A-only' })
+    expect((tabs.tabB.api as unknown as Sub).user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
 
     tabs.tabA.dispose()
     tabs.tabB.dispose()
@@ -432,10 +402,11 @@ describe('crossTabPlugin', () => {
 
     const queryA = makeUsersQuery('xtab-test/10')
     const def = defineController((ctx) => {
-      const u = ctx.use(queryA, () => ['1' as string])
+      const u = createQuery(ctx, queryA, () => ['1' as string])
       return { user: u }
     })
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'dedup', channelFactory: factory })],
     })
@@ -443,7 +414,7 @@ describe('crossTabPlugin', () => {
 
     // Need a local entry to apply to — the initial fetch creates one.
     type Sub = { user: { data: { peek(): unknown } } }
-    const peek = () => (root as unknown as Sub).user.data.peek()
+    const peek = () => (root.api as unknown as Sub).user.data.peek()
 
     const peer = 'remote-peer-1'
     const mk = (msgId: number, name: string): Message => ({
@@ -499,50 +470,84 @@ describe('crossTabPlugin', () => {
     tabs.tabB.dispose()
   })
 
-  test('11. plugin instance reused across two roots surfaces an onError', () => {
-    // Per `ASSESSMENT.md`: a single `crossTabPlugin({...})` instance owns
-    // one sourceId / channel / listener Map. Sharing across two roots would
-    // clobber state on the second init — the guard throws from `init`. The
-    // QueryClient routes that throw through `onError({ kind: 'plugin' })`
-    // (it doesn't tear down the root), but the misuse is now visible.
+  test('11. one plugin value serves two roots, each with its own channel', async () => {
+    // A plugin is a definition: setup runs per root, so the same value in two
+    // roots is two peers — which is how two tabs look to each other.
     const factory = busChannelFactory()
     const plugin = crossTabPlugin({ channelName: 'reuse', channelFactory: factory })
-
     const q = makeUsersQuery('xtab-test/11')
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1' as string]) }))
-
-    const onError1 = vi.fn()
-    const root1 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError1 })
-    // First root: clean — no plugin error.
-    expect(onError1).not.toHaveBeenCalled()
-
-    const onError2 = vi.fn()
-    const root2 = createRoot(def, { deps: {}, plugins: [plugin], onError: onError2 })
-    // Second root: plugin init throws → dispatched as kind:'plugin'.
-    const pluginErr = onError2.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'plugin')
-    expect(pluginErr).toBeTruthy()
-    expect((pluginErr?.[0] as Error).message).toMatch(/reused across multiple roots/)
-
-    root1.dispose()
-    root2.dispose()
+    const def = defineController((ctx) => ({
+      user: createQuery(ctx, q, () => ['1' as string]),
+      users: bindQuery(ctx, q),
+    }))
+    const a = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const b = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    await settle()
+    a.api.users.write('1', () => ({ id: '1', name: 'from A' }))
+    await settle()
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'from A' })
+    a.dispose()
+    b.dispose()
   })
 
-  test('12. crossTab: "infinite" / "both" dev-warns (removed values, degrade to data) (T6.4)', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    try {
-      // The type no longer allows these; a JS / cast caller still gets a warn.
-      defineQuery({
-        queryId: 'xtab-test/legacy-infinite',
-        crossTab: 'infinite' as never,
-        key: (id: string) => ['user', id],
-        fetcher: async (_ctx, id: string) => ({ id, name: 'x' }),
+  test('14. writes another plugin or a tagged handle made are not mirrored', async () => {
+    // A realtime push reaches every tab itself; mirroring it would deliver it
+    // twice. Only the app's own writes (origin undefined) cross by default.
+    const factory = busChannelFactory()
+    const q = makeUsersQuery('xtab-test/14')
+    const def = defineController((ctx) => ({
+      user: createQuery(ctx, q, () => ['1' as string]),
+      pushed: bindQuery(ctx, q, { origin: 'realtime' }),
+    }))
+    const make = () =>
+      createRoot(def, {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [crossTabPlugin({ channelName: 'origins', channelFactory: factory })],
       })
-      expect(warn.mock.calls.some((c) => /crossTab.*no longer supported/i.test(String(c[0])))).toBe(
-        true,
-      )
-    } finally {
-      warn.mockRestore()
-    }
+    const a = make()
+    const b = make()
+    await settle()
+    const before = getBus('origins').postCount
+    a.api.pushed.write('1', () => ({ id: '1', name: 'push' }))
+    await settle()
+    expect(getBus('origins').postCount).toBe(before)
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    a.dispose()
+    b.dispose()
+  })
+
+  test('15. optimistic: false mirrors only canonical writes', async () => {
+    const factory = busChannelFactory()
+    const q = makeUsersQuery('xtab-test/15')
+    const def = defineController((ctx) => ({
+      user: createQuery(ctx, q, () => ['1' as string]),
+      users: bindQuery(ctx, q),
+    }))
+    const make = () =>
+      createRoot(def, {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [
+          crossTabPlugin({
+            channelName: 'optimistic-off',
+            channelFactory: factory,
+            optimistic: false,
+          }),
+        ],
+      })
+    const a = make()
+    const b = make()
+    await settle()
+    const snap = a.api.users.setData('1', () => ({ id: '1', name: 'guess' }))
+    await settle()
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'fetcher' })
+    snap.finalize()
+    a.api.users.replace('1', { id: '1', name: 'confirmed' })
+    await settle()
+    expect(b.api.user.data.peek()).toEqual({ id: '1', name: 'confirmed' })
+    a.dispose()
+    b.dispose()
   })
 
   test('13. receive-side filter — inbound writes for locally non-opted queries are ignored (T6.4)', async () => {
@@ -551,8 +556,9 @@ describe('crossTabPlugin', () => {
     // gate), not blindly apply it.
     const q = makeUsersQuery('xtab-test/recv', { crossTab: false })
     const factory = busChannelFactory()
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1' as string]) }))
+    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1' as string]) }))
     const tab = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [crossTabPlugin({ channelName: 'recv-chan', channelFactory: factory })],
     })
@@ -575,8 +581,91 @@ describe('crossTabPlugin', () => {
     type Sub = { user: { data: { peek(): { name: string } | undefined } } }
     // crossTab:false locally → the inbound write is dropped; the entry keeps
     // its fetched value.
-    expect((tab as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
+    expect((tab.api as unknown as Sub).user.data.peek()?.name).toBe('fetcher')
 
     tab.dispose()
+  })
+})
+
+describe('crossTabPlugin — infinite queries', () => {
+  type Page = { items: string[]; next: number | null }
+  const pageAt = (n: number): Page => ({ items: [`p${n}`], next: n < 5 ? n + 1 : null })
+  const makeFeed = (id: string, crossTab = true) =>
+    defineInfiniteQuery({
+      id,
+      meta: { crossTab },
+      key: () => ['feed'],
+      fetcher: async ({ pageParam }) => pageAt(pageParam),
+      initialPageParam: 0,
+      getNextPageParam: (p: Page) => p.next,
+      itemsOf: (p: Page) => p.items,
+      staleTime: 60_000,
+    })
+
+  const mountFeedTab = (
+    feed: ReturnType<typeof makeFeed>,
+    channelName: string,
+    factory: ReturnType<typeof busChannelFactory>,
+  ) =>
+    createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, feed) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [crossTabPlugin({ channelName, channelFactory: factory })],
+      },
+    )
+
+  test('an opted-in infinite write reaches the other tab with its page params', async () => {
+    const factory = busChannelFactory()
+    const feedA = makeFeed('xtab-inf/1')
+    const tabA = mountFeedTab(feedA, 'inf-chan', factory)
+    const tabB = mountFeedTab(makeFeed('xtab-inf/1'), 'inf-chan', factory)
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+
+    // Tab A replaces its pages with three pages whose params are 3, 4, 5.
+    tabA.bindQuery(feedA).write(() => [pageAt(3), pageAt(4), pageAt(5)])
+    expect(tabA.api.feed.flat.value).toEqual(['p3', 'p4', 'p5'])
+    await settle()
+    expect(tabB.api.feed.flat.value).toEqual(['p3', 'p4', 'p5'])
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('the receiving tab stores the params that came with the pages', async () => {
+    const factory = busChannelFactory()
+    const feedA = makeFeed('xtab-inf/2')
+    const tabA = mountFeedTab(feedA, 'inf-chan-2', factory)
+    const tabB = mountFeedTab(makeFeed('xtab-inf/2'), 'inf-chan-2', factory)
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+    // Tab A pages to params [0, 1, 2]; fetches never cross, a canonical write
+    // of the same three pages does, with A's params.
+    await tabA.api.feed.fetchNextPage()
+    await tabA.api.feed.fetchNextPage()
+    tabA.bindQuery(feedA).write((pages) => [...(pages ?? [])])
+    await settle()
+    expect(tabB.api.feed.flat.value).toEqual(['p0', 'p1', 'p2'])
+    // Padding tab B's own [0] would give [0, 0, 0]: these are the params that
+    // crossed, and tab B's dehydrate would ship them on.
+    const entry = tabB.dehydrate().entries.find((e) => e.id === 'xtab-inf/2')
+    expect(entry?.pageParams).toEqual([0, 1, 2])
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('an infinite query without meta.crossTab stays in its tab', async () => {
+    const factory = busChannelFactory()
+    const feedA = makeFeed('xtab-inf/3', false)
+    const tabA = mountFeedTab(feedA, 'inf-chan-3', factory)
+    const tabB = mountFeedTab(makeFeed('xtab-inf/3', false), 'inf-chan-3', factory)
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+    tabA.bindQuery(feedA).write(() => [pageAt(4)])
+    await settle()
+    expect(tabB.api.feed.flat.value).toEqual(['p0'])
+    tabA.dispose()
+    tabB.dispose()
   })
 })

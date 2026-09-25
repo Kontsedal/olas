@@ -8,9 +8,9 @@
  * 18+ ships a global one, but the adapter's `broadcastChannel` option lets
  * us route both endpoints through one in-test instance.
  */
-import { createRoot, defineController, signal } from '@kontsedal/olas-core'
+import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
 import { describe, expect, test } from 'vitest'
-import { type IndexedDbAdapterOptions, indexedDbAdapter, usePersisted } from '../src'
+import { createPersisted, type IndexedDbAdapterOptions, indexedDbAdapter } from '../src'
 
 // ─── Minimal in-memory IDB ──────────────────────────────────────────────────
 //
@@ -320,7 +320,7 @@ describe('indexedDbAdapter — cross-tab onChange', () => {
   })
 })
 
-describe('indexedDbAdapter — integration with usePersisted', () => {
+describe('indexedDbAdapter — integration with createPersisted', () => {
   test('persists a signal to IDB and reloads it on a fresh root', async () => {
     const idb = makeFakeIdb()
     const adapter = indexedDbAdapter({
@@ -330,13 +330,13 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
 
     const defWrite = defineController((ctx) => {
       const s = signal<string>('initial')
-      const p = usePersisted(ctx, 'draft', s, { storage: adapter })
+      const p = createPersisted(ctx, 'draft', s, { storage: adapter })
       return { s, ready: p.ready }
     })
-    const r1 = createRoot(defWrite, { deps: {} })
+    const r1 = createRoot(defWrite, { queries: queryEngine(), deps: {} })
     await flush()
-    expect(r1.ready.value).toBe(true)
-    r1.s.set('saved-value')
+    expect(r1.api.ready.value).toBe(true)
+    r1.api.s.set('saved-value')
     await flush()
     r1.dispose()
 
@@ -347,13 +347,13 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
     })
     const defRead = defineController((ctx) => {
       const s = signal<string>('default-if-missing')
-      const p = usePersisted(ctx, 'draft', s, { storage: adapter2 })
+      const p = createPersisted(ctx, 'draft', s, { storage: adapter2 })
       return { s, ready: p.ready }
     })
-    const r2 = createRoot(defRead, { deps: {} })
+    const r2 = createRoot(defRead, { queries: queryEngine(), deps: {} })
     await flush()
-    expect(r2.ready.value).toBe(true)
-    expect(r2.s.value).toBe('saved-value')
+    expect(r2.api.ready.value).toBe(true)
+    expect(r2.api.s.value).toBe('saved-value')
     r2.dispose()
   })
 
@@ -371,15 +371,15 @@ describe('indexedDbAdapter — integration with usePersisted', () => {
     // Tab B holds a persisted signal listening for cross-tab updates.
     const def = defineController((ctx) => {
       const s = signal<string>('')
-      usePersisted(ctx, 'k', s, { storage: tabB, crossTab: true })
+      createPersisted(ctx, 'k', s, { storage: tabB, crossTab: true })
       return { s }
     })
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await flush()
 
     await tabA.set('k', JSON.stringify('hello-from-A'))
     await flush()
-    expect(root.s.value).toBe('hello-from-A')
+    expect(root.api.s.value).toBe('hello-from-A')
 
     root.dispose()
   })
@@ -401,7 +401,7 @@ describe('indexedDbAdapter — commit-ack + error routing (T6.1)', () => {
     expect(await adapter.get('boom')).toBeNull()
   })
 
-  test('a failing IDB write routes to usePersisted onError("write")', async () => {
+  test('a failing IDB write routes to createPersisted onError("write")', async () => {
     const idb = makeFakeIdb({ commitAbortKeys: new Set(['draft']) })
     const adapter = indexedDbAdapter({
       indexedDB: idb,
@@ -410,12 +410,12 @@ describe('indexedDbAdapter — commit-ack + error routing (T6.1)', () => {
     const ops: string[] = []
     const def = defineController((ctx) => {
       const s = signal<string>('start')
-      usePersisted(ctx, 'draft', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
+      createPersisted(ctx, 'draft', s, { storage: adapter, onError: (_e, op) => ops.push(op) })
       return { s }
     })
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await flush()
-    root.s.set('will-fail')
+    root.api.s.set('will-fail')
     await flush()
     // Previously the adapter swallowed the rejection → onError never fired.
     expect(ops).toContain('write')

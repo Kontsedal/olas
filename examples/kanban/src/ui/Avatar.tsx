@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { cx } from './cx'
+import { identityColor } from './identity'
 
 export type AvatarProps = {
   name: string
@@ -18,8 +19,12 @@ function initials(name: string): string {
 }
 
 export function Avatar({ name, hue, size = 'md', title }: AvatarProps) {
+  // The hue names a slot in the identity palette; the palette names the
+  // colour. See `identity.ts` for why the raw hue never reaches the CSS.
   const style =
-    hue !== undefined ? ({ ['--avatar-hue' as string]: String(hue) } as CSSProperties) : undefined
+    hue !== undefined
+      ? ({ ['--avatar-color' as string]: identityColor(hue) } as CSSProperties)
+      : undefined
   return (
     <span
       className={cx(

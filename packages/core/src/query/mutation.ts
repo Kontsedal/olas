@@ -1,9 +1,12 @@
+import { BRAND } from '../brand'
+import type { AmbientDeps } from '../controller/types'
 import { __runWithCause, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
+import type { MutateContext, MutationEvent, MutationRef } from '../plugin/types'
 import { batch, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
-import { registerMutationById } from './plugin'
+import { type RegisteredMutation, registerMutationById } from './mutation-registry'
 import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 /**
@@ -23,23 +26,24 @@ import type { AsyncStatus, RetryDelay, RetryPolicy, Snapshot } from './types'
  * that outlives the view. Two fixes, in order of preference:
  *
  * 1. Own the mutation somewhere that lives as long as the interaction does.
- * 2. `ctx.mutation({ detached: true })` — runs then survive dispose, and this
+ * 2. `createMutation(ctx, { detached: true })` — runs then survive dispose, and this
  *    error is never thrown. SPEC §6.5.
  */
 export class MutationDisposedError extends Error {
-  /** `spec.name` / `spec.mutationId` if either was given, else `'(anonymous)'`. */
-  readonly mutationName: string
+  /** The mutation's `id`, when it has one. */
+  readonly mutationId: string | undefined
   /** Path of the controller that owned the mutation. */
   readonly controllerPath: readonly string[]
 
-  constructor(mutationName: string, controllerPath: readonly string[]) {
+  constructor(mutationId: string | undefined, controllerPath: readonly string[]) {
     super(
-      `[olas] mutation ${mutationName} at ${controllerPath.join('/') || '<root>'} was disposed ` +
-        'before run() was called — the write did NOT run. Own the mutation somewhere that ' +
-        'outlives the interaction, or pass `detached: true` to let runs survive dispose.',
+      `[olas] mutation ${mutationId ?? '(anonymous)'} at ${controllerPath.join('/') || '<root>'} ` +
+        'was disposed before run() was called — the write did NOT run. Own the mutation ' +
+        'somewhere that outlives the interaction, or pass `detached: true` to let runs ' +
+        'survive dispose.',
     )
     this.name = 'MutationDisposedError'
-    this.mutationName = mutationName
+    this.mutationId = mutationId
     this.controllerPath = controllerPath
   }
 }
@@ -50,24 +54,28 @@ export class MutationDisposedError extends Error {
  * - `latest-wins`: a new call aborts any in-flight previous call (`AbortSignal` fires).
  * - `serial`: calls queue and run one at a time in order.
  *
- * Spec §6.3.
+ * Spec §6.1.
  */
 export type MutationConcurrency = 'parallel' | 'latest-wins' | 'serial'
 
 /**
- * The configuration object passed to `ctx.mutation(spec)`. See spec §20.5 for
+ * The configuration object passed to `createMutation(ctx, spec)`. See spec §20.5 for
  * the full lifecycle semantics. `onMutate` may return a `Snapshot` (from
  * `query.setData(...)`) to enable automatic rollback on error.
  */
 export type MutationSpec<V, R> = {
   /**
-   * A short human-readable name. Surfaces in the devtools mutation log so the
-   * user sees `moveCard` instead of just the controller path. Strongly
-   * recommended in app code; cosmetic only — no runtime semantics depend on it.
+   * Stable identity. It labels the mutation in devtools and error contexts,
+   * and plugins route by it (the mutation queue replays a persisted run by
+   * its `id`). Optional on an inline spec; `defineMutation` requires it.
+   * Write it by hand — derived names change under minification.
    */
-  name?: string
-  /** The actual write. Receives the user-supplied vars and an `AbortSignal`. */
-  mutate: (vars: V, signal: AbortSignal) => Promise<R>
+  id?: string
+  /**
+   * The write. Receives the variables and a `MutateCtx`: the `AbortSignal`
+   * to honor and the owning controller's `deps`.
+   */
+  mutate: (vars: V, ctx: MutateCtx) => Promise<R>
   /**
    * Runs before `mutate`. Return a `Snapshot` from `query.setData(...)` to
    * apply an optimistic update; the snapshot is rolled back on error.
@@ -80,23 +88,10 @@ export type MutationSpec<V, R> = {
   retry?: RetryPolicy
   retryDelay?: RetryDelay
   /**
-   * Stable identifier used by the mutation-queue plugin
-   * (`@kontsedal/olas-mutation-queue`) to route persistable runs across a
-   * page reload. REQUIRED when `persist: true`. Recommended even without
-   * `persist` if you want devtools to group runs across mutation instances
-   * — same shape as `defineQuery({ queryId })`.
-   *
-   * Don't auto-derive from `name` or function identity; both are fragile
-   * under minification.
+   * Per-mutation settings for plugins, typed by the plugins that augment
+   * `MutationMeta` (the mutation queue adds `persist`). Core never reads it.
    */
-  mutationId?: string
-  /**
-   * Opt this mutation into durable persistence. When `true`, the runner
-   * emits `onMutationEnqueue` to plugins before the user's `mutate` runs
-   * and `onMutationSettle` after retries exhaust. Requires `mutationId`.
-   * SPEC §13.3.
-   */
-  persist?: boolean
+  meta?: MutationMeta
   /**
    * Let runs outlive the controller that owns them. Default `false`.
    *
@@ -127,76 +122,101 @@ export type MutationSpec<V, R> = {
 }
 
 /**
- * Module-scope handle for a persistable mutation. Returned by
- * `defineMutation(...)`. Pass it to `ctx.mutation(...)` (spread or as-is)
- * so per-controller lifecycle hooks (`onSuccess` / `onError` / ...) can be
- * layered on top.
- *
- * Registering at module import time means the mutation-queue plugin can
- * replay pending runs from durable storage during `init` — before any
- * controller reconstructs.
+ * Per-mutation plugin settings, carried on `MutationSpec.meta`. Empty in
+ * core: plugin packages add their fields through declaration merging.
  */
-export type MutationDef<V, R> = MutationSpec<V, R> & {
-  readonly __olas: 'mutation'
-  readonly mutationId: string
+// biome-ignore lint/suspicious/noEmptyInterface: augmented by plugin packages
+export interface MutationMeta {}
+
+/** What `mutate` receives besides the variables. */
+export type MutateCtx = {
+  /**
+   * Fires when the run is cancelled (supersede, `reset()`, dispose).
+   */
+  signal: AbortSignal
+  /**
+   * The owning controller's `deps`; the root's `deps` on a replay.
+   */
+  deps: AmbientDeps
 }
 
 /**
- * Register a persistable mutation at module scope. Returns the spec
- * unchanged (with a `__olas: 'mutation'` brand) so consumers can pass it
- * to `ctx.mutation(...)`, optionally spreading per-controller hooks on
- * top:
+ * The half of a mutation that describes the write itself, for
+ * `defineMutation`: its identity, the write, and its policy. Lifecycle hooks
+ * are not part of it. They belong to the controller that runs the mutation
+ * and go to `createMutation(ctx, def, hooks)`.
+ */
+export type MutationDefinition<V, R> = Pick<
+  MutationSpec<V, R>,
+  'mutate' | 'concurrency' | 'retry' | 'retryDelay' | 'meta'
+> & { id: string }
+
+/** The per-owner half of a mutation: what `createMutation(ctx, def, hooks)` adds. */
+export type MutationHooks<V, R> = Pick<
+  MutationSpec<V, R>,
+  'onMutate' | 'onSuccess' | 'onError' | 'onSettled' | 'detached'
+>
+
+/**
+ * A module-scope mutation, returned by `defineMutation(...)`. Run it from a
+ * controller with `createMutation(ctx, def, hooks?)`.
+ */
+export type MutationDef<V, R> = MutationDefinition<V, R> & {
+  readonly [BRAND]: 'mutation'
+}
+
+/** True for a value returned by `defineMutation`. Internal. */
+export function isMutationDef(value: unknown): value is MutationDef<unknown, unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    (value as Record<symbol, unknown>)[BRAND] === 'mutation'
+  )
+}
+
+/**
+ * Define a mutation at module scope. The definition is registered by `id`,
+ * so a plugin can run it with no controller present. The mutation queue
+ * replays a run persisted before a reload this way.
  *
  * ```ts
- * // module-scope
+ * // module scope
  * export const createOrder = defineMutation({
- *   mutationId: 'order/create',
- *   mutate: async (vars: OrderInput, { signal }) => api.createOrder(vars, { signal }),
+ *   id: 'order/create',
+ *   mutate: (vars: OrderInput, { signal, deps }) => deps.api.createOrder(vars, { signal }),
+ *   meta: { persist: true },
  * })
  *
- * // controller
- * const m = ctx.mutation({
- *   ...createOrder,
+ * // a controller
+ * const place = createMutation(ctx, createOrder, {
  *   onSuccess: () => toast('Order placed'),
  * })
  * ```
  *
- * The `mutate` function MUST NOT close over controller-instance state — on
- * replay there is no controller. Module-level dependencies (a shared `api`
- * client, etc.) are fine.
+ * `mutate` must not close over controller state, because on a replay there
+ * is no controller. Reach services through `deps` instead.
  */
-export function defineMutation<V, R>(
-  spec: MutationSpec<V, R> & { mutationId: string; persist?: boolean },
-): MutationDef<V, R> {
-  if (typeof spec.mutationId !== 'string' || spec.mutationId.length === 0) {
-    throw new Error('[olas] defineMutation requires a non-empty `mutationId`.')
+export function defineMutation<V, R>(definition: MutationDefinition<V, R>): MutationDef<V, R> {
+  if (typeof definition.id !== 'string' || definition.id.length === 0) {
+    throw new Error('[olas] defineMutation requires a non-empty `id`.')
   }
-  // Default `persist: true` for defined mutations — that's the whole point
-  // of using the module-scope helper. Consumers who want a non-persistable
-  // module-scope handle can override with `persist: false`.
-  const persistSpec: MutationSpec<V, R> = { ...spec, persist: spec.persist ?? true }
-  registerMutationById(spec.mutationId, {
-    mutationId: spec.mutationId,
-    mutate: spec.mutate as (vars: unknown, signal: AbortSignal) => Promise<unknown>,
+  const def = { ...definition } as MutationDef<V, R>
+  // Non-enumerable, so spreading a definition into an inline spec does not
+  // carry the brand along with it.
+  Object.defineProperty(def, BRAND, { value: 'mutation', enumerable: false })
+  registerMutationById(definition.id, {
+    id: definition.id,
+    definition: def as unknown as MutationDefinition<unknown, unknown>,
+    mutate: definition.mutate as RegisteredMutation['mutate'],
   })
-  return Object.assign(persistSpec, {
-    __olas: 'mutation' as const,
-    mutationId: spec.mutationId,
-  })
+  return def
 }
 
-/**
- * A running mutation. Created via `ctx.mutation(spec)` — the controller owns
- * its lifetime. Each `run(vars)` returns a Promise; the four signals reflect
- * the last-resolved run for UI binding.
- *
- * Spec §6, §20.5.
- */
 /**
  * Call signature for `mutation.run`:
  *  - When `V` is `void` → no args. (`mutation.run()`)
  *  - When `V` was not constrained (default-inferred as `unknown`) → optional
- *    arg. Lets `ctx.mutation({ mutate: async () => 1 })` call `run()` *or*
+ *    arg. Lets `createMutation(ctx, { mutate: async () => 1 })` call `run()` *or*
  *    `run(anything)` without a type error.
  *  - Otherwise → arg required. (`mutation.run(vars)`)
  *
@@ -207,8 +227,17 @@ export type MutationRun<V, R> = (
   ...args: unknown extends V ? [V?] : [V] extends [void] ? [] : [V]
 ) => Promise<R>
 
+/**
+ * A running mutation. Created via `createMutation(ctx, spec)` — the controller owns
+ * its lifetime. Each `run(vars)` returns a Promise; the signals reflect the
+ * last-resolved run for UI binding.
+ *
+ * Spec §6, §20.5.
+ */
 export type Mutation<V, R> = {
-  /** Trigger a run. Returns a Promise that resolves with the mutate result. */
+  /**
+   * Trigger a run. Returns a Promise that resolves with the mutate result.
+   */
   run: MutationRun<V, R>
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
@@ -256,35 +285,45 @@ export type Mutation<V, R> = {
   dispose(): void
 }
 
+/** Why a run was cancelled, as plugins hear it on `'cancel'`. */
+type CancelReason = NonNullable<MutationEvent['reason']>
+
 type RunHandle = {
   abort: AbortController
   snapshot: Snapshot | undefined
+  /**
+   * Set by whoever aborts the run, before the abort. The first reason wins:
+   * a run superseded and then reset was superseded.
+   */
+  cancelReason?: CancelReason
 }
 
 type SerialEntry<V, R> = {
   vars: V
+  /**
+   * Minted when the run is queued, so its `'queued'` event and every later
+   * one share it.
+   */
+  runId: string
   resolve: (value: R) => void
   reject: (err: unknown) => void
 }
 
 /**
- * Hooks for emitting persistable-mutation lifecycle events back to the
- * `QueryClient`. Wired from `createMutation` when `spec.persist === true`.
- * Internal — not part of any public surface.
+ * How a mutation reports to the root's plugins. Wired by `createMutation`
+ * (and `host.mutations.run`) only when some installed plugin observes
+ * mutations. Internal — not part of any public surface.
  */
 export type MutationLifecycleHooks = {
-  emitEnqueue(event: {
-    mutationId: string
-    runId: string
-    variables: unknown
-    attempt: number
-  }): void
-  emitSettle(event: {
-    mutationId: string
-    runId: string
-    outcome: 'success' | 'error' | 'cancelled'
-    error?: unknown
-  }): void
+  emit(event: MutationEvent): void
+  /**
+   * `wrapMutate` middleware, when any plugin installed one.
+   */
+  wrap?(context: MutateContext, next: () => Promise<unknown>): Promise<unknown>
+  /**
+   * Set on runs a plugin started through `host.mutations.run`.
+   */
+  origin?: string
 }
 
 class MutationImpl<V, R> implements Mutation<V, R> {
@@ -297,6 +336,15 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   private inflight = new Set<RunHandle>()
   private serialQueue: Array<SerialEntry<V, R>> = []
   private serialActive = false
+  /**
+   * Which queue the `serial` continuations belong to. `reset()` abandons the
+   * active run and unlocks the queue, so the next `run(...)` opens a NEW queue
+   * — and the abandoned run's continuation still fires when its abort lands.
+   * Bumping this on `reset()` lets that continuation recognize itself as stale
+   * and neither start a queued run nor release the lock; both would let the
+   * newer queue run two mutations at once (spec §6.3).
+   */
+  private serialGeneration = 0
   private disposed = false
 
   constructor(
@@ -308,15 +356,75 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     },
     private readonly devtools?: DevtoolsEmitter,
     private readonly lifecycle?: MutationLifecycleHooks,
+    private readonly deps: AmbientDeps = {},
   ) {}
 
+  /** What plugins see of this mutation. */
+  private get ref(): MutationRef {
+    return { id: this.spec.id, meta: this.spec.meta ?? {} }
+  }
+
+  /** Report one step of a run to the plugins, if any observe mutations. */
+  private report(
+    runId: string,
+    variables: unknown,
+    phase: MutationEvent['phase'],
+    extra?: { result?: unknown; error?: unknown; reason?: CancelReason },
+  ): void {
+    const lifecycle = this.lifecycle
+    if (lifecycle === undefined) return
+    const event: MutationEvent = {
+      mutation: this.ref,
+      runId,
+      variables,
+      phase,
+      origin: lifecycle.origin,
+      ...extra,
+    }
+    // The plugin set isolates each hook; a throw here is a bug in core.
+    lifecycle.emit(event)
+  }
+
   /**
-   * True iff this mutation should emit persistable-lifecycle events.
-   * Validated at construction time (in `createMutation`) so any malformed
-   * `persist: true`-without-`mutationId` config surfaces early.
+   * One id per run: the devtools ambient cause and the persistable run id.
+   * Skipped (empty) only in a production build with no plugin observing
+   * mutations, where nothing consumes it. `crypto.randomUUID`-backed; see
+   * `makeRunId`.
    */
-  private get isPersistable(): boolean {
-    return this.spec.persist === true && this.lifecycle !== undefined
+  private newRunId(): string {
+    return this.lifecycle !== undefined || __DEV__ ? makeRunId() : ''
+  }
+
+  /**
+   * Report a cancelled run: `'cancel'` to plugins and `mutation:cancel` to
+   * devtools, both carrying `reason`. The devtools event closes the run in a
+   * panel's timeline, so a later settle is not paired with its start. A
+   * queued run that never started sends it too.
+   */
+  private reportCancel(runId: string, variables: unknown, reason: CancelReason): void {
+    if (__DEV__) this.emit({ type: 'mutation:cancel', reason }, runId)
+    this.report(runId, variables, 'cancel', { reason })
+  }
+
+  /** Abort a run, recording why for its `'cancel'` event. */
+  private cancel(handle: RunHandle, reason: CancelReason): void {
+    handle.cancelReason ??= reason
+    handle.abort.abort()
+  }
+
+  /**
+   * Reject every queued `serial` run with `err`, and tell plugins each one
+   * was cancelled. They heard `'queued'` for it, so they are owed an outcome.
+   */
+  private dropSerialQueue(err: DOMException, reason: CancelReason): void {
+    const queue = this.serialQueue
+    if (queue.length === 0) return
+    this.serialQueue = []
+    this.inflightCounter?.update((n) => Math.max(0, n - queue.length))
+    for (const queued of queue) {
+      queued.reject(err)
+      this.reportCancel(queued.runId, queued.vars, reason)
+    }
   }
 
   /**
@@ -332,18 +440,20 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   private emit(event: { type: 'mutation:success'; result: unknown }, causeId?: string): void
   private emit(event: { type: 'mutation:error'; error: unknown }, causeId?: string): void
   private emit(event: { type: 'mutation:rollback' }, causeId?: string): void
+  private emit(event: { type: 'mutation:cancel'; reason: CancelReason }, causeId?: string): void
   private emit(
     event:
       | { type: 'mutation:run'; vars: unknown }
       | { type: 'mutation:success'; result: unknown }
       | { type: 'mutation:error'; error: unknown }
-      | { type: 'mutation:rollback' },
+      | { type: 'mutation:rollback' }
+      | { type: 'mutation:cancel'; reason: CancelReason },
     causeId?: string,
   ): void {
     if (!__DEV__) return
     if (this.devtools === undefined) return
     const out: Record<string, unknown> = { ...event, path: this.controllerPath }
-    if (this.spec.name !== undefined) out.name = this.spec.name
+    if (this.spec.id !== undefined) out.id = this.spec.id
     // `causeId` (the run id) correlates this event with the run's optimistic
     // writes / snapshot events / settle in the devtools timeline. Empty string
     // means "no run id" (non-persistable in a prod build) — omit it.
@@ -356,8 +466,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   // no args. The public type forces the right shape per `V`.
   run = ((vars: V = undefined as V): Promise<R> => {
     if (this.cancelledByDispose) {
-      const label = this.spec.name ?? this.spec.mutationId ?? '(anonymous)'
-      return Promise.reject(new MutationDisposedError(label, this.controllerPath))
+      return Promise.reject(new MutationDisposedError(this.spec.id, this.controllerPath))
     }
     const mode = this.spec.concurrency ?? 'parallel'
     switch (mode) {
@@ -368,7 +477,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         // run's onMutate runs, so the new optimistic update doesn't stack on
         // top of the obsolete one.
         for (const handle of this.inflight) {
-          handle.abort.abort()
+          this.cancel(handle, 'superseded')
           handle.snapshot?.rollback()
           handle.snapshot = undefined
         }
@@ -380,41 +489,72 @@ class MutationImpl<V, R> implements Mutation<V, R> {
 
   private enqueueSerial(vars: V): Promise<R> {
     if (this.serialActive) {
-      return new Promise<R>((resolve, reject) => {
-        this.serialQueue.push({ vars, resolve, reject })
+      // A queued run counts as in flight, so `root.waitForIdle()` waits for it
+      // to start and settle rather than answering while it is still to run.
+      this.inflightCounter?.update((n) => n + 1)
+      const runId = this.newRunId()
+      const queued = new Promise<R>((resolve, reject) => {
+        this.serialQueue.push({ vars, runId, resolve, reject })
       })
+      // Plugins hear about a waiting run now, not when its turn comes. A queue
+      // plugin persists it here, so a reload while the run ahead of it hangs
+      // or backs off does not lose it.
+      this.report(runId, vars, 'queued')
+      return queued
     }
     this.serialActive = true
-    return this.executeRun(vars).finally(() => this.advanceSerialQueue())
+    const generation = this.serialGeneration
+    return this.executeRun(vars).finally(() => this.advanceSerialQueue(generation))
   }
 
-  private advanceSerialQueue(): void {
+  private advanceSerialQueue(generation: number): void {
+    // A `reset()` while this run was in flight abandoned its queue and opened a
+    // new one. This continuation speaks for the old queue: starting the next
+    // entry would run it alongside the new queue's active run, and clearing
+    // `serialActive` would let the next `run(...)` do the same. Neither is ours
+    // to do — the newer queue's own continuations will.
+    if (generation !== this.serialGeneration) return
     const next = this.serialQueue.shift()
     if (!next) {
       this.serialActive = false
       return
     }
-    this.executeRun(next.vars).then(
+    const started = this.executeRun(next.vars, next.runId)
+    // The run counted itself in its synchronous start (or its `onMutate`
+    // threw); only now does it leave the queued count, so the counter never
+    // dips to zero between the two.
+    this.inflightCounter?.update((n) => Math.max(0, n - 1))
+    started.then(
       (result) => {
         next.resolve(result)
-        this.advanceSerialQueue()
+        this.advanceSerialQueue(generation)
       },
       (err) => {
         next.reject(err)
-        this.advanceSerialQueue()
+        this.advanceSerialQueue(generation)
       },
     )
   }
 
-  private async executeRun(vars: V): Promise<R> {
+  /**
+   * Run one call to completion. `queuedRunId` is the id a `serial` run was
+   * queued under: plugins already heard `'queued'` for it, so a run that ends
+   * before `'start'` still reports its one outcome.
+   */
+  private async executeRun(vars: V, queuedRunId?: string): Promise<R> {
     const abort = new AbortController()
-    // One id per run, generated up front so it can wrap `onMutate` (below) as
-    // the devtools ambient cause AND serve as the persistable run id. Skipped
-    // (empty) only in a production build of a non-persistable mutation, where
-    // nothing consumes it. `crypto.randomUUID`-backed — see `makeRunId`.
-    const runId = this.isPersistable || __DEV__ ? makeRunId() : ''
-    const mutationId = this.spec.mutationId
+    // Generated up front so it can wrap `onMutate` (below) as the devtools
+    // ambient cause AND serve as the persistable run id.
+    const queued = queuedRunId !== undefined
+    const runId = queuedRunId ?? this.newRunId()
+    /** Set once this run's single outcome has been reported to plugins. */
+    let settledOutcome = false
     let snapshot: Snapshot | undefined
+    // Registered before `onMutate`, so a `dispose()`, `reset()` or
+    // `latest-wins` supersede that `onMutate` itself triggers aborts this run.
+    // Registered after, the abort found nothing and `mutate` ran anyway.
+    const handle: RunHandle = { abort, snapshot: undefined }
+    this.inflight.add(handle)
     try {
       // Run `onMutate` under this run's cause so the optimistic `setData` it
       // calls — and the `snapshot:push` / `cache:set-data` those trigger —
@@ -422,6 +562,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       const raw = __runWithCause(runId, () => this.spec.onMutate?.(vars)) ?? undefined
       snapshot = raw === undefined ? undefined : this.wrapSnapshot(raw, runId)
     } catch (err) {
+      this.leave(handle)
       // onMutate threw — the optimistic setup failed, so running `mutate`
       // against a half-applied state is unsafe. Abort the whole run: surface
       // via the error signal, the mutation's onError/onSettled, and the
@@ -432,11 +573,22 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       if (__DEV__) this.emit({ type: 'mutation:error', error: err }, runId)
       this.safeCall(() => this.spec.onError?.(err, vars, undefined), 'mutation')
       this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
+      // A run that never waited reported nothing, so it reports nothing now.
+      // A queued one reported `'queued'` and is owed its outcome.
+      if (queued) this.report(runId, vars, 'error', { error: err })
       throw err
     }
 
-    const handle: RunHandle = { abort, snapshot }
-    this.inflight.add(handle)
+    if (abort.signal.aborted) {
+      // Cancelled during `onMutate`: undo its guess and never call `mutate`.
+      // Plugins heard no `start`, so a run that never waited reports nothing.
+      // A queued one is owed the outcome of the `'queued'` it reported.
+      snapshot?.rollback()
+      this.leave(handle)
+      if (queued) this.reportCancel(runId, vars, handle.cancelReason ?? 'dispose')
+      throw new DOMException('Aborted', 'AbortError')
+    }
+    handle.snapshot = snapshot
     this.inflightCounter?.update((n) => n + 1)
     batch(() => {
       this.isPending.set(true)
@@ -446,24 +598,15 @@ class MutationImpl<V, R> implements Mutation<V, R> {
 
     if (__DEV__) this.emit({ type: 'mutation:run', vars }, runId)
 
-    // Persistable mutations emit an enqueue event BEFORE the user's `mutate`
-    // runs. If the page reloads mid-mutation, the queue plugin replays from
-    // this entry. `runId` / `mutationId` are captured at the top of
-    // `executeRun`; retries within `runWithRetry` reuse `runId` via `attempt`
-    // bumps inside that loop.
-    if (this.isPersistable && mutationId !== undefined) {
-      try {
-        this.lifecycle?.emitEnqueue({ mutationId, runId, variables: vars, attempt: 0 })
-      } catch (err) {
-        dispatchError(this.onError, err, {
-          kind: 'plugin',
-          controllerPath: this.controllerPath,
-        })
-      }
-    }
+    // Plugins hear about the run BEFORE `mutate` is first called — after
+    // `onMutate`, so an optimistic write is already visible. If the page
+    // reloads mid-run, a queue plugin replays from what it stored here. One
+    // `start` per run: the retry loop in `runWithRetry` re-invokes `mutate`
+    // under the same `runId` and reports nothing.
+    this.report(runId, vars, 'start')
 
     try {
-      const result = await raceAbort(this.runWithRetry(vars, abort.signal), abort.signal)
+      const result = await raceAbort(this.runWithRetry(vars, abort.signal, runId), abort.signal)
       if (abort.signal.aborted || this.cancelledByDispose) {
         // Reaching here means `raceAbort` RESOLVED — the work finished, and the
         // abort landed in the gap before this continuation ran. You cannot
@@ -476,13 +619,12 @@ class MutationImpl<V, R> implements Mutation<V, R> {
         //   `finalize()` commits the optimistic value instead — which is what
         //   the server now holds. A `latest-wins` supersede already consumed
         //   its snapshot back in `run()`, so this is a no-op for that case.
-        // - `outcome: 'cancelled'` tells the mutation-queue plugin to KEEP the
-        //   durable entry and replay it on the next page load — a second write
-        //   of a request that succeeded. It settled; say so.
+        // - reporting `'cancel'` after a dispose tells the mutation-queue
+        //   plugin to KEEP the durable entry and replay it later — a second
+        //   write of a request that succeeded. It settled; say so.
         snapshot?.finalize()
-        if (this.isPersistable && mutationId !== undefined) {
-          this.safeEmitSettle({ mutationId, runId, outcome: 'success' })
-        }
+        this.report(runId, vars, 'success', { result })
+        settledOutcome = true
         // The caller still walked away, so the promise still reports the abort:
         // whoever awaited this run is gone, and `data` / `status` belong to the
         // superseder or to nobody.
@@ -500,18 +642,32 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       // Spec §6.4.
       snapshot?.finalize()
       this.safeCall(() => this.spec.onSettled?.(result, undefined, vars), 'mutation')
-      if (this.isPersistable && mutationId !== undefined) {
-        this.safeEmitSettle({ mutationId, runId, outcome: 'success' })
-      }
+      this.report(runId, vars, 'success', { result })
       return result
     } catch (err) {
-      if (isAbortError(err) || abort.signal.aborted) {
+      // Only this run's own signal makes it a cancellation. An `AbortError`
+      // that `mutate` threw while the signal is live came from the work itself
+      // (a request it aborted on its own), so it is a failure, as a
+      // fetcher-originated abort is for a query.
+      if (abort.signal.aborted || this.cancelledByDispose) {
         snapshot?.rollback()
-        if (this.isPersistable && mutationId !== undefined) {
-          this.safeEmitSettle({ mutationId, runId, outcome: 'cancelled' })
+        // The late-abort branch above already reported this run's one outcome.
+        if (!settledOutcome) {
+          // A non-abort error with the signal aborted means `mutate` REJECTED
+          // and the abort landed in the gap before this continuation:
+          // `raceAbort` rejects with an AbortError when the abort comes first.
+          // The work failed, so plugins hear `'error'` — the twin of the
+          // late-success branch above.
+          if (isAbortError(err)) {
+            // `cancel()` records a reason before every abort. The fallback
+            // covers `cancelledByDispose` alone, which is dispose's doing.
+            this.reportCancel(runId, vars, handle.cancelReason ?? 'dispose')
+          } else this.report(runId, vars, 'error', { error: err })
         }
-        // Reserve `error` signal for genuine failures.
-        throw err
+        // The caller walked away, so its promise reports the abort, as on the
+        // late-success path. `error` / `status` belong to the superseder or to
+        // nobody: reserve the `error` signal for runs someone still awaits.
+        throw isAbortError(err) ? err : new DOMException('Superseded', 'AbortError')
       }
       this.error.set(err)
       this.status.set('error')
@@ -522,33 +678,18 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       // turns the auto-call into a no-op. Spec §6.4.
       snapshot?.rollback()
       this.safeCall(() => this.spec.onSettled?.(undefined, err, vars), 'mutation')
-      if (this.isPersistable && mutationId !== undefined) {
-        this.safeEmitSettle({ mutationId, runId, outcome: 'error', error: err })
-      }
+      this.report(runId, vars, 'error', { error: err })
       throw err
     } finally {
-      this.inflight.delete(handle)
       this.inflightCounter?.update((n) => Math.max(0, n - 1))
-      if (this.inflight.size === 0) {
-        this.isPending.set(false)
-      }
+      this.leave(handle)
     }
   }
 
-  private safeEmitSettle(event: {
-    mutationId: string
-    runId: string
-    outcome: 'success' | 'error' | 'cancelled'
-    error?: unknown
-  }): void {
-    try {
-      this.lifecycle?.emitSettle(event)
-    } catch (err) {
-      dispatchError(this.onError, err, {
-        kind: 'plugin',
-        controllerPath: this.controllerPath,
-      })
-    }
+  /** Drop a run's handle; the last one out clears `isPending`. */
+  private leave(handle: RunHandle): void {
+    this.inflight.delete(handle)
+    if (this.inflight.size === 0) this.isPending.set(false)
   }
 
   // Wrap so any rollback / finalize path runs the raw operation at most
@@ -575,16 +716,33 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     }
   }
 
-  private async runWithRetry(vars: V, signal: AbortSignal): Promise<R> {
+  private async runWithRetry(vars: V, signal: AbortSignal, runId: string): Promise<R> {
     const retry = this.spec.retry ?? 0
     const retryDelay = this.spec.retryDelay ?? 1000
+    const wrap = this.lifecycle?.wrap
     let attempt = 0
     while (true) {
       try {
-        return await this.spec.mutate(vars, signal)
+        const call = (): Promise<R> => this.spec.mutate(vars, { signal, deps: this.deps })
+        if (wrap === undefined) return await call()
+        return (await wrap(
+          {
+            mutation: this.ref,
+            runId,
+            variables: vars,
+            signal,
+            attempt,
+            origin: this.lifecycle?.origin,
+          },
+          call,
+        )) as R
       } catch (err) {
         if (signal.aborted || isAbortError(err)) throw err
-        const shouldRetry = typeof retry === 'number' ? attempt < retry : retry(attempt, err)
+        // `retry: false` means never (SPEC §5.2), so only a function is called.
+        const shouldRetry =
+          typeof retry === 'function'
+            ? retry(attempt, err)
+            : typeof retry === 'number' && attempt < retry
         if (!shouldRetry) throw err
         const delay = typeof retryDelay === 'function' ? retryDelay(attempt) : retryDelay
         await abortableSleep(delay, signal)
@@ -608,16 +766,14 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     // A detached mutation keeps its control surface after dispose: its runs
     // outlive the controller, so `reset()` is the only way left to stop them.
     if (this.cancelledByDispose) return
-    for (const handle of this.inflight) handle.abort.abort()
+    for (const handle of this.inflight) this.cancel(handle, 'reset')
     // Reject queued serial runs so their awaiters don't hang — symmetric with
     // `dispose()`. Without this, callers of `mutation.run(...)` on a serial
     // mutation that get reset mid-queue wait forever.
-    if (this.serialQueue.length > 0) {
-      const aborted = new DOMException('Aborted', 'AbortError')
-      const queue = this.serialQueue
-      this.serialQueue = []
-      for (const queued of queue) queued.reject(aborted)
-    }
+    this.dropSerialQueue(new DOMException('Aborted', 'AbortError'), 'reset')
+    // Retire the queue the aborted run belonged to before unlocking, so its
+    // continuation can't advance or unlock the queue the next `run(...)` opens.
+    this.serialGeneration += 1
     this.serialActive = false
     batch(() => {
       this.data.set(undefined)
@@ -635,11 +791,11 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     // in-flight handles and the serial queue alone — they finish, settle, and
     // fire their callbacks on their own.
     if (this.spec.detached === true) return
-    for (const handle of this.inflight) handle.abort.abort()
-    for (const queued of this.serialQueue) {
-      queued.reject(new DOMException('Disposed', 'AbortError'))
-    }
-    this.serialQueue.length = 0
+    for (const handle of this.inflight) this.cancel(handle, 'dispose')
+    this.dropSerialQueue(new DOMException('Disposed', 'AbortError'), 'dispose')
+    // The aborted runs settle as cancellations and never write `status`; a
+    // disposed mutation is idle, not pending forever.
+    if (this.status.peek() === 'pending') this.status.set('idle')
   }
 }
 
@@ -650,17 +806,17 @@ export function createMutation<V, R>(
   inflightCounter?: { update(fn: (n: number) => number): void },
   devtools?: DevtoolsEmitter,
   lifecycle?: MutationLifecycleHooks,
+  deps?: AmbientDeps,
 ): Mutation<V, R> {
-  // Validate persistable-mutation config at construction time so misconfig
-  // surfaces synchronously rather than on first `run()`.
-  if (spec.persist === true) {
-    if (typeof spec.mutationId !== 'string' || spec.mutationId.length === 0) {
-      throw new Error(
-        '[olas] ctx.mutation({ persist: true, ... }) requires a non-empty `mutationId`.',
-      )
-    }
-  }
-  return new MutationImpl<V, R>(spec, onError, controllerPath, inflightCounter, devtools, lifecycle)
+  return new MutationImpl<V, R>(
+    spec,
+    onError,
+    controllerPath,
+    inflightCounter,
+    devtools,
+    lifecycle,
+    deps,
+  )
 }
 
 /**

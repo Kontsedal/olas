@@ -1,22 +1,21 @@
-import { use, useRoot } from '@kontsedal/olas-react'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 import { ArchiveRestore } from 'lucide-react'
-import type { AppApi } from '../../app.controller'
 import { Button, Skeleton } from '../../ui'
 
 export function ArchiveDrawer() {
-  const app = useRoot<AppApi>()
-  const visible = use(app.preferences.prefs).showArchive
+  const app = useRoot()
+  const visible = useValue(app.preferences.prefs).showArchive
   if (!visible) return null
   return <DrawerBody />
 }
 
 function DrawerBody() {
-  const app = useRoot<AppApi>()
-  const flat = use(app.archive.sub.flat)
-  const isLoading = use(app.archive.sub.isLoading)
-  const hasNext = use(app.archive.sub.hasNextPage)
-  const isFetchingNext = use(app.archive.sub.isFetchingNextPage)
-  const board = use(app.board.board.data)
+  const app = useRoot()
+  const flat = useValue(app.archive.sub.flat)
+  const isLoading = useValue(app.archive.sub.isLoading)
+  const hasNext = useValue(app.archive.sub.hasNextPage)
+  const isFetchingNext = useValue(app.archive.sub.isFetchingNextPage)
+  const board = useValue(app.board.board.data)
   const restoreInto = board?.columns[0]?.id ?? ''
 
   return (

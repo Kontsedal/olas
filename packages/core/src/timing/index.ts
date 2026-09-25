@@ -1,2 +1,2 @@
-export { debounced, type TimingSignal } from './debounced'
+export { debounced, type TimingOptions, type TimingSignal } from './debounced'
 export { throttled } from './throttled'

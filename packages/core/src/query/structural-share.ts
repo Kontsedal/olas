@@ -16,6 +16,10 @@
  *
  * Handles cycles via a `WeakSet` of in-progress objects — a self-referential
  * payload that compares structurally identical against itself won't loop.
+ *
+ * A rebuilt object keeps the prototype both sides shared (`Object.prototype` or
+ * `null`), and an own `__proto__` property stays an own property rather than
+ * becoming the result's prototype — see `defineOwn`.
  */
 export function structuralShare<T>(prev: T, next: T): T {
   // Identity short-circuit — both branches see the exact same allocation.
@@ -47,7 +51,31 @@ function walk(prev: unknown, next: unknown, seen: WeakSet<object>): unknown {
   if (prevProto !== Object.getPrototypeOf(next)) return next
   if (prevProto !== Object.prototype && prevProto !== null) return next
 
-  return walkPlainObject(prev as Record<string, unknown>, next as Record<string, unknown>, seen)
+  return walkPlainObject(
+    prev as Record<string, unknown>,
+    next as Record<string, unknown>,
+    seen,
+    prevProto,
+  )
+}
+
+/**
+ * Give `out` an own property, whatever the key is called.
+ *
+ * `out[key] = value` is wrong for exactly one key. On an object inheriting from
+ * `Object.prototype`, assigning `__proto__` hits that prototype's accessor: it
+ * REPLACES the object's prototype and creates no property at all. So a payload
+ * carrying an own `__proto__` — `JSON.parse('{"__proto__":{…}}')` is the one
+ * thing in a fetcher's path that produces one — came back with the key missing
+ * and its prototype swapped for the value. `defineProperty` writes the own,
+ * enumerable, writable property that every other key gets by assignment.
+ */
+function defineOwn(out: Record<string, unknown>, key: string, value: unknown): void {
+  if (key === '__proto__') {
+    Object.defineProperty(out, key, { value, writable: true, enumerable: true, configurable: true })
+    return
+  }
+  out[key] = value
 }
 
 function walkArray(
@@ -84,6 +112,7 @@ function walkPlainObject(
   prev: Record<string, unknown>,
   next: Record<string, unknown>,
   seen: WeakSet<object>,
+  proto: object | null,
 ): Record<string, unknown> {
   const prevKeys = Object.keys(prev)
   const nextKeys = Object.keys(next)
@@ -92,15 +121,23 @@ function walkPlainObject(
   seen.add(prev)
   seen.add(next)
   try {
-    const out: Record<string, unknown> = {}
+    // Both sides share this prototype (`walk` checked), and it is either
+    // `Object.prototype` or `null` — a rebuilt result keeps it rather than
+    // handing a `Object.create(null)` payload back with `Object.prototype`.
+    const out: Record<string, unknown> = proto === null ? Object.create(null) : {}
     // Iterate `next`'s keys in order so the output preserves payload's
     // key ordering (matters for downstream `JSON.stringify` callers and
     // for predictable React reconciliation when an object is rendered).
     for (const key of nextKeys) {
-      const shared = walk(prev[key], next[key], seen)
-      out[key] = shared
-      if (shared !== prev[key]) changed = true
-      else if (!(key in prev)) changed = true
+      // Own-property reads, not `prev[key]` / `key in prev`: for `__proto__`
+      // (and for `toString` and the rest of `Object.prototype`) those answer
+      // about the prototype chain, and a key prev only INHERITS is a key prev
+      // does not have.
+      const prevHas = Object.hasOwn(prev, key)
+      const prevValue = prevHas ? prev[key] : undefined
+      const shared = walk(prevValue, next[key], seen)
+      defineOwn(out, key, shared)
+      if (!prevHas || shared !== prevValue) changed = true
     }
     // Keys present in `prev` but not in `next` are dropped — that's already
     // expressed by `next.keys`. But the length-mismatch flag above catches

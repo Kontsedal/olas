@@ -1,32 +1,14 @@
 import type { DevtoolsEmitter } from '../devtools'
 import { createEmitter, type Emitter } from '../emitter'
 import { dispatchError, type ErrorHandler } from '../errors'
-import { bindFieldDevtoolsOwner, createField } from '../forms/field'
-import {
-  bindTreeToDevtools,
-  bindTreeValidatorErrorReporter,
-  createFieldArray,
-  createForm,
-} from '../forms/form'
-import type {
-  FieldArray,
-  FieldArrayOptions,
-  Form,
-  FormOptions,
-  FormSchema,
-  ItemInitial,
-} from '../forms/form-types'
-import type { Validator } from '../forms/types'
 import type { QueryClient } from '../query/client'
-import type { InfiniteQuery } from '../query/infinite'
-import { createLocalCache, type LocalCacheOptions } from '../query/local'
-import { createMutation, type Mutation, type MutationSpec } from '../query/mutation'
-import type { LocalCache, Query } from '../query/types'
-import { createInfiniteUse, createUse } from '../query/use'
+import { missingQueryEngine } from '../query/missing-engine'
+import type { QueryDefaults } from '../query/types'
 import type { Scope } from '../scope'
 import { computed, signal, effect as standaloneEffect, untracked } from '../signals'
 import { readOnly } from '../signals/readonly'
 import { getFactory, getName } from './define'
+import { CTX_INTERNALS, type CtxInternals, type LocalWork } from './internals'
 import type {
   Collection,
   CollectionFactoryApi,
@@ -35,14 +17,29 @@ import type {
   CollectionHomogeneousOptions,
   ControllerDef,
   Ctx,
-  Field,
   LazyChild,
 } from './types'
 
 export type RootShared = {
   readonly devtools: DevtoolsEmitter
   readonly onError: ErrorHandler | undefined
-  readonly queryClient: QueryClient
+  /**
+   * `null` when the root was built without `queries: queryEngine()`. Every
+   * read goes through `requireClient`, which names the fix.
+   */
+  readonly queryClient: QueryClient | null
+  /**
+   * Root-wide query defaults, held here rather than read off the client.
+   * `createCache` is a controller-local cache that still honours them (§5.9),
+   * and it must not drag the whole query engine into the bundle to read two
+   * fields.
+   */
+  readonly queryDefaults: QueryDefaults
+  /**
+   * The root's live `createCache` local caches. They are not query-client
+   * entries, so `root.waitForIdle()` reads their `isFetching` from here.
+   */
+  readonly localCaches: Set<LocalWork>
   /**
    * Monotonic counter bumped by every `ctx.provide(...)` call inside this
    * root's tree. `ctx.inject(...)` caches its scope-walk result alongside
@@ -53,16 +50,18 @@ export type RootShared = {
   readonly scopesVersion: { value: number }
 }
 
+type EffectEntry = {
+  kind: 'effect'
+  factory: () => void | (() => void)
+  dispose: (() => void) | null
+}
+
 type LifecycleEntry =
-  | {
-      kind: 'effect'
-      factory: () => void | (() => void)
-      dispose: (() => void) | null
-    }
+  | EffectEntry
   | { kind: 'cleanup'; dispose: () => void }
   | {
       /**
-       * Cache subscription via `ctx.use`. Suspend/resume call the
+       * Cache subscription via `createQuery`. Suspend/resume call the
        * `suspend`/`resume` hooks so the underlying entry's `refetchInterval`
        * and event listeners pause for the duration. Spec §4.1.
        */
@@ -104,25 +103,19 @@ type LifecycleNode = {
  *
  * Iteration order is insertion order for `forward()` and reverse-insertion
  * for `reverse()`. Iteration is safe against `push` during traversal (the
- * generator captures `next`/`prev` *before* yielding) but not against
- * unlinking the current node from inside the visitor — visitors must not
- * call `unlink` on the entry they're currently inspecting.
+ * generator captures `next`/`prev` *before* yielding) and against `unlink`
+ * from inside the visitor: an unlinked node keeps its own `prev`/`next`, so a
+ * walk that reaches one steps past it without yielding it. A field's
+ * `dispose` unlinks its own entry that way while the controller disposes.
  */
 class LifecycleList {
   private head: LifecycleNode | null = null
   private tail: LifecycleNode | null = null
-  private _size = 0
-
-  get size(): number {
-    return this._size
-  }
-
   push(entry: LifecycleEntry): LifecycleNode {
     const node: LifecycleNode = { entry, prev: this.tail, next: null, unlinked: false }
     if (this.tail !== null) this.tail.next = node
     else this.head = node
     this.tail = node
-    this._size += 1
     return node
   }
 
@@ -133,13 +126,11 @@ class LifecycleList {
     else this.head = node.next
     if (node.next !== null) node.next.prev = node.prev
     else this.tail = node.prev
-    this._size -= 1
   }
 
   clear(): void {
     this.head = null
     this.tail = null
-    this._size = 0
   }
 
   /** Yield entries in insertion order. */
@@ -147,7 +138,7 @@ class LifecycleList {
     let n = this.head
     while (n !== null) {
       const next = n.next
-      yield n.entry
+      if (!n.unlinked) yield n.entry
       n = next
     }
   }
@@ -157,7 +148,7 @@ class LifecycleList {
     let n = this.tail
     while (n !== null) {
       const prev = n.prev
-      yield n.entry
+      if (!n.unlinked) yield n.entry
       n = prev
     }
   }
@@ -172,35 +163,72 @@ export class ControllerInstance {
   private readonly rootShared: RootShared
   private readonly parent: ControllerInstance | null
   private childCounter = 0
-  /** Scope values provided on this instance, keyed by `Scope.__id`. */
-  private scopes: Map<symbol, unknown> | null = null
+  /** Scope values provided on this instance, keyed by the scope object. */
+  private scopes: Map<Scope<unknown>, unknown> | null = null
   /**
    * Memoized result of `ctx.inject(scope)` per scope id, stamped with the
    * `scopesVersion` the lookup observed. A bump invalidates every cache
    * entry implicitly — the next `inject(scope)` finds a stale version
    * stamp and re-walks. Provide is rare; reads dominate.
    */
-  private injectCache: Map<symbol, { value: unknown; version: number }> | null = null
+  private injectCache: Map<Scope<unknown>, { value: unknown; version: number }> | null = null
   /**
    * Values registered via `ctx.debug({...})` for the devtools "Variables"
    * view. Live references (signals stay reactive in the panel). Merged across
    * calls. Only ever populated under `__DEV__` — `ctx.debug` no-ops otherwise.
    */
   private debugValues: Record<string, unknown> | undefined = undefined
+  /**
+   * Set when `ctx.debug({...})` ran while this controller was suspended. The
+   * suspended call stores the values but emits nothing, so `resume()` sends
+   * the merged record then and the panel does not keep the old values.
+   */
+  private debugPendingEmit = false
 
   /**
    * Pre-seed scopes from outside the factory — used by `createRoot`'s
-   * `scopes:` option so an adapter (e.g. `@kontsedal/olas-router-tanstack`)
-   * can publish cross-cutting values without forcing the user to call
-   * `ctx.provide(...)` in their root controller. Idempotent per scope id:
+   * `scopes:` option so an adapter (the router bridge, for one) can publish
+   * cross-cutting values without forcing the user to call
+   * `ctx.provide(...)` in their root controller. Idempotent per scope:
    * later calls override.
    */
-  seedScopes(bindings: ReadonlyArray<readonly [{ __id: symbol }, unknown]>): void {
+  seedScopes(bindings: ReadonlyArray<readonly [Scope<unknown>, unknown]>): void {
     if (bindings.length === 0) return
     if (this.scopes === null) this.scopes = new Map()
-    for (const [scope, value] of bindings) {
-      this.scopes.set(scope.__id, value)
+    for (const [scope, value] of bindings) this.scopes.set(scope, value)
+  }
+
+  /**
+   * Resolve a scope from this instance up through its ancestors, falling back
+   * to the scope's default. Backs both `ctx.inject` and `root.inject`.
+   * Memoized per scope, invalidated tree-wide by any `provide`.
+   */
+  resolveScope<T>(scope: Scope<T>, caller: string): T {
+    const version = this.rootShared.scopesVersion.value
+    const cached = this.injectCache?.get(scope)
+    if (cached !== undefined && cached.version === version) return cached.value as T
+    const remember = (value: unknown): void => {
+      if (this.injectCache === null) this.injectCache = new Map()
+      this.injectCache.set(scope, { value, version })
     }
+    let node: ControllerInstance | null = this
+    while (node !== null) {
+      const map = node.scopes
+      if (map?.has(scope)) {
+        const value = map.get(scope) as T
+        remember(value)
+        return value
+      }
+      node = node.parent
+    }
+    if (scope.hasDefault) {
+      remember(scope.default)
+      return scope.default as T
+    }
+    const label = scope.name ?? 'unnamed'
+    throw new Error(
+      `[olas] ${caller}(): no provider for scope '${label}' and no default. Provide it on an ancestor via ctx.provide(${label}, ...) or pass a default to defineScope.`,
+    )
   }
 
   constructor(
@@ -218,13 +246,20 @@ export class ControllerInstance {
   /**
    * Run the factory and produce an api. On throw, the partially-constructed
    * state is rolled back (entries disposed in reverse) and the error is rethrown.
+   * `beforeRollback` runs first: `createRoot` closes plugin delivery there, so
+   * a failed bootstrap tears down in the order `root.dispose()` uses.
    */
-  construct<Props, Api>(factory: (ctx: Ctx, props: Props) => Api, props: Props): Api {
+  construct<Props, Api>(
+    factory: (ctx: Ctx, props: Props) => Api,
+    props: Props,
+    beforeRollback?: () => void,
+  ): Api {
     const ctx = this.buildCtx()
     let api: Api
     try {
       api = factory(ctx, props)
     } catch (err) {
+      beforeRollback?.()
       this.rollbackPartialConstruction()
       throw err
     }
@@ -317,11 +352,59 @@ export class ControllerInstance {
     return this.state === 'suspended'
   }
 
+  /**
+   * Run `entry`'s effect and keep its disposer. The run can dispose or suspend
+   * this controller: a `ctx.effect` first run, a collection's first reconcile,
+   * or any re-run on resume. That pass found no disposer on the entry and
+   * skipped it, so a run that ends the active state stops the effect here. A
+   * suspended controller re-runs it on its next resume. A nested
+   * suspend-and-resume inside the run may have restarted the entry already,
+   * and that copy stays.
+   */
+  private startEffect(entry: EffectEntry): void {
+    const dispose = standaloneEffect(entry.factory)
+    if (this.isTerminal() || this.isSuspended() || entry.dispose !== null) dispose()
+    else entry.dispose = dispose
+  }
+
+  /**
+   * Run a new child's factory, then settle the child against this parent's
+   * state now. The factory runs untracked, so a child built inside an effect
+   * does not make that effect depend on what the factory reads; `collection`
+   * does the same (T2.3). A factory throw propagates after the child's own
+   * rollback.
+   *
+   * `live: false` means this parent was disposed while the child constructed,
+   * for one because the child's factory disposed the root. The child is
+   * disposed then, and the caller must not register it: in the parent's
+   * cleared list its `onDispose` hooks would never run. A parent suspended by
+   * then gets the child suspended once its factory returns. By then the
+   * child's effects have run once and its queries may have started fetching
+   * (§4.1); from then on it stays still until the parent's next resume wakes
+   * it.
+   */
+  private constructChild<Props, Api>(
+    child: ControllerInstance,
+    factory: (ctx: Ctx, props: Props) => Api,
+    props: Props,
+  ): { api: Api; live: boolean } {
+    const api = untracked(() => child.construct(factory, props))
+    if (this.isTerminal()) {
+      child.dispose()
+      return { api, live: false }
+    }
+    if (this.isSuspended()) child.suspend()
+    return { api, live: true }
+  }
+
   suspend(): void {
     if (this.state !== 'active') return
     this.state = 'suspended'
 
     for (const entry of this.entries.reverse()) {
+      // An `onSuspend` handler that disposed or resumed the controller owns
+      // what happens next; the rest of this pass would act on a stale state.
+      if (this.state !== 'suspended') break
       try {
         switch (entry.kind) {
           case 'effect':
@@ -350,7 +433,7 @@ export class ControllerInstance {
       }
     }
 
-    if (__DEV__) {
+    if (__DEV__ && this.state === 'suspended') {
       this.rootShared.devtools.emit({ type: 'controller:suspended', path: this.path })
     }
   }
@@ -360,6 +443,10 @@ export class ControllerInstance {
     this.state = 'active'
 
     for (const entry of this.entries.forward()) {
+      // An `onResume` handler that disposed or re-suspended the controller
+      // owns what happens next. Carrying on would switch effects and
+      // subscriptions back on for a controller that is no longer active.
+      if (this.state !== 'active') break
       try {
         switch (entry.kind) {
           case 'effect':
@@ -371,9 +458,7 @@ export class ControllerInstance {
             // would run twice per change and one copy would survive dispose().
             // Only re-activate effects that `suspend()` cleared (dispose null).
             // (T2.2)
-            if (entry.dispose === null) {
-              entry.dispose = standaloneEffect(entry.factory)
-            }
+            if (entry.dispose === null) this.startEffect(entry)
             break
           case 'subscription-cache':
             // Re-acquire the entry, restart `refetchInterval`, and re-check
@@ -382,7 +467,7 @@ export class ControllerInstance {
             break
           case 'child':
             // Skip children explicitly suspended via attach.suspend() or
-            // collection suspendItem() — a whole-tree resume (KeepAlive) must
+            // collection suspendItem() — a whole-tree resume (SuspendOnUnmount) must
             // not wake them. They resume only via their own attach.resume() /
             // resumeItem(). (T2.6)
             if (entry.explicitlySuspended) break
@@ -402,8 +487,19 @@ export class ControllerInstance {
       }
     }
 
-    if (__DEV__) {
+    if (__DEV__ && this.state === 'active') {
       this.rootShared.devtools.emit({ type: 'controller:resumed', path: this.path })
+      // A `ctx.debug` call made while suspended stored its values without an
+      // event. Send the merged record now, after `controller:resumed`.
+      if (this.debugPendingEmit) {
+        this.debugPendingEmit = false
+        this.rootShared.devtools.emit({
+          type: 'controller:debug',
+          path: this.path,
+          // Set: only a `ctx.debug` call raises the flag, and it stores first.
+          values: this.debugValues as Record<string, unknown>,
+        })
+      }
     }
   }
 
@@ -419,17 +515,54 @@ export class ControllerInstance {
     // condition. (T2.4, spec §4)
     const assertLive = (method: string): void => {
       if (self.isTerminal()) {
-        throw new Error(`[olas] ctx.${method}() called after the controller was disposed`)
+        throw new Error(`[olas] ${method}() called after the controller was disposed`)
       }
     }
+    const requireClient = (operation: string): QueryClient => {
+      const client = self.rootShared.queryClient
+      if (client === null) throw missingQueryEngine(operation)
+      return client
+    }
+    const internals: CtxInternals = {
+      assertLive,
+      register: (entry) => {
+        const node = self.entries.push(entry as LifecycleEntry)
+        return () => self.entries.unlink(node)
+      },
+      requireClient,
+      trackLocalCache: (cache) => {
+        const caches = self.rootShared.localCaches
+        caches.add(cache)
+        return () => {
+          caches.delete(cache)
+        }
+      },
+      get queryDefaults() {
+        return self.rootShared.queryDefaults as CtxInternals['queryDefaults']
+      },
+      get path() {
+        return self.path
+      },
+      report: (err, kind) => {
+        dispatchError(self.rootShared.onError, err, { kind, controllerPath: self.path })
+      },
+      get onError() {
+        return self.rootShared.onError
+      },
+      get devtools() {
+        return self.rootShared.devtools
+      },
+    }
     const ctx: Ctx = {
+      [CTX_INTERNALS]: internals,
+
       get deps() {
         return self.deps
       },
 
       effect(fn) {
         assertLive('effect')
-        const entry: LifecycleEntry = {
+        const entry: EffectEntry = {
           kind: 'effect',
           factory: () => fn(),
           dispose: null,
@@ -465,11 +598,10 @@ export class ControllerInstance {
         entry.factory = wrapped
         // If we're suspended, register the entry but defer activation to
         // `resume()` — otherwise the resume loop would overwrite a live
-        // `dispose` ref (the just-activated effect), leaking it.
-        if (self.state !== 'suspended') {
-          entry.dispose = standaloneEffect(wrapped)
-        }
-        self.entries.push(entry)
+        // `dispose` ref (the just-activated effect), leaking it. The first run
+        // can end this controller; `startEffect` settles that.
+        if (self.state !== 'suspended') self.startEffect(entry)
+        if (!self.isTerminal()) self.entries.push(entry)
       },
 
       debug(values) {
@@ -481,88 +613,17 @@ export class ControllerInstance {
           self.debugValues === undefined ? { ...values } : { ...self.debugValues, ...values }
         // During construction the merged record rides out on
         // `controller:constructed` (see `construct`). A call AFTER construction
-        // (e.g. from inside an effect) pushes an update event instead.
+        // (e.g. from inside an effect) pushes an update event instead. A call
+        // while suspended waits for `resume()`, which sends the merged record.
         if (self.state === 'active') {
           self.rootShared.devtools.emit({
             type: 'controller:debug',
             path: self.path,
             values: self.debugValues,
           })
+        } else if (self.state === 'suspended') {
+          self.debugPendingEmit = true
         }
-      },
-
-      cache<T>(
-        fetcher: (signal: AbortSignal) => Promise<T>,
-        options?: LocalCacheOptions<T>,
-      ): LocalCache<T> {
-        assertLive('cache')
-        // Root-wide defaults apply to `ctx.cache` too — a root that declares
-        // `staleTime: 5min` shouldn't have controller-local caches silently
-        // fall back to 0. Only the fields `LocalCacheOptions` actually carries
-        // are merged; `retry`/`gcTime`/`networkMode` aren't part of its
-        // surface, so there is nothing to default them into.
-        const rootDefaults = self.rootShared.queryClient.defaults
-        const cache = createLocalCache<T>(fetcher, {
-          ...options,
-          staleTime: options?.staleTime ?? rootDefaults.staleTime,
-          keepPreviousData: options?.keepPreviousData ?? rootDefaults.keepPreviousData,
-        })
-        self.entries.push({ kind: 'cleanup', dispose: () => cache.dispose() })
-        return cache
-      },
-
-      use(query: any, keyOrOptions?: any): any {
-        assertLive('use')
-        const brand = (query as { __olas?: string }).__olas
-        if (brand === 'infiniteQuery') {
-          const handle = createInfiniteUse(
-            self.rootShared.queryClient,
-            query as InfiniteQuery<unknown[], unknown, unknown>,
-            keyOrOptions,
-          )
-          self.entries.push({
-            kind: 'subscription-cache',
-            dispose: handle.dispose,
-            suspend: handle.suspend,
-            resume: handle.resume,
-          })
-          return handle.subscription
-        }
-        const handle = createUse(
-          self.rootShared.queryClient,
-          query as Query<unknown[], unknown>,
-          keyOrOptions,
-        )
-        self.entries.push({
-          kind: 'subscription-cache',
-          dispose: handle.dispose,
-          suspend: handle.suspend,
-          resume: handle.resume,
-        })
-        return handle.subscription
-      },
-
-      mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R> {
-        assertLive('mutation')
-        const queryClient = self.rootShared.queryClient
-        const m = createMutation<V, R>(
-          spec,
-          self.rootShared.onError,
-          self.path,
-          queryClient.mutationsInflight$,
-          self.rootShared.devtools,
-          // Lifecycle hooks for persistable mutations — only wired when
-          // `spec.persist === true`. `createMutation` validates the
-          // `mutationId` requirement before construction.
-          spec.persist === true
-            ? {
-                emitEnqueue: (ev) => queryClient.emitMutationEnqueue(ev),
-                emitSettle: (ev) => queryClient.emitMutationSettle(ev),
-              }
-            : undefined,
-        )
-        self.entries.push({ kind: 'cleanup', dispose: () => m.dispose() })
-        return m
       },
 
       emitter<T>(): Emitter<T> {
@@ -578,101 +639,20 @@ export class ControllerInstance {
             })
           },
         })
-        self.entries.push({ kind: 'cleanup', dispose: () => e.dispose() })
+        const node = self.entries.push({ kind: 'cleanup', dispose: () => e.dispose() })
+        // An emitter disposed early drops its entry, so a controller that
+        // makes and drops emitters for its whole life does not grow (§3.4).
+        const disposeEmitter = e.dispose
+        e.dispose = () => {
+          self.entries.unlink(node)
+          disposeEmitter()
+        }
         return e
-      },
-
-      signal,
-      computed,
-
-      field<T>(
-        initial: T,
-        validators?: ReadonlyArray<Validator<T>>,
-        options?: { validateOn?: 'change' | 'blur' | 'submit' },
-      ): Field<T> {
-        assertLive('field')
-        // Pass the reporter at construct time so the FIRST validator pass
-        // (which runs synchronously in the FieldImpl constructor's
-        // validator-effect) is covered.
-        const f = createField(initial, validators, {
-          onValidatorError: (err) => {
-            dispatchError(self.rootShared.onError, err, {
-              kind: 'effect',
-              controllerPath: self.path,
-            })
-          },
-          validateOn: options?.validateOn,
-        })
-        self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
-        // Standalone fields (not inside a form) still publish field:validated
-        // events. Use the controller path with field name "(field)" — the
-        // devtools panel groups by path so this is fine.
-        bindFieldDevtoolsOwner(f, {
-          controllerPath: self.path,
-          fieldName: '(field)',
-          emitter: self.rootShared.devtools,
-        })
-        return f
-      },
-
-      form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S> {
-        assertLive('form')
-        const reporter = (err: unknown): void => {
-          dispatchError(self.rootShared.onError, err, {
-            kind: 'effect',
-            controllerPath: self.path,
-          })
-        }
-        const f = createForm(schema, options, { onValidatorError: reporter })
-        self.entries.push({ kind: 'cleanup', dispose: () => f.dispose() })
-        // Make every leaf field publish `field:validated` to the devtools bus
-        // with its key path inside the form. See spec §20.9.
-        const stop = bindTreeToDevtools(
-          f as unknown as Form<FormSchema>,
-          '',
-          self.path,
-          self.rootShared.devtools,
-        )
-        self.entries.push({ kind: 'cleanup', dispose: stop })
-        // Bind the reporter onto every leaf in the tree too (the form itself
-        // got it via the constructor option; nested forms/arrays inside the
-        // schema didn't, since they were constructed by the caller before
-        // ctx.form ran). Idempotent — leaves that already got the reporter
-        // via ctx.field get the same one set again.
-        bindTreeValidatorErrorReporter(f as unknown as Form<FormSchema>, reporter)
-        return f
-      },
-
-      fieldArray<I extends Field<any> | Form<any>>(
-        itemFactory: (initial?: ItemInitial<I>) => I,
-        options?: FieldArrayOptions<I>,
-      ): FieldArray<I> {
-        assertLive('fieldArray')
-        const reporter = (err: unknown): void => {
-          dispatchError(self.rootShared.onError, err, {
-            kind: 'effect',
-            controllerPath: self.path,
-          })
-        }
-        const fa = createFieldArray<I>(itemFactory, options, { onValidatorError: reporter })
-        self.entries.push({ kind: 'cleanup', dispose: () => fa.dispose() })
-        const stop = bindTreeToDevtools(
-          fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
-          '',
-          self.path,
-          self.rootShared.devtools,
-        )
-        self.entries.push({ kind: 'cleanup', dispose: stop })
-        bindTreeValidatorErrorReporter(
-          fa as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
-          reporter,
-        )
-        return fa
       },
 
       provide<T>(scope: Scope<T>, value: T): void {
         if (self.scopes === null) self.scopes = new Map()
-        self.scopes.set(scope.__id, value)
+        self.scopes.set(scope, value)
         // Invalidate every cached inject lookup tree-wide. A descendant
         // that resolved this scope from a higher ancestor (or from a
         // default) would now resolve to the new value, but its cache
@@ -682,36 +662,7 @@ export class ControllerInstance {
       },
 
       inject<T>(scope: Scope<T>): T {
-        const version = self.rootShared.scopesVersion.value
-        const cache = self.injectCache
-        if (cache !== null) {
-          const cached = cache.get(scope.__id)
-          if (cached !== undefined && cached.version === version) {
-            return cached.value as T
-          }
-        }
-        const ensureMemo = (): Map<symbol, { value: unknown; version: number }> => {
-          if (self.injectCache === null) self.injectCache = new Map()
-          return self.injectCache
-        }
-        let node: ControllerInstance | null = self
-        while (node !== null) {
-          const map = node.scopes
-          if (map?.has(scope.__id)) {
-            const value = map.get(scope.__id) as T
-            ensureMemo().set(scope.__id, { value, version })
-            return value
-          }
-          node = node.parent
-        }
-        if (scope.hasDefault) {
-          ensureMemo().set(scope.__id, { value: scope.default, version })
-          return scope.default as T
-        }
-        const label = scope.name ?? scope.__id.description ?? 'unnamed'
-        throw new Error(
-          `[olas] ctx.inject(): no provider for scope '${label}' and no default. Provide it on an ancestor via ctx.provide(${label}, ...) or pass a default to defineScope.`,
-        )
+        return self.resolveScope(scope, 'ctx.inject')
       },
 
       on<T>(emitter: Emitter<T>, handler: (value: T) => void): void {
@@ -742,8 +693,8 @@ export class ControllerInstance {
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
         // child.construct() rolls back its own partial state on throw; we let
         // the throw propagate so the parent's rollback handles cleanup.
-        const api = childInstance.construct(getFactory(def), props)
-        self.entries.push({ kind: 'child', instance: childInstance })
+        const { api, live } = self.constructChild(childInstance, getFactory(def), props)
+        if (live) self.entries.push({ kind: 'child', instance: childInstance })
         return api
       },
 
@@ -757,20 +708,24 @@ export class ControllerInstance {
         const override = options?.deps
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
-        const api = childInstance.construct(getFactory(def), props)
+        const { api, live } = self.constructChild(childInstance, getFactory(def), props)
+        // A child that starts suspended under a suspended parent is not
+        // explicitly suspended: the parent's next resume wakes it.
         const entry = {
           kind: 'child' as const,
           instance: childInstance,
           explicitlySuspended: false,
         }
-        const node = self.entries.push(entry)
-        let disposed = false
+        const node = live ? self.entries.push(entry) : null
+        // A child the dead parent could not adopt is already disposed, so the
+        // handle starts out as a disposed one.
+        let disposed = !live
         return {
           api,
           dispose: () => {
             if (disposed) return
             disposed = true
-            self.entries.unlink(node)
+            if (node !== null) self.entries.unlink(node)
             try {
               childInstance.dispose()
             } catch (err) {
@@ -817,36 +772,6 @@ export class ControllerInstance {
         }
       },
 
-      session<Props, Api>(
-        def: ControllerDef<Props, Api>,
-        props: Props,
-        options?: { deps?: Partial<Record<string, unknown>> },
-      ): readonly [Api, () => void] {
-        assertLive('session')
-        const segment = self.makeChildSegment(getFactory(def), getName(def))
-        const override = options?.deps
-        const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
-        const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
-        const api = childInstance.construct(getFactory(def), props)
-        const entry: LifecycleEntry = { kind: 'child', instance: childInstance }
-        const node = self.entries.push(entry)
-        let disposed = false
-        const dispose = (): void => {
-          if (disposed) return
-          disposed = true
-          self.entries.unlink(node)
-          try {
-            childInstance.dispose()
-          } catch (err) {
-            dispatchError(self.rootShared.onError, err, {
-              kind: 'effect',
-              controllerPath: self.path,
-            })
-          }
-        }
-        return [api, dispose] as const
-      },
-
       collection<Item, K, Props, Api, R extends CollectionFactoryResult>(
         options:
           | CollectionHomogeneousOptions<Item, K, Props, Api>
@@ -887,16 +812,19 @@ export class ControllerInstance {
             def = homoOpts.controller as unknown as ControllerDef<unknown, unknown>
             childProps = homoOpts.propsOf(item)
           }
+          // An earlier item's factory can dispose the owner mid-reconcile.
+          if (self.isTerminal()) return null
           const segment = self.makeChildSegment(getFactory(def), getName(def))
           const childDeps =
             options.deps !== undefined ? { ...self.deps, ...options.deps } : self.deps
           const instance = new ControllerInstance(self, self.rootShared, segment, childDeps)
           try {
-            const api = instance.construct(
+            const { api, live } = self.constructChild(
+              instance,
               getFactory(def) as (ctx: Ctx, props: unknown) => Api,
               childProps,
             )
-            return { instance, api, def }
+            return live ? { instance, api, def } : null
           } catch (err) {
             // SPEC §12.1.6: runtime construction errors in collection items
             // route to onError; the bad item is skipped.
@@ -1007,15 +935,15 @@ export class ControllerInstance {
             })
           }
         }
-        const effectEntry: LifecycleEntry = {
+        const effectEntry: EffectEntry = {
           kind: 'effect',
           factory: wrapped,
           dispose: null,
         }
-        if (self.state !== 'suspended') {
-          effectEntry.dispose = standaloneEffect(wrapped)
-        }
-        self.entries.push(effectEntry)
+        // The first reconcile can end the owner, as a `ctx.effect`'s first run
+        // can; `startEffect` settles it the same way.
+        if (self.state !== 'suspended') self.startEffect(effectEntry)
+        if (!self.isTerminal()) self.entries.push(effectEntry)
 
         return {
           // readOnly so the writable backing signals can't be mutated through
@@ -1101,17 +1029,25 @@ export class ControllerInstance {
               const childDeps =
                 options?.deps !== undefined ? { ...self.deps, ...options.deps } : self.deps
               const instance = new ControllerInstance(self, self.rootShared, segment, childDeps)
+              let built: { api: Api; live: boolean }
               try {
-                const api = instance.construct(getFactory(def), props)
-                childInstance = instance
-                childNode = self.entries.push({ kind: 'child', instance })
-                api$.set(api)
-                status$.set('ready')
-                return api
+                built = self.constructChild(instance, getFactory(def), props)
               } catch (err) {
                 handleFailure(err)
                 throw err
               }
+              // The parent, or this handle, can be disposed while the child
+              // constructs. `constructChild` already disposed a child the dead
+              // parent could not adopt.
+              if (!built.live || disposed) {
+                if (built.live) instance.dispose()
+                throw new Error('[olas] ctx.lazyChild: disposed during load')
+              }
+              childInstance = instance
+              childNode = self.entries.push({ kind: 'child', instance })
+              api$.set(built.api)
+              status$.set('ready')
+              return built.api
             },
             (err) => {
               if (disposed) throw err

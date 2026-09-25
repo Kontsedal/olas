@@ -3,22 +3,29 @@
  * selected.
  *
  * Library primitives demonstrated:
- *  - `formFromZod` + `FieldArray` for subtasks (already covered elsewhere,
+ *  - `createZodForm` + `FieldArray` for subtasks (already covered elsewhere,
  *    here we exercise async validators on a leaf field).
  *  - `debouncedValidator` — async "is this title already used?" check.
- *  - The controller exposes its own `suspend` / `resume` so a `<KeepAlive>`
- *    wrapper can freeze it when the panel unmounts (the form keeps its
- *    state; only effects pause).
+ *  - The controller exposes its own `suspend` / `resume`, the shape a
+ *    `<SuspendOnUnmount>` wrapper calls when the panel's details unmount and
+ *    mount again. They flip `isPaused`, and the panel head renders it. This
+ *    controller is a `ctx.child`, so it lives as long as the app and its form
+ *    keeps an unsaved draft across a collapse. A controller made with
+ *    `ctx.attach` would hand the wrapper a `suspend` that pauses its effects
+ *    and cache subscriptions too.
  */
 
 import {
+  bindQuery,
   type Ctx,
   computed,
+  createMutation,
+  createQuery,
   debouncedValidator,
   defineController,
   signal,
 } from '@kontsedal/olas-core'
-import { formFromZod } from '@kontsedal/olas-zod'
+import { createZodForm } from '@kontsedal/olas-zod'
 import type { Card, SaveCardInput } from '../../api'
 import { type CardFormValue, cardFormSchema } from '../../api'
 import {
@@ -44,16 +51,19 @@ const blankInitials: CardFormValue = {
 
 export const cardDetailController = defineController(
   (ctx: Ctx) => {
+    const boardQueryActions = bindQuery(ctx, boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const { selectedCardId, close } = ctx.inject(selectedCardScope)
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
 
+    // True between a `suspend()` and the next `resume()`. The panel head's
+    // state tag reads it, so the wrapper's effect is visible.
     const isPaused = signal(false)
 
     // Subscribe to the active board so we can pull the selected card's
     // current data from the cache reactively.
-    const board = ctx.use(boardQuery, () => [activeBoardId.value])
+    const board = createQuery(ctx, boardQuery, () => [activeBoardId.value])
 
     /** The card currently being edited — `null` when the panel is closed. */
     const card = computed<Card | null>(() => {
@@ -63,20 +73,8 @@ export const cardDetailController = defineController(
       return data?.cards[id] ?? null
     })
 
-    /**
-     * Build a single form upfront — its initial values reflect whatever
-     * card is selected at construction (or blank). On every selection
-     * change we re-anchor via `setAsInitial`, which doesn't dirty the form.
-     */
-    const form = formFromZod(ctx, cardFormSchema, { initials: blankInitials })
-
-    // Attach the async unique-title validator to the title field. Imperatively
-    // pushing into the existing validator list isn't supported; instead we
-    // wire a manual effect that re-runs the check.
-    //
-    // The simpler `debouncedValidator` approach is to declare it at form
-    // construction. Since `formFromZod` doesn't accept extra leaf validators
-    // today, we hand-roll one here that mirrors `debouncedValidator`'s shape.
+    // The async unique-title check. `debouncedValidator` waits 400 ms after the
+    // last keystroke, and the field aborts a check a newer value supersedes.
     const titleValidator = debouncedValidator<string>(async (value, signal) => {
       const cardId = selectedCardId.peek()
       if (value.trim() === '') return null
@@ -89,30 +87,18 @@ export const cardDetailController = defineController(
       return available ? null : 'Title is already used on this board'
     }, 400)
 
-    // Track the validator's last run so we surface it in the field's errors.
-    // Manual since `formFromZod` doesn't accept extra leaf validators today.
-    const titleAsyncError = signal<string | null>(null)
-    const isTitleChecking = signal(false)
-
-    let titleCheckAborter: AbortController | null = null
-    ctx.effect(() => {
-      const value = form.fields.title.value
-      titleCheckAborter?.abort()
-      const aborter = new AbortController()
-      titleCheckAborter = aborter
-      isTitleChecking.set(true)
-      Promise.resolve(titleValidator(value, aborter.signal)).then(
-        (result) => {
-          if (aborter.signal.aborted) return
-          titleAsyncError.set(result)
-          isTitleChecking.set(false)
-        },
-        () => {
-          // Aborted — leave as-is.
-        },
-      )
+    /**
+     * Build a single form upfront — its initial values reflect whatever
+     * card is selected at construction (or blank). On every selection
+     * change we re-anchor via `setAsInitial`, which doesn't dirty the form.
+     * `extraValidators` puts the title check next to the schema's own rule,
+     * so its message lands on `form.fields.title.errors` and its progress on
+     * `form.fields.title.isValidating`.
+     */
+    const form = createZodForm(ctx, cardFormSchema, {
+      initial: blankInitials,
+      extraValidators: { title: titleValidator },
     })
-    ctx.onDispose(() => titleCheckAborter?.abort())
 
     // Watch the resolved card signal and refresh form initials when the
     // user picks a different card OR the card's data lands later.
@@ -120,32 +106,32 @@ export const cardDetailController = defineController(
     ctx.effect(() => {
       const c = card.value
       if (c === null) {
-        if (lastCardId !== null) form.resetWithInitial(blankInitials)
+        if (lastCardId !== null) form.setAsInitial(blankInitials)
         lastCardId = null
         return
       }
       // Only re-anchor when the id changes — avoid stomping in-progress
       // edits whenever the cache writes back (e.g. cross-tab patch).
       if (c.id !== lastCardId) {
-        form.resetWithInitial(cardToFormInitials(c))
+        form.setAsInitial(cardToFormInitials(c))
         lastCardId = c.id
       }
     })
 
     // ───────── Save mutation (serial) ─────────
 
-    const save = ctx.mutation<void, Card>({
-      name: 'saveCard',
+    const save = createMutation<void, Card>(ctx, {
+      id: 'saveCard',
       concurrency: 'serial',
-      mutate: async (_v, signal) => {
+      mutate: async (_v, { signal }) => {
         const id = selectedCardId.peek()
         if (id === null) throw new Error('No card open')
         form.markAllTouched()
         const ok = await form.validate()
-        if (!ok || titleAsyncError.peek() !== null) {
+        if (!ok) {
           throw new Error('Form has errors')
         }
-        const value = form.value.value as CardFormValue
+        const value = form.value as CardFormValue
         const input: SaveCardInput = {
           id,
           title: value.title,
@@ -157,7 +143,9 @@ export const cardDetailController = defineController(
           subtasks: value.subtasks,
         }
         const saved = await ctx.deps.api.saveCard(activeBoardId.peek(), input, signal)
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        // Server truth, post-save: `write` (canonical), not `setData` (optimistic
+        // + needs settling). See `.wiki/decisions/canonical-vs-optimistic-writes.md`.
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev ? { ...prev, cards: { ...prev.cards, [saved.id]: saved } } : (prev as never),
         )
         return saved
@@ -189,9 +177,7 @@ export const cardDetailController = defineController(
       form,
       save,
       close,
-      titleAsyncError,
-      isTitleChecking,
-      // SuspendableController shape for `<KeepAlive>`.
+      // SuspendableController shape for `<SuspendOnUnmount>`.
       suspend: () => isPaused.set(true),
       resume: () => isPaused.set(false),
       isPaused,

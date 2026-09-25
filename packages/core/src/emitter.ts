@@ -16,11 +16,17 @@
  */
 export type Emitter<T> = {
   emit: [T] extends [void] ? () => void : (value: T) => void
-  /** Subscribe to every emission. Returns the unsubscribe function. */
+  /**
+   * Subscribe to every emission. Returns the unsubscribe function.
+   */
   on(handler: (value: T) => void): () => void
-  /** Subscribe to the next emission only. Auto-unsubscribes after firing. */
+  /**
+   * Subscribe to the next emission only. Auto-unsubscribes after firing.
+   */
   once(handler: (value: T) => void): () => void
-  /** Tear down the emitter. Subsequent `emit` / `on` / `once` are no-ops. */
+  /**
+   * Tear down the emitter. Subsequent `emit` / `on` / `once` are no-ops.
+   */
   dispose(): void
 }
 

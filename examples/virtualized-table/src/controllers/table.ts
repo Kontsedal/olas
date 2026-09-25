@@ -6,16 +6,17 @@
 // time gets per-row reactivity without allocating a controller per row
 // (which would churn hundreds of constructions per scroll-second).
 //
-// Selection ranges + bulk updates leverage `@kontsedal/olas-core`'s `selection`
-// composable (SPEC §17.5) over the same row signals — no extra plumbing.
+// Selection ranges + bulk updates leverage `@kontsedal/olas-core`'s `createSelection`
+// composable (SPEC §16.5) over the same row signals — no extra plumbing.
 
 import {
   type Ctx,
   computed,
+  createMutation,
+  createSelection,
   defineController,
   type ReadSignal,
   type Signal,
-  selection,
   signal,
 } from '@kontsedal/olas-core'
 import type { Issue, Status } from '../api'
@@ -28,7 +29,7 @@ export const tableController = defineController(
   (ctx: Ctx, props: TableProps) => {
     // Seed once at construction. Generation is sync (no fetch) so we can
     // populate the map without an AsyncState dance. In a real app this would
-    // be `ctx.use(issuesQuery)` over an infinite/paginated query.
+    // be `createQuery(ctx, issuesQuery)` over an infinite/paginated query.
     const initial = ctx.deps.api.generateIssues(props.rowCount)
     const rowMap = new Map<string, Signal<Issue>>(
       initial.map((row) => [row.id, signal<Issue>(row)]),
@@ -53,14 +54,14 @@ export const tableController = defineController(
       return out
     })
 
-    const sel = selection<string>()
+    const sel = createSelection<string>()
 
     // Single-row status update. Returns a Snapshot-shaped object from
     // `onMutate` so the framework's auto-rollback fires on non-abort errors
     // (spec §6.4). The snapshot closure captures `slot` + `prev`, so
     // rollback restores exactly the row that was edited.
-    const updateStatus = ctx.mutation<{ id: string; status: Status }, void>({
-      name: 'updateStatus',
+    const updateStatus = createMutation<{ id: string; status: Status }, void>(ctx, {
+      id: 'updateStatus',
       concurrency: 'parallel',
       onMutate: ({ id, status }) => {
         const slot = rowMap.get(id)
@@ -72,7 +73,8 @@ export const tableController = defineController(
           finalize: () => {},
         }
       },
-      mutate: ({ id, status }, abortSignal) => ctx.deps.api.saveStatus(id, status, abortSignal),
+      mutate: ({ id, status }, { signal: abortSignal }) =>
+        ctx.deps.api.saveStatus(id, status, abortSignal),
     })
 
     /** Bulk-update every selected row to `status`. Each row is its own run, so

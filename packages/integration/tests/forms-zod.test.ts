@@ -10,11 +10,11 @@
  * - reset() restores initials and clears dirty / errors.
  *
  * This is a controller-level (no DOM) verification of the contract
- * between olas-core forms and olas-zod's `formFromZod` helper.
+ * between olas-core forms and olas-zod's `createZodForm` helper.
  */
 
-import { createRoot, defineController } from '@kontsedal/olas-core'
-import { formFromZod } from '@kontsedal/olas-zod'
+import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
+import { createZodForm } from '@kontsedal/olas-zod'
 import { describe, expect, test, vi } from 'vitest'
 import { z } from 'zod'
 import { settle } from './_helpers'
@@ -35,8 +35,8 @@ describe('integration: forms + zod end-to-end', () => {
     const handler = vi.fn(async (value: UserForm) => ({ id: 'srv-1', ...value }))
 
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, userSchema, {
-        initials: {
+      form: createZodForm(ctx, userSchema, {
+        initial: {
           name: 'X', // too short
           email: 'not-an-email', // bad
           address: { street: 'Main', city: 'Sprawl' },
@@ -44,7 +44,7 @@ describe('integration: forms + zod end-to-end', () => {
       }),
     }))
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type Fields = {
@@ -52,13 +52,13 @@ describe('integration: forms + zod end-to-end', () => {
       email: { errors: { value: string[] }; set: (v: string) => void; touched: { value: boolean } }
       address: { fields: { street: { errors: { value: string[] } } } }
     }
-    const fields = root.form.fields as unknown as Fields
+    const fields = root.api.form.fields as unknown as Fields
 
     // Initial validation: name and email are bad; submit must refuse.
     expect(fields.name.errors.value).toContain('name too short')
     expect(fields.email.errors.value).toContain('not an email')
 
-    const blocked = await root.form.submit(handler)
+    const blocked = await root.api.form.submit(handler)
     expect(blocked.ok).toBe(false)
     expect(handler).not.toHaveBeenCalled()
     // Submit-blocked path marks every leaf as touched so the UI can show errors.
@@ -72,7 +72,7 @@ describe('integration: forms + zod end-to-end', () => {
     expect(fields.name.errors.value).toEqual([])
     expect(fields.email.errors.value).toEqual([])
 
-    const ok = await root.form.submit(handler)
+    const ok = await root.api.form.submit(handler)
     expect(ok.ok).toBe(true)
     expect(handler).toHaveBeenCalledTimes(1)
     expect(handler).toHaveBeenCalledWith({
@@ -86,8 +86,8 @@ describe('integration: forms + zod end-to-end', () => {
 
   test('server-side validation errors map back to the right leaf via form.setErrors', async () => {
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, userSchema, {
-        initials: {
+      form: createZodForm(ctx, userSchema, {
+        initial: {
           name: 'Alice',
           email: 'alice@example.com',
           address: { street: 'Main', city: 'Sprawl' },
@@ -95,7 +95,7 @@ describe('integration: forms + zod end-to-end', () => {
       }),
     }))
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type FormApi = {
@@ -105,10 +105,10 @@ describe('integration: forms + zod end-to-end', () => {
         address: { fields: { city: { errors: { value: string[] } } } }
       }
     }
-    const formApi = root.form as unknown as FormApi
+    const formApi = root.api.form as unknown as FormApi
 
     // Submit a value the schema accepts; the server complains.
-    const result = await root.form.submit(async () => {
+    const result = await root.api.form.submit(async () => {
       // Simulate a 422 with field-level errors.
       formApi.setErrors({
         email: ['email already taken'],
@@ -133,12 +133,12 @@ describe('integration: forms + zod end-to-end', () => {
       .refine((v) => v.password === v.confirm, { message: 'passwords must match' })
 
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, passwordSchema as unknown as z.ZodObject<z.ZodRawShape>, {
-        initials: { password: 'abcdefgh', confirm: 'mismatch!' },
+      form: createZodForm(ctx, passwordSchema as unknown as z.ZodObject<z.ZodRawShape>, {
+        initial: { password: 'abcdefgh', confirm: 'mismatch!' },
       }),
     }))
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type FormApi = {
@@ -148,7 +148,7 @@ describe('integration: forms + zod end-to-end', () => {
         confirm: { errors: { value: string[] }; set: (v: string) => void }
       }
     }
-    const f = root.form as unknown as FormApi
+    const f = root.api.form as unknown as FormApi
 
     // Root refine lives at the form level, not on either leaf.
     expect(f.topLevelErrors.value).toContain('passwords must match')
@@ -165,15 +165,15 @@ describe('integration: forms + zod end-to-end', () => {
 
   test('reset clears dirty + restores initials + clears server errors', async () => {
     const def = defineController((ctx) => ({
-      form: formFromZod(ctx, userSchema, {
-        initials: {
+      form: createZodForm(ctx, userSchema, {
+        initial: {
           name: 'Alice',
           email: 'alice@example.com',
           address: { street: 'Main', city: 'Sprawl' },
         },
       }),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await settle()
 
     type FormApi = {
@@ -184,7 +184,7 @@ describe('integration: forms + zod end-to-end', () => {
       setErrors: (errs: Record<string, string[]>) => void
       reset: () => void
     }
-    const f = root.form as unknown as FormApi
+    const f = root.api.form as unknown as FormApi
 
     f.fields.name.set('Bob')
     f.setErrors({ name: ['server says no'] })

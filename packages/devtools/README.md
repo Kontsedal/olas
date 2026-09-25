@@ -1,8 +1,6 @@
 # @kontsedal/olas-devtools
 
-In-app devtools UI for an Olas root. Two React components: `<DevtoolsLauncher>` (floating draggable window with a launcher button) and `<DevtoolsPanel>` (the panel itself, for embedding in your own chrome). Both read the same `root.__debug` event stream.
-
-A standalone browser extension reading the same stream is tracked in [`../../BACKLOG.md`](../../BACKLOG.md).
+In-app devtools UI for an Olas root, as two React components. `<DevtoolsLauncher>` is a floating draggable window with a launcher button. `<DevtoolsPanel>` is the panel itself, for embedding in your own chrome. Both read the same `root.debug` event stream.
 
 ## Install
 
@@ -10,18 +8,20 @@ A standalone browser extension reading the same stream is tracked in [`../../BAC
 pnpm add @kontsedal/olas-devtools @kontsedal/olas-core @kontsedal/olas-react @preact/signals-core react
 ```
 
-`react >= 18` and the three Olas packages are peer deps.
+`react >= 18`, `@kontsedal/olas-core` and `@kontsedal/olas-react` are peer deps, and core brings its own peer, `@preact/signals-core`.
 
 ## 30-second example
 
 ```tsx
-import { OlasProvider } from '@kontsedal/olas-react'
+import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { DevtoolsLauncher } from '@kontsedal/olas-devtools'
-import { createRoot } from '@kontsedal/olas-core'
+import { OlasProvider } from '@kontsedal/olas-react'
+import { App } from './App'
+import { appController } from './app.controller'
 
-const root = createRoot(appController, { deps })
+const root = createRoot(appController, { deps: {}, queries: queryEngine() })
 
-function AppShell() {
+export function AppShell() {
   return (
     <OlasProvider root={root}>
       <App />
@@ -31,52 +31,74 @@ function AppShell() {
 }
 ```
 
-`DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open / minimized state persist to `localStorage`.
+`import.meta.env.DEV` is Vite's development flag; use your bundler's equivalent. The package declares no side effects, so a production build where the flag is `false` drops the panel.
+
+The panel reads the events that `@kontsedal/olas-core` emits only in its development build. Core's `development` export condition points at that build, and Vite's dev server, webpack and Rspack in development mode, and Next.js in dev resolve it without configuration. With esbuild or Rollup, add `conditions: ['development']` to the dev config. Against core's default build, the panel shows the cache but no controller tree or timeline (SPEC §23).
+
+`DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open and minimized state persist to `localStorage`. The launcher records from the moment it mounts, and closing or minimizing the window keeps what it recorded.
+
+A devtools error stays in the devtools. A render error inside the panel shows in place of the panel, with a Retry button, and the host app stays mounted.
 
 If you'd rather host the panel yourself (e.g., fixed sidebar in a layout), import `DevtoolsPanel` directly and size it however you like. Styles are scoped to the `.olas-devtools-*` class prefix; no CSS imports needed.
 
 ## What you'll see
 
+A search box sits above the tabs. Press `/` anywhere in the panel to focus it. It finds controllers, query ids, key args, mutations, form fields and payload content, groups the results by kind, and Enter jumps to the row and highlights it.
+
 | Tab | Content |
 |-----|---------|
-| **Tree** | Live controller tree. Each node shows its path segment and lifecycle state (active / suspended / disposed). |
-| **Cache** | Chronological log of `cache:fetch-start` / `fetch-success` / `fetch-error` / `invalidated` / `gc` events. |
-| **Mutations** | Chronological log of `mutation:run` / `success` / `error` / `rollback` events. |
-| **Fields** | Field-level validation outcomes. **Inert today** — the runtime doesn't emit `field:validated` yet (see [What's emitted](#whats-emitted-by-the-runtime)); the tab fills in once it does, or when you feed events via `store.handle(...)`. |
+| **Timeline** | The default. Every event, newest first, grouped by cause: a mutation run, its optimistic write and its rollback read as one collapsible chain. A superseded, reset or disposed run ends its chain with `cancel` and the reason. A cache write expands to a before-and-after diff. A plugin's `host.debug` events carry the plugin's name, and a chip per lane shows or hides them. |
+| **Tree** | Live controller tree. Each node shows its path segment, lifecycle state and its `ctx.debug` variables, live. A disposed node stays for a while, greyed, with its variables frozen at dispose time. |
+| **Cache** | Chronological log of cache events. |
+| **Inspector** | Live state of every cache entry, refreshed on cache events. |
+| **Mutations** | Chronological log of `mutation:run`, `success`, `error`, `rollback` and `cancel` events. A settle or a cancel shows how long its own run took. |
+| **Fields** | Field-level validation outcomes. |
 
-The **Clear** button empties the three event logs (the tree is live state, not a log, and is preserved).
+Every long view mounts only the rows in view, so a 10,000-event timeline scrolls like a short one. The **Clear** button empties the event logs and the timeline. The tree and the inspector show live state rather than a log, so Clear keeps them.
 
 ## API
 
-```ts
+```ts nocheck
 function DevtoolsLauncher(props: {
-  root: Pick<Root<unknown>, '__debug'>
+  root: Pick<Root<unknown>, 'debug'>
   defaultTab?: DevtoolsTab
-  maxEntries?: number       // per-log cap, oldest drop first; default 100
-  urlHashKey?: string       // forwarded to the panel; persists open-tab in the URL
-  storageKey?: string       // localStorage key for window position/size; default 'olas-devtools-window'
+  maxEntries?: number         // per-log cap, oldest drop first; default 100
+  maxTimelineEntries?: number // timeline ring-buffer capacity; default 10,000
+  urlHashKey?: string         // forwarded to the panel; persists tab + filters in the URL
+  storageKey?: string         // localStorage key for window position/size; default 'olas-devtools-window'
   initial?: { x?: number; y?: number; w?: number; h?: number }
-}): JSX.Element
+}): ReactElement
 
 function DevtoolsPanel(props: {
-  root: Pick<Root<unknown>, '__debug'>
+  root: Pick<Root<unknown>, 'debug'>
   defaultTab?: DevtoolsTab
   maxEntries?: number
-  urlHashKey?: string
-}): JSX.Element
+  maxTimelineEntries?: number
+  urlHashKey?: string         // its own key=value segment of the hash; the rest stays as it was
+  store?: DevtoolsStore       // render this store; its owner attaches it, and it outlives the panel
+}): ReactElement
 
-type DevtoolsTab = 'tree' | 'cache' | 'mutations' | 'fields' | 'events'
+type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
 
 // Lower-level store — exported so consumers can build their own UI.
 class DevtoolsStore {
-  readonly tree$: Signal<ControllerNode>
-  readonly cache$: Signal<CacheEntry[]>
-  readonly mutations$: Signal<MutationEntry[]>
-  readonly fields$: Signal<FieldEntry[]>
+  constructor(options?: DevtoolsStoreOptions) // maxEntries, maxTimelineEntries, maxDisposedNodes, coalesce, now
 
-  attach(root): () => void   // subscribes; returns unsubscribe
-  handle(event): void        // for tests or programmatic feed
+  readonly tree$: ReadSignal<ControllerNode>
+  readonly cache$: ReadSignal<CacheEntry[]>
+  readonly mutations$: ReadSignal<MutationEntry[]>
+  readonly fields$: ReadSignal<FieldEntry[]>
+  readonly events$: ReadSignal<TimelineEvent[]>   // the timeline's ring buffer
+  readonly droppedEvents$: ReadSignal<number>     // events the ring overwrote
+  readonly cacheState$: Signal<DebugCacheEntry[]> // live cache entries, for the inspector
+  readonly subscribers$: ReadSignal<ReadonlyMap<string, number>> // subscriptions per entry
+
+  attach(root: Pick<Root<unknown>, 'debug'>): () => void // subscribes; returns unsubscribe
+  handle(event: DebugEvent): void                        // for tests or programmatic feed
+  pause(): void                                          // drop new events until resume()
+  resume(): void
   clearLogs(): void
+  search(query: string, limitPerKind?: number): SearchGroup[]
 }
 ```
 
@@ -84,25 +106,33 @@ class DevtoolsStore {
 |---|---|
 | `<DevtoolsLauncher root>` | The one-liner. Floating launcher button + a draggable, resizable panel window; position / size / open state persist to `localStorage`. |
 | `<DevtoolsPanel root>` | The panel alone — embed it in your own chrome (a fixed sidebar, a split pane). |
-| `DevtoolsStore` | The lower-level store behind the panel. `attach(root)` to subscribe, `handle(event)` to feed events, read `tree$` / `cache$` / `mutations$` / `fields$` — build your own UI on top. |
+| `DevtoolsStore` | The lower-level store behind the panel. `attach(root)` to subscribe, `handle(event)` to feed events, read `tree$`, `events$` and the log signals, or call `search` — build your own UI on top. |
 
-## Important: the panel sees only post-mount events
+## Important: what the panel keeps
 
-The panel subscribes to `root.__debug` on mount. Events that fired before mount (e.g. the root controller's `controller:constructed`) are NOT in the tree. Mount the panel as early as possible if you want the full picture. The cache / mutation / field logs are bounded by `maxEntries` (default 100) anyway, and the controller tree drops the oldest fully-disposed subtrees beyond `maxDisposedNodes` (default 200, a `DevtoolsStore` option) so a long, churny session stays bounded.
+The panel subscribes to `root.debug` on mount, and the bus replays the live controller tree to it, so the Tree is complete from the start. Cache, mutation and field events that fired before the mount are not replayed. `<DevtoolsLauncher>` subscribes when it mounts, not when its window opens, so render it next to your app. A `<DevtoolsPanel>` of your own records from its own mount.
 
-If you need historical state, build a parallel `DevtoolsStore` early (next to `createRoot`) and pass it into a custom UI later.
+With `urlHashKey`, the panel keeps its tab and filters in one `key=value` segment of the URL hash. It writes only when the rest of the hash is empty or `key=value` pairs too. It leaves a hash router's path or an anchor untouched, so there the state does not persist.
+
+Memory stays bounded however long the session runs. The timeline keeps the newest `maxTimelineEntries` events, default 10,000, and its toolbar counts the ones it dropped. The cache, mutation and field logs keep `maxEntries` each, default 100. The tree drops the earliest-disposed subtrees beyond `maxDisposedNodes`, default 200, a `DevtoolsStore` option.
+
+If you need historical state, build a `DevtoolsStore` early, next to `createRoot`, and `attach` it. Pass it to `<DevtoolsPanel store={store}>` or to a custom UI later. The panel renders a store it is given and leaves attaching it to you.
 
 ## What's emitted by the runtime
 
-Spec §20.9 lists the full `DebugEvent` union. Today the runtime emits:
+Spec §20.9 lists the full `DebugEvent` union. In development builds the runtime emits:
 
-- **controller:** `constructed` / `suspended` / `resumed` / `disposed`
-- **cache:** `fetch-start` / `fetch-success` / `fetch-error` / `invalidated` / `gc`
-- **mutation:** `run` / `success` / `error` / `rollback`
+- **controller:** `constructed`, `suspended`, `resumed`, `disposed` and `debug`
+- **cache:** `subscribed`, `unsubscribed`, `fetch-start`, `fetch-success`, `fetch-error`, `set-data`, `invalidated` and `gc`
+- **snapshot:** `push`, `rollback` and `finalize`, for optimistic writes
+- **mutation:** `run`, `success`, `error`, `rollback` and `cancel`
+- **field:** `validated`
+- **plugin:** `event`, for each `host.debug(payload)` a plugin makes
 
-`cache:subscribed` and `field:validated` are declared in the type but not yet wired in the runtime. The panel renders them when they arrive; you can also feed them via `store.handle(event)` from your own instrumentation.
+A `createQuery` subscription sends `cache:subscribed` when it binds an entry and `cache:unsubscribed` when it lets go, with its controller's path. The store counts them per entry in `subscribers$`, and re-seeds the counts from each `queryEntries()` snapshot, so a panel attached late still counts the subscriptions made before it. The inspector shows the count beside each entry.
 
 ## Further reading
 
-- [`.wiki/modules/devtools.md`](../../.wiki/modules/devtools.md) — internal mechanics.
-- [SPEC §14](../../SPEC.md#14-devtools) (Devtools), [§20.9](../../SPEC.md#209-errors--devtools) (`DebugEvent`).
+- [`.wiki/modules/devtools.md`](../../.wiki/modules/devtools.md) — the event bus.
+- [`.wiki/modules/devtools-panel.md`](../../.wiki/modules/devtools-panel.md) — the panel's internals.
+- [SPEC §14](../../SPEC.md#14-devtools) for devtools, and [§20.9](../../SPEC.md#209-errors--devtools) for `DebugEvent`.

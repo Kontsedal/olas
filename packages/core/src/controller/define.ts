@@ -1,3 +1,4 @@
+import { BRAND } from '../brand'
 import type { ControllerDef, Ctx } from './types'
 
 type InternalControllerDef<Props, Api> = ControllerDef<Props, Api> & {
@@ -24,13 +25,24 @@ export type DefineControllerOptions = {
  *
  * `Props` defaults to `void` so a factory written as `(ctx) => ...` is typed
  * as `ControllerDef<void, Api>` — the form `createRoot` requires.
+ *
+ * @example
+ * ```ts
+ * export const counter = defineController(
+ *   (ctx) => {
+ *     const count = signal(0)
+ *     return { count, increment: () => count.update((n) => n + 1) }
+ *   },
+ *   { name: 'counter' },
+ * )
+ * ```
  */
 export function defineController<Props = void, Api = unknown>(
   factory: (ctx: Ctx, props: Props) => Api,
   options?: DefineControllerOptions,
 ): ControllerDef<Props, Api> {
   const def: InternalControllerDef<Props, Api> = {
-    __olas: 'controller',
+    [BRAND]: 'controller',
     __factory: factory,
     ...(options?.name !== undefined ? { __name: options.name } : {}),
   } as InternalControllerDef<Props, Api>

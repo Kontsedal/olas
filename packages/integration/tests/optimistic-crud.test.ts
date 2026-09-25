@@ -17,13 +17,15 @@
  */
 
 import {
+  createMutation,
+  createQuery,
   createRoot,
   defineController,
   defineQuery,
-  type QuerySubscription,
+  queryEngine,
   type Snapshot,
 } from '@kontsedal/olas-core'
-import { defineEntity, entitiesPlugin } from '@kontsedal/olas-entities'
+import { defineEntity, Entities, entitiesPlugin } from '@kontsedal/olas-entities'
 import { describe, expect, test, vi } from 'vitest'
 import { deferred, settle } from './_helpers'
 
@@ -49,13 +51,13 @@ const seedFeed = (): Post[] => [
 describe('integration: optimistic CRUD + entities', () => {
   test('like-post optimistic update patches both queries; commits on server success', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/feed-success',
+      id: 'int/crud/feed-success',
       key: () => [],
       fetcher: async () => ({ posts: seedFeed() }),
       staleTime: 60_000,
     })
     const sidebarQuery = defineQuery({
-      queryId: 'int/crud/sidebar-success',
+      id: 'int/crud/sidebar-success',
       key: () => [],
       // Same `p1` referenced via a different query — the reverse index
       // must patch both in one entities.update.
@@ -63,71 +65,68 @@ describe('integration: optimistic CRUD + entities', () => {
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const sidebar = ctx.use(sidebarQuery, () => [])
-      const likePost = ctx.mutation<string, { id: string; likes: number }>({
+      const entities = ctx.inject(Entities)
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const sidebar = createQuery(ctx, sidebarQuery, () => [])
+      const likePost = createMutation<string, { id: string; likes: number }>(ctx, {
         mutate: async (id: string) => {
           // Pretend server-authoritative count comes back.
           return { id, likes: 1 }
         },
         onMutate: (id) => {
-          const before = plugin.get(Post, id)
+          const before = entities.get(Post, id)
           if (!before) return
-          plugin.update(Post, id, { likes: before.likes + 1 })
+          entities.update(Post, id, { likes: before.likes + 1 })
         },
         onSuccess: (server) => {
-          plugin.update(Post, server.id, { likes: server.likes })
+          entities.update(Post, server.id, { likes: server.likes })
         },
       })
       return { feed, sidebar, likePost }
     })
-
-    type Api = {
-      feed: QuerySubscription<{ posts: Post[] }>
-      sidebar: QuerySubscription<{ recent: Post[] }>
-      likePost: { run: (id: string) => Promise<{ id: string; likes: number }> }
-    }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
-      dispose: () => void
-    }
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    })
 
     await settle()
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(0)
-    expect(root.sidebar.data.peek()?.recent[0]?.likes).toBe(0)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(0)
+    expect(root.api.sidebar.data.peek()?.recent[0]?.likes).toBe(0)
 
-    await root.likePost.run('p1')
+    await root.api.likePost.run('p1')
 
     // Both queries reflect the patch — single entity.update reached both
     // via the reverse index.
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(1)
-    expect(root.sidebar.data.peek()?.recent[0]?.likes).toBe(1)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(1)
+    expect(root.api.sidebar.data.peek()?.recent[0]?.likes).toBe(1)
     // Sibling unaffected.
-    expect(root.feed.data.peek()?.posts[1]?.likes).toBe(0)
+    expect(root.api.feed.data.peek()?.posts[1]?.likes).toBe(0)
 
     root.dispose()
   })
 
   test('server failure rolls back the optimistic patch in both queries', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/feed-rollback',
+      id: 'int/crud/feed-rollback',
       key: () => [],
       fetcher: async () => ({ posts: seedFeed() }),
       staleTime: 60_000,
     })
     const sidebarQuery = defineQuery({
-      queryId: 'int/crud/sidebar-rollback',
+      id: 'int/crud/sidebar-rollback',
       key: () => [],
       fetcher: async () => ({ recent: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const sidebar = ctx.use(sidebarQuery, () => [])
-      const likePost = ctx.mutation<string, void>({
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const sidebar = createQuery(ctx, sidebarQuery, () => [])
+      const likePost = createMutation<string, void>(ctx, {
         mutate: async () => {
           throw new Error('500 — like rejected')
         },
@@ -136,14 +135,14 @@ describe('integration: optimistic CRUD + entities', () => {
           const feedSnap = feedQuery.setData(() => {
             const current = feedQuery as unknown as never
             void current
-            const prev = root.feed.data.peek()
+            const prev = root.api.feed.data.peek()
             if (!prev) return { posts: [] as Post[] }
             return {
               posts: prev.posts.map((p) => (p.id === id ? { ...p, likes: p.likes + 1 } : p)),
             }
           })
           const sidebarSnap = sidebarQuery.setData(() => {
-            const prev = root.sidebar.data.peek()
+            const prev = root.api.sidebar.data.peek()
             if (!prev) return { recent: [] as Post[] }
             return {
               recent: prev.recent.map((p) => (p.id === id ? { ...p, likes: p.likes + 1 } : p)),
@@ -165,57 +164,54 @@ describe('integration: optimistic CRUD + entities', () => {
       })
       return { feed, sidebar, likePost }
     })
-
-    type Api = {
-      feed: QuerySubscription<{ posts: Post[] }>
-      sidebar: QuerySubscription<{ recent: Post[] }>
-      likePost: { run: (id: string) => Promise<void> }
-    }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
-      dispose: () => void
-    }
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    })
 
     await settle()
 
     // Mid-flight: the optimistic write IS visible.
-    const promise = root.likePost.run('p1').catch((err) => err)
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(1)
-    expect(root.sidebar.data.peek()?.recent[0]?.likes).toBe(1)
+    const promise = root.api.likePost.run('p1').catch((err) => err)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(1)
+    expect(root.api.sidebar.data.peek()?.recent[0]?.likes).toBe(1)
 
     const err = await promise
     expect(err).toBeInstanceOf(Error)
     expect((err as Error).message).toMatch(/500/)
 
     // After failure: both queries are rolled back.
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(0)
-    expect(root.sidebar.data.peek()?.recent[0]?.likes).toBe(0)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(0)
+    expect(root.api.sidebar.data.peek()?.recent[0]?.likes).toBe(0)
 
     root.dispose()
   })
 
   test('latest-wins racing mutations: superseded run rolls back; winner commits in both queries', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/feed-race',
+      id: 'int/crud/feed-race',
       key: () => [],
       fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
     const sidebarQuery = defineQuery({
-      queryId: 'int/crud/sidebar-race',
+      id: 'int/crud/sidebar-race',
       key: () => [],
       fetcher: async () => ({ recent: [{ id: 'p1', title: 'A', likes: 0 }] }),
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const slots = [deferred<number>(), deferred<number>()]
     let i = 0
 
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const sidebar = ctx.use(sidebarQuery, () => [])
-      const setLikes = ctx.mutation<number, number>({
-        mutate: async (target, signal) => {
+      const entities = ctx.inject(Entities)
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const sidebar = createQuery(ctx, sidebarQuery, () => [])
+      const setLikes = createMutation<number, number>(ctx, {
+        mutate: async (target, { signal }) => {
           const slot = slots[i++]
           if (!slot) throw new Error('out of slots')
           signal.addEventListener('abort', () =>
@@ -226,32 +222,28 @@ describe('integration: optimistic CRUD + entities', () => {
         onMutate: (target) => {
           // Optimistically push `target` likes via the entities plugin —
           // patches both queries in one shot.
-          plugin.update(Post, 'p1', { likes: target })
+          entities.update(Post, 'p1', { likes: target })
         },
         concurrency: 'latest-wins',
       })
       return { feed, sidebar, setLikes }
     })
-
-    type Api = {
-      feed: QuerySubscription<{ posts: Post[] }>
-      sidebar: QuerySubscription<{ recent: Post[] }>
-      setLikes: { run: (n: number) => Promise<number> }
-    }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
-      dispose: () => void
-    }
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    })
     await settle()
 
     // Kick off slow run #1 (target 10), then slow run #2 (target 20) before
     // #1 resolves.
-    const p1 = root.setLikes.run(10).catch(() => 'aborted')
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(10)
-    expect(root.sidebar.data.peek()?.recent[0]?.likes).toBe(10)
+    const p1 = root.api.setLikes.run(10).catch(() => 'aborted')
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(10)
+    expect(root.api.sidebar.data.peek()?.recent[0]?.likes).toBe(10)
 
-    const p2 = root.setLikes.run(20)
+    const p2 = root.api.setLikes.run(20)
     // The optimistic write for run #2 has overwritten run #1.
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(20)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(20)
 
     // Resolve the winner first; aborted #1 will reject independently.
     slots[1]!.resolve(20)
@@ -259,27 +251,27 @@ describe('integration: optimistic CRUD + entities', () => {
     await p1
 
     // Both queries reflect the winner — no flicker back to #1's value.
-    expect(root.feed.data.peek()?.posts[0]?.likes).toBe(20)
-    expect(root.sidebar.data.peek()?.recent[0]?.likes).toBe(20)
+    expect(root.api.feed.data.peek()?.posts[0]?.likes).toBe(20)
+    expect(root.api.sidebar.data.peek()?.recent[0]?.likes).toBe(20)
 
     root.dispose()
   })
 
   test('disposing the root mid-flight cancels in-flight mutations cleanly', async () => {
     const feedQuery = defineQuery({
-      queryId: 'int/crud/dispose-midflight',
+      id: 'int/crud/dispose-midflight',
       key: () => [],
       fetcher: async () => ({ posts: seedFeed() }),
       staleTime: 60_000,
     })
 
-    const plugin = entitiesPlugin([Post])
+    const plugin = entitiesPlugin({ entities: [Post] })
     const hold = deferred<void>()
 
     const def = defineController((ctx) => {
-      const feed = ctx.use(feedQuery, () => [])
-      const slow = ctx.mutation<void, void>({
-        mutate: async (_v, signal) => {
+      const feed = createQuery(ctx, feedQuery, () => [])
+      const slow = createMutation<void, void>(ctx, {
+        mutate: async (_v, { signal }) => {
           signal.addEventListener('abort', () =>
             hold.reject(new DOMException('Aborted', 'AbortError')),
           )
@@ -288,18 +280,15 @@ describe('integration: optimistic CRUD + entities', () => {
       })
       return { feed, slow }
     })
-
-    type Api = {
-      feed: QuerySubscription<{ posts: Post[] }>
-      slow: { run: () => Promise<void> }
-    }
-    const root = createRoot(def, { deps: {}, plugins: [plugin] }) as unknown as Api & {
-      dispose: () => void
-    }
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    })
     await settle()
 
     const onSettled = vi.fn()
-    void root.slow.run().catch(onSettled)
+    void root.api.slow.run().catch(onSettled)
     root.dispose()
     await settle()
     // After dispose the in-flight mutation was aborted; no unhandled

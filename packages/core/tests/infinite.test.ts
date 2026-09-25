@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineInfiniteQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 
 const emptyDeps = {}
@@ -30,6 +32,7 @@ describe('defineInfiniteQuery + ctx.use', () => {
   test('initial fetch lands the first page; data exposes it', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/34',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 0,
@@ -37,42 +40,44 @@ describe('defineInfiniteQuery + ctx.use', () => {
       getPreviousPageParam: (page) => page.prev,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.chat.status.value).toBe('success'))
-    expect(root.chat.pages.value).toEqual([fx.pages[0]])
-    expect(root.chat.flat.value).toEqual(['a', 'b'])
-    expect(root.chat.hasNextPage.value).toBe(true)
-    expect(root.chat.hasPreviousPage.value).toBe(false)
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.status.value).toBe('success'))
+    expect(root.api.chat.pages.value).toEqual([fx.pages[0]])
+    expect(root.api.chat.flat.value).toEqual(['a', 'b'])
+    expect(root.api.chat.hasNextPage.value).toBe(true)
+    expect(root.api.chat.hasPreviousPage.value).toBe(false)
     root.dispose()
   })
 
   test('fetchNextPage appends pages; hasNextPage flips to false at the end', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/54',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 0,
       getNextPageParam: (page) => page.next,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.chat.flat.value).toEqual(['a', 'b']))
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.flat.value).toEqual(['a', 'b']))
 
-    await root.chat.fetchNextPage()
-    expect(root.chat.flat.value).toEqual(['a', 'b', 'c', 'd'])
-    expect(root.chat.hasNextPage.value).toBe(true)
+    await root.api.chat.fetchNextPage()
+    expect(root.api.chat.flat.value).toEqual(['a', 'b', 'c', 'd'])
+    expect(root.api.chat.hasNextPage.value).toBe(true)
 
-    await root.chat.fetchNextPage()
-    expect(root.chat.flat.value).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
-    expect(root.chat.hasNextPage.value).toBe(false)
+    await root.api.chat.fetchNextPage()
+    expect(root.api.chat.flat.value).toEqual(['a', 'b', 'c', 'd', 'e', 'f'])
+    expect(root.api.chat.hasNextPage.value).toBe(false)
     root.dispose()
   })
 
   test('fetchPreviousPage prepends pages', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/77',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 1, // start in the middle
@@ -80,54 +85,56 @@ describe('defineInfiniteQuery + ctx.use', () => {
       getPreviousPageParam: (page) => page.prev,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.chat.flat.value).toEqual(['c', 'd']))
-    expect(root.chat.hasPreviousPage.value).toBe(true)
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.flat.value).toEqual(['c', 'd']))
+    expect(root.api.chat.hasPreviousPage.value).toBe(true)
 
-    await root.chat.fetchPreviousPage()
-    expect(root.chat.flat.value).toEqual(['a', 'b', 'c', 'd'])
-    expect(root.chat.hasPreviousPage.value).toBe(false)
+    await root.api.chat.fetchPreviousPage()
+    expect(root.api.chat.flat.value).toEqual(['a', 'b', 'c', 'd'])
+    expect(root.api.chat.hasPreviousPage.value).toBe(false)
     root.dispose()
   })
 
   test('invalidate refetches all loaded pages in place (no collapse)', async () => {
     const fx = makeFixture()
     const q = defineInfiniteQuery({
+      id: 'infinite/98',
       key: () => ['chat'],
       fetcher: fx.fetch,
       initialPageParam: 0,
       getNextPageParam: (page) => page.next,
       itemsOf: (page) => page.items,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
-    await root.chat.fetchNextPage()
-    await root.chat.fetchNextPage()
-    expect(root.chat.pages.value.length).toBe(3)
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.pages.value.length).toBe(1))
+    await root.api.chat.fetchNextPage()
+    await root.api.chat.fetchNextPage()
+    expect(root.api.chat.pages.value.length).toBe(3)
 
     // Refetch-all (T3.7): invalidate re-fetches every loaded page in order,
     // it no longer collapses to page one. Pages stay length 3 throughout.
     fx.calls.length = 0
     q.invalidate()
     await vi.waitFor(() => expect(fx.calls).toEqual([0, 1, 2]))
-    expect(root.chat.pages.value.length).toBe(3)
-    expect(root.chat.pages.value[0]).toEqual(fx.pages[0])
+    expect(root.api.chat.pages.value.length).toBe(3)
+    expect(root.api.chat.pages.value[0]).toEqual(fx.pages[0])
     root.dispose()
   })
 
   test('flat falls back to pages when itemsOf is omitted', async () => {
     const q = defineInfiniteQuery({
+      id: 'infinite/123',
       key: () => ['raw'],
       fetcher: async ({ pageParam }) => `page${pageParam}`,
       initialPageParam: 0,
       getNextPageParam: (page) => (page === 'page0' ? 1 : null),
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['page0']))
-    expect(root.x.flat.value).toEqual(['page0'])
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['page0']))
+    expect(root.api.x.flat.value).toEqual(['page0'])
     root.dispose()
   })
 })
@@ -141,14 +148,15 @@ describe('infinite query: refetchInterval', () => {
     // wired in InfiniteClientEntry — periodic refetch silently did nothing.
     let count = 0
     const q = defineInfiniteQuery({
+      id: 'infinite/145',
       key: () => ['rfi-infinite'],
       fetcher: async () => `page${++count}`,
       initialPageParam: 0,
       getNextPageParam: () => null,
       refetchInterval: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -163,6 +171,7 @@ describe('infinite query: refetchInterval', () => {
     const seen: Array<string[] | undefined> = []
     let count = 0
     const q = defineInfiniteQuery({
+      id: 'infinite/167',
       key: () => ['rfi-infinite-fn'],
       fetcher: async () => `page${++count}`,
       initialPageParam: 0,
@@ -173,8 +182,8 @@ describe('infinite query: refetchInterval', () => {
         return pages === undefined ? 250 : 1000
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     expect(count).toBe(1)
 
@@ -218,6 +227,7 @@ describe('infinite query: keepPreviousData', () => {
     })()
 
     const q = defineInfiniteQuery({
+      id: 'infinite/222',
       key: (k: number) => [k],
       fetcher: async (_, k: number) => (k === 1 ? dKey1.promise : dKey2.promise),
       initialPageParam: 0,
@@ -226,20 +236,135 @@ describe('infinite query: keepPreviousData', () => {
     })
     const keySig = signal<[number]>([1])
     const def = defineController((ctx) => ({
-      x: ctx.use(q, () => keySig.value),
+      x: createQuery(ctx, q, () => keySig.value),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     dKey1.resolve()
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['first-key']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['first-key']))
 
     // Switch to key 2; the new fetch hasn't resolved yet — pages still expose
     // the previous key's data because keepPreviousData is on.
     keySig.set([2])
     await Promise.resolve()
-    expect(root.x.pages.value).toEqual(['first-key'])
+    expect(root.api.x.pages.value).toEqual(['first-key'])
 
     dKey2.resolve()
-    await vi.waitFor(() => expect(root.x.pages.value).toEqual(['second-key']))
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['second-key']))
+    root.dispose()
+  })
+})
+
+describe('infinite createQuery — keepDataWhileDisabled', () => {
+  test('disabling keeps the loaded pages and their flattened items', async () => {
+    const fx = makeFixture()
+    const q = defineInfiniteQuery({
+      id: 'infinite/252',
+      key: () => ['chat-keep-disabled'],
+      fetcher: fx.fetch,
+      initialPageParam: 0,
+      getNextPageParam: (page) => page.next,
+      itemsOf: (page) => page.items,
+    })
+    const enabled = signal(true)
+    const def = defineController((ctx) => ({
+      chat: createQuery(ctx, q, { enabled: () => enabled.value, keepDataWhileDisabled: true }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.status.value).toBe('success'))
+    enabled.set(false)
+    expect(root.api.chat.status.value).toBe('idle')
+    expect(root.api.chat.pages.value).toEqual([fx.pages[0]])
+    expect(root.api.chat.data.value).toEqual([fx.pages[0]])
+    expect(root.api.chat.flat.value).toEqual(['a', 'b'])
+    root.dispose()
+  })
+
+  test('without the flag, disabling blanks the pages (spec default)', async () => {
+    const fx = makeFixture()
+    const q = defineInfiniteQuery({
+      id: 'infinite/275',
+      key: () => ['chat-blank-disabled'],
+      fetcher: fx.fetch,
+      initialPageParam: 0,
+      getNextPageParam: (page) => page.next,
+      itemsOf: (page) => page.items,
+    })
+    const enabled = signal(true)
+    const def = defineController((ctx) => ({
+      chat: createQuery(ctx, q, { enabled: () => enabled.value }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.status.value).toBe('success'))
+    enabled.set(false)
+    expect(root.api.chat.pages.value).toEqual([])
+    expect(root.api.chat.data.value).toBeUndefined()
+    expect(root.api.chat.flat.value).toEqual([])
+    root.dispose()
+  })
+})
+
+describe('InfiniteQuery peek / write / replace — parity with Query', () => {
+  const define = (id: string, fetch: ReturnType<typeof makeFixture>['fetch']) =>
+    defineInfiniteQuery({
+      id,
+      key: () => ['chat'],
+      fetcher: fetch,
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+      itemsOf: (page: Page) => page.items,
+    })
+
+  test('peek reads loaded pages without creating an entry', async () => {
+    const fx = makeFixture()
+    const q = define('infinite-parity/peek', fx.fetch)
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const bound = root.bindQuery(q)
+    expect(bound.peek()).toBeUndefined() // first page still in flight
+    await vi.waitFor(() => expect(root.api.chat.status.value).toBe('success'))
+    expect(bound.peek()).toEqual([fx.pages[0]])
+    root.dispose()
+  })
+
+  test('write patches the pages canonically: no pending mutation, fetch left alone', async () => {
+    const fx = makeFixture()
+    const q = define('infinite-parity/write', fx.fetch)
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.status.value).toBe('success'))
+    const bound = root.bindQuery(q)
+    bound.write((pages) =>
+      (pages ?? []).map((p, i) => (i === 0 ? { ...p, items: [...p.items, 'z'] } : p)),
+    )
+    expect(root.api.chat.flat.value).toEqual(['a', 'b', 'z'])
+    expect(root.api.chat.hasPendingMutations.value).toBe(false)
+    root.dispose()
+  })
+
+  test('replace supersedes the in-flight fetch', async () => {
+    let release: (p: Page) => void = () => {}
+    const q = defineInfiniteQuery({
+      id: 'infinite-parity/replace',
+      key: () => ['chat'],
+      fetcher: () =>
+        new Promise<Page>((resolve) => {
+          release = resolve
+        }),
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+      itemsOf: (page: Page) => page.items,
+    })
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.chat.isFetching.value).toBe(true)
+    root.bindQuery(q).replace([{ items: ['server'], next: null, prev: null }])
+    expect(root.api.chat.isFetching.value).toBe(false)
+    expect(root.api.chat.flat.value).toEqual(['server'])
+    // The superseded response lands too late to overwrite the replacement.
+    release({ items: ['stale'], next: null, prev: null })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.api.chat.flat.value).toEqual(['server'])
     root.dispose()
   })
 })

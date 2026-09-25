@@ -1,0 +1,68 @@
+/* The shared scales: type by role, three corner tiers, the control ladder,
+   space, motion and the solved palette. See `.wiki/decisions/ui-rules.md`.
+   This app keeps the house teal: Vue's own green sits on the success hue,
+   and one hue meaning two things is the drift the rules exist to stop. */
+@import "../../_shared/ui/tokens.css";
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--font-line);
+}
+
+:focus-visible {
+  outline: var(--focus-width) solid var(--color-accent);
+  outline-offset: var(--focus-offset);
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+/* The one control ladder, shared by every button and field beside another. */
+.control {
+  height: var(--control-md);
+  border-radius: var(--radius-control);
+  border: 1px solid var(--color-border-control);
+  background: var(--color-bg-elev);
+  padding: 0 var(--space-5);
+}
+
+.control:hover {
+  background: var(--color-bg-hover);
+}
+
+.control--primary {
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+  color: var(--color-accent-fg);
+  font-weight: var(--weight-medium);
+}
+
+.control--primary:hover {
+  border-color: var(--color-accent-hover);
+  background: var(--color-accent-hover);
+}
+
+.control:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.meta {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--color-fg-mute);
+}

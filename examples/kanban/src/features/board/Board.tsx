@@ -25,10 +25,9 @@ import {
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
-import { use, useQuery, useRoot } from '@kontsedal/olas-react'
+import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { RefreshCw } from 'lucide-react'
 import { useState } from 'react'
-import type { AppApi } from '../../app.controller'
 import { Button, Card, Skeleton } from '../../ui'
 import { FilterChips } from '../filters/FilterChips'
 import { SearchBar } from '../search/SearchBar'
@@ -37,12 +36,12 @@ import { Column } from './Column'
 import { NewColumnButton } from './NewColumnButton'
 
 export function Board() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const board = app.board.board
   const boardQuery = useQuery(board)
 
   // Selection bar
-  const selectedIds = use(app.board.selection.selectedIds)
+  const selectedIds = useValue(app.board.selection.selectedIds)
   const selCount = selectedIds.size
 
   const sensors = useSensors(
@@ -138,6 +137,7 @@ export function Board() {
       {boardQuery.isLoading && boardQuery.data === undefined ? (
         <div className="olas-board-skeleton">
           {Array.from({ length: 4 }, (_, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: four fixed placeholders that never reorder, add or delete; the position is the identity
             <Card key={i} variant="flat" className="olas-column">
               <Skeleton height={18} width="50%" />
               <Skeleton height={120} />

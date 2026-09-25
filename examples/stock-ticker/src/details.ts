@@ -4,7 +4,7 @@
 // when they pick a different one or close the details panel. Demonstrates
 // what controllers buy you over raw signals:
 //
-//  - `ctx.cache(fetcher)`        — a private, controller-owned async cache.
+//  - `createCache(ctx, fetcher)`        — a private, controller-owned async cache.
 //                                  Disposed automatically with the controller.
 //  - `ctx.effect(...)`            — subscription to the live tick stream for
 //                                  this single symbol, cleaned up on dispose.
@@ -12,11 +12,11 @@
 //                                  resources (cleared timer, here).
 //  - `ctx.deps.market`            — typed ambient deps, no module global.
 //
-// `KeepAlive` in the React layer wraps this controller so flipping between
+// `SuspendOnUnmount` in the React layer wraps this controller so flipping between
 // two symbols can either dispose-and-recreate, OR suspend/resume to preserve
 // the recent-trades cache. The example uses suspend/resume.
 
-import { type Ctx, computed, defineController, signal } from '@kontsedal/olas-core'
+import { type Ctx, computed, createCache, defineController, signal } from '@kontsedal/olas-core'
 import type { Tick, Trade } from './api'
 
 export type DetailsProps = { symbol: string }
@@ -25,8 +25,9 @@ export const detailsController = defineController(
   (ctx: Ctx, props: DetailsProps) => {
     // Private cache — only this controller subscribes; no module-level
     // sharing, no cache key gymnastics.
-    const trades = ctx.cache<Trade[]>(
-      (signal) => ctx.deps.market.getRecentTrades(props.symbol, signal),
+    const trades = createCache<Trade[]>(
+      ctx,
+      ({ signal }) => ctx.deps.market.getRecentTrades(props.symbol, signal),
       { staleTime: 30_000 },
     )
 

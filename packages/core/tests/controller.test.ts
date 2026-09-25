@@ -1,6 +1,8 @@
 import { describe, expect, test, vi } from 'vitest'
+import { createField } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { createEmitter } from '../src/emitter'
+import { queryEngine } from '../src/query/engine'
 import { computed, signal } from '../src/signals'
 import { createTestController } from '../src/testing'
 
@@ -18,13 +20,13 @@ describe('defineController + createRoot', () => {
   test('returns the controller api merged with root controls', () => {
     const root = createRoot(
       defineController(() => ({ count: signal(0) })),
-      { deps: noopApi },
+      { queries: queryEngine(), deps: noopApi },
     )
-    expect(typeof root.count.value).toBe('number')
+    expect(typeof root.api.count.value).toBe('number')
     expect(typeof root.dispose).toBe('function')
     expect(typeof root.suspend).toBe('function')
     expect(typeof root.resume).toBe('function')
-    expect(typeof root.__debug.subscribe).toBe('function')
+    expect(typeof root.debug.subscribe).toBe('function')
     root.dispose()
   })
 
@@ -36,10 +38,10 @@ describe('defineController + createRoot', () => {
     })
     const root = createRoot(
       defineController((ctx) => ({ child: ctx.child(child, undefined) })),
-      { deps: noopApi },
+      { queries: queryEngine(), deps: noopApi },
     )
     expect(observed).toBe(noopApi)
-    expect(root.child.ok).toBe(true)
+    expect(root.api.child.ok).toBe(true)
     root.dispose()
   })
 
@@ -60,7 +62,7 @@ describe('defineController + createRoot', () => {
       middle: ctx.child(middle, undefined, { deps: { api: otherApi } }),
     }))
 
-    const r = createRoot(root, { deps: noopApi })
+    const r = createRoot(root, { queries: queryEngine(), deps: noopApi })
     expect(seen).toEqual(['fetch', 'original', 'fetch', 'override'])
     r.dispose()
   })
@@ -76,9 +78,9 @@ describe('ctx.effect', () => {
       })
       return { a }
     })
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     expect(observed).toEqual([1])
-    root.a.set(2)
+    root.api.a.set(2)
     expect(observed).toEqual([1, 2])
     root.dispose()
   })
@@ -92,7 +94,7 @@ describe('ctx.effect', () => {
       })
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     expect(cleanups).toEqual(['setup'])
     root.dispose()
     expect(cleanups).toEqual(['setup', 'teardown'])
@@ -106,11 +108,11 @@ describe('ctx.effect', () => {
       })
       return { ok: true }
     })
-    const root = createRoot(def, { deps: noopApi, onError })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi, onError })
     expect(onError).toHaveBeenCalledTimes(1)
     expect((onError.mock.calls[0]![0] as Error).message).toBe('effect boom')
     expect(onError.mock.calls[0]![1].kind).toBe('effect')
-    expect(root.ok).toBe(true)
+    expect(root.api.ok).toBe(true)
     root.dispose()
   })
 })
@@ -121,14 +123,14 @@ describe('ctx.emitter / ctx.on', () => {
       const emitter = ctx.emitter<number>()
       return { emitter }
     })
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     const handler = vi.fn()
-    root.emitter.on(handler)
-    root.emitter.emit(1)
+    root.api.emitter.on(handler)
+    root.api.emitter.emit(1)
     expect(handler).toHaveBeenCalledWith(1)
     root.dispose()
     // After dispose, emits are no-ops.
-    root.emitter.emit(2)
+    root.api.emitter.emit(2)
     expect(handler).toHaveBeenCalledTimes(1)
   })
 
@@ -139,7 +141,7 @@ describe('ctx.emitter / ctx.on', () => {
       ctx.on(external, (v) => seen.push(v))
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     external.emit('a')
     expect(seen).toEqual(['a'])
     root.dispose()
@@ -156,7 +158,7 @@ describe('ctx.emitter / ctx.on', () => {
       })
       return {}
     })
-    const root = createRoot(def, { deps: noopApi, onError })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi, onError })
     external.emit('x')
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError.mock.calls[0]![1].kind).toBe('emitter')
@@ -167,74 +169,78 @@ describe('ctx.emitter / ctx.on', () => {
 describe('ctx.field — sync validators', () => {
   test('initial errors reflect the initial value', () => {
     const def = defineController((ctx) => ({
-      name: ctx.field('', [(v) => (v.length === 0 ? 'required' : null)]),
+      name: createField(ctx, '', { validators: [(v) => (v.length === 0 ? 'required' : null)] }),
     }))
-    const root = createRoot(def, { deps: noopApi })
-    expect(root.name.errors.value).toEqual(['required'])
-    expect(root.name.isValid.value).toBe(false)
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    expect(root.api.name.errors.value).toEqual(['required'])
+    expect(root.api.name.isValid.value).toBe(false)
     root.dispose()
   })
 
   test('set runs validators and updates errors / dirty', () => {
     const def = defineController((ctx) => ({
-      n: ctx.field(0, [(v) => (v < 5 ? 'too small' : null)]),
+      n: createField(ctx, 0, { validators: [(v) => (v < 5 ? 'too small' : null)] }),
     }))
-    const root = createRoot(def, { deps: noopApi })
-    expect(root.n.isDirty.value).toBe(false)
-    root.n.set(10)
-    expect(root.n.value).toBe(10)
-    expect(root.n.errors.value).toEqual([])
-    expect(root.n.isValid.value).toBe(true)
-    expect(root.n.isDirty.value).toBe(true)
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    expect(root.api.n.isDirty.value).toBe(false)
+    root.api.n.set(10)
+    expect(root.api.n.value).toBe(10)
+    expect(root.api.n.errors.value).toEqual([])
+    expect(root.api.n.isValid.value).toBe(true)
+    expect(root.api.n.isDirty.value).toBe(true)
     root.dispose()
   })
 
   test('field.set is bound — safe to pass as a value (detached), still runs validators', () => {
     const def = defineController((ctx) => ({
-      n: ctx.field(0, [(v) => (v < 5 ? 'too small' : null)]),
+      n: createField(ctx, 0, { validators: [(v) => (v < 5 ? 'too small' : null)] }),
     }))
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     // Detach `set`, as with `onChange={field.set}` or `setName: field.set`.
-    const set = root.n.set
+    const set = root.api.n.set
     expect(() => set(10)).not.toThrow()
-    expect(root.n.value).toBe(10)
-    expect(root.n.errors.value).toEqual([]) // validators still ran through the bound path
-    expect(root.n.isDirty.value).toBe(true)
-    expect(root.n.set).toBe(set) // stable identity
+    expect(root.api.n.value).toBe(10)
+    expect(root.api.n.errors.value).toEqual([]) // validators still ran through the bound path
+    expect(root.api.n.isDirty.value).toBe(true)
+    expect(root.api.n.set).toBe(set) // stable identity
     root.dispose()
   })
 
   test('reset returns to initial and clears dirty/touched/errors', () => {
     const def = defineController((ctx) => ({
-      s: ctx.field('init', [(v) => (v === 'init' ? null : 'must equal init')]),
+      s: createField(ctx, 'init', {
+        validators: [(v) => (v === 'init' ? null : 'must equal init')],
+      }),
     }))
-    const root = createRoot(def, { deps: noopApi })
-    root.s.set('other')
-    root.s.markTouched()
-    expect(root.s.value).toBe('other')
-    expect(root.s.touched.value).toBe(true)
-    expect(root.s.isDirty.value).toBe(true)
-    expect(root.s.errors.value).toEqual(['must equal init'])
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    root.api.s.set('other')
+    root.api.s.markTouched()
+    expect(root.api.s.value).toBe('other')
+    expect(root.api.s.touched.value).toBe(true)
+    expect(root.api.s.isDirty.value).toBe(true)
+    expect(root.api.s.errors.value).toEqual(['must equal init'])
 
-    root.s.reset()
-    expect(root.s.value).toBe('init')
-    expect(root.s.touched.value).toBe(false)
-    expect(root.s.isDirty.value).toBe(false)
-    expect(root.s.errors.value).toEqual([])
+    root.api.s.reset()
+    expect(root.api.s.value).toBe('init')
+    expect(root.api.s.touched.value).toBe(false)
+    expect(root.api.s.isDirty.value).toBe(false)
+    expect(root.api.s.errors.value).toEqual([])
     root.dispose()
   })
 
   test('a validator that reads another signal re-runs when that signal changes', () => {
     const password = signal('hunter2')
     const def = defineController((ctx) => ({
-      confirm: ctx.field('', [(v) => (v === password.value ? null : 'must match')]),
+      confirm: createField(ctx, '', {
+        validators: [(v) => (v === password.value ? null : 'must match')],
+      }),
     }))
-    const root = createRoot(def, { deps: noopApi })
-    expect(root.confirm.errors.value).toEqual(['must match'])
-    root.confirm.set('hunter2')
-    expect(root.confirm.errors.value).toEqual([])
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    expect(root.api.confirm.errors.value).toEqual(['must match'])
+    root.api.confirm.set('hunter2')
+    expect(root.api.confirm.errors.value).toEqual([])
     password.set('changed')
-    expect(root.confirm.errors.value).toEqual(['must match'])
+    expect(root.api.confirm.errors.value).toEqual(['must match'])
     root.dispose()
   })
 })
@@ -243,53 +249,57 @@ describe('ctx.field — async validators', () => {
   test('isValidating goes true while pending and false on settle', async () => {
     let resolveValidator: (v: string | null) => void = () => {}
     const def = defineController((ctx) => ({
-      name: ctx.field('foo', [
-        () =>
-          new Promise<string | null>((r) => {
-            resolveValidator = r
-          }),
-      ]),
+      name: createField(ctx, 'foo', {
+        validators: [
+          () =>
+            new Promise<string | null>((r) => {
+              resolveValidator = r
+            }),
+        ],
+      }),
     }))
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
 
     // Wait one microtask so the effect's async branch kicks off.
     await Promise.resolve()
-    expect(root.name.isValidating.value).toBe(true)
+    expect(root.api.name.isValidating.value).toBe(true)
     // isValid HOLDS the last-known validity while a pass is in flight (T5.3) —
     // a fresh field with no prior settle defaults to valid, so it does not flash
     // invalid mid-check (which would strobe a submit button on every keystroke).
-    expect(root.name.isValid.value).toBe(true)
+    expect(root.api.name.isValid.value).toBe(true)
 
     resolveValidator(null)
     await Promise.resolve()
     await Promise.resolve()
-    expect(root.name.isValidating.value).toBe(false)
-    expect(root.name.errors.value).toEqual([])
-    expect(root.name.isValid.value).toBe(true)
+    expect(root.api.name.isValidating.value).toBe(false)
+    expect(root.api.name.errors.value).toEqual([])
+    expect(root.api.name.isValid.value).toBe(true)
     root.dispose()
   })
 
   test('latest value wins — older async result is dropped', async () => {
     const resolvers: Array<(v: string | null) => void> = []
     const def = defineController((ctx) => ({
-      n: ctx.field('a', [() => new Promise<string | null>((r) => resolvers.push(r))]),
+      n: createField(ctx, 'a', {
+        validators: [() => new Promise<string | null>((r) => resolvers.push(r))],
+      }),
     }))
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
 
     // first run (initial) created resolvers[0]
     await Promise.resolve()
-    root.n.set('b') // triggers re-run; resolvers[1] queued
+    root.api.n.set('b') // triggers re-run; resolvers[1] queued
     await Promise.resolve()
     // resolve the second (latest) one first
     resolvers[1]!('only b matters')
     await Promise.resolve()
     await Promise.resolve()
-    expect(root.n.errors.value).toEqual(['only b matters'])
+    expect(root.api.n.errors.value).toEqual(['only b matters'])
     // older one resolves later — should be ignored
     resolvers[0]!('this should NOT win')
     await Promise.resolve()
     await Promise.resolve()
-    expect(root.n.errors.value).toEqual(['only b matters'])
+    expect(root.api.n.errors.value).toEqual(['only b matters'])
     root.dispose()
   })
 })
@@ -304,19 +314,19 @@ describe('lifecycle — suspend / resume / dispose', () => {
       })
       return { a }
     })
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     expect(observed).toEqual([0])
 
     root.suspend()
-    root.a.set(1)
-    root.a.set(2)
+    root.api.a.set(1)
+    root.api.a.set(2)
     expect(observed).toEqual([0]) // suspended; no re-runs
 
     root.resume()
     // Effect re-runs once on resume, picking up the latest value.
     expect(observed).toEqual([0, 2])
 
-    root.a.set(3)
+    root.api.a.set(3)
     expect(observed).toEqual([0, 2, 3])
     root.dispose()
   })
@@ -329,7 +339,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
       ctx.onDispose(() => events.push('dispose'))
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     root.suspend()
     root.resume()
     root.dispose()
@@ -353,7 +363,7 @@ describe('lifecycle — suspend / resume / dispose', () => {
     const root = defineController((ctx) => ({
       mid: ctx.child(middle, undefined),
     }))
-    const r = createRoot(root, { deps: noopApi })
+    const r = createRoot(root, { queries: queryEngine(), deps: noopApi })
     r.suspend()
     expect(log).toEqual(['leaf:suspend', 'mid:suspend'])
     r.resume()
@@ -377,21 +387,21 @@ describe('lifecycle — suspend / resume / dispose', () => {
       ctx.onDispose(cleanups)
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
     root.dispose()
     root.dispose()
     expect(cleanups).toHaveBeenCalledTimes(1)
   })
 
-  test('suspend with maxIdle auto-disposes when the timer fires', () => {
+  test('suspend with maxIdleTime auto-disposes when the timer fires', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
       ctx.onDispose(onDispose)
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(999)
     expect(onDispose).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
@@ -399,15 +409,15 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('resume cancels a pending maxIdle timer', () => {
+  test('resume cancels a pending maxIdleTime timer', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
       ctx.onDispose(onDispose)
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(500)
     root.resume()
     vi.advanceTimersByTime(10_000)
@@ -416,15 +426,15 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('dispose clears a pending maxIdle timer (no double-fire)', () => {
+  test('dispose clears a pending maxIdleTime timer (no double-fire)', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
       ctx.onDispose(onDispose)
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    root.suspend({ maxIdleTime: 1000 })
     root.dispose()
     expect(onDispose).toHaveBeenCalledTimes(1)
     vi.advanceTimersByTime(10_000)
@@ -432,19 +442,19 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('a second suspend({maxIdle}) restarts the idle timer from zero', () => {
+  test('a second suspend({maxIdleTime}) restarts the idle timer from zero', () => {
     vi.useFakeTimers()
     const onDispose = vi.fn()
     const def = defineController((ctx) => {
       ctx.onDispose(onDispose)
       return {}
     })
-    const root = createRoot(def, { deps: noopApi })
-    root.suspend({ maxIdle: 1000 })
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(900)
     // Re-suspend before the first timer fires — the prior timer is cleared
     // and the new 1000ms window starts now.
-    root.suspend({ maxIdle: 1000 })
+    root.suspend({ maxIdleTime: 1000 })
     vi.advanceTimersByTime(200)
     expect(onDispose).not.toHaveBeenCalled()
     vi.advanceTimersByTime(800)
@@ -452,13 +462,33 @@ describe('lifecycle — suspend / resume / dispose', () => {
     vi.useRealTimers()
   })
 
-  test('controller api defining a reserved root key throws on createRoot', () => {
-    for (const reserved of ['dispose', 'suspend', 'resume', '__debug'] as const) {
-      const def = defineController(() => ({ [reserved]: () => {} }) as Record<string, () => void>)
-      expect(() => createRoot(def, { deps: noopApi })).toThrowError(
-        /conflicts with the root controls/,
-      )
-    }
+  test('an api may use the names of root controls; the two never collide', () => {
+    const own = { dispose: vi.fn(), suspend: vi.fn(), resume: vi.fn(), debug: 'mine' }
+    const def = defineController(() => own)
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    root.api.dispose()
+    root.api.suspend()
+    expect(own.dispose).toHaveBeenCalledTimes(1)
+    expect(own.suspend).toHaveBeenCalledTimes(1)
+    expect(root.api.debug).toBe('mine')
+    expect(typeof root.debug.subscribe).toBe('function')
+    root.dispose()
+  })
+
+  test('a primitive api is returned as-is on root.api', () => {
+    const def = defineController(() => 42)
+    const root = createRoot(def, { queries: queryEngine(), deps: noopApi })
+    expect(root.api).toBe(42)
+    root.dispose()
+  })
+
+  test('the root handle is frozen', () => {
+    const root = createRoot(
+      defineController(() => ({})),
+      { queries: queryEngine(), deps: noopApi },
+    )
+    expect(Object.isFrozen(root)).toBe(true)
+    root.dispose()
   })
 })
 
@@ -478,7 +508,7 @@ describe('construction error rollback (§12.1)', () => {
       return {}
     })
 
-    expect(() => createRoot(parent, { deps: noopApi })).toThrow('broken')
+    expect(() => createRoot(parent, { queries: queryEngine(), deps: noopApi })).toThrow('broken')
     // The sibling that *was* successfully constructed must be torn down
     // because the parent's factory threw — partial parent rollback.
     expect(siblingDisposed).toHaveBeenCalledTimes(1)
@@ -503,9 +533,9 @@ describe('construction error rollback (§12.1)', () => {
       return { s }
     })
 
-    const root = createRoot(parent, { deps: noopApi })
+    const root = createRoot(parent, { queries: queryEngine(), deps: noopApi })
     expect(siblingDisposed).not.toHaveBeenCalled()
-    expect(root.s.ok).toBe(true)
+    expect(root.api.s.ok).toBe(true)
     root.dispose()
     expect(siblingDisposed).toHaveBeenCalledTimes(1)
   })
@@ -515,7 +545,9 @@ describe('construction error rollback (§12.1)', () => {
     const broken = defineController(() => {
       throw new Error('bootstrap fail')
     })
-    expect(() => createRoot(broken, { deps: noopApi, onError })).toThrow('bootstrap fail')
+    expect(() => createRoot(broken, { queries: queryEngine(), deps: noopApi, onError })).toThrow(
+      'bootstrap fail',
+    )
     expect(onError).not.toHaveBeenCalled()
   })
 
@@ -526,17 +558,17 @@ describe('construction error rollback (§12.1)', () => {
     const initSpy = vi.fn()
     const disposeSpy = vi.fn()
     const plugin = {
-      init: initSpy,
-      dispose: disposeSpy,
+      name: 'spy',
+      setup: () => {
+        initSpy()
+        return { dispose: disposeSpy }
+      },
     }
     const broken = defineController(() => {
       throw new Error('bootstrap fail')
     })
     expect(() =>
-      createRoot(broken, {
-        deps: noopApi,
-        plugins: [plugin],
-      }),
+      createRoot(broken, { queries: queryEngine(), deps: noopApi, plugins: [plugin] }),
     ).toThrow('bootstrap fail')
     expect(initSpy).toHaveBeenCalledTimes(1)
     expect(disposeSpy).toHaveBeenCalledTimes(1)
@@ -553,7 +585,7 @@ describe('createTestController', () => {
       deps: { whatever: true },
       props: { id: 'u1' },
     })
-    expect(root.greeting.value).toBe('hello u1')
+    expect(root.api.greeting.value).toBe('hello u1')
     expect(typeof root.dispose).toBe('function')
     root.dispose()
   })
@@ -564,7 +596,9 @@ describe('three-level tree (root → feature → leaf)', () => {
     const log: string[] = []
 
     const leaf = defineController((ctx, props: { name: string }) => {
-      const field = ctx.field('', [(v) => (v.length === 0 ? 'required' : null)])
+      const field = createField(ctx, '', {
+        validators: [(v) => (v.length === 0 ? 'required' : null)],
+      })
       ctx.onDispose(() => log.push(`leaf:${props.name}:disposed`))
       return { field, name: props.name }
     })
@@ -588,14 +622,14 @@ describe('three-level tree (root → feature → leaf)', () => {
       feature: ctx.child(feature, undefined),
     }))
 
-    const root = createRoot(rootDef, { deps: noopApi })
+    const root = createRoot(rootDef, { queries: queryEngine(), deps: noopApi })
     const seen: string[] = []
-    const off = root.feature.events.on((e) => seen.push(e.kind))
+    const off = root.api.feature.events.on((e) => seen.push(e.kind))
 
-    expect(root.feature.a.field.isValid.value).toBe(false)
-    root.feature.a.field.set('x')
-    expect(root.feature.a.field.isValid.value).toBe(true)
-    root.feature.b.field.set('y')
+    expect(root.api.feature.a.field.isValid.value).toBe(false)
+    root.api.feature.a.field.set('x')
+    expect(root.api.feature.a.field.isValid.value).toBe(true)
+    root.api.feature.b.field.set('y')
     expect(seen).toEqual(['both-valid'])
 
     root.suspend()
@@ -630,7 +664,7 @@ describe('ctx.attach — early-dispose child handle', () => {
         },
         { name: 'parent' },
       ),
-      { deps: {} },
+      { queries: queryEngine(), deps: {} },
     )
 
     expect(attached!.api.mark).toBe('leaf')
@@ -655,7 +689,7 @@ describe('ctx.attach — early-dispose child handle', () => {
         ctx.attach(leaf, undefined)
         return {}
       }),
-      { deps: {} },
+      { queries: queryEngine(), deps: {} },
     )
 
     root.dispose()
@@ -682,7 +716,7 @@ describe('ctx.attach — early-dispose child handle', () => {
         attached = ctx.attach(leaf, undefined)
         return {}
       }),
-      { deps: {} },
+      { queries: queryEngine(), deps: {} },
     )
 
     attached!.suspend()

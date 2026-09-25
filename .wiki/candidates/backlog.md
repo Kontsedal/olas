@@ -3,7 +3,7 @@ name: candidate-backlog
 description: "Staging backlog of substantial, forward-looking proposals (rich design candidates). The terse grab-bag of smaller ideas stays in the repo-root BACKLOG.md."
 type: overview
 edges:
-  - { type: related, target: decisions/devtools-overhaul.md }
+  - { type: related, target: ../decisions/devtools-overhaul.md }
 last_verified: 2026-07-28
 confidence: candidate
 ---
@@ -45,7 +45,7 @@ inspector), T8.8 (plugin lanes), T8.9 (session traces), T8.10 (UX pass) — plus
 leftovers (`cache:subscribe/unsubscribe`, `effect:run`, `form:field-change`, `scope:*`,
 `plugin:event`).
 
-→ **Full design: [`decisions/devtools-overhaul.md`](decisions/devtools-overhaul.md)**
+→ **Full design: [`decisions/devtools-overhaul.md`](../decisions/devtools-overhaul.md)**
 (sub-phases 8A foundation → 8B causal timeline → 8C live actions → 8D polish, ten tasks;
 T8.1 + T8.4 marked ✅ there). The devtools *bugs* were already fixed (remediation T6.3,
 see `modules/devtools-panel.md`); this is additive.
@@ -57,7 +57,7 @@ one-liners live in `BACKLOG.md`.
 
 - **`@kontsedal/olas-offline`** — an offline-first reconnection layer over
   `mutation-queue` + `persist`: navigator-online detection, a connection-state signal,
-  conflict-resolution helpers, mid-session (not just cross-reload) retry with backoff.
+  conflict-resolution helpers, mid-session (not only cross-reload) retry with backoff.
   The natural home for logic currently smeared across mutation-queue's replay and
   realtime's `onReconnect`.
 - **Infinite-query first-class completeness** — a cluster the remediation deliberately
@@ -74,7 +74,7 @@ one-liners live in `BACKLOG.md`.
 - **Devtools browser extension** — an out-of-page consumer of `root.__debug` (complements,
   doesn't replace, the in-app panel). Best pursued *after* the overhaul above, since it
   reuses the same event bus + trace format.
-- **Ecosystem adapters & tooling** — `@kontsedal/olas-vue` / `-svelte` (signal interop),
+- **Ecosystem adapters & tooling** — `@kontsedal/olas-vue` and `-svelte` (signal interop),
   `@kontsedal/olas-eslint-plugin` (catch correctness rules the type system can't — e.g.
   "fetcher must use its `signal`"), `@kontsedal/olas-vite-plugin` (HMR full-root-rebuild
   automation). Additive, framework-neutral by design.

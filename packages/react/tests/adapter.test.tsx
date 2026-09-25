@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
+import {
+  createField,
+  createMutation,
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+  signal,
+} from '@kontsedal/olas-core'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { StrictMode, useEffect, useLayoutEffect } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { OlasProvider, use, useController, useField, useMutation, useQuery, useRoot } from '../src'
+import { OlasProvider, useField, useMutation, useQuery, useRoot, useValue } from '../src'
 
 afterEach(() => {
   cleanup()
@@ -16,10 +25,10 @@ describe('use(signal)', () => {
       const count = signal(0)
       return { count, inc: () => count.set(count.peek() + 1) }
     })
-    const root = createRoot(counterDef, { deps: {} })
+    const root = createRoot(counterDef, { queries: queryEngine(), deps: {} })
 
     function Counter() {
-      const value = use(root.count)
+      const value = useValue(root.api.count)
       return <span data-testid="count">{value}</span>
     }
 
@@ -30,10 +39,10 @@ describe('use(signal)', () => {
     )
 
     expect(screen.getByTestId('count').textContent).toBe('0')
-    act(() => root.inc())
+    act(() => root.api.inc())
     expect(screen.getByTestId('count').textContent).toBe('1')
-    act(() => root.inc())
-    act(() => root.inc())
+    act(() => root.api.inc())
+    act(() => root.api.inc())
     expect(screen.getByTestId('count').textContent).toBe('3')
 
     root.dispose()
@@ -41,7 +50,7 @@ describe('use(signal)', () => {
 
   test('useRoot resolves the root from <OlasProvider>', () => {
     const def = defineController(() => ({ label: 'hello' }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function Greeting() {
       const api = useRoot<{ label: string }>()
@@ -70,41 +79,28 @@ describe('use(signal)', () => {
       console.error = prev
     }
   })
-
-  test('useController is a back-compat passthrough', () => {
-    const def = defineController(() => ({ greeting: 'hi' }))
-    const root = createRoot(def, { deps: {} })
-
-    function Greet() {
-      const api = useController(root)
-      return <span data-testid="hc">{api.greeting}</span>
-    }
-
-    render(<Greet />)
-    expect(screen.getByTestId('hc').textContent).toBe('hi')
-    root.dispose()
-  })
 })
 
 describe('useQuery(subscription)', () => {
   test('re-renders on query.invalidate() and surfaces fresh data', async () => {
     let value = 'first'
     const greetingQuery = defineQuery({
+      id: 'adapter/87',
       key: () => [],
       fetcher: async () => value,
     })
 
     const def = defineController((ctx) => {
-      const greeting = ctx.use(greetingQuery)
+      const greeting = createQuery(ctx, greetingQuery)
       return { greeting }
     })
     // Silence the expected abort noise that invalidation can produce when a
     // superseded fetch rejects with AbortError — `onError` swallows it for
     // this test.
-    const root = createRoot(def, { deps: {}, onError: () => {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
     function GreetingView() {
-      const { data, isLoading } = useQuery(root.greeting)
+      const { data, isLoading } = useQuery(root.api.greeting)
       return <span data-testid="g">{isLoading ? 'loading' : (data ?? '')}</span>
     }
 
@@ -115,7 +111,7 @@ describe('useQuery(subscription)', () => {
     )
 
     await act(async () => {
-      await root.greeting.firstValue()
+      await root.api.greeting.firstValue()
     })
     expect(screen.getByTestId('g').textContent).toBe('first')
 
@@ -124,13 +120,13 @@ describe('useQuery(subscription)', () => {
       greetingQuery.invalidate()
       // invalidate marks the entry stale; the subscription auto-refetches.
       // Wait for the refetch to settle.
-      await root.greeting.firstValue()
+      await root.api.greeting.firstValue()
     })
     // firstValue resolves on the first cached value (still 'first' after the
     // first fetch). Wait one more microtask cycle and assert the visible
     // text matches the refetched data.
     await act(async () => {
-      await root.greeting.refetch()
+      await root.api.greeting.refetch()
     })
     expect(screen.getByTestId('g').textContent).toBe('second')
 
@@ -146,11 +142,11 @@ describe('StrictMode safety', () => {
       return { count: signal(0) }
     })
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     expect(constructions).toHaveBeenCalledTimes(1)
 
     function View() {
-      const v = use(root.count)
+      const v = useValue(root.api.count)
       // Track that React does mount/unmount per StrictMode
       useEffect(() => {
         // intentional empty — just exercise StrictMode's double-effect path
@@ -168,7 +164,7 @@ describe('StrictMode safety', () => {
 
     expect(constructions).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('v').textContent).toBe('0')
-    act(() => root.count.set(7))
+    act(() => root.api.count.set(7))
     expect(screen.getByTestId('v').textContent).toBe('7')
 
     root.dispose()
@@ -178,12 +174,12 @@ describe('StrictMode safety', () => {
 describe('useField <input> round-trip', () => {
   test('typing into an input updates the field and re-renders', () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('init'),
+      name: createField<string>(ctx, 'init'),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function NameInput() {
-      const { value, set, touched, markTouched } = useField(root.name)
+      const { value, set, touched, markTouched } = useField(root.api.name)
       return (
         <div>
           <input
@@ -211,7 +207,7 @@ describe('useField <input> round-trip', () => {
       fireEvent.change(input, { target: { value: 'edited' } })
     })
     expect(input.value).toBe('edited')
-    expect(root.name.peek()).toBe('edited')
+    expect(root.api.name.peek()).toBe('edited')
 
     act(() => {
       fireEvent.blur(input)
@@ -224,11 +220,13 @@ describe('useField <input> round-trip', () => {
 
 describe('useMutation status (R4.2)', () => {
   test('a void mutation reports isSuccess after it resolves', async () => {
-    const def = defineController((ctx) => ({ save: ctx.mutation({ mutate: async () => {} }) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({
+      save: createMutation(ctx, { mutate: async () => {} }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function View() {
-      const m = useMutation(root.save)
+      const m = useMutation(root.api.save)
       return <span data-testid="s">{m.isSuccess ? 'success' : m.isIdle ? 'idle' : 'other'}</span>
     }
 
@@ -242,7 +240,7 @@ describe('useMutation status (R4.2)', () => {
     // A void mutation resolves `undefined`; only `status` changes. The hook must
     // subscribe to it and re-render with isSuccess=true (was stuck on 'idle').
     await act(async () => {
-      await root.save.run()
+      await root.api.save.run()
     })
     expect(screen.getByTestId('s').textContent).toBe('success')
 
@@ -254,7 +252,7 @@ describe('use(signal, { select, isEqual }) (R4.4)', () => {
   test('a changed selector re-derives even when the raw value is unchanged', () => {
     const arr = signal(['a', 'b', 'c'])
     function View({ index }: { index: number }) {
-      const item = use(arr, { select: (a) => a[index] })
+      const item = useValue(arr, { select: (a) => a[index] })
       return <span data-testid="item">{item}</span>
     }
     const { rerender } = render(<View index={0} />)
@@ -268,7 +266,7 @@ describe('use(signal, { select, isEqual }) (R4.4)', () => {
     const src = signal<{ tags: string[] }>({ tags: ['x', 'y'] })
     let renders = 0
     function View() {
-      const tags = use(src, {
+      const tags = useValue(src, {
         select: (s) => s.tags,
         isEqual: (a, b) => a.length === b.length && a.every((t, i) => t === b[i]),
       })
@@ -293,11 +291,11 @@ describe('use(signal, { select, isEqual }) (R4.4)', () => {
 
 describe('useSyncExternalStore consistency (R4.5)', () => {
   test('a field write between render and subscription is reflected (no stale snapshot)', () => {
-    const def = defineController((ctx) => ({ name: ctx.field<string>('initial') }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ name: createField<string>(ctx, 'initial') }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function Reader() {
-      const { value } = useField(root.name)
+      const { value } = useField(root.api.name)
       return <span data-testid="v">{value}</span>
     }
     // Rendered AFTER Reader; its layout effect writes the field during commit —
@@ -307,7 +305,7 @@ describe('useSyncExternalStore consistency (R4.5)', () => {
     // the stale value. The computed snapshot reflects real store state (T4.5).
     function Writer() {
       useLayoutEffect(() => {
-        root.name.set('written')
+        root.api.name.set('written')
       }, [])
       return null
     }

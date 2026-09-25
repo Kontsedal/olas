@@ -1,60 +1,63 @@
 ---
 name: brand-markers-not-classes
-description: Why we use Symbol.for(...) brands for runtime type discrimination instead of instanceof.
+description: Why runtime kinds are Symbol.for brand keys on plain objects instead of instanceof, and why the keys are symbols no public type exports.
 type: decision
 covers:
-  - packages/core/src/forms/form.ts
+  - packages/core/src/brand.ts
+  - packages/core/src/forms/form.ts:33-77
   - packages/core/src/query/define.ts
+  - packages/core/src/query/mutation.ts:160-213
+  - packages/core/src/scope.ts
 edges:
   - { type: uses, target: ../modules/forms.md }
-last_verified: 2026-05-22
-confidence: high
+  - { type: tested-by, target: ../../packages/core/tests/scope.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/tree-shaking.test.ts }
+last_verified: 2026-09-25
+confidence: medium
 ---
 
 # Brand markers, not classes
 
 ## The choice
 
-Where we need to distinguish primitive types at runtime, we use a brand marker on the impl object:
+Where core must tell kinds of value apart at runtime, the value carries a brand under a symbol key. `packages/core/src/brand.ts` holds three keys:
 
-- `Form` and `FieldArray`: `Symbol.for('olas.form')` and `Symbol.for('olas.fieldArray')` (in `form.ts`).
-- `Query` and `InfiniteQuery`: `__olas: 'query'` and `__olas: 'infiniteQuery'` (in `define.ts`).
-- `ControllerDef`: `__olas: 'controller'` (in `define.ts`).
+- **`BRAND`** — the kind, as a string: `'controller'`, `'query'`, `'infiniteQuery'`, `'queryEngine'`, `'scope'`, `'mutation'`. `olas-entities` stamps `'entity'` under the same key.
+- **`PHANTOM`** — an optional property that pins a phantom type parameter (`Scope<T>`, `ControllerDef<Props, Api>`, `EntityDef<T>`). No value carries it at runtime.
+- **`INTERNAL`** — plumbing a public value hands to core. Today that is the engine's `options` and `create`.
 
-Predicates: `isForm(x)`, `isFieldArray(x)`, `isField(x)` (defaults when neither brand is set). Query dispatch: `(query as { __olas?: string }).__olas === 'infiniteQuery'`.
+Forms keep their own two keys, `Symbol.for('olas.form')` and `Symbol.for('olas.fieldArray')` (`form.ts:33-77`), with the predicates `isForm` and `isFieldArray`. A node with neither brand is treated as a `Field`; no `isField` predicate exists.
+
+Query dispatch reads the kind: `(query as { [BRAND]?: string })[BRAND] === 'infiniteQuery'` in `createQuery` (`query/bind.ts`).
 
 ## Why not `instanceof`?
 
 ### Impl classes aren't exported
 
-`FormImpl`, `FieldArrayImpl`, `FieldImpl` are internal. Exposing them so consumers can do `instanceof` would couple every consumer to the internal class names. Brands decouple.
+`FormImpl`, `FieldArrayImpl` and `FieldImpl` are internal. Exposing them so consumers can use `instanceof` would couple every consumer to the internal class names. Brands decouple.
 
-### `Symbol.for(...)` survives bundling
+### `Symbol.for(...)` survives two copies of core
 
-If two copies of `@kontsedal/olas-core` end up in a bundle (a dependency upgrade gone wrong), `instanceof` against a class from copy A fails on instances from copy B. `Symbol.for('olas.form')` resolves to the same symbol across realms.
+If two copies of `@kontsedal/olas-core` end up in a bundle, `instanceof` against a class from copy A fails on instances from copy B. `Symbol.for('olas.brand')` is the same symbol in both copies, so each recognizes the other's queries and scopes.
 
 ### Brands compose with mocks
 
-In UI tests, you might want to hand a "fake form" to a component that calls `isForm(...)` on it. With brands, mocking is `{ [FORM_BRAND]: true, fields: {...}, value: signal({...}), ... }`. With `instanceof`, you'd have to construct a real `FormImpl`, which means a real `ctx`, which means a real controller — too much for a UI test.
+A UI test can hand a component a fake form, `{ [Symbol.for('olas.form')]: true, fields: {...}, … }`. With `instanceof` it would need a real `FormImpl`, which means a real `ctx` and a real controller.
 
-## Why a literal `__olas: 'query'` for queries, not a Symbol?
+## Why symbol keys, not `__olas: 'query'`
 
-Queries cross the network boundary in SSR (`dehydrate()` would NOT serialize the brand, but the brand is checked at runtime in `ctx.use`). Symbols don't serialize through `JSON.stringify`. We don't actually need cross-process equality for query brands — they're never sent over the wire — but the literal string form is also nicer in error messages, devtools events, and grep output.
+Before 1.0 the kind was a string property, `__olas`, and the phantom types and engine plumbing sat beside it as `__t`, `__types`, `__options` and `__create`. They all showed in autocomplete on every public value, and in `Object.keys` and `JSON.stringify`.
 
-For forms, the brand is on an object held in user memory only, so a `Symbol.for(...)` is fine and gives us the bundling-resilience property.
+A symbol key shows in none of those. Core does not export the three symbols, so user code cannot reach them by name. The published `.d.ts` declares each one as a non-exported `declare const BRAND: unique symbol`.
 
-## Predicate locations
+The old page argued for the string form because it "is nicer in error messages, devtools events, and grep output". None of those reads the brand: errors and devtools events carry the query's `id`.
 
-```ts
-// form.ts:24-31
-const isForm        = (x: unknown): x is Form<FormSchema>
-const isFieldArray  = (x: unknown): x is FieldArray<...>
-const isField       = (x: unknown): x is Field<unknown>
+`Scope` lost its `__id: symbol` in the same pass. The scope object is its own identity, so the instance's scope maps key on the object (`controller/instance.ts`).
 
-// controller/instance.ts:243 (in ctx.use)
-const brand = (query as { __olas?: string }).__olas
-```
+## Non-enumerable where a value is spread
+
+`defineMutation` sets its brand with `Object.defineProperty(..., { enumerable: false })` (`query/mutation.ts`). `createMutation(ctx, { ...def, retry: 0 })` is a supported spelling, and a spread must not carry the brand into the inline spec.
 
 ## What's NOT branded
 
-`Field` doesn't get its own brand; we infer it by elimination (`isField = !isForm && !isFieldArray`). Adding a `Symbol.for('olas.field')` brand would make the test ordering insensitive but wasn't needed in practice. A future contributor adding new schema-tree node types should add explicit brands.
+`Field` has no brand of its own; it is inferred by elimination (`isField = !isForm && !isFieldArray`). A new schema-tree node type should add an explicit brand.

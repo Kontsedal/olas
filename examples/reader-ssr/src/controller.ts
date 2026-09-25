@@ -9,18 +9,27 @@
 //  - `ctx.effect` accumulator                → pages append as new cursors land
 //  - `root.waitForIdle` / `root.dehydrate`   → SSR snapshot
 //  - `createRoot(..., { hydrate })`          → client hydration
-//  - `usePersisted`                          → reading progress survives reloads
+//  - `createPersisted`                          → reading progress survives reloads
 //  - `ctx.emitter` + `ctx.on`                → analytics events
 //  - `onError` root option + `ErrorContext`  → centralized error handling
 //
-// Why not `defineInfiniteQuery`? The current `root.dehydrate()` only serializes
-// entries from regular `defineQuery` caches — infinite-query state is not
-// included. Modeling pagination as "regular query + reactive key" gives us
-// SSR-ready entries (one per cursor) while still demonstrating accumulation.
+// Why not `defineInfiniteQuery`? It would work: `root.dehydrate()` includes
+// infinite queries with their page params. This example models pagination as
+// a regular query with a reactive key instead, so each cursor is its own SSR
+// entry, and the controller shows the accumulation that an infinite query
+// would do for it.
 
 import type { Ctx, DehydratedState, ErrorContext } from '@kontsedal/olas-core'
-import { computed, createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
-import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
+import {
+  computed,
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+  signal,
+} from '@kontsedal/olas-core'
+import { createPersisted, type StorageAdapter } from '@kontsedal/olas-persist'
 import type { Api, Article, Page } from './api'
 import { composerController } from './composer-controller'
 
@@ -49,6 +58,7 @@ declare module '@kontsedal/olas-core' {
 // --- Shared query: one cache entry per cursor. ---------------------------
 
 export const pageQuery = defineQuery({
+  id: 'reader/pages',
   key: (cursor: number) => ['page', cursor],
   fetcher: ({ signal, deps }, cursor: number): Promise<Page> => deps.api.getPage(cursor, signal),
   staleTime: 60_000,
@@ -72,7 +82,7 @@ export const readerController = defineController(
     // the subscription re-keys when this signal changes — i.e. the cache
     // entry being read switches transparently.
     const currentCursor = signal<number>(0)
-    const currentPage = ctx.use(pageQuery, () => [currentCursor.value])
+    const currentPage = createQuery(ctx, pageQuery, () => [currentCursor.value])
 
     // Accumulator: every successful page lands here. After SSR hydration the
     // effect immediately observes the cached cursor-0 page and pushes it.
@@ -110,13 +120,13 @@ export const readerController = defineController(
     const theme = signal<Theme>('auto')
 
     if (ctx.deps.storage !== undefined) {
-      usePersisted(ctx, 'olas-reader.progress', progress, { storage: ctx.deps.storage })
-      usePersisted(ctx, 'olas-reader.bookmarks', bookmarks, { storage: ctx.deps.storage })
-      usePersisted(ctx, 'olas-reader.theme', theme, { storage: ctx.deps.storage })
+      createPersisted(ctx, 'olas-reader.progress', progress, { storage: ctx.deps.storage })
+      createPersisted(ctx, 'olas-reader.bookmarks', bookmarks, { storage: ctx.deps.storage })
+      createPersisted(ctx, 'olas-reader.theme', theme, { storage: ctx.deps.storage })
     } else {
-      usePersisted(ctx, 'olas-reader.progress', progress)
-      usePersisted(ctx, 'olas-reader.bookmarks', bookmarks)
-      usePersisted(ctx, 'olas-reader.theme', theme)
+      createPersisted(ctx, 'olas-reader.progress', progress)
+      createPersisted(ctx, 'olas-reader.bookmarks', bookmarks)
+      createPersisted(ctx, 'olas-reader.theme', theme)
     }
 
     const isBookmarked = (articleId: string): boolean => bookmarks.peek().includes(articleId)
@@ -181,6 +191,7 @@ const appController = defineController(
 
 export function createAppRoot(deps: ReaderDeps, hydrate?: DehydratedState) {
   return createRoot(appController, {
+    queries: queryEngine(),
     deps,
     onError: (err, context) => {
       deps.logger?.error(err, context)
@@ -193,7 +204,4 @@ export function createAppRoot(deps: ReaderDeps, hydrate?: DehydratedState) {
 }
 
 export type AppRoot = ReturnType<typeof createAppRoot>
-export type AppApi = Omit<
-  AppRoot,
-  'dispose' | 'suspend' | 'resume' | 'dehydrate' | 'waitForIdle' | '__debug'
->
+export type AppApi = AppRoot['api']

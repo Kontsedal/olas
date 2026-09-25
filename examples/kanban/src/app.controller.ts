@@ -16,7 +16,8 @@
  *    notifications emitter that lives inside this tree.
  */
 
-import { type CtrlApi, type Ctx, defineController } from '@kontsedal/olas-core'
+import { type CtrlApi, type Ctx, createQuery, defineController } from '@kontsedal/olas-core'
+import { Entities } from '@kontsedal/olas-entities'
 import { activityController } from './features/activity/activity.controller'
 import { archiveController } from './features/archive/archive.controller'
 import { boardController } from './features/board/board.controller'
@@ -55,8 +56,8 @@ export const appController = defineController(
 
     // Seed the entity stores by subscribing — the entities plugin's
     // auto-walk happens on every cache write, so subscribing here is enough.
-    const users = ctx.use(usersQuery)
-    const labels = ctx.use(labelsQuery)
+    const users = createQuery(ctx, usersQuery)
+    const labels = createQuery(ctx, labelsQuery)
 
     // Boards catalog.
     const boards = ctx.child(boardsController, undefined)
@@ -93,9 +94,9 @@ export const appController = defineController(
       archive,
       users,
       labels,
-      // Pass-through to the entities plugin so React components can
-      // synchronously look up a cached entity by id.
-      entities: ctx.deps.entities,
+      // The entities store, so React components can subscribe to one entity
+      // by id (`useValue(app.entities.signal(UserEntity, id))`).
+      entities: ctx.inject(Entities),
     }
   },
   { name: 'app' },

@@ -1,22 +1,39 @@
 export {
   createOlasContext,
   HydrationBoundary,
+  type HydrationBoundaryProps,
+  type OlasContext,
   OlasProvider,
-  useController,
+  type OlasProviderProps,
+  type Register,
+  type RegisteredApi,
   useRoot,
 } from './context'
 export {
-  use,
+  type MutateFn,
+  type UseFieldInputOptions,
+  type UseFieldInputResult,
+  type UseFieldResult,
+  type UseInfiniteQueryResult,
+  type UseMutationCallbacks,
+  type UseMutationResult,
+  type UseQueryResult,
+  type UseSuspenseInfiniteQueryResult,
+  type UseSuspenseQueryResult,
+  type UseValueOptions,
+  type UseValueSelectOptions,
   useField,
   useFieldInput,
+  useInfiniteQuery,
   useMutation,
   useQuery,
   useSuspenseQuery,
+  useValue,
 } from './hooks'
 export {
-  KeepAlive,
   type SuspendableController,
   SuspendOnUnmount,
+  type SuspendOnUnmountProps,
   useSuspendOnHidden,
 } from './keep-alive'
 export {
@@ -26,4 +43,5 @@ export {
   OLAS_BOOTSTRAP_SCRIPT,
   STREAMING_GLOBAL,
   type StreamingHydrator,
+  type StreamingHydratorOptions,
 } from './streaming'

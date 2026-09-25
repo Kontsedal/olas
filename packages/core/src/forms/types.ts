@@ -21,6 +21,12 @@ export type FormIssue = { path: (string | number)[]; message: string }
  */
 export type ValidatorResult = string | null | FormIssue[]
 
+/**
+ * Checks one value: `null` when it passes, a message or `FormIssue[]` when it
+ * fails, returned at once or as a promise. `signal` aborts when a newer run
+ * supersedes this one and on dispose, so an async validator can cancel its
+ * request.
+ */
 export type Validator<T> = (
   value: T,
   signal: AbortSignal,

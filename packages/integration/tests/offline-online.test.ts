@@ -15,7 +15,14 @@
  * contract), mutation-queue (enqueue / replay / drain semantics).
  */
 
-import { createRoot, defineController, defineMutation, type Mutation } from '@kontsedal/olas-core'
+import {
+  createMutation,
+  createRoot,
+  defineController,
+  defineMutation,
+  type Mutation,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import { mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -45,20 +52,21 @@ describe('integration: offline → online sync', () => {
     let online = false
     let mutateCalls = 0
     defineMutation({
-      mutationId: idA,
+      id: idA,
       mutate: async (vars: OrderVars): Promise<OrderResult> => {
         mutateCalls += 1
         if (!online) throw new Error('NetworkError: offline')
         return { id: 'srv-1', ...vars }
       },
+      meta: { persist: true },
     })
 
     const def1 = defineController((ctx) => ({
-      create: ctx.mutation({
+      create: createMutation(ctx, {
         // Spread the module-scope spec (mutationId + mutate) and add
         // retry: 0 so in-process retries don't consume our attempt budget.
-        mutationId: idA,
-        mutate: async (vars: OrderVars, signal: AbortSignal) => {
+        id: idA,
+        mutate: async (vars: OrderVars, { signal }) => {
           // Re-route to the registered mutate fn through the closure so
           // the in-process run also fails (the queue path uses the
           // registered impl on replay).
@@ -71,19 +79,18 @@ describe('integration: offline → online sync', () => {
             return r
           })
         },
-        persist: true,
+        meta: { persist: true },
         retry: 0,
       }) as Mutation<OrderVars, OrderResult>,
     }))
-
-    type Api = { create: Mutation<OrderVars, OrderResult> }
     const root1 = createRoot(def1, {
+      queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
-    }) as unknown as Api & { dispose: () => void }
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
+    })
 
-    await expect(root1.create.run({ sku: 'A-1', qty: 2 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'A-1', qty: 2 })).rejects.toThrow(/offline/)
     await settle()
 
     // Entry persisted; storage is non-empty.
@@ -103,8 +110,9 @@ describe('integration: offline → online sync', () => {
     online = true
     const def2 = defineController(() => ({}))
     const root2 = createRoot(def2, {
+      queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/v1', maxAttempts: 5 })],
     })
     await settle()
 
@@ -126,38 +134,40 @@ describe('integration: offline → online sync', () => {
     const seen: OrderVars[] = []
 
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: OrderVars): Promise<OrderResult> => {
         if (!online) throw new Error('NetworkError: offline')
         seen.push(vars)
         return { id: `srv-${seen.length}`, ...vars }
       },
+      meta: { persist: true },
     })
 
     const def1 = defineController((ctx) => ({
-      create: ctx.mutation({
-        mutationId: id,
+      create: createMutation(ctx, {
+        id: id,
         mutate: async (vars: OrderVars) => {
           if (!online) throw new Error('NetworkError: offline')
           seen.push(vars)
           return { id: `srv-${seen.length}`, ...vars } as OrderResult
         },
-        persist: true,
+        meta: { persist: true },
         retry: 0,
       }) as Mutation<OrderVars, OrderResult>,
     }))
-
-    type Api = { create: Mutation<OrderVars, OrderResult> }
     const root1 = createRoot(def1, {
+      queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 })],
-    }) as unknown as Api & { dispose: () => void }
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 }),
+      ],
+    })
 
     // Three offline writes — each persists.
-    await expect(root1.create.run({ sku: 'A', qty: 1 })).rejects.toThrow(/offline/)
-    await expect(root1.create.run({ sku: 'B', qty: 2 })).rejects.toThrow(/offline/)
-    await expect(root1.create.run({ sku: 'C', qty: 3 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'A', qty: 1 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'B', qty: 2 })).rejects.toThrow(/offline/)
+    await expect(root1.api.create.run({ sku: 'C', qty: 3 })).rejects.toThrow(/offline/)
     await settle()
 
     expect(adapter.store.size).toBe(3)
@@ -172,11 +182,15 @@ describe('integration: offline → online sync', () => {
     const root2 = createRoot(
       defineController(() => ({})),
       {
+        queries: queryEngine(),
         deps: {},
-        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 })],
+        plugins: [
+          mutationQueuePlugin({ storage: adapter, keyPrefix: 'int/mq/batch', maxAttempts: 5 }),
+        ],
       },
     )
-    await settle()
+    // The startup replay is tracked, so this waits for all three.
+    await root2.waitForIdle()
 
     // All three replayed in enqueue order; storage drained.
     expect(adapter.store.size).toBe(0)
@@ -197,12 +211,13 @@ describe('integration: offline → online sync', () => {
     let failuresLeft = 3 // first 3 replay attempts fail, then succeed
 
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: OrderVars): Promise<OrderResult> => {
         attemptLog(vars)
         if (failuresLeft-- > 0) throw new Error('still offline')
         return { id: 'srv-final', ...vars }
       },
+      meta: { persist: true },
     })
 
     // Seed a queue entry as if a prior session had enqueued and crashed
@@ -225,10 +240,11 @@ describe('integration: offline → online sync', () => {
       const root = createRoot(
         defineController(() => ({})),
         {
+          queries: queryEngine(),
           deps: {},
           plugins: [
             mutationQueuePlugin({
-              adapter,
+              storage: adapter,
               keyPrefix: 'int/mq/retry',
               maxAttempts: 10,
             }),

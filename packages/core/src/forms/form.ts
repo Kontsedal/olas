@@ -1,10 +1,14 @@
 import type { Field } from '../controller/types'
 import { batch, computed, effect, type Signal, signal, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
+import { abandonAsyncResults, isAbortError } from '../utils'
 import {
+  asyncValidatorFlags,
   bindFieldDevtoolsOwner,
   bindFieldValidatorErrorReporter,
-  createField,
+  callValidators,
+  RoutedErrors,
+  runDisposeHooks,
   type ValidatorErrorReporter,
 } from './field'
 import type {
@@ -21,11 +25,50 @@ import type {
   FormValidator,
   FormValue,
   ItemInitial,
+  SubmitOptions,
+  SubmitResult,
 } from './form-types'
-import type { FormIssue, ValidatorResult } from './types'
+import type { FormIssue, Validator, ValidatorResult } from './types'
 
 const FORM_BRAND = Symbol.for('olas.form')
 const FIELD_ARRAY_BRAND = Symbol.for('olas.fieldArray')
+
+const brand = (node: object, key: symbol): void => {
+  ;(node as Record<symbol, unknown>)[key] = true
+}
+
+const messageOf = (reason: unknown): string =>
+  reason instanceof Error ? reason.message : String(reason)
+
+/**
+ * `isValid` for an aggregate node: the live answer when nothing below it is
+ * validating, and the last settled answer while something is. An effect keeps
+ * the settled answer current even when nothing reads `isValid`.
+ */
+function holdWhileValidating(
+  isValidating: ReadSignal<boolean>,
+  live: ReadSignal<boolean>,
+  keepStop: (stop: () => void) => void,
+): ReadSignal<boolean> {
+  const settled = signal(true)
+  keepStop(
+    effect(() => {
+      if (!isValidating.value) settled.set(live.value)
+    }),
+  )
+  return computed(() => (isValidating.value ? settled.value : live.value))
+}
+
+/**
+ * What `FormImpl.seatKeepingEdits` needs of a child. Fields and field arrays
+ * built by core have `rebaseInitial`, and forms have `seatKeepingEdits`.
+ */
+type SeatTarget = {
+  readonly isDirty: ReadSignal<boolean>
+  setAsInitial(value: unknown): void
+  seatKeepingEdits?: (value: unknown) => void
+  rebaseInitial?: (value: unknown) => void
+}
 
 const isForm = (x: unknown): x is Form<FormSchema> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FORM_BRAND] === true
@@ -33,11 +76,14 @@ const isForm = (x: unknown): x is Form<FormSchema> =>
 const isFieldArray = (x: unknown): x is FieldArray<Field<unknown> | Form<FormSchema>> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FIELD_ARRAY_BRAND] === true
 
-const isField = (x: unknown): x is Field<unknown> =>
-  typeof x === 'object' && x !== null && !isForm(x) && !isFieldArray(x)
+/** A field, as opposed to a nested form or field array. */
+const isLeaf = (x: unknown): boolean => !isForm(x) && !isFieldArray(x)
 
-/** Any node that can receive parent-form-validator-routed errors (T5.2). */
-type FormErrorTarget = { setFormErrors?: (msgs: ReadonlyArray<string>) => void }
+/**
+ * Any node that can receive parent-form-validator-routed errors (T5.2).
+ * `source` is the routing node, so each router keeps its own list.
+ */
+type FormErrorTarget = { setFormErrors?: (msgs: ReadonlyArray<string>, source: object) => void }
 
 /**
  * Walk a form tree from `root` following `FormIssue.path` segments. Forms walk
@@ -78,16 +124,54 @@ function appendIssues(out: FormIssue[], result: ValidatorResult): void {
 }
 
 /**
+ * One form-level or array-level pass, sync validators first (spec §8.1) —
+ * see `callValidators`. Collects the synchronous issues. A synchronous throw
+ * reaches `report` and becomes an issue on the node itself. Prod shows a
+ * generic message for it, so internal error text does not leak into form
+ * errors; the real error still reaches `report` (T5.3).
+ */
+function runLevelValidators<V>(
+  validators: ReadonlyArray<Validator<V>>,
+  isAsync: boolean[],
+  value: V,
+  signal: AbortSignal,
+  report: (err: unknown) => void,
+): { issues: FormIssue[]; failed: boolean; pending: Promise<ValidatorResult>[] } {
+  const issues: FormIssue[] = []
+  const { failed, pending } = callValidators(
+    validators,
+    isAsync,
+    value,
+    signal,
+    (result) => {
+      const before = issues.length
+      appendIssues(issues, result)
+      return issues.length > before
+    },
+    (err) => {
+      report(err)
+      issues.push({
+        path: [],
+        message: __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
+      })
+    },
+  )
+  return { issues, failed, pending }
+}
+
+/**
  * Route a fully-collected issue set for one form-level validation run:
  *  - empty-path (and unresolvable) issues → `topLevelErrors$` on the owning node
- *  - path issues → the resolved descendant's `setFormErrors`
+ *  - path issues → the resolved descendant's `setFormErrors`, under `root`
  *
  * Targets that received an error last run but not this one are cleared, so a
- * fixed cross-field rule removes its message from the field it landed on.
- * Returns the new target set for the caller to retain. MUST run inside a batch.
+ * fixed cross-field rule removes its message from the field it landed on. The
+ * clear removes only `root`'s list: another router's messages on the same
+ * target stay. Returns the new target set for the caller to retain. MUST run
+ * inside a batch.
  */
 function routeFormIssues(
-  root: unknown,
+  root: object,
   issues: FormIssue[],
   topLevelErrors$: Signal<string[]>,
   lastTargets: Set<FormErrorTarget>,
@@ -111,17 +195,15 @@ function routeFormIssues(
   }
   topLevelErrors$.set(topLevel)
   for (const t of lastTargets) {
-    if (!byTarget.has(t)) t.setFormErrors?.([])
+    if (!byTarget.has(t)) t.setFormErrors?.([], root)
   }
-  for (const [t, msgs] of byTarget) t.setFormErrors?.(msgs)
+  for (const [t, msgs] of byTarget) t.setFormErrors?.(msgs, root)
   return new Set(byTarget.keys())
 }
 
 class FormImpl<S extends FormSchema> implements Form<S> {
-  readonly [FORM_BRAND] = true
-
   readonly fields: S
-  readonly value: ReadSignal<FormValue<S>>
+  private readonly value$: ReadSignal<FormValue<S>>
   readonly errors: ReadSignal<FormErrors<S>>
   readonly isValid: ReadSignal<boolean>
   readonly isDirty: ReadSignal<boolean>
@@ -139,16 +221,16 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   private readonly topLevelErrors$: Signal<string[]> = signal([])
   /**
-   * Errors routed to THIS form by an ancestor form-level validator (a
-   * `FormIssue` whose path resolves to this node). Merged into `topLevelErrors`
-   * beside this form's own validator output, so `topLevelErrors` means "errors
-   * attached to this node itself, whatever their source". Owned by the ancestor
-   * router (T5.2) — see `setFormErrors`.
+   * Errors routed to THIS form by ancestor form-level validators (a
+   * `FormIssue` whose path resolves to this node), one list per ancestor.
+   * Merged into `topLevelErrors` beside this form's own validator output, so
+   * `topLevelErrors` means "errors attached to this node itself, whatever their
+   * source". Each list is owned by its router (T5.2) — see `setFormErrors`.
    */
-  private readonly parentFormErrors$: Signal<string[]> = signal([])
+  private readonly parentFormErrors = new RoutedErrors()
   readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
     const own = this.topLevelErrors$.value
-    const parent = this.parentFormErrors$.value
+    const parent = this.parentFormErrors.merged.value
     if (parent.length === 0) return own
     if (own.length === 0) return parent
     return [...own, ...parent]
@@ -166,12 +248,21 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   readonly submitError: ReadSignal<unknown> = this.submitError$
 
   private readonly validators: ReadonlyArray<FormValidator<S>>
+  /** Which top-level validators count as async — see `asyncValidatorFlags`. */
+  private readonly asyncValidators: boolean[]
   private readonly options: FormOptions<S> | undefined
   private validatorDispose: (() => void) | null = null
+  private validityDispose: (() => void) | null = null
   private initialDispose: (() => void) | null = null
+  /**
+   * Set once a defined `initial()` value has been seated, by the reactive
+   * effect or by `reset()`. The next value is no longer the first (§8.4).
+   */
+  private initialSeated = false
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
   private disposed = false
+  private disposeHooks: Array<() => void> | null = null
   private onValidatorError: ((err: unknown) => void) | null = null
 
   /** Internal — wire a sync-throw reporter for the top-level validators. */
@@ -184,9 +275,14 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     options?: FormOptions<S>,
     internalOptions?: { onValidatorError?: (err: unknown) => void },
   ) {
+    // The brand is set here rather than as a computed class-field key: a
+    // bundler keeps a class with a computed field key even when nothing uses
+    // it, which kept all of forms in every bundle built from `dist`.
+    brand(this, FORM_BRAND)
     this.fields = schema
     this.options = options
     this.validators = options?.validators ?? []
+    this.asyncValidators = asyncValidatorFlags(this.validators)
     // Capture reporter BEFORE the top-level validator effect kicks off in
     // this constructor — mirrors the FieldImpl fix.
     this.onValidatorError = internalOptions?.onValidatorError ?? null
@@ -199,23 +295,40 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       if (typeof options.initial === 'function') {
         const initialFn = options.initial
         const mode = options.resetOnInitialChange ?? 'when-clean'
-        let firstRun = true
         this.initialDispose = effect(() => {
-          // Track signals read by `initialFn`. The dirty-guard MUST run
-          // untracked — otherwise `isDirty` would become a dep and re-seating
-          // on user input would cascade.
-          const ini = initialFn()
+          // Track signals read by `initialFn`. A throw routes like a validator
+          // throw, to the controller's `onError`. Uncaught, it escaped into
+          // whatever wrote the signal: a refetch that changed the data's shape
+          // rejected with the form's TypeError. The reads made before the
+          // throw stay tracked, so a later good value still re-seats.
+          let ini: DeepPartial<FormValue<S>> | undefined
+          try {
+            ini = initialFn()
+          } catch (err) {
+            this.reportError(err)
+            return
+          }
           if (ini === undefined) return
+          // The dirty guard MUST run untracked — otherwise `isDirty` would
+          // become a dep and re-seating on user input would cascade.
           untracked(() => {
             if (this.disposed) return
-            if (firstRun) {
-              firstRun = false
-              this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+            const partial = ini as DeepPartial<FormValue<S>>
+            if (!this.initialSeated) {
+              // The first defined value fills what the user has not edited.
+              // An edit made while the data loaded keeps its value, and only
+              // its baseline moves (spec §8.4). A form-wide guard here left
+              // every other field at its empty seed, for a save to write back.
+              this.initialSeated = true
+              if (mode === 'always') this.applyPartial(partial, true)
+              else this.seatKeepingEdits(partial)
               return
             }
             if (mode === 'never') return
-            if (mode === 'when-clean' && this.isDirty.peek()) return
-            this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+            // `computeBool` rather than `isDirty`, which the constructor
+            // builds only after this effect's first run.
+            if (mode !== 'always' && this.computeBool('isDirty')) return
+            this.applyPartial(partial, true)
           })
         })
       } else {
@@ -223,7 +336,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       }
     }
 
-    this.value = computed(() => this.computeValue())
+    this.value$ = computed(() => this.computeValue())
     this.errors = computed(() => this.computeErrors())
     this.isDirty = computed(() => this.computeBool('isDirty'))
     this.touched = computed(() => this.computeBool('touched'))
@@ -234,15 +347,20 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       }
       return false
     })
-    this.isValid = computed(() => {
-      // Merged view: this form's own top-level validators AND any errors an
-      // ancestor form-level validator routed onto this node (T5.2).
+    // Merged view: this form's own top-level validators, any errors an
+    // ancestor form-level validator routed onto this node (T5.2), and every
+    // child. While anything in the subtree validates, the last settled answer
+    // holds, as a field's does (spec §8.2), so a bound submit button doesn't
+    // flicker.
+    const liveValid = computed(() => {
       if (this.topLevelErrors.value.length > 0) return false
-      if (this.isValidating.value) return false
       for (const child of Object.values(this.fields)) {
         if (!(child as { isValid: ReadSignal<boolean> }).isValid.value) return false
       }
       return true
+    })
+    this.isValid = holdWhileValidating(this.isValidating, liveValid, (stop) => {
+      this.validityDispose = stop
     })
     this.flatErrors = computed(() => this.computeFlatErrors())
     this.dirtyFields = computed(() => {
@@ -256,15 +374,27 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     }
   }
 
+  get value(): FormValue<S> {
+    return this.value$.value
+  }
+
+  peek(): FormValue<S> {
+    return this.value$.peek()
+  }
+
+  subscribe(handler: (value: FormValue<S>) => void): () => void {
+    return this.value$.subscribe(handler)
+  }
+
+  subscribeChanges(handler: (value: FormValue<S>) => void): () => void {
+    return this.value$.subscribeChanges(handler)
+  }
+
   private computeValue(): FormValue<S> {
     const out: Record<string, unknown> = {}
+    // Every child — Field, Form or FieldArray — is a ReadSignal of its value.
     for (const [k, child] of Object.entries(this.fields)) {
-      if (isForm(child) || isFieldArray(child)) {
-        out[k] = (child as { value: ReadSignal<unknown> }).value.value
-      } else {
-        // Field<T> is itself a ReadSignal<T>; .value returns T (tracked).
-        out[k] = (child as Field<unknown>).value
-      }
+      out[k] = (child as ReadSignal<unknown>).value
     }
     return out as FormValue<S>
   }
@@ -307,71 +437,49 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   private applyPartial(partial: DeepPartial<FormValue<S>>, asInitial: boolean): void {
     for (const [k, val] of Object.entries(partial)) {
+      // Own keys only: `fields` is a plain object, so `__proto__`, `constructor`
+      // or `toString` in a partial (parsed JSON can carry them) would otherwise
+      // find `Object.prototype` members and call `set` on them.
+      if (!Object.hasOwn(this.fields, k)) continue
       const child = (this.fields as Record<string, unknown>)[k]
       if (!child) continue
       // `partial.someNestedForm === undefined` means "leave this subtree
       // alone", not "reset it with undefined" — which would crash on
-      // `Object.entries(undefined)`.
-      if (val === undefined) continue
-      if (isForm(child)) {
-        // Nested form: recurse via its own `set` (user) or rebuild via reset
-        // through the same `applyPartial`-with-`asInitial` flag (initial).
-        if (asInitial) {
-          ;(child as Form<FormSchema>).resetWithInitial(val as DeepPartial<FormValue<FormSchema>>)
-        } else {
-          child.set(val as DeepPartial<FormValue<FormSchema>>)
-        }
-      } else if (isFieldArray(child)) {
-        const arr = child
-        const newValues = val as unknown[]
-        if (asInitial) {
-          // Reset-style application: replace items wholesale and re-anchor
-          // them as the new initial so a later `reset()` returns here.
-          arr.clear()
-          for (const itemVal of newValues) {
-            arr.add(itemVal as ItemInitial<Field<unknown>>)
-          }
-          // Internal: re-anchor the initialItems list. `replaceInitialItems`
-          // is only exposed for this exact use case.
-          ;(
-            arr as unknown as {
-              replaceInitialItems: (items: ReadonlyArray<unknown>) => void
-            }
-          ).replaceInitialItems(newValues)
-        } else {
-          // User-driven patch: preserve item identity where the lengths
-          // overlap so touched / dirty / in-flight validators on existing
-          // items survive. Tail diff handles grow / shrink.
-          const current = arr.items.peek() as ReadonlyArray<Field<unknown> | Form<FormSchema>>
-          const overlap = Math.min(current.length, newValues.length)
-          for (let i = 0; i < overlap; i++) {
-            const item = current[i]
-            const v = newValues[i]
-            if (isForm(item)) {
-              item.set(v as DeepPartial<FormValue<FormSchema>>)
-            } else {
-              ;(item as Field<unknown>).set(v)
-            }
-          }
-          for (let i = current.length; i < newValues.length; i++) {
-            arr.add(newValues[i] as ItemInitial<Field<unknown>>)
-          }
-          for (let i = current.length - 1; i >= newValues.length; i--) {
-            arr.remove(i)
-          }
-        }
-      } else {
-        const f = child as Field<unknown>
-        if (asInitial) f.setAsInitial(val)
-        else f.set(val)
-      }
+      // `Object.entries(undefined)`. A nested form or field array cannot hold
+      // `null` either, and JSON spells "no nested record" that way, so it
+      // leaves the subtree alone too. A field takes `null` as its value.
+      if (val === undefined || (val === null && !isLeaf(child))) continue
+      // Field, Form and FieldArray share `set` and `setAsInitial`, each
+      // taking its own value shape.
+      const node = child as { set(v: unknown): void; setAsInitial(v: unknown): void }
+      if (asInitial) node.setAsInitial(val)
+      else node.set(val)
     }
   }
 
-  /** Internal: re-seat this form's leaves from `partial` as their new initial. */
-  resetWithInitial(partial: DeepPartial<FormValue<S>>): void {
+  setAsInitial(partial: DeepPartial<FormValue<S>>): void {
     if (this.disposed) return
     batch(() => this.applyPartial(partial, true))
+  }
+
+  /**
+   * Internal — seat `partial` as the baseline without discarding edits: a
+   * clean child takes it through `setAsInitial`, a dirty nested form recurses,
+   * and a dirty field or field array keeps its value and moves only its
+   * baseline (`rebaseInitial`). The first `initial()` value lands this way
+   * (§8.4).
+   */
+  seatKeepingEdits(partial: DeepPartial<FormValue<S>>): void {
+    if (this.disposed) return
+    for (const [k, val] of Object.entries(partial)) {
+      // Own keys and defined values only, as in `applyPartial`.
+      if (!Object.hasOwn(this.fields, k) || val === undefined) continue
+      const child = (this.fields as Record<string, unknown>)[k] as SeatTarget | undefined
+      if (!child || (val === null && !isLeaf(child))) continue
+      if (!child.isDirty.peek()) child.setAsInitial(val)
+      else if (typeof child.seatKeepingEdits === 'function') child.seatKeepingEdits(val)
+      else child.rebaseInitial?.(val)
+    }
   }
 
   reset(): void {
@@ -384,8 +492,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
           ;(child as Field<unknown>).reset()
         }
       }
-      this.topLevelErrors$.set([])
-      this.parentFormErrors$.set([])
+      // `topLevelErrors$` and `parentFormErrors` stay: this form's validators
+      // and an ancestor's own them. A reset that changes the value re-runs
+      // both, and one that does not leaves their last result standing, so a
+      // rule that still fails stays visible (the same as a field's routed
+      // errors).
       // Submission lifecycle is conceptually part of "form state"; resetting
       // a form means the user is starting over. Without these clears, a UI
       // bound to `submitCount`/`submitError` would show stale state after
@@ -397,12 +508,29 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       // separate pass would fire a second notification and briefly expose the
       // "reset to construction seed, then re-seat to current initial" tearing
       // (visible with a reactive `initial: () => …` whose deps changed) (T5.3).
-      if (this.options?.initial !== undefined) {
-        const ini =
-          typeof this.options.initial === 'function' ? this.options.initial() : this.options.initial
-        if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+      const ini = this.readInitial()
+      if (ini !== undefined) {
+        this.initialSeated = true
+        this.applyPartial(ini, true)
       }
     })
+  }
+
+  /**
+   * `options.initial` as `reset()` reads it. A thunk runs untracked, so a
+   * `reset()` inside an effect does not subscribe that effect to what the
+   * thunk reads. A throw reaches `onError`, as the reactive seat's does, and
+   * reads as no value: the fields keep the baselines they reset to.
+   */
+  private readInitial(): DeepPartial<FormValue<S>> | undefined {
+    const initial = this.options?.initial
+    if (typeof initial !== 'function') return initial
+    try {
+      return untracked(initial)
+    } catch (err) {
+      this.reportError(err)
+      return undefined
+    }
   }
 
   markAllTouched(): void {
@@ -452,30 +580,26 @@ class FormImpl<S extends FormSchema> implements Form<S> {
    * - `submitError` set to the throw, if any.
    * - Optional pre-submit `validate()` (default true). When invalid every
    *   field is marked touched and the handler is skipped — the returned
-   *   promise resolves with `{ ok: false }` and `submitError` is left
-   *   untouched (validation failure is not a thrown error).
+   *   promise resolves with `{ ok: false, reason: 'invalid' }` and
+   *   `submitError` is left untouched (validation failure is not a thrown
+   *   error).
    *
    * The handler may return a value (synchronously or via Promise); it's
-   * captured in the resolved object's `data` field. Throws are captured
-   * unless `onError: 'rethrow'`. A `resetOnSuccess: true` option calls
-   * `reset()` after the handler resolves successfully.
+   * captured in the resolved object's `data` field. Throws resolve
+   * `{ ok: false, reason: 'error', error }` unless `onError: 'rethrow'`. A
+   * `resetOnSuccess: true` option calls `reset()` after the handler resolves
+   * successfully.
    */
   async submit<R = unknown>(
     handler: (value: FormValue<S>) => R | Promise<R>,
-    options?: {
-      validateBeforeSubmit?: boolean
-      resetOnSuccess?: boolean
-      onError?: 'rethrow' | 'capture'
-    },
-  ): Promise<{ ok: boolean; data?: Awaited<R>; error?: unknown }> {
-    if (this.disposed) return { ok: false, error: new Error('form is disposed') }
+    options?: SubmitOptions,
+  ): Promise<SubmitResult<Awaited<R>>> {
+    if (this.disposed) return { ok: false, reason: 'disposed' }
 
     // Double-submit guard — refusing to start a second submission while one
     // is in flight matches RHF / TanStack-Form. Consumers wanting parallel
     // submits should run them off the form directly.
-    if (this.isSubmitting$.peek()) {
-      return { ok: false, error: new Error('submit already in progress') }
-    }
+    if (this.isSubmitting$.peek()) return { ok: false, reason: 'busy' }
 
     const validateFirst = options?.validateBeforeSubmit ?? true
     const onErrorMode = options?.onError ?? 'capture'
@@ -489,13 +613,20 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     try {
       if (validateFirst) {
         const ok = await this.validate()
+        // Disposed while validating: the form is gone, so the handler must not
+        // run on it. `dispose()` settled the validation, which is why this
+        // point is reached at all.
+        if (this.disposed) {
+          this.isSubmitting$.set(false)
+          return { ok: false, reason: 'disposed' }
+        }
         if (!ok) {
           this.markAllTouched()
           this.isSubmitting$.set(false)
-          return { ok: false }
+          return { ok: false, reason: 'invalid' }
         }
       }
-      const result = (await handler(this.value.peek())) as Awaited<R>
+      const result = (await handler(this.value$.peek())) as Awaited<R>
       if (options?.resetOnSuccess) this.reset()
       this.isSubmitting$.set(false)
       return { ok: true, data: result }
@@ -505,7 +636,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
         this.isSubmitting$.set(false)
       })
       if (onErrorMode === 'rethrow') throw err
-      return { ok: false, error: err }
+      return { ok: false, reason: 'error', error: err }
     }
   }
 
@@ -530,15 +661,13 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   }
 
   /**
-   * Internal — receive errors routed here by an ancestor form-level validator
-   * (a `FormIssue` whose path resolved to this nested form). Guards against
-   * spurious writes so a whole-tree clear pass doesn't wake subscribers. See
+   * Internal — receive errors routed here by the ancestor form-level validator
+   * of `source` (a `FormIssue` whose path resolved to this nested form). See
    * `routeFormIssues`.
    */
-  setFormErrors(errors: ReadonlyArray<string>): void {
+  setFormErrors(errors: ReadonlyArray<string>, source: object): void {
     if (this.disposed) return
-    if (this.parentFormErrors$.peek().length === 0 && errors.length === 0) return
-    this.parentFormErrors$.set(errors.length === 0 ? [] : [...errors])
+    this.parentFormErrors.set(source, errors)
   }
 
   /**
@@ -595,48 +724,60 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     if (this.disposed) return
     this.disposed = true
     this.validatorDispose?.()
+    this.validityDispose?.()
     this.initialDispose?.()
     this.currentValidatorAbort?.abort()
+    // The form-level pass in flight never settles now; end it so a
+    // `validate()` or `submit()` waiting on it resolves (see FieldImpl).
+    this.topLevelValidating$.set(false)
     for (const child of Object.values(this.fields)) {
       ;(child as { dispose?: () => void }).dispose?.()
+    }
+    const hooks = this.disposeHooks
+    this.disposeHooks = null
+    runDisposeHooks(hooks)
+  }
+
+  /** Internal — see `addNodeDisposeHook` in `./field.ts`. */
+  addDisposeHook(fn: () => void): void {
+    if (this.disposed) {
+      fn()
+      return
+    }
+    if (this.disposeHooks === null) this.disposeHooks = []
+    this.disposeHooks.push(fn)
+  }
+
+  /**
+   * Route a throw from `initial()` to the controller's error handler, the
+   * reporter validator throws use.
+   */
+  private reportError(err: unknown): void {
+    try {
+      this.onValidatorError?.(err)
+    } catch {
+      // The reporter must not propagate.
     }
   }
 
   private runTopLevelValidators(): void {
     if (this.disposed) return
-    const value = this.value.value
+    const value = this.value$.value
     this.currentValidatorAbort?.abort()
     const abort = new AbortController()
     this.currentValidatorAbort = abort
     const myId = ++this.currentValidatorRun
 
-    const syncIssues: FormIssue[] = []
-    const asyncPromises: Promise<ValidatorResult>[] = []
-    for (const v of this.validators) {
-      try {
-        const r = v(value, abort.signal)
-        if (r instanceof Promise) asyncPromises.push(r)
-        else appendIssues(syncIssues, r)
-      } catch (err) {
-        try {
-          this.onValidatorError?.(err)
-        } catch {
-          // The reporter must not propagate.
-        }
-        // Prod shows a generic message (don't leak internal error text into
-        // form errors); the real error still reaches `onValidatorError` (T5.3).
-        syncIssues.push({
-          path: [],
-          message: __DEV__
-            ? err instanceof Error
-              ? err.message
-              : String(err)
-            : 'Validation failed',
-        })
-      }
-    }
+    const {
+      issues: syncIssues,
+      failed,
+      pending: asyncPromises,
+    } = runLevelValidators(this.validators, this.asyncValidators, value, abort.signal, (err) =>
+      this.reportError(err),
+    )
 
-    if (syncIssues.length > 0) {
+    if (failed) {
+      abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
           this,
@@ -677,6 +818,8 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       const issues: FormIssue[] = []
       for (const r of results) {
         if (r.status === 'fulfilled') appendIssues(issues, r.value)
+        // A rejected check is an error on this node, as it is on a field.
+        else if (!isAbortError(r.reason)) issues.push({ path: [], message: messageOf(r.reason) })
       }
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
@@ -784,10 +927,8 @@ function walkErrors(
 }
 
 class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> {
-  readonly [FIELD_ARRAY_BRAND] = true
-
   readonly items: ReadSignal<ReadonlyArray<I>>
-  readonly value: ReadSignal<FieldArrayValue<I>>
+  private readonly value$: ReadSignal<FieldArrayValue<I>>
   readonly errors: ReadSignal<Array<FieldArrayItemErrors<I> | undefined>>
   readonly size: ReadSignal<number>
   readonly isValid: ReadSignal<boolean>
@@ -800,17 +941,18 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
    * Structural dirtiness — flipped by `add`/`insert`/`remove`/`move`/`clear`.
    * Item-level `isDirty` alone misses these, so a reactive `initial` + the
    * default `resetOnInitialChange: 'when-clean'` would re-seat the array on a
-   * background refetch and delete rows the user just added (T5.1). Reset by
-   * `reset()` and by an initial-driven re-anchor (`replaceInitialItems`).
+   * background refetch and delete rows the user just added (T5.1). Cleared by
+   * `reset()` and by an initial-driven re-seat (`setAsInitial`).
    */
   private readonly structurallyDirty$: Signal<boolean> = signal(false)
   private readonly topLevelErrors$: Signal<string[]> = signal([])
-  /** Errors routed to this array by an ancestor form-level validator (T5.2) —
-   *  merged into `topLevelErrors` beside the array's own validator output. */
-  private readonly parentFormErrors$: Signal<string[]> = signal([])
+  /** Errors routed to this array by ancestor form-level validators (T5.2), one
+   *  list per ancestor — merged into `topLevelErrors` beside the array's own
+   *  validator output. */
+  private readonly parentFormErrors = new RoutedErrors()
   readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
     const own = this.topLevelErrors$.value
-    const parent = this.parentFormErrors$.value
+    const parent = this.parentFormErrors.merged.value
     if (parent.length === 0) return own
     if (own.length === 0) return parent
     return [...own, ...parent]
@@ -822,10 +964,14 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   private readonly itemFactory: (initial?: ItemInitial<I>) => I
   private initialItems: Array<ItemInitial<I>> = []
   private readonly validators: ReadonlyArray<FieldArrayValidator<I>>
+  /** Which array-level validators count as async — see `asyncValidatorFlags`. */
+  private readonly asyncValidators: boolean[]
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
   private validatorDispose: (() => void) | null = null
+  private validityDispose: (() => void) | null = null
   private disposed = false
+  private disposeHooks: Array<() => void> | null = null
   private onValidatorError: ((err: unknown) => void) | null = null
 
   /** Internal — see `FormImpl.bindValidatorErrorReporter`. */
@@ -838,8 +984,10 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     options?: FieldArrayOptions<I>,
     internalOptions?: { onValidatorError?: (err: unknown) => void },
   ) {
+    brand(this, FIELD_ARRAY_BRAND) // see FormImpl's constructor
     this.itemFactory = itemFactory
     this.validators = options?.validators ?? []
+    this.asyncValidators = asyncValidatorFlags(this.validators)
     this.onValidatorError = internalOptions?.onValidatorError ?? null
     this.items$ = signal<I[]>([])
     if (options?.initial) {
@@ -853,13 +1001,10 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
     this.items = this.items$
     this.size = computed(() => this.items$.value.length)
-    this.value = computed(
+    // Every item — Field or Form — is a ReadSignal of its value.
+    this.value$ = computed(
       () =>
-        this.items$.value.map((item) => {
-          if (isForm(item)) return item.value.value
-          // Field is a ReadSignal — `.value` is the actual value.
-          return (item as Field<unknown>).value
-        }) as FieldArrayValue<I>,
+        this.items$.value.map((item) => (item as ReadSignal<unknown>).value) as FieldArrayValue<I>,
     )
     this.errors = computed(() =>
       this.items$.value.map((item) => {
@@ -888,15 +1033,16 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       }
       return false
     })
-    this.isValid = computed(() => {
-      // Merged view: the array's own top-level validators AND any errors an
-      // ancestor form-level validator routed onto this node (T5.2).
+    // Same merged view and the same hold as `FormImpl.isValid`.
+    const liveValid = computed(() => {
       if (this.topLevelErrors.value.length > 0) return false
-      if (this.isValidating.value) return false
       for (const item of this.items$.value) {
         if (!(item as { isValid: ReadSignal<boolean> }).isValid.value) return false
       }
       return true
+    })
+    this.isValid = holdWhileValidating(this.isValidating, liveValid, (stop) => {
+      this.validityDispose = stop
     })
 
     if (this.validators.length > 0) {
@@ -904,18 +1050,34 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     }
   }
 
+  get value(): FieldArrayValue<I> {
+    return this.value$.value
+  }
+
+  peek(): FieldArrayValue<I> {
+    return this.value$.peek()
+  }
+
+  subscribe(handler: (value: FieldArrayValue<I>) => void): () => void {
+    return this.value$.subscribe(handler)
+  }
+
+  subscribeChanges(handler: (value: FieldArrayValue<I>) => void): () => void {
+    return this.value$.subscribeChanges(handler)
+  }
+
   at(index: number): I | undefined {
     return this.items$.peek()[index]
   }
 
   /**
-   * Internal — receive errors routed here by an ancestor form-level validator
-   * (a `FormIssue` whose path resolved to this array). See `routeFormIssues`.
+   * Internal — receive errors routed here by the ancestor form-level validator
+   * of `source` (a `FormIssue` whose path resolved to this array). See
+   * `routeFormIssues`.
    */
-  setFormErrors(errors: ReadonlyArray<string>): void {
+  setFormErrors(errors: ReadonlyArray<string>, source: object): void {
     if (this.disposed) return
-    if (this.parentFormErrors$.peek().length === 0 && errors.length === 0) return
-    this.parentFormErrors$.set(errors.length === 0 ? [] : [...errors])
+    this.parentFormErrors.set(source, errors)
   }
 
   add(initial?: ItemInitial<I>): void {
@@ -936,6 +1098,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   remove(index: number): void {
     if (this.disposed) return
+    // Out of range changes nothing, so it must not mark the array dirty.
+    if (index < 0 || index >= this.items$.peek().length) return
     const next = [...this.items$.peek()]
     const [removed] = next.splice(index, 1)
     if (removed) {
@@ -947,6 +1111,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   move(from: number, to: number): void {
     if (this.disposed) return
+    if (from < 0 || from >= this.items$.peek().length || from === to) return
     const next = [...this.items$.peek()]
     const [item] = next.splice(from, 1)
     if (item) next.splice(to, 0, item)
@@ -963,18 +1128,46 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     this.structurallyDirty$.set(true)
   }
 
+  set(values: ReadonlyArray<ItemInitial<I>>): void {
+    if (this.disposed) return
+    batch(() => {
+      // Preserve item identity where the lengths overlap, so touched / dirty /
+      // in-flight validators on existing items survive. The tail diff handles
+      // grow and shrink.
+      const current = this.items$.peek()
+      const overlap = Math.min(current.length, values.length)
+      for (let i = 0; i < overlap; i++) {
+        ;(current[i] as { set(v: unknown): void }).set(values[i])
+      }
+      for (let i = current.length; i < values.length; i++) this.add(values[i])
+      for (let i = current.length - 1; i >= values.length; i--) this.remove(i)
+    })
+  }
+
+  setAsInitial(values: ReadonlyArray<ItemInitial<I>>): void {
+    if (this.disposed) return
+    batch(() => {
+      // Rebuild the items wholesale and re-anchor them as the initial, so a
+      // later `reset()` returns here rather than to the construction initials.
+      this.clear()
+      for (const v of values) this.add(v)
+      this.initialItems = [...values]
+      // This is the new clean baseline: the clear()/add() that drove it must
+      // not leave the array structurally dirty (T5.1).
+      this.structurallyDirty$.set(false)
+    })
+  }
+
   /**
-   * Internal — used by `Form.resetWithInitial` to re-anchor the array's
-   * initial items after a parent-driven `applyPartial(..., asInitial: true)`.
-   * Without this, a subsequent `reset()` would revert to the construction-
-   * time initials rather than the most-recently-applied ones.
+   * Internal — move `reset()`'s target to `values` and keep the current
+   * items. `Form` calls it for the first `initial()` value on an array the
+   * user already changed (§8.4). The items were not built from the new
+   * baseline, so the array stays dirty until `reset()` or `setAsInitial`.
    */
-  replaceInitialItems(items: ReadonlyArray<ItemInitial<I>>): void {
-    this.initialItems = [...items]
-    // The array was just re-seated from `initial` (reactive-initial re-apply or
-    // `resetWithInitial`) — this is the new clean baseline, so the clear()/add()
-    // that drove it must not leave the array structurally dirty (T5.1).
-    this.structurallyDirty$.set(false)
+  rebaseInitial(values: ReadonlyArray<ItemInitial<I>>): void {
+    if (this.disposed) return
+    this.initialItems = [...values]
+    this.structurallyDirty$.set(true)
   }
 
   reset(): void {
@@ -984,8 +1177,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       for (const ini of this.initialItems) {
         this.add(ini)
       }
-      this.topLevelErrors$.set([])
-      this.parentFormErrors$.set([])
+      // The error channels stay with their validators, as in `FormImpl.reset`.
+      // Rebuilt items give the array a new value, so both re-run anyway.
       // clear()/add() above flipped structural dirt; reset() lands on the
       // clean initial baseline (T5.1).
       this.structurallyDirty$.set(false)
@@ -1028,47 +1221,50 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     if (this.disposed) return
     this.disposed = true
     this.validatorDispose?.()
+    this.validityDispose?.()
     this.currentValidatorAbort?.abort()
+    // End the array-level pass in flight, as `FormImpl.dispose` does.
+    this.topLevelValidating$.set(false)
     for (const item of this.items$.peek()) {
       ;(item as { dispose?: () => void }).dispose?.()
     }
+    const hooks = this.disposeHooks
+    this.disposeHooks = null
+    runDisposeHooks(hooks)
+  }
+
+  /** Internal — see `addNodeDisposeHook` in `./field.ts`. */
+  addDisposeHook(fn: () => void): void {
+    if (this.disposed) {
+      fn()
+      return
+    }
+    if (this.disposeHooks === null) this.disposeHooks = []
+    this.disposeHooks.push(fn)
   }
 
   private runTopLevelValidators(): void {
     if (this.disposed) return
-    const value = this.value.value
+    const value = this.value$.value
     this.currentValidatorAbort?.abort()
     const abort = new AbortController()
     this.currentValidatorAbort = abort
     const myId = ++this.currentValidatorRun
 
-    const syncIssues: FormIssue[] = []
-    const asyncPromises: Promise<ValidatorResult>[] = []
-    for (const v of this.validators) {
+    const {
+      issues: syncIssues,
+      failed,
+      pending: asyncPromises,
+    } = runLevelValidators(this.validators, this.asyncValidators, value, abort.signal, (err) => {
       try {
-        const r = v(value, abort.signal)
-        if (r instanceof Promise) asyncPromises.push(r)
-        else appendIssues(syncIssues, r)
-      } catch (err) {
-        try {
-          this.onValidatorError?.(err)
-        } catch {
-          // The reporter must not propagate.
-        }
-        // Prod shows a generic message (don't leak internal error text into
-        // form errors); the real error still reaches `onValidatorError` (T5.3).
-        syncIssues.push({
-          path: [],
-          message: __DEV__
-            ? err instanceof Error
-              ? err.message
-              : String(err)
-            : 'Validation failed',
-        })
+        this.onValidatorError?.(err)
+      } catch {
+        // The reporter must not propagate.
       }
-    }
+    })
 
-    if (syncIssues.length > 0) {
+    if (failed) {
+      abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
           this,
@@ -1109,6 +1305,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       const issues: FormIssue[] = []
       for (const r of results) {
         if (r.status === 'fulfilled') appendIssues(issues, r.value)
+        // A rejected check is an error on this node, as it is on a field.
+        else if (!isAbortError(r.reason)) issues.push({ path: [], message: messageOf(r.reason) })
       }
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
@@ -1143,7 +1341,7 @@ export function createFieldArray<I extends Field<any> | Form<any>>(
  * Recursively wire every leaf `Field` in a form / field-array tree to a
  * devtools emitter. Returns a single disposer that tears down every standalone
  * `effect()` registered along the way (used for FieldArray watching), so the
- * caller — `ctx.form` / `ctx.fieldArray` in the controller — can register one
+ * caller — `createForm` / `createFieldArray` in the controller — can register one
  * cleanup entry and have the whole subtree's reactive work die with the
  * controller. Spec §20.9.
  */
@@ -1235,7 +1433,7 @@ function bindTreeToDevtoolsInto(
 /**
  * Walk a Form/FieldArray subtree and install `reporter` on every level —
  * leaf fields, nested forms' top-level validators, and field-arrays' top-level
- * validators. Called by `ctx.form` / `ctx.fieldArray` so synchronous validator
+ * validators. Called by `createForm` / `createFieldArray` so synchronous validator
  * throws anywhere in the tree route through `root.onError`. See
  * `ValidatorErrorReporter` in `./field.ts`.
  */
@@ -1255,7 +1453,7 @@ export function bindTreeValidatorErrorReporter(
     const impl = node as { bindValidatorErrorReporter?: (r: ValidatorErrorReporter | null) => void }
     impl.bindValidatorErrorReporter?.(reporter)
     // Items currently in the array. (Items added later won't get the reporter
-    // unless `ctx.fieldArray` is wrapped to rebind — but the leaf items in the
+    // unless `createFieldArray` is wrapped to rebind — but the leaf items in the
     // typical pattern come from a user factory that constructs through
     // `createField` and is bound here by the parent traversal.)
     for (const item of node.items.value) {
@@ -1265,8 +1463,3 @@ export function bindTreeValidatorErrorReporter(
   }
   bindFieldValidatorErrorReporter(node as Field<unknown>, reporter)
 }
-
-// Quiet unused-import linter without exporting these symbols publicly.
-void createField
-void untracked
-void isField

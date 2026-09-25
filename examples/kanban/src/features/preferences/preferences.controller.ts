@@ -3,7 +3,7 @@
  * plus visibility toggles for activity/archive panels.
  *
  * Library primitives demonstrated:
- *  - `usePersisted(ctx, key, signal)` — Signals satisfy `PersistableSource`
+ *  - `createPersisted(ctx, key, signal)` — Signals satisfy `PersistableSource`
  *    so we pass them straight through. localStorage round-trip happens via
  *    the default adapter; tests inject `ctx.deps.storage` if needed.
  *  - Standalone `effect()` — mirrors theme + density to `<html data-*>`.
@@ -12,14 +12,14 @@
  */
 
 import { type Ctx, effect, signal } from '@kontsedal/olas-core'
-import { type StorageAdapter, usePersisted } from '@kontsedal/olas-persist'
+import { createPersisted, type StorageAdapter } from '@kontsedal/olas-persist'
 import type { DensityPref, Preferences, ThemePref } from '../../scopes'
 
 declare module '@kontsedal/olas-core' {
   interface AmbientDeps {
     /**
      * Storage backend for persisted preferences. Optional — when omitted the
-     * usePersisted call falls back to `localStorageAdapter`.
+     * createPersisted call falls back to `localStorageAdapter()`.
      */
     storage?: StorageAdapter | undefined
   }
@@ -39,7 +39,7 @@ const STORAGE_KEY = 'olas-kanban.prefs'
 export function createPreferences(ctx: Ctx) {
   const prefs = signal<Preferences>(DEFAULTS)
 
-  usePersisted(ctx, STORAGE_KEY, prefs, { storage: ctx.deps.storage, crossTab: true })
+  createPersisted(ctx, STORAGE_KEY, prefs, { storage: ctx.deps.storage, crossTab: true })
 
   // Mirror theme + density to <html> attributes so the CSS tokens flip.
   // Skipping this on the server (no `document`) keeps SSR-safe.

@@ -7,10 +7,9 @@
 import { useRoot } from '@kontsedal/olas-react'
 import { Plus } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import type { AppApi } from '../../app.controller'
 
 export function NewColumnButton() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)

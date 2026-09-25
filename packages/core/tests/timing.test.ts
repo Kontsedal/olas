@@ -306,3 +306,94 @@ describe('throttled options matrix (T2.7)', () => {
     expect(() => throttled(a, 100, { leading: false, trailing: false })).toThrow(/must be true/)
   })
 })
+
+describe('durations go through scheduleExpiry (§21.5)', () => {
+  // A raw `setTimeout` coerces a non-finite delay to ~1ms and overflows one
+  // past the 32-bit limit into an immediate fire, so the longest windows
+  // behaved as the shortest.
+  test('debounced(source, Infinity) never fires on its own; flush still emits', () => {
+    const a = signal(0)
+    const d = debounced(a, Number.POSITIVE_INFINITY)
+    a.set(1)
+    vi.advanceTimersByTime(60_000)
+    expect(d.value).toBe(0)
+    d.flush()
+    expect(d.value).toBe(1)
+  })
+
+  test('debounced with a delay past the 32-bit limit does not fire early', () => {
+    const a = signal(0)
+    const d = debounced(a, 2 ** 31 + 1_000)
+    a.set(1)
+    vi.advanceTimersByTime(60_000)
+    expect(d.value).toBe(0)
+    vi.advanceTimersByTime(2 ** 31)
+    expect(d.value).toBe(1)
+  })
+
+  test('debounced leading edge with an Infinity cooldown suppresses later writes', () => {
+    const a = signal(0)
+    const d = debounced(a, Number.POSITIVE_INFINITY, { leading: true, trailing: false })
+    a.set(1)
+    expect(d.value).toBe(1)
+    vi.advanceTimersByTime(60_000)
+    // The cooldown never ends, so this write is not a new leading edge.
+    a.set(2)
+    expect(d.value).toBe(1)
+  })
+
+  test('throttled(source, Infinity) emits the leading edge and holds the trailing one', () => {
+    vi.setSystemTime(1000)
+    const a = signal(0)
+    const t = throttled(a, Number.POSITIVE_INFINITY)
+    a.set(1)
+    expect(t.value).toBe(1)
+    a.set(2)
+    vi.advanceTimersByTime(60_000)
+    expect(t.value).toBe(1)
+    t.flush()
+    expect(t.value).toBe(2)
+  })
+
+  // The scheduler schedules nothing for a non-finite delay, `NaN` included. A
+  // `NaN` window, such as a failed `Number(...)` parse, then never emitted,
+  // where a raw `setTimeout` fired it at once. It now runs as 0, with a warning.
+  describe('a NaN window runs as 0', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    test('debounced(source, NaN) emits on the next turn and warns', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const a = signal(0)
+      const d = debounced(a, Number.NaN)
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('debounced'))
+      a.set(1)
+      vi.advanceTimersByTime(0)
+      expect(d.value).toBe(1)
+      d.dispose()
+    })
+
+    test('debounced(source, NaN, { leading: true }) ends its cooldown', () => {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const a = signal(0)
+      const d = debounced(a, Number.NaN, { leading: true, trailing: false })
+      a.set(1)
+      expect(d.value).toBe(1)
+      vi.advanceTimersByTime(0)
+      a.set(2)
+      expect(d.value).toBe(2)
+      d.dispose()
+    })
+
+    test('throttled(source, NaN) emits the trailing edge and warns', () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      vi.setSystemTime(1000)
+      const a = signal(0)
+      const t = throttled(a, Number.NaN, { leading: false })
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('throttled'))
+      a.set(1)
+      vi.advanceTimersByTime(0)
+      expect(t.value).toBe(1)
+      t.dispose()
+    })
+  })
+})

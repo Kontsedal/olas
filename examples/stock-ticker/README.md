@@ -11,7 +11,7 @@ Olas signals; DOM bindings come from `effect()` wrappers in `src/dom.ts`.
 - **`defineQuery` with `refetchInterval`** — symbol metadata refreshes every 30s.
 - **`throttled(prices, 250)`** — UI updates rate-limited; the underlying `prices` signal still updates exactly.
 - **`debounced(searchInput, 200)`** — search filter waits for the user to stop typing.
-- **`usePersisted`** — the watchlist survives page reloads via `localStorage`; tests use a memory adapter for round-trip assertions.
+- **`createPersisted`** — the watchlist survives page reloads via `localStorage`; tests use a memory adapter for round-trip assertions.
 - **`createTestController`** — every behavior above is verified in `tests/controller.test.ts` with zero DOM and zero real time.
 
 ## Files
@@ -45,4 +45,4 @@ Then open the printed `http://localhost:5180` and watch the prices wiggle.
 
 - The library does not bundle `@preact/signals-core`; it's a peer dependency. The example installs it in `devDependencies` so `pnpm install` is enough.
 - `setMarketForQuery(market)` is a module-level hand-off: a `defineQuery` at module scope can't read `ctx.deps`, so we expose a setter the bootstrap calls once. A real app would inject the api through `ctx.deps` everywhere (which we do for the controller itself — only the module-scoped query needs this hand-off).
-- `usePersisted` falls back to `localStorageAdapter` when `ctx.deps.storage` is `undefined`. The controller branches on this so tests can substitute a memory storage and assert against `storage.store`.
+- `createPersisted` falls back to `localStorageAdapter()` when `ctx.deps.storage` is `undefined`. The controller branches on this so tests can substitute a memory storage and assert against `storage.store`.

@@ -1,8 +1,9 @@
 import { defineConfig } from 'tsdown'
+import { minifyInlineCss } from './scripts/minify-css.ts'
 
 export default defineConfig({
   entry: { index: 'src/index.ts' },
-  format: ['esm', 'cjs'],
+  format: ['esm'],
   dts: true,
   sourcemap: true,
   clean: true,
@@ -12,5 +13,7 @@ export default defineConfig({
   define: {
     __DEV__: JSON.stringify(process.env.NODE_ENV !== 'production'),
   },
-  outExtensions: ({ format }) => ({ js: format === 'es' ? '.mjs' : '.cjs' }),
+  outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
+  // The inline stylesheet's comments document the UI rules; consumers get it minified.
+  plugins: [minifyInlineCss()],
 })

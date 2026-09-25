@@ -1,5 +1,5 @@
 /**
- * Preferences feature — usePersisted round-trip across two roots wired to the
+ * Preferences feature — createPersisted round-trip across two roots wired to the
  * same in-memory storage adapter (a stand-in for two browser tabs).
  */
 
@@ -12,7 +12,7 @@ describe('preferences', () => {
     const a = createKanbanRoot({ storage })
     try {
       await flush()
-      a.root.preferences.setTheme('dark')
+      a.root.api.preferences.setTheme('dark')
       await flush()
     } finally {
       a.dispose()
@@ -21,7 +21,7 @@ describe('preferences', () => {
     const b = createKanbanRoot({ storage })
     try {
       await flush()
-      expect(b.root.preferences.prefs.peek().theme).toBe('dark')
+      expect(b.root.api.preferences.prefs.peek().theme).toBe('dark')
     } finally {
       b.dispose()
     }
@@ -30,9 +30,9 @@ describe('preferences', () => {
   test('density toggles between compact and comfortable', async () => {
     const { root, dispose } = createKanbanRoot()
     try {
-      expect(root.preferences.prefs.peek().density).toBe('compact')
-      root.preferences.setDensity('comfortable')
-      expect(root.preferences.prefs.peek().density).toBe('comfortable')
+      expect(root.api.preferences.prefs.peek().density).toBe('compact')
+      root.api.preferences.setDensity('comfortable')
+      expect(root.api.preferences.prefs.peek().density).toBe('comfortable')
     } finally {
       dispose()
     }

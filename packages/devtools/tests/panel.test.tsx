@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery, signal } from '@kontsedal/olas-core'
+import {
+  createMutation,
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+  signal,
+} from '@kontsedal/olas-core'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, test } from 'vitest'
 import { DevtoolsPanel } from '../src/DevtoolsPanel'
@@ -24,14 +32,14 @@ describe('<DevtoolsPanel>', () => {
       }),
       { name: 'app' },
     )
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="tree" />)
     // The root (path = ['root']) is already in the tree.
     expect(screen.getByRole('tabpanel').textContent).toContain('root')
 
     await act(async () => {
-      root.addLeaf()
+      root.api.addLeaf()
     })
     const treePanel = await screen.findByRole('tabpanel')
     expect(treePanel.textContent).toMatch(/leaf/)
@@ -41,18 +49,19 @@ describe('<DevtoolsPanel>', () => {
 
   test('renders cache events as they arrive', async () => {
     const usersQuery = defineQuery({
+      id: 'panel/51',
       key: () => [],
       fetcher: async () => 'data',
     })
-    const def = defineController((ctx) => ({ users: ctx.use(usersQuery) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ users: createQuery(ctx, usersQuery) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="cache" />)
 
     // The initial fetch fired before the panel subscribed, so trigger a fresh
     // cycle to exercise the live-event path.
     await act(async () => {
-      await root.users.refetch()
+      await root.api.users.refetch()
     })
 
     // Panel uses rAF-coalesced writes — wait one frame for the pending
@@ -72,14 +81,14 @@ describe('<DevtoolsPanel>', () => {
   })
 
   test('Clear button empties the cache log', async () => {
-    const q = defineQuery({ key: () => [], fetcher: async () => 'x' })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: {} })
+    const q = defineQuery({ id: 'panel/83', key: () => [], fetcher: async () => 'x' })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="cache" />)
 
     await act(async () => {
-      await root.x.refetch()
+      await root.api.x.refetch()
     })
     // Panel coalesces via rAF — wait one frame so the pending events land.
     await act(
@@ -100,7 +109,7 @@ describe('<DevtoolsPanel>', () => {
 
   test('tabs switch the rendered view', () => {
     const def = defineController(() => ({ value: signal(0) }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} />)
     // Timeline is the default tab (the headline view).
@@ -137,11 +146,11 @@ describe('<DevtoolsPanel>', () => {
     const def = defineController((ctx) => ({
       addLeaf: () => ctx.child(leaf, undefined),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="tree" />)
     act(() => {
-      root.addLeaf()
+      root.api.addLeaf()
     })
     const panel = screen.getByRole('tabpanel')
     expect(panel.textContent).toMatch(/active/)
@@ -156,13 +165,13 @@ describe('<DevtoolsPanel>', () => {
   })
 
   test('the filter input is debounced before it filters the view — T6.3', async () => {
-    const q = defineQuery({ key: () => [], fetcher: async () => 'x' })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: {} })
+    const q = defineQuery({ id: 'panel/167', key: () => [], fetcher: async () => 'x' })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="cache" />)
     await act(async () => {
-      await root.x.refetch()
+      await root.api.x.refetch()
     })
     await raf()
     expect(screen.getByRole('tabpanel').textContent).toContain('fetch-success')
@@ -185,7 +194,7 @@ describe('<DevtoolsPanel>', () => {
 
   test('respects defaultTab prop', () => {
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="fields" />)
     expect(screen.getByRole('tab', { name: 'Fields' }).getAttribute('aria-selected')).toBe('true')
@@ -195,13 +204,14 @@ describe('<DevtoolsPanel>', () => {
 
   test('timeline groups a failing mutation + its optimistic write + rollback as one cause-chain', async () => {
     const q = defineQuery({
+      id: 'panel/205',
       key: (id: string) => [id],
       fetcher: async (_c, id) => `server-${id}`,
     })
     const def = defineController((ctx) => ({
-      cur: ctx.use(q, () => ['1']),
-      save: ctx.mutation({
-        name: 'save',
+      cur: createQuery(ctx, q, () => ['1']),
+      save: createMutation(ctx, {
+        id: 'save',
         mutate: async () => {
           throw new Error('boom')
         },
@@ -209,15 +219,15 @@ describe('<DevtoolsPanel>', () => {
         retry: 0,
       }),
     }))
-    const root = createRoot(def, { deps: {}, onError: () => {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
     await act(async () => {
-      await root.cur.firstValue()
+      await root.api.cur.firstValue()
     })
 
     render(<DevtoolsPanel root={root} />) // Timeline is the default tab
 
     await act(async () => {
-      await root.save.run(undefined as void).catch(() => undefined)
+      await root.api.save.run(undefined as void).catch(() => undefined)
     })
     await raf()
 
@@ -233,26 +243,27 @@ describe('<DevtoolsPanel>', () => {
 
   test('a cache:set-data row expands to a structural before/after diff', async () => {
     const q = defineQuery({
+      id: 'panel/243',
       key: (id: string) => [id],
       fetcher: async (_c, _id) => ({ name: 'Ada', age: 36 }),
     })
     const def = defineController((ctx) => ({
-      cur: ctx.use(q, () => ['1']),
-      bump: ctx.mutation({
-        name: 'bump',
+      cur: createQuery(ctx, q, () => ['1']),
+      bump: createMutation(ctx, {
+        id: 'bump',
         mutate: async () => 'ok',
         onMutate: () =>
           q.setData('1', (p) => ({ ...(p as { name: string; age: number }), age: 37 })),
       }),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     await act(async () => {
-      await root.cur.firstValue()
+      await root.api.cur.firstValue()
     })
 
     render(<DevtoolsPanel root={root} />)
     await act(async () => {
-      await root.bump.run(undefined as void)
+      await root.api.bump.run(undefined as void)
     })
     await raf()
 
@@ -274,7 +285,7 @@ describe('<DevtoolsPanel>', () => {
       ctx.debug({ count })
       return { inc: () => count.set(count.peek() + 1) }
     })
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="tree" />)
     const panel = screen.getByRole('tabpanel')
@@ -282,7 +293,7 @@ describe('<DevtoolsPanel>', () => {
     expect(panel.textContent).toContain('0') // live value
 
     await act(async () => {
-      root.inc()
+      root.api.inc()
     })
     expect(panel.textContent).toContain('1') // updated reactively — no poll
 
@@ -290,13 +301,17 @@ describe('<DevtoolsPanel>', () => {
   })
 
   test('the cache inspector updates from events (no poll)', async () => {
-    const q = defineQuery({ key: (id: string) => [id], fetcher: async (_c, id) => `data-${id}` })
-    const def = defineController((ctx) => ({ x: ctx.use(q, () => ['u1']) }))
-    const root = createRoot(def, { deps: {} })
+    const q = defineQuery({
+      id: 'panel/301',
+      key: (id: string) => [id],
+      fetcher: async (_c, id) => `data-${id}`,
+    })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => ['u1']) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     render(<DevtoolsPanel root={root} defaultTab="inspector" />)
     await act(async () => {
-      await root.x.refetch()
+      await root.api.x.refetch()
     })
     await raf()
 

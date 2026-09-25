@@ -1,0 +1,89 @@
+name: Publish
+
+# Manual release to npm. Nothing publishes on a merge — someone has to come here
+# and run this, from `main`, and type the confirmation.
+#
+# What it publishes: whatever versions are currently on `main`. The normal
+# sequence is (1) merge the "Version Packages" PR that `version.yml` opened,
+# (2) run this. `changeset publish` skips any package whose version already
+# exists on npm, so a re-run after a partial failure is safe and resumes rather
+# than duplicating.
+#
+# Requires an `NPM_TOKEN` repository secret. Without it `changeset publish` has
+# no auth and publishes nothing.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "publish" to confirm releasing to npm'
+        required: true
+        default: ''
+
+concurrency: publish-main
+
+permissions:
+  contents: write # `changeset publish` pushes git tags
+
+jobs:
+  publish:
+    name: verify + publish to npm
+    runs-on: ubuntu-latest
+    steps:
+      # Typing the word is the whole point: `workflow_dispatch` is one click
+      # from the Actions tab, and this step is irreversible.
+      - name: Check confirmation
+        if: inputs.confirm != 'publish'
+        run: |
+          echo "::error::Confirmation failed. Re-run and type 'publish' in the confirm field."
+          exit 1
+
+      - name: Refuse to publish from anywhere but main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Publish only from main (got ${{ github.ref }})."
+          exit 1
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v6.1.0
+
+      # No dependency cache here: a poisoned cache entry would reach npm through
+      # this job. It runs rarely, so a cold install costs little.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: pnpm install --frozen-lockfile
+
+      # Re-verify here rather than trusting main's last CI run: this publishes
+      # the artifacts built in THIS job, and an npm version can never be
+      # reused. Same chain as ci.yml, build first (see the note there).
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm check:peer-ranges
+      - run: pnpm check:peer-bumps
+      - run: pnpm test:coverage
+      - run: pnpm --filter "./examples/*" test
+      - run: pnpm publint
+      - run: pnpm attw
+      - run: pnpm smoke:dist
+
+      # pnpm 11+ reads registry auth from ~/.npmrc or the project .npmrc only.
+      # It ignores the NPM_CONFIG_USERCONFIG file that setup-node's
+      # `registry-url` writes, and changesets/action v2 no longer writes one
+      # itself. So the token goes where pnpm looks, just before it is needed.
+      - name: Authenticate to npm
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # The `publish` sub-action only publishes: it cannot rewrite versions,
+      # which already happened in the merged Version Packages PR. It also tags
+      # each release and creates its GitHub release.
+      - name: Publish
+        uses: changesets/action/publish@v2.1.2
+        with:
+          script: pnpm release

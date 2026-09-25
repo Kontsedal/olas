@@ -1,0 +1,67 @@
+name: Docs
+
+# Builds the VitePress site (docs/) on every pull request that could change it,
+# so a dead link, a Vue template error or a broken reference page fails review.
+#
+# Deploying is manual and opt-in: run this workflow from the Actions tab with
+# `deploy` ticked. It publishes to GitHub Pages, which must first be enabled in
+# the repository settings (Pages → Source: GitHub Actions). Nothing deploys on
+# push or merge.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy the built site to GitHub Pages
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build the docs site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6.1.0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Builds the packages, checks the API reports (which also writes the doc
+      # model the reference pages come from), syncs the repo docs into docs/,
+      # and builds the site.
+      - run: pnpm docs:build
+
+      - if: github.event_name == 'workflow_dispatch' && inputs.deploy
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    name: deploy to GitHub Pages
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

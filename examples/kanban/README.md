@@ -1,6 +1,6 @@
 # Flagship — kanban (React)
 
-A project tracker that exercises essentially every primitive in the Olas
+A project tracker that exercises nearly every primitive in the Olas
 library through *natural* features, not contrived demos. The intent is that a
 single feature open in the editor reads like a real app — and that the union
 of all features doubles as a coverage map for the library.
@@ -9,22 +9,22 @@ of all features doubles as a coverage map for the library.
 
 | Visible feature | Library primitive |
 |---|---|
-| Multi-board sidebar with switching | `defineQuery({ crossTab: true })`, reactive key thunks |
-| Active board grid | `defineQuery` + `ctx.use(query, () => [...])` |
-| Drag-drop reorder *within* a column | `ctx.mutation({ concurrency: 'serial' })` |
-| Drag-drop *across* columns | `ctx.mutation({ concurrency: 'parallel' })` with optimistic snapshot |
-| Search bar (250 ms debounce → server) | `debounced()` + `ctx.mutation({ concurrency: 'latest-wins' })` |
+| Multi-board sidebar with switching | `defineQuery({ meta: { crossTab: true } })`, reactive key thunks |
+| Active board grid | `defineQuery` + `createQuery(ctx, query, () => [...])` |
+| Drag-drop reorder *within* a column | `createMutation(ctx, { concurrency: 'serial' })` |
+| Drag-drop *across* columns | `createMutation(ctx, { concurrency: 'parallel' })` with optimistic snapshot |
+| Search bar (250 ms debounce → server) | `debounced()` + `createMutation(ctx, { concurrency: 'latest-wins' })` |
 | Filter chips (priority / label / assignee) | `computed()` composition over signals |
 | Bulk move + multi-select | `selection<string>()` (handleClick range / meta) |
-| Detail panel | `<KeepAlive controller={cardDetail}>` (suspend/resume on unmount) |
-| Card detail form | `formFromZod` + `FieldArray` for subtasks |
+| Detail panel | `<SuspendOnUnmount controller={cardDetail}>` around the details. Collapse them and the head's tag turns from Live to Suspended; expand them and the unsaved draft is still there. |
+| Card detail form | `createZodForm` + `FieldArray` for subtasks |
 | Async title-uniqueness check | `debouncedValidator()` |
 | Assignee picker with shared user data | `entitiesPlugin` + `defineEntity<User>` |
 | Label picker with shared label data | `entitiesPlugin` + `defineEntity<Label>` |
-| Comments thread | `useLiveStream` over a BroadcastChannel realtime |
-| "Another tab just moved a card" log | `useRealtimePatcher` |
+| Comments thread | `createLiveStream` over a BroadcastChannel realtime |
+| "Another tab just moved a card" log | `createRealtimePatcher` |
 | Two-tab cache convergence | `crossTabPlugin` |
-| Persisted theme / density / sidebar / last-open board | `usePersisted` × N |
+| Persisted theme / density / sidebar / last-open board | `createPersisted` × N |
 | Theme + density mirror to `<html>` | standalone `effect()` |
 | Archived-cards drawer with paged scroll | `defineInfiniteQuery` |
 | Background-tab polling pause | `useSuspendOnHidden(root)` |
@@ -51,14 +51,14 @@ src/
 ├── features/
 │   ├── boards/              # sidebar + switcher
 │   ├── board/               # kanban grid + 3 mutation modes + drag/drop + selection
-│   ├── card-detail/         # KeepAlive panel + form + async validator
+│   ├── card-detail/         # SuspendOnUnmount panel + form + async validator
 │   ├── search/              # debounced search bar
 │   ├── filters/             # chip picker (priority/label/assignee)
-│   ├── comments/            # useLiveStream thread
+│   ├── comments/            # createLiveStream thread
 │   ├── activity/            # emitter feed + remote-actor events
 │   ├── notifications/       # ErrorContext-driven toasts
 │   ├── archive/             # defineInfiniteQuery drawer
-│   └── preferences/         # usePersisted theme/density/sidebar
+│   └── preferences/         # createPersisted theme/density/sidebar
 └── ui/                      # kanban-local design system
     ├── tokens.css, motion.css, globals.css, primitives.css
     └── Button, Card, Input, Tag, Avatar, Toast, Dialog, …
@@ -78,13 +78,13 @@ two browser windows and one acts as a remote actor:
    a refetch.
 3. After success, the board controller `publish`es a `card.moved` event over
    the *realtime* channel (`olas-kanban-realtime`).
-4. Window B's `useRealtimePatcher` picks it up, sees `event.by !== tabId`,
+4. Window B's `createRealtimePatcher` picks it up, sees `event.by !== tabId`,
    and emits an "Another tab moved a card" entry into the activity scope —
    visible in the activity panel with a distinct accent.
 
 The two channels are intentionally separate, mirroring real deployments where
 the cache transport (e.g. a write-through CDN cache, an in-process pubsub)
-is independent of the realtime fan-out (e.g. a WebSocket / Pusher / Supabase).
+is independent of the realtime fan-out (e.g. a WebSocket, Pusher and Supabase).
 
 ## Run it
 
@@ -101,5 +101,5 @@ pnpm --filter @kontsedal/olas-example-kanban build
 1. `src/api/types.ts` — domain shapes.
 2. `src/app.controller.ts` — the *orchestrator*. Reads top-down like a wiring diagram.
 3. `src/features/board/board.controller.ts` — three mutation modes side-by-side; this is where the testability claim lives.
-4. `src/features/card-detail/card-detail.controller.ts` — `formFromZod` + `debouncedValidator` + KeepAlive shape.
-5. `tests/board.test.ts` + `tests/cross-tab.test.ts` — see the mutations and the two-tab convergence verified deterministically.
+4. `src/features/card-detail/card-detail.controller.ts` — `createZodForm` + `debouncedValidator` + SuspendOnUnmount shape.
+5. `tests/board.test.ts` + `tests/cross-tab.test.ts` — see the mutations and the two-tab convergence verified deterministically. `tests/card-detail.test.tsx` renders the panel and watches the suspend state follow the wrapper.

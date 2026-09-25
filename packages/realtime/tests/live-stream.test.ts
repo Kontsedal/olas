@@ -1,12 +1,12 @@
-import { createRoot, defineController, effect } from '@kontsedal/olas-core'
+import { createRoot, defineController, effect, queryEngine } from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   type ConnectionState,
+  createConnectionState,
+  createLiveStream,
   type RealtimeHandler,
   type RealtimeService,
   type RealtimeSubscription,
-  useLiveStream,
-  useRealtimeConnection,
 } from '../src'
 
 declare module '@kontsedal/olas-core' {
@@ -52,24 +52,24 @@ const fakeRealtime = () => {
   return service
 }
 
-describe('useLiveStream', () => {
+describe('createLiveStream', () => {
   test('buffer caps at capacity, oldest events drop (flushMs=0)', () => {
     const realtime = fakeRealtime()
     const def = defineController((ctx) => {
-      const stream = useLiveStream<string>(ctx, 'logs', {
+      const stream = createLiveStream<string>(ctx, 'logs', {
         capacity: 3,
         flushMs: 0,
       })
       return { stream }
     })
-    const root = createRoot(def, { deps: { realtime } })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
     for (const ch of ['a', 'b', 'c', 'd', 'e']) {
       realtime.emit('logs', ch)
     }
 
-    expect(root.stream.events.value).toEqual(['c', 'd', 'e'])
-    expect(root.stream.events.value.length).toBe(3)
+    expect(root.api.stream.events.value).toEqual(['c', 'd', 'e'])
+    expect(root.api.stream.events.value.length).toBe(3)
 
     root.dispose()
   })
@@ -85,19 +85,19 @@ describe('useLiveStream', () => {
     test('flushMs coalesces N emissions into one signal write', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<number>(ctx, 'logs', {
+        const stream = createLiveStream<number>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       // Count writes to events$ via an effect that observes the value.
       let writes = 0
       const dispose = effect(() => {
         // Tracked read.
-        void root.stream.events.value
+        void root.api.stream.events.value
         writes++
       })
       // The initial run counts as one write — reset so we count only flushes.
@@ -109,7 +109,7 @@ describe('useLiveStream', () => {
 
       vi.advanceTimersByTime(16)
       expect(writes - baseline).toBe(1)
-      expect(root.stream.events.value).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+      expect(root.api.stream.events.value).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
 
       dispose()
       root.dispose()
@@ -121,59 +121,59 @@ describe('useLiveStream', () => {
       // stranded forever after resume().
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 50,
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'queued')
       // Pause BEFORE flushMs elapses — the trailing timer is canceled.
       vi.advanceTimersByTime(10)
-      expect(root.stream.events.value).toEqual([])
-      root.stream.pause()
+      expect(root.api.stream.events.value).toEqual([])
+      root.api.stream.pause()
 
       // While paused: time advances; the stranded event would never appear in
       // the original buggy implementation.
       vi.advanceTimersByTime(1000)
-      expect(root.stream.events.value).toEqual([])
+      expect(root.api.stream.events.value).toEqual([])
 
       // Resume — the effect re-runs and reschedules the flush.
-      root.stream.resume()
+      root.api.stream.resume()
       vi.advanceTimersByTime(50)
-      expect(root.stream.events.value).toEqual(['queued'])
+      expect(root.api.stream.events.value).toEqual(['queued'])
       root.dispose()
     })
 
     test('pause stops buffering; resume continues; buffer survives the pause', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'a')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a'])
+      expect(root.api.stream.events.value).toEqual(['a'])
 
-      root.stream.pause()
-      expect(root.stream.isPaused.value).toBe(true)
+      root.api.stream.pause()
+      expect(root.api.stream.isPaused.value).toBe(true)
       // Subscription should be gone — emit lands nowhere.
       realtime.emit('logs', 'b')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a'])
+      expect(root.api.stream.events.value).toEqual(['a'])
 
-      root.stream.resume()
-      expect(root.stream.isPaused.value).toBe(false)
+      root.api.stream.resume()
+      expect(root.api.stream.isPaused.value).toBe(false)
       realtime.emit('logs', 'c')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a', 'c'])
+      expect(root.api.stream.events.value).toEqual(['a', 'c'])
 
       root.dispose()
     })
@@ -181,20 +181,20 @@ describe('useLiveStream', () => {
     test('dispose clears the pending flush timer and unsubscribes', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 100,
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'a')
       // Pending flush scheduled but not yet fired.
-      expect(root.stream.events.value).toEqual([])
+      expect(root.api.stream.events.value).toEqual([])
 
       // Snapshot the events read BEFORE dispose so we can compare after.
-      const before = root.stream.events.value
+      const before = root.api.stream.events.value
 
       root.dispose()
       // Subscriber gone.
@@ -202,47 +202,47 @@ describe('useLiveStream', () => {
 
       // Advance past the original flush deadline — no late write should land.
       vi.advanceTimersByTime(200)
-      expect(root.stream.events.value).toBe(before)
-      expect(root.stream.events.value).toEqual([])
+      expect(root.api.stream.events.value).toBe(before)
+      expect(root.api.stream.events.value).toEqual([])
     })
 
     test('clear() empties without killing the subscription', () => {
       const realtime = fakeRealtime()
       const def = defineController((ctx) => {
-        const stream = useLiveStream<string>(ctx, 'logs', {
+        const stream = createLiveStream<string>(ctx, 'logs', {
           capacity: 100,
           flushMs: 16,
         })
         return { stream }
       })
-      const root = createRoot(def, { deps: { realtime } })
+      const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
 
       realtime.emit('logs', 'a')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['a'])
+      expect(root.api.stream.events.value).toEqual(['a'])
 
-      root.stream.clear()
-      expect(root.stream.events.value).toEqual([])
+      root.api.stream.clear()
+      expect(root.api.stream.events.value).toEqual([])
       // Subscription preserved.
       expect(realtime.subscriberCount('logs')).toBe(1)
 
       realtime.emit('logs', 'b')
       vi.advanceTimersByTime(16)
-      expect(root.stream.events.value).toEqual(['b'])
+      expect(root.api.stream.events.value).toEqual(['b'])
 
       root.dispose()
     })
   })
 })
 
-describe('useRealtimeConnection (T6.7)', () => {
+describe('createConnectionState (T6.7)', () => {
   test("reports 'unknown' when the transport can't report connection state", () => {
     const realtime = fakeRealtime() // no onConnectionChange
-    const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
-    const root = createRoot(def, { deps: { realtime } })
+    const def = defineController((ctx) => ({ conn: createConnectionState(ctx) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
     // Old behavior lied with 'connected'; a transport with no
     // onConnectionChange genuinely can't know → 'unknown'.
-    expect(root.conn.value).toBe('unknown')
+    expect(root.api.conn.value).toBe('unknown')
     root.dispose()
   })
 
@@ -259,11 +259,11 @@ describe('useRealtimeConnection (T6.7)', () => {
         }
       },
     }
-    const def = defineController((ctx) => ({ conn: useRealtimeConnection(ctx) }))
-    const root = createRoot(def, { deps: { realtime } })
-    expect(root.conn.value).toBe('connected') // optimistic initial (has a reporter)
+    const def = defineController((ctx) => ({ conn: createConnectionState(ctx) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime } })
+    expect(root.api.conn.value).toBe('connected') // optimistic initial (has a reporter)
     conn.handler?.('offline')
-    expect(root.conn.value).toBe('offline')
+    expect(root.api.conn.value).toBe('offline')
     root.dispose()
   })
 })

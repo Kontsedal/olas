@@ -3,11 +3,11 @@ name: raf-unbound-illegal-invocation
 description: "Assigning native requestAnimationFrame UNBOUND to a field then calling it as a method throws 'Illegal invocation' in real browsers — invisible to jsdom, so tests miss it."
 type: pitfall
 covers:
-  - packages/devtools/src/store.ts:233-247
+  - packages/devtools/src/store.ts:464-490
 edges:
   - { type: tested-by, target: ../../packages/devtools/tests/store.test.ts }
   - { type: related, target: ../modules/devtools-panel.md }
-last_verified: 2026-07-28
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -21,7 +21,7 @@ later calls `this.schedule(fn)`. The obvious form is a **bug**:
 this.schedule = requestAnimationFrame
 ```
 
-Native `requestAnimationFrame` / `cancelAnimationFrame` (and most DOM methods) require
+Native `requestAnimationFrame` and `cancelAnimationFrame` (and most DOM methods) require
 `this` to be the global (`window`). Called as `this.schedule(fn)` — i.e. as a method of
 the store — `this` is the store, and a real browser throws
 **`TypeError: Illegal invocation`**. Fix by wrapping so it's called bare (global `this`):
@@ -38,14 +38,14 @@ this.cancelSchedule = (h) => cancelAnimationFrame(h)
 - The throw happened inside `scheduleFlush`, which runs inside a `__debug` handler, and
   `DevtoolsEmitter.emit` wraps handlers in an **empty** `try/catch` — so it was swallowed
   with no console error.
-- The failure was *partial*, which masked it: `tree$` / `cacheState$` are set
-  **synchronously** (in `handle`'s switch / on `attach`) so the Tree and Inspector tabs
-  worked; only the **coalesced** signals (`cache$` / `mutations$` / `fields$` / `events$`)
+- The failure was *partial*, which masked it: `tree$` and `cacheState$` are set
+  **synchronously** (in `handle`'s switch and on `attach`) so the Tree and Inspector tabs
+  worked; only the **coalesced** signals (`cache$`, `mutations$`, `fields$` and `events$`)
   route through the flush and stayed empty. First event's `scheduleFlush` threw and left
   `flushHandle` stuck at the `-1` sentinel, so no flush was ever scheduled again.
 
-Net symptom in a real browser: the devtools **Tree + Inspector populate, but Timeline /
-Cache / Mutations / Fields are permanently empty** — with no error in the console.
+Net symptom in a real browser: the devtools **Tree + Inspector populate, but Timeline,
+Cache, Mutations and Fields are permanently empty** — with no error in the console.
 
 ## Lesson
 

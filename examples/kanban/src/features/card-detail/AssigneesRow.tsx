@@ -1,12 +1,11 @@
-import { use, useQuery, useRoot } from '@kontsedal/olas-react'
-import type { AppApi } from '../../app.controller'
+import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { Avatar, cx } from '../../ui'
 
 export function AssigneesRow() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const users = useQuery(app.users)
   const array = app.cardDetail.form.fields.assigneeIds
-  const value = use(array.value) as readonly string[]
+  const value = useValue(array)
   const selectedSet = new Set(value)
 
   return (

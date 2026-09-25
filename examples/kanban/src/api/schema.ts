@@ -1,13 +1,12 @@
 /**
  * Zod schemas for the card form + `AmbientDeps` augmentation.
  *
- * The card form is built via `formFromZod` so leaf validators, FieldArray
+ * The card form is built via `createZodForm` so leaf validators, FieldArray
  * walking, and TS inference all come from the same schema. An async
  * `debouncedValidator` for "title is unique on this board" attaches to
  * the title field at controller-construction time (see `card-detail`).
  */
 
-import type { EntitiesPlugin } from '@kontsedal/olas-entities'
 import { z } from 'zod'
 import type { NotificationEvent } from '../scopes'
 import type { Broadcaster } from './broadcast'
@@ -51,12 +50,6 @@ declare module '@kontsedal/olas-core' {
     realtime: Broadcaster['realtime']
     /** Tab identity — embedded in every published realtime event. */
     tabId: string
-    /**
-     * Entities plugin handle. Exposed on deps so any controller can read
-     * `ctx.deps.entities.signal(UserEntity, id)` without threading the
-     * plugin through scopes.
-     */
-    entities: EntitiesPlugin
     /**
      * Mutable bridge populated by `appController` so the root-level `onError`
      * handler can call the notifications emitter that lives inside the tree.

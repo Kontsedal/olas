@@ -1,5 +1,5 @@
 {
-  "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
+  "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "files": {
     "includes": [
       "**",
@@ -34,7 +34,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "suspicious": {
         "noExplicitAny": "off",
         "noConfusingVoidType": "off",
@@ -63,5 +63,37 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["examples/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noArrayIndexKey": "error"
+          },
+          "correctness": {
+            "useExhaustiveDependencies": "error",
+            "useHookAtTopLevel": "error"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["**/*.svelte", "**/*.vue"],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noUnusedVariables": "off",
+            "noUnusedImports": "off",
+            "useHookAtTopLevel": "off"
+          },
+          "style": {
+            "useConst": "off",
+            "useImportType": "off"
+          }
+        }
+      }
+    }
+  ],
   "assist": { "actions": { "source": { "organizeImports": "on" } } }
 }

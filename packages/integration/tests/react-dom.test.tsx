@@ -11,7 +11,15 @@
  * regression here is also a regression in the example app.
  */
 
-import { createRoot, defineController, defineQuery } from '@kontsedal/olas-core'
+import {
+  createField,
+  createMutation,
+  createQuery,
+  createRoot,
+  defineController,
+  defineQuery,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import {
   OlasProvider,
   useField,
@@ -37,15 +45,15 @@ const seedCards = (): Card[] => [
 describe('react integration: card list', () => {
   test('useQuery re-renders when a mutation succeeds and writes to the cache', async () => {
     const cardsQuery = defineQuery({
-      queryId: 'int/react/cards-mutate',
+      id: 'int/react/cards-mutate',
       key: () => [],
       fetcher: async () => seedCards(),
       staleTime: 60_000,
     })
 
     const def = defineController((ctx) => {
-      const cards = ctx.use(cardsQuery, () => [])
-      const like = ctx.mutation<string, void>({
+      const cards = createQuery(ctx, cardsQuery, () => [])
+      const like = createMutation<string, void>(ctx, {
         mutate: async (id) => {
           cardsQuery.setData(() => {
             const prev = cards.data.peek() ?? []
@@ -56,11 +64,11 @@ describe('react integration: card list', () => {
       return { cards, like }
     })
 
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function CardList() {
-      const { data, isLoading } = useQuery(root.cards)
-      const m = useMutation(root.like)
+      const { data, isLoading } = useQuery(root.api.cards)
+      const m = useMutation(root.api.like)
       if (isLoading) return <div data-testid="status">loading</div>
       return (
         <div>
@@ -108,7 +116,7 @@ describe('react integration: card list', () => {
   test('useSuspenseQuery shows the fallback then resolves', async () => {
     let resolveFetch: ((v: { who: string }) => void) | null = null
     const slowQuery = defineQuery({
-      queryId: 'int/react/slow',
+      id: 'int/react/slow',
       key: () => [],
       fetcher: () =>
         new Promise<{ who: string }>((r) => {
@@ -117,11 +125,11 @@ describe('react integration: card list', () => {
       staleTime: 60_000,
     })
 
-    const def = defineController((ctx) => ({ slow: ctx.use(slowQuery, () => []) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ slow: createQuery(ctx, slowQuery, () => []) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function SlowView() {
-      const { data } = useSuspenseQuery(root.slow)
+      const { data } = useSuspenseQuery(root.api.slow)
       return <span data-testid="who">{data.who}</span>
     }
 
@@ -137,7 +145,7 @@ describe('react integration: card list', () => {
 
     await act(async () => {
       resolveFetch?.({ who: 'world' })
-      await root.slow.firstValue()
+      await root.api.slow.firstValue()
     })
     expect(screen.queryByTestId('fallback')).toBeNull()
     expect(screen.getByTestId('who').textContent).toBe('world')
@@ -147,12 +155,12 @@ describe('react integration: card list', () => {
 
   test('useField round-trip with a controlled <input>', async () => {
     const def = defineController((ctx) => ({
-      name: ctx.field<string>(''),
+      name: createField<string>(ctx, ''),
     }))
-    const root = createRoot(def, { deps: {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
 
     function NameInput() {
-      const { value, set, isDirty } = useField(root.name)
+      const { value, set, isDirty } = useField(root.api.name)
       return (
         <div>
           <input data-testid="name" value={value} onChange={(e) => set(e.target.value)} />
@@ -173,32 +181,26 @@ describe('react integration: card list', () => {
     })
     expect((screen.getByTestId('name') as HTMLInputElement).value).toBe('Alice')
     expect(screen.getByTestId('dirty').textContent).toBe('yes')
-    expect(root.name.peek()).toBe('Alice')
+    expect(root.api.name.peek()).toBe('Alice')
 
     root.dispose()
   })
 
   test('useMutation surfaces error state from a failing mutate', async () => {
     const def = defineController((ctx) => ({
-      save: ctx.mutation<void, void>({
+      save: createMutation<void, void>(ctx, {
         mutate: async () => {
           throw new Error('boom')
         },
       }),
     }))
-    const root = createRoot(def, { deps: {}, onError: () => {} })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, onError: () => {} })
 
     function SaveButton() {
-      const m = useMutation(root.save)
+      const m = useMutation(root.api.save)
       return (
         <div>
-          <button
-            type="button"
-            data-testid="save"
-            onClick={() => {
-              m.mutate().catch(() => {})
-            }}
-          >
+          <button type="button" data-testid="save" onClick={() => m.mutate()}>
             Save
           </button>
           <span data-testid="err">{m.isError ? (m.error as Error).message : 'none'}</span>

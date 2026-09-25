@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: ten published packages ship — `@kontsedal/olas-core` (signals, controllers, queries, mutations, forms, SSR + streaming SSR, `defineScope`, the dynamic-child trio `ctx.session` / `ctx.collection` / `ctx.lazyChild`), `@kontsedal/olas-react` (Provider + hooks + keep-alive + streaming hydration), `@kontsedal/olas-zod`, `@kontsedal/olas-persist` (`usePersisted` + `localStorageAdapter` + `indexedDbAdapter`), `@kontsedal/olas-devtools` (in-app panel + floating launcher), `@kontsedal/olas-cross-tab` (BroadcastChannel cache sync), `@kontsedal/olas-entities` (entity normalization plugin), `@kontsedal/olas-realtime` (realtime patcher + live streams), `@kontsedal/olas-mutation-queue` (durable persist + reload-safe replay for `persist: true` mutations), `@kontsedal/olas-router` (scope-based router bridge for TanStack Router / React Router v6). Plus the private `packages/integration` cross-package test suite. 843 tests across 59 files + the `examples/` apps (kanban, reader-ssr, stock-ticker, virtualized-table). Don't tear down "unused" scaffolding without checking; some pieces anticipate work that hasn't landed yet — `BACKLOG.md` lists what's outstanding.
+Current implementation status: fourteen published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 2,533 tests across 187 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -18,33 +18,63 @@ Current implementation status: ten published packages ship — `@kontsedal/olas-
 pnpm install                                       # link workspace + install deps
 pnpm typecheck                                     # tsc --noEmit per package
 pnpm lint                                          # biome check .
+pnpm check:doc-snippets [file.md]                  # typecheck the ts/tsx blocks in the docs against src
+pnpm check:peer-bumps                              # a pending release that leaves a peer range behind has a major changeset for that package
 pnpm exec biome check --write .                    # auto-fix lint + format
 pnpm test                                          # vitest run (all packages)
 pnpm test:watch                                    # vitest watch
-pnpm build                                         # tsdown per package → dist/{mjs,cjs,d.mts,d.cts}
+pnpm build                                         # tsdown per package → dist/{js,d.ts} (ESM only)
+pnpm smoke:dist                                    # after build: dist imports, require()s, tree-shakes; dev builds emit devtools events
+pnpm check:public-types                            # after build: every type in a public signature is exported
+pnpm size                                          # after build: bundle-size budgets (.size-limit.json)
+pnpm api:check                                     # after build: packages/*/etc/*.api.md match the built .d.ts
+pnpm api:update                                    # after build: rewrite the API reports after an intended surface change
+
+pnpm docs:build                                    # build, api:check, sync the repo docs into docs/, build the VitePress site
+pnpm docs:dev                                      # sync, then serve the site (needs a prior build + api:check)
 
 pnpm vitest run packages/core/tests/query.test.ts  # run one test file
 pnpm vitest run -t "race protection"               # run by test-name substring
 
 pnpm wiki:lint                                     # check .wiki/ for broken citations, orphans, stale pages
+pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
-CI = `install → typecheck → lint → test → build`. Reproducing CI locally is the five commands above in order.
+CI = `install → build → typecheck → lint → check:peer-ranges → check:peer-bumps → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `program=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
+
+## Releasing
+
+Packages version **independently** — `.changeset/config.json` has no `fixed` group, so a release bumps only the packages a changeset names, plus any whose peer range a bumped dependency fell out of. Changesets 3 releases that second kind as a patch, but a narrower peer range is breaking, so `pnpm check:peer-bumps` fails until a changeset names each one as major (`.wiki/decisions/peer-bump-guard.md`). Version numbers across the suite are not expected to match. Don't "fix" a mismatch by adding bumps.
+
+Every user-visible change needs a changeset (`pnpm changeset`) naming the packages it touches. A docs-only change to a package README needs none.
+
+Internal peer ranges carry an upper bound at the next major (`>=1.0.0 <2.0.0`). Changesets 3.0.3 keeps the bound when it rewrites a range. `pnpm version-packages` runs `check:peer-bumps`, then `changeset version`, then `scripts/pin-peer-ranges.mjs`, which restores a bound if one is missing. CI and the publish workflow run `pnpm check:peer-ranges`, which fails on a range without one, and `pnpm check:peer-bumps`.
+
+The pipeline is two workflows, deliberately split:
+
+1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`pnpm version-packages`) through `changesets/action/version`. **Never publishes.**
+2. `.github/workflows/publish.yml` — `workflow_dispatch` only, from `main`, with a typed confirmation. Re-runs the full verify chain, writes the npm token to `~/.npmrc`, then runs `pnpm release` through `changesets/action/publish`.
+
+Merging the version PR does **not** release. Someone has to run the publish workflow. That split is the point: merging is routine and reversible, pushing to npm is neither — a version number can never be reused. `changeset publish` skips packages already on npm, so re-running after a partial failure resumes safely.
 
 ## Workspace layout
 
 ```
 packages/
   core/            # @kontsedal/olas-core           — signals, controllers, queries, mutations, forms, SSR + streaming SSR
-  react/           # @kontsedal/olas-react          — OlasProvider, useRoot/useController/useQuery/useField, KeepAlive, useSuspendOnHidden, HydrationBoundary, streaming hydrator
-  persist/         # @kontsedal/olas-persist        — usePersisted + localStorageAdapter + indexedDbAdapter
-  zod/             # @kontsedal/olas-zod            — zodValidator, formFromZod
+  react/           # @kontsedal/olas-react          — OlasProvider, useRoot/useValue/useQuery/useInfiniteQuery/useField/useMutation, SuspendOnUnmount, useSuspendOnHidden, HydrationBoundary, streaming hydrator (also Preact through preact/compat)
+  vue/             # @kontsedal/olas-vue            — olasPlugin, useRoot, useValue/useQuery/useInfiniteQuery/useField/useMutation as refs
+  svelte/          # @kontsedal/olas-svelte         — setRoot/getRoot, queryStore/infiniteQueryStore/fieldStore/mutationStore; signals are stores
+  persist/         # @kontsedal/olas-persist        — createPersisted + localStorageAdapter() + indexedDbAdapter(), persistQueryCachePlugin
+  zod/             # @kontsedal/olas-zod            — zodValidator, createZodForm
   devtools/        # @kontsedal/olas-devtools       — in-app DevtoolsPanel + floating launcher
-  cross-tab/       # @kontsedal/olas-cross-tab      — BroadcastChannel-backed cross-tab cache sync (QueryClientPlugin)
-  entities/        # @kontsedal/olas-entities       — defineEntity + auto-walk + reverse-index backprop (QueryClientPlugin)
-  realtime/        # @kontsedal/olas-realtime       — useRealtimePatcher + useLiveStream over a consumer-supplied RealtimeService
-  mutation-queue/  # @kontsedal/olas-mutation-queue — durable persist + reload-safe replay for `persist: true` mutations (QueryClientPlugin)
-  router/          # @kontsedal/olas-router         — createRouterAdapter + RouteParams/Search/Pathname scopes (TanStack Router / React Router v6)
+  cross-tab/       # @kontsedal/olas-cross-tab      — BroadcastChannel-backed cross-tab cache sync (plugin; meta.crossTab)
+  entities/        # @kontsedal/olas-entities       — defineEntity + auto-walk + reverse-index backprop (plugin; the Entities scope)
+  realtime/        # @kontsedal/olas-realtime       — createRealtimePatcher + createLiveStream + createConnectionState over a consumer-supplied RealtimeService
+  mutation-queue/  # @kontsedal/olas-mutation-queue — durable persist + reload-safe replay for `meta: { persist: true }` mutations (plugin; the MutationQueue scope)
+  router/          # @kontsedal/olas-router         — createRouterAdapter → { plugin, Bridge }; RouteParams/Search/Pathname scopes (TanStack Router / React Router v6)
+  eslint-plugin/   # @kontsedal/olas-eslint-plugin  — eight syntax-only lint rules + recommended/strict flat configs
+  codemod/         # @kontsedal/olas-codemod        — 0.8 → 1.0 migration CLI on ts-morph (npx @kontsedal/olas-codemod 1.0)
   integration/     # private — cross-package integration test suite, not published
 ```
 
@@ -112,10 +142,10 @@ confidence: high
 ```
 
 - **`covers`** — file paths or `path:start-end` ranges this page documents. When those lines change, lint should flag the page for re-verification. Be specific: cite ranges, not whole files, when only part of a file matters.
-- **`edges`** — typed links to other pages. Types: `uses` / `tested-by` / `supersedes` / `contradicts` / `documented-in` / `related` (last one only when nothing else fits).
+- **`edges`** — typed links to other pages. Types: `uses`, `tested-by`, `supersedes`, `contradicts`, `documented-in` and `related` (last one only when nothing else fits).
 - **`confidence`** — three levels with concrete tests:
   - `high` — page is verifiable against source AND has a referenced test (or spec section) pinning the behavior. Multi-source.
-  - `medium` — page is synthesis (a "how this works" narrative) derived from reading code, but no independent verification (peer review, separate test, spec § citation) has confirmed the synthesis. **Default for anything authored in the same session as the code it describes.**
+  - `medium` — the page is a "how this works" narrative derived from reading code, and no independent source has confirmed it. Peer review, a separate test or a spec § citation would each count as confirmation. **Default for anything authored in the same session as the code it describes.**
   - `candidate` — speculation. One file cited, no confirming test, no spec section. Lives in `.wiki/candidates/`. Excluded from authoritative queries.
 - **`last_verified`** — ISO date (YYYY-MM-DD). Update when you re-read the covered code and confirm the page is still accurate.
 
@@ -129,8 +159,8 @@ In page bodies, prefer **citations as `path:line` or `path:start-end`** over pro
 
 New information enters the wiki here.
 
-- **Commit ingest** — when finishing a non-trivial change, read the diff, identify affected pages by `covers:`, update them, bump `last_verified`. Add new pages for new modules / entities. Add a `log.md` entry: `## [YYYY-MM-DD HH:MM] ingest | <short summary>`.
-- **Conversation ingest** — when the user explains *why* something is the way it is, or describes a bug / constraint / past attempt, file it. Usually a pitfall or decision page. Don't let context die in chat.
+- **Commit ingest** — when finishing a non-trivial change, read the diff, identify affected pages by `covers:`, update them, bump `last_verified`. Add new pages for new modules and entities. Add a `log.md` entry: `## [YYYY-MM-DD HH:MM] ingest | <short summary>`.
+- **Conversation ingest** — when the user explains *why* something is the way it is, or describes a bug, constraint and past attempt, file it. Usually a pitfall or decision page. Don't let context die in chat.
 - **External ingest** — bug reports, runtime issues, surprising library behavior. Same treatment.
 
 ### Query
@@ -141,25 +171,26 @@ Before reading source code, read the wiki:
 2. Read those pages.
 3. Follow `covers:` citations to specific file ranges.
 4. Read only the cited ranges, not whole files.
-5. Answer / act.
+5. Answer and act.
 
 This inverts the normal "grep → read → synthesize" loop. The synthesis already exists; the wiki points you at the exact code.
 
-If a query produces a useful new synthesis (comparison, walk-through, inferred pattern), file it back as a page. The wiki compounds on use, not just on commits.
+If a query produces a useful new synthesis (comparison, walk-through, inferred pattern), file it back as a page. The wiki compounds on use, not only on commits.
 
 ### Lint
 
 Run `pnpm wiki:lint`. The script in `scripts/wiki-lint.ts` checks:
 
 - Required frontmatter fields present (`name`, `description`, `type`, `last_verified`, `confidence`).
-- `confidence` is one of `high` / `medium` / `candidate`.
+- `confidence` is one of `high`, `medium` or `candidate`.
 - `last_verified` is a valid ISO date.
 - Every `covers:` path exists. If a line range is given (`path:start-end` or `path:N`), the file is long enough.
 - Every `edges:` target resolves to an existing file (path relative to the page).
-- Edge `type` is one of `uses` / `tested-by` / `supersedes` / `contradicts` / `documented-in` / `related`.
+- Edge `type` is one of `uses`, `tested-by`, `supersedes`, `contradicts`, `documented-in` or `related`.
 - Orphans — pages not linked from `index.md` or any other page's edges/body.
 - Staleness — pages whose `last_verified` is older than 60 days.
 - Drift — covered files modified (per git log) after the page's `last_verified`.
+- Drifted citations — a body `path:N` / `path:N-M` whose range, give or take 2 lines, names none of the identifiers its sentence puts in backticks (a warning). Put at least one backticked identifier from the cited lines in the citation's sentence, so the check can verify it.
 
 Exit code: 0 on warnings only, 1 if any errors.
 
@@ -167,7 +198,7 @@ Additionally, do passes that the linter can't automate:
 
 - Read covered code and confirm the page's claims still match.
 - Look for two pages making conflicting claims → flag via a `contradicts` edge.
-- Look for modules / public APIs without coverage.
+- Look for modules and public APIs without coverage.
 - Promote candidates with accumulated evidence to authoritative.
 - Re-confirm `high`-confidence pages dated before your session began (see bootstrap caveat above).
 
@@ -220,11 +251,10 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 # Codebase-specific gotchas (the quick list — full details in `.wiki/pitfalls/`)
 
 - **`callArgs` vs `keyArgs` in `ClientEntry`** — original args go to the fetcher; `spec.key(...)` output goes to the hash. They are not the same. See `.wiki/pitfalls/callargs-vs-keyargs.md`.
-- **`Field<T>.value` returns `T`, but `Form.value` and `FieldArray.value` are `ReadSignal<...>`.** Form traversal code branches on this. See `.wiki/pitfalls/field-value-shape.md`.
 - **`latest-wins` mutations roll back the previous snapshot synchronously before calling the new `onMutate`** — not on the previous run's catch. Doing it later stacks snapshots wrong. See `.wiki/pitfalls/latest-wins-rollback-order.md`.
 - **`isStale` cannot be a `Date.now()` computed** — its deps don't change as time passes. Must be timer-driven. See `.wiki/pitfalls/isstale-needs-timer.md`.
 - **Mutations race against their abort signal** so misbehaving mutate fns can't block forever. See `.wiki/pitfalls/raceabort-for-misbehaving-mutate.md`.
-- **`ctx.field('')` infers `Field<''>`** because of literal narrowing. Annotate: `ctx.field<string>('')`. See `.wiki/pitfalls/literal-type-narrowing.md`.
+- **`createField` infers `T` from the initial value.** A bare `createField(ctx, '')` widens to `Field<string>`, but with a `validators` array the literal sticks (`Field<''>`), and `null` or `[]` give a field that holds only that. Annotate: `createField<string>(ctx, '', { validators })`. See `.wiki/pitfalls/literal-type-narrowing.md`.
 - **`@preact/signals-core`'s overloaded `signal()` gives `Signal<T | undefined>`** through `ReturnType` because the last overload wins. We use `PreactSignal<T>` directly to dodge it. See `.wiki/pitfalls/preact-signals-overload-return.md`.
 
 ---
@@ -233,5 +263,9 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 
 - **Don't commit `dist/`.** `tsdown` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
 - **`@preact/signals-core` is a peer dep on `@kontsedal/olas-core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
-- **biome config in `biome.json`** (currently v2.x — see `package.json`) — two rules are intentionally off: `noExplicitAny` (the wrapper types need it) and `noConfusingVoidType` (matches the spec's effect signature `() => void | (() => void)`). Don't re-enable them.
+- **Two TypeScripts.** `tsc` is TypeScript 7 (`@typescript/native`). The `typescript` package is the 6.0 API (`npm:@typescript/typescript6`), because typescript-eslint, svelte-check, vue-tsc, rolldown-plugin-dts and `check-doc-snippets.ts` need an API that TypeScript 7.0 does not ship. Don't collapse them into one `typescript@7`. See `.wiki/decisions/toolchain.md`.
+- **Node 22.22+ to work on the repo, Node 20.19+ to use the packages.** The root `engines` is the toolchain's floor (jsdom 30); every published package keeps `>=20.19`. pnpm 12 refuses a version published less than a day ago (`minimumReleaseAge`), so a fresh `--latest` can land one release back.
+- **biome config in `biome.json`**, currently v2.x per `package.json`. Two rules are intentionally off everywhere. `noExplicitAny` is off because the wrapper types need it. `noConfusingVoidType` is off because it matches the spec's effect signature `() => void | (() => void)`. Don't re-enable them. Three more, `useHookAtTopLevel`, `useExhaustiveDependencies` and `noArrayIndexKey`, are errors in `examples/**` only, where the code is meant to be exemplary; `.wiki/modules/examples.md` lists the package-level exceptions that keep them off elsewhere.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".
+- **Every interface follows one set of rules**, covering the four example apps and the devtools panel. Values are picked by role from a named scale, colour marks state, and the corner tiers name a layer. The scales live in [`examples/_shared/ui/tokens.css`](examples/_shared/ui/tokens.css); the rules and the reasoning are in [`.wiki/decisions/ui-rules.md`](.wiki/decisions/ui-rules.md). Nothing enforces them, which that page says plainly — read it before touching a stylesheet.
+- **Every `.md` follows one writing style**, checked by `pnpm prose:lint`. One fact per sentence, a named actor, no word that carries no fact. The rules, and the four things the linter flags that we leave alone on purpose, are in [`.wiki/decisions/prose-rules.md`](.wiki/decisions/prose-rules.md). Read it before a docs pass; a clean run is not the goal.

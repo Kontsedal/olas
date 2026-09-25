@@ -14,7 +14,7 @@ export function AvatarStack({ members, max = 3, size = 'sm' }: AvatarStackProps)
       {shown.map((m) => (
         <Avatar key={m.id} name={m.name} hue={m.hue} size={size} />
       ))}
-      {overflow > 0 && <Avatar key="overflow" name={`+${overflow}`} hue={270} size={size} />}
+      {overflow > 0 && <Avatar key="overflow" name={`+${overflow}`} size={size} />}
     </span>
   )
 }

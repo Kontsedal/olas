@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* The shared scales first — type by role, three corner tiers, the control
+   ladder, space, motion and the solved palette. Then only what is
+   kanban's own. See `.wiki/decisions/ui-rules.md`. */
+@import "../../_shared/ui/tokens.css";
 @import "./ui/tokens.css";
 @import "./ui/motion.css";
 @import "./ui/globals.css";
@@ -19,13 +23,31 @@
 @import "./features/preferences/preferences.css";
 @import "./app.css";
 
-/* Hand DevtoolsPanel the same tokens so it looks at home. */
-.olas-devtools {
+/* Hand the devtools panel this app's palette.
+ *
+ * It ships the same solved values, so this is not a restyle — it is what keeps
+ * the panel in step when the USER picks a theme here. The panel only reads
+ * `prefers-color-scheme`, so without this a light choice against a dark OS
+ * leaves a dark panel in a light app.
+ *
+ * The names on the left are the panel's documented override surface. Three of
+ * the seven that used to be here (`--olas-fg-mute`, `--olas-bg-elev`,
+ * `--olas-bg-sunk`) were not names the panel reads, and did nothing. */
+.olas-devtools,
+.olas-devtools-launcher,
+.olas-devtools-floating {
+  --olas-bg: var(--color-bg-elev);
+  --olas-soft: var(--color-bg-sunk);
+  --olas-soft-2: var(--color-bg-hover);
+  --olas-row-alt: var(--color-bg);
   --olas-fg: var(--color-fg);
-  --olas-fg-mute: var(--color-fg-mute);
-  --olas-bg: var(--color-bg);
-  --olas-bg-elev: var(--color-bg-elev);
-  --olas-bg-sunk: var(--color-bg-sunk);
+  --olas-muted: var(--color-fg-mute);
+  --olas-dim: var(--color-fg-dim);
   --olas-border: var(--color-border);
+  --olas-border-control: var(--color-border-control);
   --olas-accent: var(--color-accent);
+  --olas-accent-fg: var(--color-accent-fg);
+  --olas-success: var(--color-success);
+  --olas-warn: var(--color-warning);
+  --olas-error: var(--color-danger);
 }

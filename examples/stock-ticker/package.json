@@ -17,12 +17,12 @@
     "@kontsedal/olas-persist": "workspace:^"
   },
   "devDependencies": {
-    "@preact/signals-core": "^1.14.2",
-    "@tailwindcss/vite": "^4.3.0",
-    "@types/node": "^25.9.0",
-    "tailwindcss": "^4.3.0",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.13",
-    "vitest": "^4.1.6"
+    "@preact/signals-core": "^1.14.4",
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/node": "^26.6.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.1"
   }
 }

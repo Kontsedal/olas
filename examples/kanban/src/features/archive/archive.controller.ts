@@ -14,14 +14,22 @@
  * archive pages cache after success.
  */
 
-import { type Ctx, defineController, defineInfiniteQuery } from '@kontsedal/olas-core'
+import {
+  bindQuery,
+  type Ctx,
+  createMutation,
+  createQuery,
+  defineController,
+  defineInfiniteQuery,
+} from '@kontsedal/olas-core'
 import type { ArchivePage, Card } from '../../api'
 import { activeBoardScope, activityScope, notificationsScope } from '../../scopes'
 import { boardQuery } from '../board/board.query'
 
 export const archiveQuery = defineInfiniteQuery<[string], number, ArchivePage, Card>({
-  // Note: infinite queries don't propagate cross-tab in v1 (SPEC §13.2).
-  queryId: 'archive',
+  // No `meta.crossTab`: the archive is per tab. An infinite query can opt in
+  // like any other, and its pages sync with their page params (SPEC §13.2).
+  id: 'archive',
   key: (boardId: string) => [boardId],
   fetcher: ({ pageParam, signal, deps }, boardId: string) =>
     deps.api.getArchive(boardId, pageParam, signal),
@@ -35,31 +43,35 @@ const uid = () => `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`
 
 export const archiveController = defineController(
   (ctx: Ctx) => {
+    const archiveQueryActions = bindQuery(ctx, archiveQuery)
+    const boardQueryActions = bindQuery(ctx, boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
 
-    const sub = ctx.use(archiveQuery, () => [activeBoardId.value])
+    const sub = createQuery(ctx, archiveQuery, () => [activeBoardId.value])
 
-    const restore = ctx.mutation<{ cardId: string; columnId: string }, void>({
-      name: 'restoreCard',
+    const restore = createMutation<{ cardId: string; columnId: string }, void>(ctx, {
+      id: 'restoreCard',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const card = await ctx.deps.api.restoreCard(
           activeBoardId.peek(),
           vars.cardId,
           vars.columnId,
           signal,
         )
-        // Surgically drop the restored card from the archive pages cache.
-        archiveQuery.setData(activeBoardId.peek(), (prev) =>
+        // Surgically drop the restored card from the archive pages cache. The
+        // server already accepted the restore, so this is a canonical `write`:
+        // there is no guess to roll back, and no snapshot is left pending.
+        archiveQueryActions.write(activeBoardId.peek(), (prev) =>
           (prev ?? []).map((page) => ({
             ...page,
             items: page.items.filter((c) => c.id !== vars.cardId),
           })),
         )
         // Patch the live board cache so the card reappears in the chosen column.
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev
             ? {
                 ...prev,

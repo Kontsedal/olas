@@ -1,23 +1,34 @@
+import { BRAND } from '../brand'
 import { __currentCauseId, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
+import { scheduleExpiry } from '../expiry-timer'
+import type { PluginEngine, PluginSet } from '../plugin/host'
+import type { FetchContext, MutationHost, QueryHost, QueryRef, WriteSource } from '../plugin/types'
 import { type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
-import { Entry } from './entry'
+import { createInfiniteQueryActions, createQueryActions } from './actions'
+import { Entry, type EntryEvents, notInFuture } from './entry'
 import { subscribeReconnect, subscribeWindowFocus } from './focus-online'
-import { InfiniteEntry, type InfiniteQuery, type InfiniteQuerySpec } from './infinite'
+import {
+  InfiniteEntry,
+  type InfiniteQuery,
+  type InfiniteQueryActions,
+  type InfiniteQuerySpec,
+} from './infinite'
 import { stableHash } from './keys'
 import {
-  type GcEvent,
-  type InvalidateEvent,
-  lookupRegisteredQuery,
-  type QueryClientPlugin,
-  type QueryClientPluginApi,
-  type SetDataEvent,
-} from './plugin'
+  createMutation as createMutationImpl,
+  type Mutation,
+  type MutationLifecycleHooks,
+  type MutationSpec,
+} from './mutation'
+import { lookupRegisteredMutation } from './mutation-registry'
 import type {
-  DefaultQueryOptions,
+  DehydratedEntry,
   DehydratedState,
   Query,
+  QueryActions,
+  QueryDefaults,
   QuerySpec,
   RefetchInterval,
   RetryDelay,
@@ -98,9 +109,197 @@ type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
  * identity stops a dehydrated entry for query A being adopted by query B that
  * merely hashes to the same key (spec §15, T1.2). `JSON.stringify` of the pair
  * is used rather than string concatenation so no separator char is ambiguous —
- * both `id` (an arbitrary user `queryId`) and `hash` are unbounded strings.
+ * both `id` (an arbitrary user-written string) and `hash` are unbounded.
  */
 const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
+
+/**
+ * Whether two binds passed the same call arg, for the dev warning in
+ * `bindEntry`. Plain objects and arrays compare structurally, so equal args
+ * built afresh on every re-key match, and a `Date` compares by its time. There
+ * is no JSON normalization, unlike the key hash (§5.4): `Infinity` and
+ * `-Infinity`, or a `Date` and its ISO string, share an entry and differ here,
+ * so the fetcher dropping one of them warns. `NaN` matches `NaN`, and `-0`
+ * matches `0`. Anything else, such as a function or a class instance, compares
+ * by identity. A cycle compares without recursing forever, and a structure too
+ * deep to walk counts as different.
+ */
+function sameCallArg(a: unknown, b: unknown): boolean {
+  try {
+    return equalCallArgs(a, b, new Map())
+  } catch {
+    return false
+  }
+}
+
+function equalCallArgs(a: unknown, b: unknown, seen: Map<object, object>): boolean {
+  // SameValueZero: `NaN` equals itself, and `-0` equals `0`.
+  if (a === b || (Number.isNaN(a) && Number.isNaN(b))) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (a instanceof Date || b instanceof Date) {
+    return a instanceof Date && b instanceof Date && equalCallArgs(a.getTime(), b.getTime(), seen)
+  }
+  const proto: unknown = Object.getPrototypeOf(a)
+  if (proto !== Object.getPrototypeOf(b)) return false
+  const isArray = Array.isArray(a)
+  if (!isArray && proto !== Object.prototype && proto !== null) return false
+  // A pair already under comparison counts as equal, so a cycle ends here.
+  if (seen.get(a) === b) return true
+  seen.set(a, b)
+  if (isArray) {
+    const as = a as unknown[]
+    const bs = b as unknown[]
+    if (as.length !== bs.length) return false
+    for (let i = 0; i < as.length; i++) {
+      if (!equalCallArgs(as[i], bs[i], seen)) return false
+    }
+    return true
+  }
+  const ra = a as Record<string, unknown>
+  const rb = b as Record<string, unknown>
+  const keys = Object.keys(ra)
+  if (keys.length !== Object.keys(rb).length) return false
+  for (const k of keys) {
+    if (!Object.hasOwn(rb, k)) return false
+    if (!equalCallArgs(ra[k], rb[k], seen)) return false
+  }
+  return true
+}
+
+/**
+ * A key as a warning prints it: JSON, with a bigint written as `1n`. Plain
+ * `JSON.stringify` throws on a bigint, and the warning must not break the bind.
+ */
+function describeKey(key: readonly unknown[]): string {
+  try {
+    return JSON.stringify(key, (_name, value: unknown) =>
+      typeof value === 'bigint' ? `${value}n` : value,
+    )
+  } catch {
+    return String(key)
+  }
+}
+
+/** The shape a dehydrated entry must have before hydration reads it. */
+function isHydrationEntry(value: unknown): value is DehydratedEntry {
+  if (value === null || typeof value !== 'object') return false
+  const e = value as Record<string, unknown>
+  return (
+    typeof e.id === 'string' &&
+    Array.isArray(e.key) &&
+    typeof e.lastUpdatedAt === 'number' &&
+    (e.pageParams === undefined || Array.isArray(e.pageParams))
+  )
+}
+
+/**
+ * An infinite entry's hydration payload, when `data` is a pages array with a
+ * `pageParams` array of the same length. Anything else cannot seed pages.
+ */
+function infinitePayload(
+  data: unknown,
+  pageParams: readonly unknown[] | undefined,
+): { pages: unknown[]; pageParams: unknown[] } | undefined {
+  if (!Array.isArray(data) || !Array.isArray(pageParams)) return undefined
+  if (data.length === 0 || data.length !== pageParams.length) return undefined
+  return { pages: data, pageParams: [...pageParams] }
+}
+
+/** A buffered hydration payload, waiting for its entry to be bound. */
+type HydratedSlot = {
+  data: unknown
+  lastUpdatedAt: number
+  origin: string | undefined
+  /**
+   * Present for an infinite query's payload; `data` is then its pages.
+   */
+  pageParams: readonly unknown[] | undefined
+}
+
+/**
+ * The devtools event bundle an entry reports through, regular or infinite:
+ * fetch start and settle (with the write it produced, correlated by
+ * `causeId`), and the optimistic snapshot layer events.
+ */
+function devtoolsEntryEvents(
+  devtools: DevtoolsEmitter | undefined,
+  queryId: string,
+  queryKey: readonly unknown[],
+): EntryEvents | undefined {
+  if (devtools === undefined) return undefined
+  return {
+    onFetchStart: (fetchId) =>
+      devtools.emit({ type: 'cache:fetch-start', queryId, queryKey, causeId: fetchId }),
+    onFetchSuccess: (durationMs, data, fetchId) => {
+      devtools.emit({
+        type: 'cache:fetch-success',
+        queryId,
+        queryKey,
+        durationMs,
+        causeId: fetchId,
+      })
+      // The data write the fetch produced — correlated with the fetch via
+      // `causeId` so the timeline groups them and the cache inspector updates
+      // without polling.
+      devtools.emit({
+        type: 'cache:set-data',
+        queryId,
+        queryKey,
+        source: 'fetch',
+        data,
+        causeId: fetchId,
+      })
+    },
+    onFetchError: (durationMs, error, fetchId) =>
+      devtools.emit({
+        type: 'cache:fetch-error',
+        queryId,
+        queryKey,
+        durationMs,
+        error,
+        causeId: fetchId,
+      }),
+    // `causeId` is read from the ambient cause (the mutation run whose
+    // `onMutate`/rollback is executing) at emit time — see `__runWithCause`.
+    onSnapshotPush: () =>
+      devtools.emit({ type: 'snapshot:push', queryKey, causeId: __currentCauseId() }),
+    onSnapshotRollback: () =>
+      devtools.emit({ type: 'snapshot:rollback', queryKey, causeId: __currentCauseId() }),
+    onSnapshotFinalize: () =>
+      devtools.emit({ type: 'snapshot:finalize', queryKey, causeId: __currentCauseId() }),
+  }
+}
+
+/**
+ * Tell the devtools a subscription bound (`joined`) or left an entry, with the
+ * subscribing controller's path. A no-op without a bus. Call sites guard it
+ * with `if (__DEV__)`, so production builds drop the call.
+ */
+function reportSubscriber(
+  devtools: DevtoolsEmitter | undefined,
+  query: { readonly __id: string },
+  queryKey: readonly unknown[],
+  subscriberPath: readonly string[],
+  joined: boolean,
+): void {
+  devtools?.emit({
+    type: joined ? 'cache:subscribed' : 'cache:unsubscribed',
+    queryId: query.__id,
+    queryKey,
+    subscriberPath,
+  })
+}
+
+/** Options for `bindQuery(ctx, query, options?)` and `root.bindQuery(query, options?)`. */
+export type BindQueryOptions = {
+  /**
+   * Stamped as `origin` on every write and invalidation made through this
+   * handle, so plugins can tell them apart from the app's own. A realtime
+   * patcher tags its writes this way, and cross-tab then leaves them alone:
+   * every tab receives the same server push itself.
+   */
+  origin?: string
+}
 
 export class ClientEntry<T> {
   readonly entry: Entry<T>
@@ -110,9 +309,17 @@ export class ClientEntry<T> {
   readonly callArgs: readonly unknown[]
   readonly client: QueryClient
   readonly query: AnyQuery
+  /** Every hold on the entry: subscriptions and in-flight prefetches. Drives gc. */
   private subscriberCount = 0
-  private gcTimer: ReturnType<typeof setTimeout> | null = null
-  private intervalTimer: ReturnType<typeof setTimeout> | null = null
+  /** The holds that are controller subscriptions — what the devtools count. */
+  private subscriptions = 0
+  /** Set by `dispose`. A late `release()` (a prefetch settling after the root
+   *  went away) must not arm a gc timer for a dead entry. */
+  private disposed = false
+  /** Cancellation closure from `scheduleExpiry`; `null` = no gc pending. */
+  private gcTimer: (() => void) | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = chain stopped. */
+  private intervalTimer: (() => void) | null = null
   private unsubFocus: (() => void) | null = null
   private unsubOnline: (() => void) | null = null
   private gcTime: number
@@ -138,14 +345,11 @@ export class ClientEntry<T> {
     spec: QuerySpec<any, T>,
     hydrated: { data: T; lastUpdatedAt: number } | undefined,
     /**
-     * Prepared by `QueryClient.bindEntry` (which is the only construction
-     * site). When the query has a `queryId`, the closure calls back into
-     * `QueryClient.emitSetData` with `source: 'fetch'` after every
-     * successful fetch. We accept it pre-built rather than reach into the
-     * client from here because `emitSetData` is `private` on `QueryClient`
-     * — restricting the access path is the whole point.
+     * Prepared by `QueryClient.bindEntry` (the only construction site): reports
+     * a successful fetch to the plugins as a `'fetch'` write. Handed in
+     * pre-built so the client's emitters stay private.
      */
-    onFetchSuccess: ((data: T) => void) | undefined,
+    onFetched: (data: T) => void,
   ) {
     this.client = client
     this.query = query
@@ -164,8 +368,13 @@ export class ClientEntry<T> {
     const deps = client.deps as import('../controller/types').AmbientDeps
     const devtools = client.devtools
     const queryKey = this.keyArgs
+    const queryId = query.__id
+    const ref = client.refOf(query)
     this.entry = new Entry<T>({
-      fetcher: () => (signal) => fetcherFn({ signal, deps }, ...(callArgs as never[])),
+      fetcher: () => (signal, attempt) =>
+        client.runFetch({ query: ref, key: keyArgs, args: callArgs, signal, attempt }, () =>
+          fetcherFn({ signal, deps }, ...(callArgs as never[])),
+        ) as Promise<T>,
       staleTime: spec.staleTime ?? defaults.staleTime,
       retry: (spec.retry ?? defaults.retry) as RetryPolicy | undefined,
       retryDelay: (spec.retryDelay ?? defaults.retryDelay) as RetryDelay | undefined,
@@ -173,59 +382,24 @@ export class ClientEntry<T> {
       structuralShare: spec.structuralShare ?? defaults.structuralShare,
       initialData: hydrated?.data,
       initialUpdatedAt: hydrated?.lastUpdatedAt,
-      events:
-        __DEV__ && devtools !== undefined
-          ? {
-              onFetchStart: (fetchId) =>
-                devtools.emit({ type: 'cache:fetch-start', queryKey, causeId: fetchId }),
-              onFetchSuccess: (durationMs, data, fetchId) => {
-                devtools.emit({
-                  type: 'cache:fetch-success',
-                  queryKey,
-                  durationMs,
-                  causeId: fetchId,
-                })
-                // The data write the fetch produced — correlated with the
-                // fetch via `causeId` so the timeline groups them and the
-                // cache inspector updates without polling.
-                devtools.emit({
-                  type: 'cache:set-data',
-                  queryKey,
-                  source: 'fetch',
-                  data,
-                  causeId: fetchId,
-                })
-              },
-              onFetchError: (durationMs, error, fetchId) =>
-                devtools.emit({
-                  type: 'cache:fetch-error',
-                  queryKey,
-                  durationMs,
-                  error,
-                  causeId: fetchId,
-                }),
-              // Optimistic snapshot layer events. `causeId` is read from the
-              // ambient cause (the mutation run whose `onMutate`/rollback is
-              // executing) at emit time — see `__runWithCause` in devtools.ts.
-              onSnapshotPush: () =>
-                devtools.emit({ type: 'snapshot:push', queryKey, causeId: __currentCauseId() }),
-              onSnapshotRollback: () =>
-                devtools.emit({ type: 'snapshot:rollback', queryKey, causeId: __currentCauseId() }),
-              onSnapshotFinalize: () =>
-                devtools.emit({ type: 'snapshot:finalize', queryKey, causeId: __currentCauseId() }),
-            }
-          : undefined,
-      onSuccessData: onFetchSuccess,
+      events: __DEV__ ? devtoolsEntryEvents(devtools, queryId, queryKey) : undefined,
+      onSuccessData: onFetched,
+      hasSubscribers: () => this.hasSubscribers(),
     })
   }
 
-  acquire(): void {
+  /**
+   * Hold the entry. `subscriberPath` is the subscribing controller's path; it
+   * is absent for a hold that is not a subscription, such as a prefetch.
+   */
+  acquire(subscriberPath?: readonly string[]): void {
     this.subscriberCount += 1
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
     if (this.subscriberCount === 1) {
+      this.client.emitActivity(this.query, this.keyArgs, true)
       if (this.nextIntervalMs !== undefined) this.startIntervalTimer()
       if (this.refetchOnWindowFocus) {
         this.unsubFocus = subscribeWindowFocus(() => this.triggerEventRefetch())
@@ -234,26 +408,47 @@ export class ClientEntry<T> {
         this.unsubOnline = subscribeReconnect(() => this.triggerEventRefetch())
       }
     }
+    if (subscriberPath !== undefined) {
+      this.subscriptions += 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, true)
+    }
   }
 
-  release(): void {
+  /** Let go of a hold `acquire` took, with the same `subscriberPath`. */
+  release(subscriberPath?: readonly string[]): void {
+    if (this.disposed) return
     this.subscriberCount -= 1
+    if (subscriberPath !== undefined) {
+      this.subscriptions -= 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, false)
+    }
     if (this.subscriberCount <= 0) {
+      if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
       this.stopEventSubscriptions()
+      // The root is tearing down, and the client disposes every entry next: a
+      // gc timer armed now would only be cancelled.
+      if (this.client.isClosing) return
       if (this.gcTime === 0) {
         this.client.dropEntry(this)
       } else {
-        this.gcTimer = setTimeout(() => {
+        this.gcTimer = scheduleExpiry(this.gcTime, () => {
           this.gcTimer = null
           this.client.dropEntry(this)
-        }, this.gcTime)
+        })
       }
     }
   }
 
   hasSubscribers(): boolean {
     return this.subscriberCount > 0
+  }
+
+  /** Controller subscriptions holding the entry, for `root.debug.queryEntries()`. */
+  get subscriptionCount(): number {
+    return this.subscriptions
   }
 
   startIntervalTimer(): void {
@@ -275,7 +470,12 @@ export class ClientEntry<T> {
       this.intervalTimer = null
       return
     }
-    this.intervalTimer = setTimeout(() => {
+    // `scheduleExpiry` rather than a raw `setTimeout`: `resolveRefetchInterval`
+    // rejects non-finite gaps, but a FINITE one above the signed 32-bit limit
+    // still overflows into an immediate fire — a ~1ms poll storm out of the
+    // longest interval you can ask for. Chunking is the same fix staleness and
+    // gc use (§21.5).
+    this.intervalTimer = scheduleExpiry(ms, () => {
       // Re-arm BEFORE the guards and the fetch, so the cadence stays a
       // metronome: gap N+1 is measured from this tick, not from whenever the
       // fetch it kicks off happens to settle. `setInterval` behaved that way
@@ -296,15 +496,22 @@ export class ClientEntry<T> {
       // aborted request per interval (T3.2). Skip the tick; the running fetch
       // will finish and the next tick re-arms once it's idle.
       if (this.entry.isFetching.peek()) return
+      // A fetch parked for the network runs once the network is back, and the
+      // tick starts nothing else: offline, each tick would park one more
+      // waiter. Without this, a park the `online` event missed stayed for good.
+      if (this.entry.isPaused.peek()) {
+        this.entry.resumeParked()
+        return
+      }
       this.entry.startFetch().catch(() => {
         /* error already captured on entry */
       })
-    }, ms)
+    })
   }
 
   stopIntervalTimer(): void {
     if (this.intervalTimer != null) {
-      clearTimeout(this.intervalTimer)
+      this.intervalTimer()
       this.intervalTimer = null
     }
   }
@@ -340,26 +547,34 @@ export class ClientEntry<T> {
       })
       return
     }
-    this.gcTimer = setTimeout(() => {
+    this.gcTimer = scheduleExpiry(this.gcTime, () => {
       this.gcTimer = null
       this.client.dropEntry(this)
-    }, this.gcTime)
+    })
   }
 
   /** Refetch on focus / reconnect, but only if the data is actually stale. */
   private triggerEventRefetch(): void {
-    if (!this.entry.isStaleNow()) return
     // Join an in-flight fetch instead of aborting + restarting it — a focus /
     // reconnect landing mid-fetch shouldn't cancel it (T3.9, cf. T3.2 interval).
     if (this.entry.isFetching.peek()) return
+    // A parked fetch runs through the entry's drain, and only once online: on
+    // one `online` event, starting a fetch here as well as the drain made a
+    // request and then aborted it for another.
+    if (this.entry.isPaused.peek()) {
+      this.entry.resumeParked()
+      return
+    }
+    if (!this.entry.isStaleNow()) return
     this.entry.startFetch().catch(() => {
       /* error already captured on entry */
     })
   }
 
   dispose(): void {
+    this.disposed = true
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
     this.stopIntervalTimer()
@@ -374,12 +589,24 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   readonly callArgs: readonly unknown[]
   readonly client: QueryClient
   readonly query: AnyInfiniteQuery
+  /** See `ClientEntry.subscriberCount`. */
   private subscriberCount = 0
-  private gcTimer: ReturnType<typeof setTimeout> | null = null
-  private intervalTimer: ReturnType<typeof setTimeout> | null = null
+  /** See `ClientEntry.subscriptions`. */
+  private subscriptions = 0
+  /** Set by `dispose`. A late `release()` (a prefetch settling after the root
+   *  went away) must not arm a gc timer for a dead entry. */
+  private disposed = false
+  /** Cancellation closure from `scheduleExpiry`; `null` = no gc pending. */
+  private gcTimer: (() => void) | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = chain stopped. */
+  private intervalTimer: (() => void) | null = null
   private gcTime: number
   /** See `ClientEntry.nextIntervalMs` — same closure, same variance reason. */
   private nextIntervalMs: (() => number | null) | undefined
+  private unsubFocus: (() => void) | null = null
+  private unsubOnline: (() => void) | null = null
+  private readonly refetchOnWindowFocus: boolean
+  private readonly refetchOnReconnect: boolean
 
   constructor(
     client: QueryClient,
@@ -387,21 +614,16 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     callArgs: readonly unknown[],
     keyArgs: readonly unknown[],
     spec: InfiniteQuerySpec<any, PageParam, TPage, TItem>,
-    /**
-     * Prepared by `QueryClient.bindInfiniteEntry`. When the infinite query
-     * has a `queryId`, the closure calls back into `QueryClient.emitSetData`
-     * with `kind: 'infinite', source: 'fetch'` after every successful page
-     * write (initial, next, prev). Mirrors `ClientEntry.onFetchSuccess`.
-     */
-    onFetchSuccess: ((pages: TPage[]) => void) | undefined,
+    hydrated: { pages: TPage[]; pageParams: PageParam[]; lastUpdatedAt: number } | undefined,
+    /** Reports every successful page batch as a `'fetch'` write. See `ClientEntry`. */
+    onFetched: (pages: TPage[]) => void,
   ) {
     this.client = client
     this.query = query
     this.callArgs = callArgs
     this.keyArgs = keyArgs
-    // `refetchOnWindowFocus` / `refetchOnReconnect` are intentionally absent:
-    // infinite entries install no focus/online subscription, so honoring a
-    // root default here would be dead config. See `DefaultQueryOptions`.
+    this.refetchOnWindowFocus = spec.refetchOnWindowFocus ?? client.refetchOnWindowFocus
+    this.refetchOnReconnect = spec.refetchOnReconnect ?? client.refetchOnReconnect
     const defaults = client.defaults
     this.gcTime = spec.gcTime ?? defaults.gcTime ?? DEFAULT_GC_TIME
     const interval = spec.refetchInterval
@@ -411,9 +633,13 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
         : () => resolveRefetchInterval(interval, () => this.entry.data.peek())
     const fetcherFn = spec.fetcher
     const deps = client.deps as import('../controller/types').AmbientDeps
+    const ref = client.refOf(query)
     this.entry = new InfiniteEntry<TPage, TItem, PageParam>({
-      fetcher: ({ pageParam, signal }) =>
-        fetcherFn({ pageParam, signal, deps }, ...(callArgs as never[])),
+      fetcher: ({ pageParam, signal, attempt }) =>
+        client.runFetch(
+          { query: ref, key: keyArgs, args: callArgs, pageParam, signal, attempt },
+          () => fetcherFn({ pageParam, signal, deps }, ...(callArgs as never[])),
+        ) as Promise<TPage>,
       initialPageParam: spec.initialPageParam,
       getNextPageParam: spec.getNextPageParam,
       getPreviousPageParam: spec.getPreviousPageParam,
@@ -423,44 +649,95 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       retryDelay: (spec.retryDelay ?? defaults.retryDelay) as RetryDelay | undefined,
       networkMode: spec.networkMode ?? defaults.networkMode,
       structuralShare: spec.structuralShare ?? defaults.structuralShare,
-      // Fire SetDataEvent { kind: 'infinite', source: 'fetch' } whenever a
-      // fetch settles successfully. Plugins (e.g. entity normalization) use
-      // this to walk the pages and update their normalized stores. Mirrors
-      // the regular `ClientEntry`'s `onFetchSuccess` closure plumbing.
-      onSuccessData: onFetchSuccess,
+      initialPages: hydrated?.pages,
+      initialPageParams: hydrated?.pageParams,
+      initialUpdatedAt: hydrated?.lastUpdatedAt,
+      events: __DEV__ ? devtoolsEntryEvents(client.devtools, query.__id, keyArgs) : undefined,
+      onSuccessData: onFetched,
+      hasSubscribers: () => this.hasSubscribers(),
     })
   }
 
-  acquire(): void {
+  /** See `ClientEntry.acquire`. */
+  acquire(subscriberPath?: readonly string[]): void {
     this.subscriberCount += 1
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
-    if (this.subscriberCount === 1 && this.nextIntervalMs !== undefined) {
-      this.startIntervalTimer()
+    if (this.subscriberCount === 1) {
+      this.client.emitActivity(this.query, this.keyArgs, true)
+      if (this.nextIntervalMs !== undefined) this.startIntervalTimer()
+      if (this.refetchOnWindowFocus) {
+        this.unsubFocus = subscribeWindowFocus(() => this.triggerEventRefetch())
+      }
+      if (this.refetchOnReconnect) {
+        this.unsubOnline = subscribeReconnect(() => this.triggerEventRefetch())
+      }
     }
+    if (subscriberPath !== undefined) {
+      this.subscriptions += 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, true)
+    }
+  }
+
+  /** See `ClientEntry.subscriptionCount`. */
+  get subscriptionCount(): number {
+    return this.subscriptions
+  }
+
+  /** See `ClientEntry.triggerEventRefetch`. A refetch re-fetches every loaded page. */
+  private triggerEventRefetch(): void {
+    if (this.entry.isFetching.peek()) return
+    if (this.entry.isPaused.peek()) {
+      this.entry.resumeParked()
+      return
+    }
+    if (!this.entry.isStaleNow()) return
+    this.entry.startFetch().catch(() => {
+      /* error captured on entry */
+    })
+  }
+
+  private stopEventSubscriptions(): void {
+    this.unsubFocus?.()
+    this.unsubFocus = null
+    this.unsubOnline?.()
+    this.unsubOnline = null
   }
 
   hasSubscribers(): boolean {
     return this.subscriberCount > 0
   }
 
-  release(): void {
+  /** See `ClientEntry.release`. */
+  release(subscriberPath?: readonly string[]): void {
+    if (this.disposed) return
     this.subscriberCount -= 1
+    if (subscriberPath !== undefined) {
+      this.subscriptions -= 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, false)
+    }
     if (this.subscriberCount <= 0) {
+      if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
+      this.stopEventSubscriptions()
+      // The root is tearing down, and the client disposes every entry next: a
+      // gc timer armed now would only be cancelled.
+      if (this.client.isClosing) return
       if (this.gcTime === 0) {
         this.client.dropInfiniteEntry(
           this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
         )
       } else {
-        this.gcTimer = setTimeout(() => {
+        this.gcTimer = scheduleExpiry(this.gcTime, () => {
           this.gcTimer = null
           this.client.dropInfiniteEntry(
             this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
           )
-        }, this.gcTime)
+        })
       }
     }
   }
@@ -482,24 +759,28 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       this.intervalTimer = null
       return
     }
-    this.intervalTimer = setTimeout(() => {
+    this.intervalTimer = scheduleExpiry(ms, () => {
       this.armIntervalTick()
       // Same visibility-gate as the regular `ClientEntry.startIntervalTimer`.
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
       }
-      // Join an in-flight fetch instead of aborting it (T3.2) — see the
-      // regular `ClientEntry.startIntervalTimer` for the livelock rationale.
+      // Join an in-flight fetch instead of aborting it (T3.2), and run a parked
+      // one only once online — see `ClientEntry.armIntervalTick`.
       if (this.entry.isFetching.peek()) return
+      if (this.entry.isPaused.peek()) {
+        this.entry.resumeParked()
+        return
+      }
       this.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
-    }, ms)
+    })
   }
 
   private stopIntervalTimer(): void {
     if (this.intervalTimer != null) {
-      clearTimeout(this.intervalTimer)
+      this.intervalTimer()
       this.intervalTimer = null
     }
   }
@@ -517,20 +798,22 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       })
       return
     }
-    this.gcTimer = setTimeout(() => {
+    this.gcTimer = scheduleExpiry(this.gcTime, () => {
       this.gcTimer = null
       this.client.dropInfiniteEntry(
         this as unknown as InfiniteClientEntry<unknown, unknown, unknown>,
       )
-    }, this.gcTime)
+    })
   }
 
   dispose(): void {
+    this.disposed = true
     if (this.gcTimer != null) {
-      clearTimeout(this.gcTimer)
+      this.gcTimer()
       this.gcTimer = null
     }
     this.stopIntervalTimer()
+    this.stopEventSubscriptions()
     this.entry.dispose()
   }
 }
@@ -540,7 +823,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
  * GC timers, refetch-interval timers. Subscribers are routed in/out via
  * `acquire` / `release`.
  */
-export class QueryClient {
+export class QueryClient implements PluginEngine {
   private readonly maps = new Map<AnyQuery, Map<string, ClientEntry<unknown>>>()
   private readonly infiniteMaps = new Map<
     AnyInfiniteQuery,
@@ -548,11 +831,23 @@ export class QueryClient {
   >()
   private readonly touchedQueries = new Set<AnyQuery>()
   private readonly touchedInfiniteQueries = new Set<AnyInfiniteQuery>()
-  private readonly hydratedData = new Map<string, { data: unknown; lastUpdatedAt: number }>()
+  private readonly hydratedData = new Map<string, HydratedSlot>()
+  /**
+   * The queries this root has used, by `id`. Plugins address queries by id,
+   * and only a query this root has bound can have entries to address. Kept
+   * per root, so a duplicate id is a collision within one app, not across the
+   * process.
+   */
+  private readonly byId = new Map<string, AnyQuery | AnyInfiniteQuery>()
+  private readonly refs = new Map<AnyQuery | AnyInfiniteQuery, QueryRef>()
+  /** Mutations plugins started through `host.mutations.run`, per plugin and id. */
+  private readonly pluginMutations = new Map<string, Mutation<unknown, unknown>>()
   /** Mutations inflight across the whole root — used by `waitForIdle`. */
   readonly mutationsInflight$: Signal<number> = signal(0)
   private onError: ErrorHandler | undefined
   private disposed = false
+  /** Set by `close()`: the root is disposing its controllers, then this client. */
+  private closing = false
   /** Devtools bus, if any — passed by `createRoot`. Used to emit cache events. */
   readonly devtools: DevtoolsEmitter | undefined
 
@@ -564,283 +859,339 @@ export class QueryClient {
   readonly refetchOnReconnect: boolean
 
   /**
-   * Root-wide query defaults from `RootOptions.defaultQueryOptions`. Read by
-   * `ClientEntry` / `InfiniteClientEntry` / `createUse` / `ctx.cache` when a
+   * Root-wide query defaults from `queryEngine({ defaults })`. Read by
+   * `ClientEntry` / `InfiniteClientEntry` / `createUse` / `createCache` when a
    * spec omits the field. Always an object (never `undefined`) so call sites
    * are a plain `spec.X ?? this.defaults.X ?? <built-in>`. Spec §5.9.
    */
-  readonly defaults: DefaultQueryOptions
+  readonly defaults: QueryDefaults
 
-  /**
-   * Installed plugins. Fired on every `setData` / `invalidate` / `gc` so
-   * cross-tab / persistence-like layers can observe and react. SPEC §13.2.
-   */
-  private readonly plugins: QueryClientPlugin[]
-  /**
-   * Flipped to `true` while a remote-originated write (via
-   * `applyRemoteSetData` / `applyRemoteInvalidate`) is being applied. The
-   * resulting plugin events carry `isRemote: true` so plugins know to skip
-   * rebroadcast.
-   */
-  private applyingRemote = false
+  /** The root's plugins, or `null` when none are installed. */
+  private readonly plugins: PluginSet | null
 
   constructor(opts?: {
     onError?: ErrorHandler
     hydrate?: DehydratedState
     devtools?: DevtoolsEmitter
     deps?: Record<string, unknown>
-    refetchOnWindowFocus?: boolean
-    refetchOnReconnect?: boolean
-    defaultQueryOptions?: DefaultQueryOptions
-    plugins?: QueryClientPlugin[]
+    defaults?: QueryDefaults
+    plugins?: PluginSet | null
   }) {
     this.onError = opts?.onError
     this.devtools = opts?.devtools
     this.deps = opts?.deps ?? {}
-    this.defaults = opts?.defaultQueryOptions ?? {}
-    // The flat `refetchOn*` options are the older spelling; the dedicated
-    // `defaultQueryOptions` slot wins when both are set.
-    this.refetchOnWindowFocus =
-      this.defaults.refetchOnWindowFocus ?? opts?.refetchOnWindowFocus ?? false
-    this.refetchOnReconnect = this.defaults.refetchOnReconnect ?? opts?.refetchOnReconnect ?? false
-    this.plugins = opts?.plugins ?? []
+    this.defaults = opts?.defaults ?? {}
+    this.refetchOnWindowFocus = this.defaults.refetchOnWindowFocus ?? false
+    this.refetchOnReconnect = this.defaults.refetchOnReconnect ?? false
+    this.plugins = opts?.plugins ?? null
     if (opts?.hydrate) this.hydrate(opts.hydrate)
-    const api = this.makePluginApi()
-    for (const plugin of this.plugins) {
-      this.callPlugin(plugin, () => plugin.init?.(api))
-    }
   }
 
-  /**
-   * Build the `QueryClientPluginApi` view that plugins receive at `init`
-   * time. Closes over `this`; safe to hand out — plugins call back through
-   * these methods to push remote-originated writes into the local cache.
-   */
-  private makePluginApi(): QueryClientPluginApi {
-    const self = this
-    return {
-      applyRemoteSetData(queryId, keyArgs, data) {
-        self.applyRemoteSetData(queryId, keyArgs, data)
-      },
-      applyRemoteInvalidate(queryId, keyArgs) {
-        self.applyRemoteInvalidate(queryId, keyArgs)
-      },
-      setEntryData(queryId, keyArgs, updater) {
-        self.setEntryData(queryId, keyArgs, updater)
-      },
-      subscribedKeys(queryId) {
-        return self.subscribedKeysFor(queryId)
-      },
-    }
-  }
-
-  /** Invoke a plugin callback; route exceptions through `onError`. */
-  private callPlugin(plugin: QueryClientPlugin, fn: () => void): void {
-    try {
-      fn()
-    } catch (err) {
-      dispatchError(this.onError, err, {
-        kind: 'plugin',
-        controllerPath: [],
-        pluginName: plugin.name,
-      })
-    }
-  }
-
-  /**
-   * Emit a `SetDataEvent` to every installed plugin. The `source` field
-   * tells layered plugins where the write originated:
-   * - `'set'`: explicit `client.setData`, including mutations and plugin-
-   *   initiated `setEntryData` calls (e.g. entity backpropagation).
-   * - `'fetch'`: a query fetcher resolved successfully (`Entry.applySuccess`
-   *   reaches this through `onSuccessData`), or hydrated data was first
-   *   bound (a per-tab arrival of pre-fetched data; cross-tab skips
-   *   `'fetch'` so this stays a per-tab concern).
-   * - `'remote'`: `applyRemoteSetData` — cross-tab / server-push. Mirrors
-   *   `isRemote === true`.
-   *
-   * Private — fetcher-success emission goes through the `onFetchSuccess`
-   * closure that `bindEntry` builds and hands to each new `ClientEntry`.
-   * Hydrated emission goes through this method directly from `bindEntry`.
-   * Mutation / remote paths call it from within QueryClient methods.
-   */
-  private emitSetData(
-    query: AnyQuery | AnyInfiniteQuery,
-    keyArgs: readonly unknown[],
-    data: unknown,
-    kind: 'data' | 'infinite',
-    source: 'set' | 'fetch' | 'remote',
-  ): void {
-    if (this.plugins.length === 0) return
-    const queryId = query.__spec.queryId
-    if (queryId == null) return
-    const event: SetDataEvent = {
-      queryId,
-      keyArgs,
-      data,
-      kind,
-      isRemote: this.applyingRemote,
-      source,
-    }
-    for (const plugin of this.plugins) {
-      if (plugin.onSetData) {
-        const cb = plugin.onSetData
-        this.callPlugin(plugin, () => cb.call(plugin, event))
+  /** What plugins see of a query. One object per query, reused by every event. */
+  refOf(query: AnyQuery | AnyInfiniteQuery): QueryRef {
+    let ref = this.refs.get(query)
+    if (ref === undefined) {
+      ref = {
+        id: query.__id,
+        kind: query[BRAND] === 'infiniteQuery' ? 'infinite' : 'query',
+        meta: query.__spec.meta ?? {},
       }
+      this.refs.set(query, ref)
     }
+    return ref
+  }
+
+  /** Record `query` under its id, so plugins can address it. */
+  private index(query: AnyQuery | AnyInfiniteQuery): void {
+    const existing = this.byId.get(query.__id)
+    if (existing === query) return
+    if (__DEV__ && existing !== undefined) {
+      console.warn(
+        `[olas] two different queries share the id '${query.__id}' in one root. Plugins, ` +
+          'SSR payloads and devtools address queries by id, so the later one wins. Expected ' +
+          'after a hot reload re-evaluates the module that defines it; a naming collision ' +
+          'otherwise.',
+      )
+    }
+    this.byId.set(query.__id, query)
+  }
+
+  private emitWrite(
+    query: AnyQuery | AnyInfiniteQuery,
+    key: readonly unknown[],
+    data: unknown,
+    updatedAt: number | undefined,
+    source: WriteSource,
+    origin: string | undefined,
+    pageParams?: readonly unknown[],
+  ): void {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.listens('onWrite')) return
+    plugins.emit('onWrite', {
+      query: this.refOf(query),
+      key,
+      data,
+      updatedAt: updatedAt ?? Date.now(),
+      source,
+      origin,
+      ...(pageParams !== undefined ? { pageParams } : {}),
+    })
+  }
+
+  /** `emitWrite` for an infinite entry: the pages, with their params. */
+  private emitInfiniteWrite(
+    entry: InfiniteClientEntry<unknown, unknown, unknown>,
+    source: WriteSource,
+    origin: string | undefined,
+  ): void {
+    const pages = entry.entry.pages.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      pages,
+      entry.entry.lastUpdatedAt.peek(),
+      source,
+      origin,
+      entry.entry.pageParams.peek(),
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, source)
+  }
+
+  private emitInvalidated(
+    query: AnyQuery | AnyInfiniteQuery,
+    key: readonly unknown[],
+    origin: string | undefined,
+  ): void {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.listens('onInvalidate')) return
+    plugins.emit('onInvalidate', { query: this.refOf(query), key, origin })
+  }
+
+  private emitRemoved(query: AnyQuery | AnyInfiniteQuery, key: readonly unknown[]): void {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.listens('onRemove')) return
+    plugins.emit('onRemove', { query: this.refOf(query), key, reason: 'gc' })
+  }
+
+  /** An entry's subscriber count crossed zero. Called by the entries. */
+  emitActivity(query: AnyQuery | AnyInfiniteQuery, key: readonly unknown[], active: boolean): void {
+    const plugins = this.plugins
+    const hook = active ? 'onActivate' : 'onDeactivate'
+    if (plugins === null || !plugins.listens(hook)) return
+    plugins.emit(hook, { query: this.refOf(query), key })
+  }
+
+  /** Run one fetch attempt through the plugins' `wrapFetch` middleware. */
+  runFetch(context: FetchContext, base: () => Promise<unknown>): Promise<unknown> {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.hasFetchWrappers) return base()
+    return plugins.wrapFetch(context, base)
   }
 
   /**
-   * Emit a devtools `cache:set-data` event for a cache write. Independent of
-   * the plugin `emitSetData` fan-out above — devtools observes ALL writes,
-   * even for queries without a `queryId` (which plugins skip). When `source`
-   * is omitted it's derived from the ambient cause: a write inside a
-   * mutation's `onMutate`/rollback (an active `__runWithCause` frame) is
-   * `'mutate'` and inherits the run's `causeId`; a bare write is `'set'`.
-   * Fetch / remote callers pass `source` explicitly. Call sites guard with
-   * `if (__DEV__)` so production strips them.
+   * How a mutation reports to the plugins, or `undefined` when none observe
+   * mutations — the runner then skips building events entirely.
+   */
+  mutationLifecycle(origin?: string): MutationLifecycleHooks | undefined {
+    const plugins = this.plugins
+    if (plugins === null || !plugins.observesMutations) return undefined
+    return {
+      emit: (event) => plugins.emit('onMutation', event),
+      ...(plugins.hasMutateWrappers
+        ? { wrap: (context, next) => plugins.wrapMutate(context, next) }
+        : {}),
+      ...(origin !== undefined ? { origin } : {}),
+    }
+  }
+
+  /** The cache as plugin `origin` sees it (`PluginHost.queries`). */
+  queryHost(origin: string): QueryHost {
+    return {
+      get: (id) => {
+        const query = this.byId.get(id)
+        return query === undefined ? undefined : this.refOf(query)
+      },
+      keys: (id) => {
+        const query = this.byId.get(id)
+        if (query === undefined) return []
+        const map =
+          query[BRAND] === 'infiniteQuery'
+            ? this.infiniteMaps.get(query as AnyInfiniteQuery)
+            : this.maps.get(query as AnyQuery)
+        return map === undefined ? [] : [...map.values()].map((e) => e.keyArgs)
+      },
+      peek: (id, key) => {
+        const found = this.entryByKey(id, key)
+        if (found === undefined) return undefined
+        return found.kind === 'query'
+          ? found.entry.entry.data.peek()
+          : found.entry.entry.pages.peek()
+      },
+      write: (id, key, updater, options) =>
+        this.writeByKey(id, key, updater, 'write', origin, options?.pageParams),
+      replace: (id, key, value, options) =>
+        this.writeByKey(id, key, () => value, 'replace', origin, options?.pageParams),
+      invalidate: (id, key) => {
+        const found = this.entryByKey(id, key)
+        if (found === undefined) return Promise.resolve()
+        const { query, keyArgs } = found.entry
+        // The same devtools event an app's `invalidate` sends, so a plugin's
+        // invalidation shows on the timeline too.
+        if (__DEV__) {
+          this.devtools?.emit({ type: 'cache:invalidated', queryId: query.__id, queryKey: keyArgs })
+        }
+        const settled = this.invalidateEntry(found.entry)
+        this.emitInvalidated(query, keyArgs, origin)
+        return settled
+      },
+      hydrate: (state) => this.hydrateLive(state, origin),
+      dehydrate: () => this.dehydrate(),
+      hashKey: (key) => stableHash(key),
+    }
+  }
+
+  /** Registered mutations, runnable by plugin `origin` (`PluginHost.mutations`). */
+  mutationHost(origin: string): MutationHost {
+    return {
+      has: (id) => lookupRegisteredMutation(id) !== undefined,
+      get: (id) => {
+        const registered = lookupRegisteredMutation(id)
+        return registered === undefined ? undefined : { id, meta: registered.definition.meta ?? {} }
+      },
+      run: (id, variables) => this.runRegistered(id, variables, origin),
+    }
+  }
+
+  private runRegistered(id: string, variables: unknown, origin: string): Promise<unknown> {
+    if (this.disposed) {
+      return Promise.reject(new Error('[olas] host.mutations.run() after the root was disposed'))
+    }
+    const registered = lookupRegisteredMutation(id)
+    if (registered === undefined) {
+      return Promise.reject(
+        new Error(
+          `[olas] host.mutations.run('${id}'): no mutation is registered under that id. Import ` +
+            `the module that calls defineMutation({ id: '${id}' }) before running it.`,
+        ),
+      )
+    }
+    // One runner per plugin and id, so a definition's `serial` / `latest-wins`
+    // concurrency holds across that plugin's runs of it.
+    const slot = `${origin}\u0000${id}`
+    let mutation = this.pluginMutations.get(slot)
+    if (mutation === undefined) {
+      mutation = createMutationImpl<unknown, unknown>(
+        registered.definition as unknown as MutationSpec<unknown, unknown>,
+        this.onError,
+        ['plugin', origin],
+        this.mutationsInflight$,
+        this.devtools,
+        this.mutationLifecycle(origin),
+        this.deps as import('../controller/types').AmbientDeps,
+      )
+      this.pluginMutations.set(slot, mutation)
+    }
+    return (mutation.run as (v: unknown) => Promise<unknown>)(variables)
+  }
+
+  private entryByKey(
+    id: string,
+    key: readonly unknown[],
+  ):
+    | { kind: 'query'; entry: ClientEntry<unknown> }
+    | { kind: 'infinite'; entry: InfiniteClientEntry<unknown, unknown, unknown> }
+    | undefined {
+    const query = this.byId.get(id)
+    if (query === undefined) return undefined
+    const hash = stableHash(key)
+    if (query[BRAND] === 'infiniteQuery') {
+      const entry = this.infiniteMaps.get(query as AnyInfiniteQuery)?.get(hash)
+      return entry === undefined ? undefined : { kind: 'infinite', entry }
+    }
+    const entry = this.maps.get(query as AnyQuery)?.get(hash)
+    return entry === undefined ? undefined : { kind: 'query', entry }
+  }
+
+  /**
+   * A plugin's canonical write to an existing entry (`write` / `replace`). A
+   * replace supersedes a fetch in flight only when it left the entry holding
+   * data, for a regular and an infinite query alike: the rule the app-side
+   * `replaceData` and `replaceInfiniteData` apply.
+   */
+  private writeByKey(
+    id: string,
+    key: readonly unknown[],
+    updater: (prev: unknown) => unknown,
+    source: 'write' | 'replace',
+    origin: string,
+    pageParams?: readonly unknown[],
+  ): void {
+    const found = this.entryByKey(id, key)
+    if (found === undefined) return
+    if (found.kind === 'query') {
+      const { entry } = found
+      entry.entry.setData(updater as (prev: unknown) => never, { track: false })
+      const data = entry.entry.data.peek()
+      if (source === 'replace' && data !== undefined) {
+        entry.entry.supersedeByWrite()
+      }
+      this.emitWrite(
+        entry.query,
+        entry.keyArgs,
+        data,
+        entry.entry.lastUpdatedAt.peek(),
+        source,
+        origin,
+      )
+      if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, source)
+      return
+    }
+    const { entry } = found
+    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], {
+      track: false,
+      pageParams,
+    })
+    if (source === 'replace' && entry.entry.data.peek() !== undefined) {
+      entry.entry.supersedeByWrite()
+    }
+    this.emitInfiniteWrite(entry, source, origin)
+  }
+
+  private acceptsState(state: DehydratedState): boolean {
+    if (state.version === 1 && Array.isArray(state.entries)) return true
+    // A silent drop would hide a schema-bumped payload. Warn so a future
+    // format bump is detectable from the client side.
+    if (__DEV__) {
+      console.warn(
+        '[olas] hydrate(): unsupported state.version =',
+        state.version,
+        '— expected 1. Dropping payload; cache will fetch fresh.',
+      )
+    }
+    return false
+  }
+
+  /**
+   * Emit a devtools `cache:set-data` event for a cache write. Same `source`
+   * vocabulary as the plugins' `WriteEvent`. A write inside a mutation's
+   * `onMutate` or rollback inherits the run's `causeId` from the ambient
+   * cause. Call sites guard with `if (__DEV__)` so production strips them.
    */
   private emitDevtoolsSetData(
+    query: AnyQuery | AnyInfiniteQuery,
     queryKey: readonly unknown[],
     data: unknown,
-    source?: 'set' | 'fetch' | 'mutate' | 'remote',
+    source: WriteSource,
   ): void {
     if (this.devtools === undefined) return
-    const causeId = __currentCauseId()
-    // `source` derives from the ambient cause when not passed: a write inside a
-    // mutation's onMutate/rollback is `'mutate'`, a bare write is `'set'`. A
-    // `causeId: undefined` is dropped by `DevtoolsEmitter.stamp`, so callers
-    // needn't branch.
-    const resolved = source ?? (causeId !== undefined ? 'mutate' : 'set')
-    this.devtools.emit({ type: 'cache:set-data', queryKey, source: resolved, data, causeId })
-  }
-
-  private emitInvalidate(
-    query: AnyQuery | AnyInfiniteQuery,
-    keyArgs: readonly unknown[],
-    kind: 'data' | 'infinite',
-  ): void {
-    if (this.plugins.length === 0) return
-    const queryId = query.__spec.queryId
-    if (queryId == null) return
-    const event: InvalidateEvent = {
-      queryId,
-      keyArgs,
-      kind,
-      isRemote: this.applyingRemote,
-    }
-    for (const plugin of this.plugins) {
-      if (plugin.onInvalidate) {
-        const cb = plugin.onInvalidate
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  private emitGc(
-    query: AnyQuery | AnyInfiniteQuery,
-    keyArgs: readonly unknown[],
-    kind: 'data' | 'infinite',
-  ): void {
-    if (this.plugins.length === 0) return
-    const queryId = query.__spec.queryId
-    if (queryId == null) return
-    const event: GcEvent = { queryId, keyArgs, kind }
-    for (const plugin of this.plugins) {
-      if (plugin.onGc) {
-        const cb = plugin.onGc
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  /**
-   * Fan out a `MutationEnqueueEvent` to every installed plugin. Called from
-   * `MutationImpl.executeRun` when `spec.persist === true`. Plugins use this
-   * to write the run to durable storage; the queue replays on reload. SPEC §13.3.
-   */
-  emitMutationEnqueue(event: {
-    mutationId: string
-    runId: string
-    variables: unknown
-    attempt: number
-  }): void {
-    if (this.plugins.length === 0) return
-    for (const plugin of this.plugins) {
-      if (plugin.onMutationEnqueue) {
-        const cb = plugin.onMutationEnqueue
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  /** Fan out a `MutationSettleEvent` to every installed plugin. SPEC §13.3. */
-  emitMutationSettle(event: {
-    mutationId: string
-    runId: string
-    outcome: 'success' | 'error' | 'cancelled'
-    error?: unknown
-  }): void {
-    if (this.plugins.length === 0) return
-    for (const plugin of this.plugins) {
-      if (plugin.onMutationSettle) {
-        const cb = plugin.onMutationSettle
-        this.callPlugin(plugin, () => cb.call(plugin, event))
-      }
-    }
-  }
-
-  /** Resolve `queryId → live entry-map keys`. Empty array when unknown. */
-  private subscribedKeysFor(queryId: string): readonly (readonly unknown[])[] {
-    // Defer the registry lookup to avoid an eager circular import — `define.ts`
-    // imports `QueryClient` as a type, and we import the registry helper here
-    // for runtime use only.
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return []
-    const out: (readonly unknown[])[] = []
-    if (query.__olas === 'query') {
-      const map = this.maps.get(query as unknown as AnyQuery)
-      if (map) for (const ce of map.values()) out.push(ce.keyArgs)
-    } else {
-      const map = this.infiniteMaps.get(query as unknown as AnyInfiniteQuery)
-      if (map) for (const ce of map.values()) out.push(ce.keyArgs)
-    }
-    return out
-  }
-
-  /**
-   * Apply a remote-originated `setData` for the query identified by
-   * `queryId`, scoped to the entry already keyed by `keyArgs` in this
-   * client. Goes through the underlying `Entry.setData` so subscribers see
-   * the write; plugin `onSetData` fires with `isRemote: true`.
-   *
-   * Drops silently when:
-   * - No query with that id is registered (the receiving tab hasn't
-   *   imported the module that defined it).
-   * - The registered query is an infinite query (cross-tab infinite sync
-   *   is deferred — see `plugin.ts` `SetDataEvent.kind`).
-   * - No local entry exists for that key (the receiving tab isn't
-   *   subscribed; nothing useful to write to without callArgs for a
-   *   future refetch).
-   */
-  applyRemoteSetData(queryId: string, keyArgs: readonly unknown[], data: unknown): void {
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return
-    if (query.__olas !== 'query') return // infinite — deferred for v1
-    const internal = query as unknown as AnyQuery
-    const map = this.maps.get(internal)
-    if (!map) return
-    const hash = stableHash(keyArgs)
-    const entry = map.get(hash)
-    if (!entry) return
-    this.applyingRemote = true
-    try {
-      entry.entry.setData(() => data as never, { track: false })
-      this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
-      if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, data, 'remote')
-    } finally {
-      this.applyingRemote = false
-    }
+    this.devtools.emit({
+      type: 'cache:set-data',
+      queryId: query.__id,
+      queryKey,
+      source,
+      data,
+      causeId: __currentCauseId(),
+    })
   }
 
   /**
@@ -850,7 +1201,7 @@ export class QueryClient {
    * - If the matching `ClientEntry` already exists (a subscriber has
    *   bound this key), `Entry.applyHydration(data, lastUpdatedAt)` writes
    *   through with the server's timestamp + supersedes any inflight
-   *   fetch. Plugins see a `SetDataEvent` with `source: 'remote'`.
+   *   fetch. Plugins see one `WriteEvent` with `source: 'hydrate'`.
    * - If no `ClientEntry` exists yet (the subscribing component hasn't
    *   mounted), the entry is buffered in `hydratedData` so the next
    *   `bindEntry` for that hash picks it up — same path the constructor
@@ -860,27 +1211,28 @@ export class QueryClient {
    * on the server pushes its dehydrated entry through this method on the
    * client as the bootstrap script executes.
    */
-  applyDehydratedEntry(
-    queryId: string,
-    keyArgs: readonly unknown[],
-    data: unknown,
-    lastUpdatedAt: number,
-  ): void {
-    const query = lookupRegisteredQuery(queryId)
+  applyDehydratedEntry(dehydrated: DehydratedEntry, origin?: string): void {
+    const { id: queryId, key: keyArgs, data, lastUpdatedAt, pageParams } = dehydrated
     const hash = stableHash(keyArgs)
-    if (query && query.__olas === 'query') {
-      const internal = query as unknown as AnyQuery
-      const map = this.maps.get(internal)
-      const entry = map?.get(hash)
+    const query = this.byId.get(queryId)
+    if (query !== undefined && query[BRAND] === 'query') {
+      const entry = this.maps.get(query as AnyQuery)?.get(hash)
       if (entry !== undefined) {
-        this.applyingRemote = true
-        try {
-          entry.entry.applyHydration(data, lastUpdatedAt)
-          this.emitSetData(internal, entry.keyArgs, data, 'data', 'remote')
-          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, data, 'remote')
-        } finally {
-          this.applyingRemote = false
-        }
+        // A row older than the entry's data is skipped, and reports nothing.
+        if (!entry.entry.applyHydration(data, lastUpdatedAt)) return
+        const at = entry.entry.lastUpdatedAt.peek()
+        this.emitWrite(entry.query, entry.keyArgs, data, at, 'hydrate', origin)
+        if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'hydrate')
+        return
+      }
+    }
+    if (query !== undefined && query[BRAND] === 'infiniteQuery') {
+      const entry = this.infiniteMaps.get(query as AnyInfiniteQuery)?.get(hash)
+      const pages = infinitePayload(data, pageParams)
+      if (entry !== undefined) {
+        if (pages === undefined) return
+        if (!entry.entry.applyHydration(pages.pages, pages.pageParams, lastUpdatedAt)) return
+        this.emitInfiniteWrite(entry, 'hydrate', origin)
         return
       }
     }
@@ -888,113 +1240,72 @@ export class QueryClient {
     // The next bindEntry for this query + key will adopt the buffered payload
     // and clear the slot. Namespaced by queryId so a colliding-key query can't
     // steal it (spec §15, T1.2).
-    this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt })
+    this.bufferRow(hydrationKey(queryId, hash), { data, lastUpdatedAt, origin, pageParams })
   }
 
   /**
-   * Local-originated `setData` keyed by `queryId + keyArgs`. Plugin-facing
-   * (exposed via `QueryClientPluginApi.setEntryData`); used by the
-   * `@kontsedal/olas-entities` plugin to backpropagate entity patches into
-   * every query holding the entity, without forcing the plugin to recover
-   * the original `callArgs`.
-   *
-   * Drops silently in the same cases as `applyRemoteSetData` (unknown
-   * queryId / infinite query / no local entry). Emits `SetDataEvent` with
-   * `isRemote: false`, `source: 'set'` — cross-tab WILL rebroadcast.
+   * Buffer a row for a key no entry has bound yet. A row stamped before the
+   * one already waiting for the key is dropped, as a bound entry drops a row
+   * older than its data (§15).
    */
-  setEntryData(
-    queryId: string,
-    keyArgs: readonly unknown[],
-    updater: (prev: unknown) => unknown,
-  ): void {
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return
-    const hash = stableHash(keyArgs)
-    if (query.__olas === 'query') {
-      const internal = query as unknown as AnyQuery
-      const map = this.maps.get(internal)
-      if (!map) return
-      const entry = map.get(hash)
-      if (!entry) return
-      entry.entry.setData(updater as (prev: unknown) => never, { track: false })
-      this.emitSetData(internal, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-      // A canonical (track:false) backprop write — always `'set'`, even when a
-      // mutation's ambient cause is active (it inherits the `causeId`, but its
-      // KIND is a plain set, not an optimistic mutate).
-      if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
+  private bufferRow(hkey: string, slot: HydratedSlot): void {
+    const waiting = this.hydratedData.get(hkey)
+    if (
+      waiting !== undefined &&
+      notInFuture(slot.lastUpdatedAt) < notInFuture(waiting.lastUpdatedAt)
+    ) {
       return
     }
-    // Infinite query. The plugin's `SetDataEvent.data` for `kind: 'infinite'`
-    // is `TPage[]` (the pages array), so the same path-based walk + write
-    // mechanics apply — we just route through `InfiniteEntry.setData` and
-    // re-emit with `kind: 'infinite'`.
-    const internal = query as unknown as AnyInfiniteQuery
-    const map = this.infiniteMaps.get(internal)
-    if (!map) return
-    const entry = map.get(hash)
-    if (!entry) return
-    entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], { track: false })
-    this.emitSetData(internal, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
-    // Canonical backprop write — always `'set'` (see the regular-query branch).
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.pages.peek(), 'set')
+    this.hydratedData.set(hkey, slot)
   }
 
-  applyRemoteInvalidate(queryId: string, keyArgs: readonly unknown[]): void {
-    const query = lookupRegisteredQuery(queryId)
-    if (!query) return
-    if (query.__olas !== 'query') return // infinite — deferred for v1
-    const internal = query as unknown as AnyQuery
-    const map = this.maps.get(internal)
-    if (!map) return
-    const hash = stableHash(keyArgs)
-    const entry = map.get(hash)
-    if (!entry) return
-    this.applyingRemote = true
-    try {
-      // Emit AFTER kicking off invalidate so plugins reading entry state see
-      // post-invalidation values, mirroring setData's emit-after-write order.
-      entry.entry.invalidate().catch((err) => {
-        // Two rapid invalidates on the same key supersede each other, which
-        // raises AbortError. That's not a cache error — swallow.
-        if (isAbortError(err)) return
-        dispatchError(this.onError, err, {
-          kind: 'cache',
-          controllerPath: [],
-          queryKey: entry.keyArgs,
-        })
-      })
-      this.emitInvalidate(internal, entry.keyArgs, 'data')
-    } finally {
-      this.applyingRemote = false
-    }
+  /**
+   * Apply a payload to a running root (`root.hydrate`, `host.queries.hydrate`):
+   * bound entries take it now, unbound ones buffer it. A payload of another
+   * version is dropped with a warning, as at `createRoot`.
+   */
+  hydrateLive(state: DehydratedState, origin?: string): void {
+    if (!this.acceptsState(state)) return
+    this.eachHydrationEntry(state, (e) => this.applyDehydratedEntry(e, origin))
   }
 
+  /** Buffer a payload for entries not bound yet (`RootOptions.hydrate`). */
   hydrate(state: DehydratedState): void {
-    if (state.version !== 1) {
-      // Silent drop hid schema-bumped payloads. Warn so a future spec bump is
-      // detectable from the client side without code archaeology.
-      if (__DEV__) {
-        // eslint-disable-next-line no-console
-        console.warn(
-          '[olas] hydrate(): unsupported state.version =',
-          state.version,
-          '— expected 1. Dropping payload; cache will fetch fresh.',
-        )
-      }
-      return
-    }
-    for (const entry of state.entries) {
+    if (!this.acceptsState(state)) return
+    this.eachHydrationEntry(state, (entry) => {
       const hash = stableHash(entry.key)
-      this.hydratedData.set(hydrationKey(entry.id, hash), {
+      this.bufferRow(hydrationKey(entry.id, hash), {
         data: entry.data,
         lastUpdatedAt: entry.lastUpdatedAt,
+        origin: undefined,
+        pageParams: entry.pageParams,
       })
+    })
+  }
+
+  /**
+   * Apply `apply` to each entry, skipping any that is malformed or that throws.
+   * A payload can come from storage a user edited (`persistQueryCachePlugin`),
+   * and one bad entry, such as a key nested deep enough to overflow
+   * `stableHash`, must not fail `createRoot` for the rest.
+   */
+  private eachHydrationEntry(
+    state: DehydratedState,
+    apply: (entry: DehydratedEntry) => void,
+  ): void {
+    for (const entry of state.entries as readonly unknown[]) {
+      try {
+        if (!isHydrationEntry(entry)) throw new TypeError('not a dehydrated entry')
+        apply(entry)
+      } catch (err) {
+        if (__DEV__) console.warn('[olas] hydrate(): skipped a malformed entry.', err)
+      }
     }
   }
 
   /**
    * Snapshot every live cache entry (regular + infinite) as a flat list of
-   * `DebugCacheEntry`. Exposed via `root.__debug.queryEntries()` for the
+   * `DebugCacheEntry`. Exposed via `root.debug.queryEntries()` for the
    * devtools cache inspector — shows current data and state, not past
    * fetch events. Spec §20.9.
    */
@@ -1003,6 +1314,7 @@ export class QueryClient {
     for (const map of this.maps.values()) {
       for (const ce of map.values()) {
         out.push({
+          queryId: ce.query.__id,
           key: ce.keyArgs as readonly unknown[],
           status: ce.entry.status.peek(),
           data: ce.entry.data.peek(),
@@ -1011,12 +1323,14 @@ export class QueryClient {
           isStale: ce.entry.isStale.peek(),
           isFetching: ce.entry.isFetching.peek(),
           hasPendingMutations: ce.entry.hasPendingMutations.peek(),
+          subscribers: ce.subscriptionCount,
         })
       }
     }
     for (const map of this.infiniteMaps.values()) {
       for (const ce of map.values()) {
         out.push({
+          queryId: ce.query.__id,
           key: ce.keyArgs as readonly unknown[],
           status: ce.entry.status.peek(),
           // Infinite entries carry an array of pages; expose them verbatim.
@@ -1026,24 +1340,42 @@ export class QueryClient {
           isStale: ce.entry.isStale.peek(),
           isFetching: ce.entry.isFetching.peek(),
           hasPendingMutations: ce.entry.hasPendingMutations.peek(),
+          subscribers: ce.subscriptionCount,
         })
       }
     }
     return out
   }
 
+  /**
+   * Every entry that holds data, with the time that data was written. `status`
+   * alone is not the test: it reads `'pending'` over the data during a
+   * background refetch, and `'error'` over it after a failed one (§5.3, §15).
+   */
   dehydrate(): DehydratedState {
     const entries: DehydratedState['entries'] = []
     for (const [query, map] of this.maps) {
       for (const ce of map.values()) {
-        if (ce.entry.status.peek() === 'success') {
-          entries.push({
-            id: query.__id,
-            key: ce.keyArgs,
-            data: ce.entry.data.peek(),
-            lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
-          })
-        }
+        const data = ce.entry.data.peek()
+        if (data === undefined && ce.entry.status.peek() !== 'success') continue
+        entries.push({
+          id: query.__id,
+          key: ce.keyArgs,
+          data,
+          lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
+        })
+      }
+    }
+    for (const [query, map] of this.infiniteMaps) {
+      for (const ce of map.values()) {
+        if (ce.entry.pages.peek().length === 0 && ce.entry.status.peek() !== 'success') continue
+        entries.push({
+          id: query.__id,
+          key: ce.keyArgs,
+          data: ce.entry.pages.peek(),
+          pageParams: ce.entry.pageParams.peek(),
+          lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
+        })
       }
     }
     return { version: 1, entries }
@@ -1105,6 +1437,35 @@ export class QueryClient {
     throw err
   }
 
+  bindQuery<Args extends unknown[], T>(
+    query: Query<Args, T>,
+    options?: BindQueryOptions,
+  ): QueryActions<Args, T>
+  bindQuery<Args extends unknown[], TPage, TItem>(
+    query: InfiniteQuery<Args, TPage, TItem>,
+    options?: BindQueryOptions,
+  ): InfiniteQueryActions<Args, TPage, TItem>
+  bindQuery(
+    source: Query<any, any> | InfiniteQuery<any, any, any>,
+    options?: BindQueryOptions,
+  ): QueryActions<any, any> | InfiniteQueryActions<any, any, any> {
+    const query = source as AnyQuery | AnyInfiniteQuery
+    const getClient = () => {
+      if (this.disposed) throw new Error('[olas] Bound query operation called after root disposal')
+      return this
+    }
+    getClient()
+    query.__clients.add(this)
+    this.index(query)
+    const origin = options?.origin
+    if (query[BRAND] === 'infiniteQuery') {
+      this.touchedInfiniteQueries.add(query)
+      return createInfiniteQueryActions(query, getClient, origin)
+    }
+    this.touchedQueries.add(query)
+    return createQueryActions(query, getClient, origin)
+  }
+
   bindEntry<Args extends unknown[], T>(query: Query<Args, T>, args: Args): ClientEntry<T> {
     const internal = query as AnyQuery
     let map = this.maps.get(internal)
@@ -1113,47 +1474,57 @@ export class QueryClient {
       this.maps.set(internal, map)
       this.touchedQueries.add(internal)
       internal.__clients.add(this)
+      this.index(internal)
     }
     const keyArgs = internal.__spec.key(...args)
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as ClientEntry<T> | undefined
     if (!entry) {
       const hkey = hydrationKey(internal.__id, hash)
-      const hydrated = this.hydratedData.get(hkey) as { data: T; lastUpdatedAt: number } | undefined
+      const hydrated = this.hydratedData.get(hkey) as
+        | (HydratedSlot & { data: T; lastUpdatedAt: number })
+        | undefined
       if (hydrated) this.hydratedData.delete(hkey)
-      // Build the fetcher-success emitter here so `emitSetData` can stay
-      // `private` — `ClientEntry` doesn't reach back into the client to call
-      // it; the closure captures (query, keyArgs, this) in this scope and
-      // is consumed by `Entry.onSuccessData` from inside `applySuccess`.
-      const onFetchSuccess: ((data: T) => void) | undefined =
-        internal.__spec.queryId != null
-          ? (data) => this.emitSetData(internal, keyArgs, data, 'data', 'fetch')
-          : undefined
-      entry = new ClientEntry<T>(
+      // The entry reports its own successful fetches through this closure, so
+      // the emitters can stay private to the client.
+      const onFetched = (data: T): void =>
+        this.emitWrite(
+          internal,
+          keyArgs,
+          data,
+          created.entry.lastUpdatedAt.peek(),
+          'fetch',
+          undefined,
+        )
+      const created: ClientEntry<T> = new ClientEntry<T>(
         this,
         internal,
         args,
         keyArgs,
         internal.__spec,
         hydrated,
-        onFetchSuccess,
+        onFetched,
       )
+      entry = created
       map.set(hash, entry as ClientEntry<unknown>)
       // The entry is created without an immediate subscriber (callers like
       // `prefetch`/`setData`/`invalidate` reach `bindEntry` first; subscribing
       // callers then call `acquire()` right after, which clears the gc timer).
       entry.scheduleGcIfOrphan()
-      // Hydrated data lands in `initialData` on the new Entry — `applySuccess`
-      // is never called, so plugins observing fetch results (entities, ...)
-      // would otherwise miss every hydrated row. Emit a SetDataEvent with
-      // `source: 'fetch'` here once the entry is registered (and the plugin
-      // is already init'd, since the QueryClient constructor runs hydrate →
-      // plugin init before any subscriber can reach bindEntry). The fetch
-      // source is correct for layered consumers: each tab hydrates
-      // independently, so cross-tab's "skip 'fetch'" gate continues to do
-      // the right thing.
+      // Buffered hydrated data lands in `initialData` on the new Entry, so no
+      // fetch ever reports it. Report it here, once, as the `'hydrate'` write
+      // it is — plugins observing every write (entities) would otherwise miss
+      // every hydrated row.
       if (hydrated !== undefined) {
-        this.emitSetData(internal, keyArgs, hydrated.data, 'data', 'fetch')
+        this.emitWrite(
+          internal,
+          keyArgs,
+          hydrated.data,
+          created.entry.lastUpdatedAt.peek(),
+          'hydrate',
+          hydrated.origin,
+        )
+        if (__DEV__) this.emitDevtoolsSetData(internal, keyArgs, hydrated.data, 'hydrate')
       }
     } else if (__DEV__) {
       // The fetcher closure is captured on first `bindEntry`. If a later
@@ -1167,13 +1538,13 @@ export class QueryClient {
       const len = Math.max(prev.length, args.length)
       let mismatch = prev.length !== args.length
       for (let i = 0; i < len && !mismatch; i++) {
-        if (!Object.is(prev[i], args[i])) mismatch = true
+        if (!sameCallArg(prev[i], args[i])) mismatch = true
       }
       if (mismatch) {
         // eslint-disable-next-line no-console
         console.warn(
           `[olas] bindEntry: hash collision with diverging callArgs for query` +
-            ` ${internal.__spec.queryId ?? '<anonymous>'} key=${JSON.stringify(keyArgs)}.` +
+            ` ${internal.__spec.id} key=${describeKey(keyArgs)}.` +
             ` First bind's args are used by the fetcher; later args ignored.` +
             ` Either include the difference in spec.key(...) or pass identical args.`,
         )
@@ -1193,9 +1564,9 @@ export class QueryClient {
       this.maps.delete(entry.query)
     }
     if (__DEV__) {
-      this.devtools?.emit({ type: 'cache:gc', queryKey: entry.keyArgs })
+      this.devtools?.emit({ type: 'cache:gc', queryId: entry.query.__id, queryKey: entry.keyArgs })
     }
-    this.emitGc(entry.query, entry.keyArgs, 'data')
+    this.emitRemoved(entry.query, entry.keyArgs)
   }
 
   /**
@@ -1208,13 +1579,20 @@ export class QueryClient {
   private invalidateEntry(entry: {
     hasSubscribers(): boolean
     keyArgs: readonly unknown[]
-    entry: { invalidate(): Promise<unknown>; markStale(): void }
+    query: { readonly __id: string }
+    entry: {
+      invalidate(): Promise<unknown>
+      markStale(): void
+      failureOf(err: unknown): { attempt: number; cause?: unknown } | undefined
+    }
   }): Promise<void> {
     if (entry.hasSubscribers()) {
       // Resolve when the triggered refetch settles. Errors are reported through
       // `onError` (as before) and swallowed for the awaiter, so `await invalidate()`
       // never throws — it means "the refetch this invalidate kicked off has finished",
-      // matching TanStack's `invalidateQueries`.
+      // matching TanStack's `invalidateQueries`. When a `replace` discarded that
+      // refetch and the entry caught up, the entry's promise follows the catch-up,
+      // so this settles with the fetch that reconciled (§6.4).
       return entry.entry.invalidate().then(
         () => {},
         (err) => {
@@ -1222,7 +1600,11 @@ export class QueryClient {
           dispatchError(this.onError, err, {
             kind: 'cache',
             controllerPath: [],
-            queryKey: entry.keyArgs,
+            queryId: entry.query.__id,
+            key: entry.keyArgs,
+            // The retry attempt that failed last, and the fetch error a throwing
+            // retry callback replaced.
+            ...entry.entry.failureOf(err),
           })
         },
       )
@@ -1232,7 +1614,11 @@ export class QueryClient {
     return Promise.resolve()
   }
 
-  invalidate<Args extends unknown[]>(query: Query<Args, any>, args: Args): Promise<void> {
+  invalidate<Args extends unknown[]>(
+    query: Query<Args, any>,
+    args: Args,
+    origin?: string,
+  ): Promise<void> {
     const internal = query as AnyQuery
     const map = this.maps.get(internal)
     if (!map) return Promise.resolve()
@@ -1241,25 +1627,28 @@ export class QueryClient {
     const entry = map.get(hash)
     if (!entry) return Promise.resolve()
     if (__DEV__) {
-      this.devtools?.emit({ type: 'cache:invalidated', queryKey: keyArgs })
+      this.devtools?.emit({ type: 'cache:invalidated', queryId: internal.__id, queryKey: keyArgs })
     }
     const settled = this.invalidateEntry(entry)
-    this.emitInvalidate(internal, keyArgs, 'data')
+    this.emitInvalidated(internal, keyArgs, origin)
     return settled
   }
 
-  invalidateAll(query: Query<any, any>): Promise<void> {
+  invalidateAll(query: Query<any, any>, origin?: string): Promise<void> {
     const internal = query as AnyQuery
     const map = this.maps.get(internal)
     if (!map) return Promise.resolve()
     const settled: Promise<void>[] = []
-    for (const [hash, entry] of map) {
-      void hash
+    for (const entry of map.values()) {
       if (__DEV__) {
-        this.devtools?.emit({ type: 'cache:invalidated', queryKey: entry.keyArgs })
+        this.devtools?.emit({
+          type: 'cache:invalidated',
+          queryId: internal.__id,
+          queryKey: entry.keyArgs,
+        })
       }
       settled.push(this.invalidateEntry(entry))
-      this.emitInvalidate(internal, entry.keyArgs, 'data')
+      this.emitInvalidated(internal, entry.keyArgs, origin)
     }
     return Promise.all(settled).then(() => {})
   }
@@ -1306,10 +1695,10 @@ export class QueryClient {
    * A **canonical** write to one keyed entry: patches data, pushes no
    * optimistic snapshot, never flips `hasPendingMutations` (spec §6.4).
    *
-   * The userland counterpart to the plugin-facing `setEntryData` — same
-   * `{ track: false }` path through `Entry.setData`, same `source: 'set'`
+   * The userland counterpart to the plugin-facing `host.queries.write` — same
+   * `{ track: false }` path through `Entry.setData`, same `source: 'write'`
    * event, so cross-tab and entity plugins see it exactly as they see any
-   * other local write. What it is NOT is an optimistic patch: there is no
+   * other canonical write. What it is NOT is an optimistic patch: there is no
    * `Snapshot` to roll back, which is the whole point. `setData`'s snapshot
    * exists to be settled by the mutation that created it, and a fire-and-forget
    * patcher (a server-push handler, a realtime event fold) has no mutation to
@@ -1317,7 +1706,7 @@ export class QueryClient {
    * the entry forever: `hasPendingMutations` wedged at `true` and an array that
    * grows without bound on a long-lived entry.
    *
-   * Unlike `setEntryData` this DOES bind (create) the entry when absent, for
+   * Unlike `host.queries.write` this DOES bind (create) the entry when absent, for
    * one reason: symmetry with `setData`, whose behaviour it otherwise matches
    * exactly. Guard with `peekData` when writing into a possibly-absent key is
    * wrong for your data shape (a merge over `undefined` usually is).
@@ -1326,30 +1715,34 @@ export class QueryClient {
     query: Query<Args, T>,
     args: Args,
     updater: (prev: T | undefined) => T,
+    origin?: string,
   ): void {
     const entry = this.bindEntry(query, args)
-    // A canonical write SUPERSEDES a fetch that is already in flight (§6.4). It is newer by
-    // definition: the caller is folding in something the server has already said, while the
-    // outstanding request was issued before that happened and will answer with the state from
-    // before it. Without this the response lands last and silently undoes the write.
+    // A PATCH, and so it leaves a fetch that is already in flight alone (§5.5, §6.4). That is
+    // deliberate: an updater reading `prev` describes the fields it touches and says nothing
+    // about the others, so a response already on its way may well be carrying newer values for
+    // them. Discarding it on the strength of a one-field patch loses those. `replaceData` is the
+    // write that supersedes, and it takes a whole value precisely so the caller cannot make that
+    // claim by accident. A caller who has decided this patch should win calls `cancel(...)`
+    // first. 0.7.0 and 0.7.1 had `write` supersede and were rolled back over exactly this.
     //
-    // `setData` deliberately does NOT do this — an optimistic patch is a guess, and a server
-    // response is entitled to overrule a guess. That asymmetry is the whole reason the two
-    // methods are separate (`.wiki/decisions/canonical-vs-optimistic-writes.md`), and it is
-    // where this diverges from react-query, which has one door for both and therefore cannot
-    // treat them differently.
-    //
-    // A PATCH. It does not supersede an in-flight fetch, and that is deliberate: an updater
-    // reading `prev` describes the fields it touches and says nothing about the others, so a
-    // response already on its way may well be carrying newer values for them. Discarding it on
-    // the strength of a one-field patch loses those. `replaceData` is the write that supersedes,
-    // and it takes a whole value precisely so the caller cannot make this claim by accident.
+    // `setData` differs again, one step further down: an optimistic patch is a guess, and a
+    // server response is entitled to overrule a guess, so it does not even rebase live snapshots
+    // onto itself the way this does. Those two asymmetries are the whole reason the three methods
+    // are separate (`.wiki/decisions/canonical-vs-optimistic-writes.md`), and they are where this
+    // diverges from react-query, which has one door for all three and therefore cannot treat them
+    // differently.
     entry.entry.setData(updater, { track: false })
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-    // Explicit `'set'`, not the ambient-cause default: a canonical write inside
-    // a mutation's `onMutate` inherits the `causeId` but its KIND is still a
-    // plain set, never `'mutate'` (the `setEntryData` precedent).
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
+    const data = entry.entry.data.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      data,
+      entry.entry.lastUpdatedAt.peek(),
+      'write',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'write')
   }
 
   /**
@@ -1367,40 +1760,70 @@ export class QueryClient {
    * Supersedes only when `value` is defined, for the reason `Entry.setData` makes necessary: it
    * flips an idle/pending entry to `success` whatever it is handed, so replacing with `undefined`
    * AND cancelling would strand the entry at `success` over no data, with nothing to refetch it
-   * until `staleTime` lapses. `Entry.cancel` is a no-op when nothing is fetching.
+   * until `staleTime` lapses. Superseding is a no-op when nothing is fetching.
+   *
+   * When the discarded fetch was an invalidation's, the entry re-fetches once to reconcile
+   * (`Entry.supersedeByWrite`).
    */
-  replaceData<Args extends unknown[], T>(query: Query<Args, T>, args: Args, value: T): void {
+  replaceData<Args extends unknown[], T>(
+    query: Query<Args, T>,
+    args: Args,
+    value: T,
+    origin?: string,
+  ): void {
     const entry = this.bindEntry(query, args)
     entry.entry.setData(() => value, { track: false })
-    if (value !== undefined) entry.entry.cancel()
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek(), 'set')
+    if (value !== undefined) entry.entry.supersedeByWrite()
+    const data = entry.entry.data.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      data,
+      entry.entry.lastUpdatedAt.peek(),
+      'replace',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'replace')
   }
 
   setData<Args extends unknown[], T>(
     query: Query<Args, T>,
     args: Args,
     updater: (prev: T | undefined) => T,
+    origin?: string,
   ): Snapshot {
     const entry = this.bindEntry(query, args)
     const snapshot = entry.entry.setData(updater)
-    // Read the post-update value to broadcast — plugins want the new state,
-    // not the updater function (which would be uncloneable across
-    // BroadcastChannel).
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.data.peek(), 'data', 'set')
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.data.peek())
-    // Re-broadcast on rollback so cross-tab / entity plugins drop the failed
-    // optimistic value instead of keeping it (T3.6). Guard on an actual data
-    // change: a non-top chain-splice rollback (§6.4) leaves current data
-    // untouched, so there is nothing new to broadcast.
+    // Report the post-update value — plugins want the new state, not the
+    // updater function (which would be uncloneable across BroadcastChannel).
+    const data = entry.entry.data.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      data,
+      entry.entry.lastUpdatedAt.peek(),
+      'optimistic',
+      origin,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'optimistic')
+    // Report the rollback too, so plugins that mirrored the optimistic value
+    // (cross-tab, entities) drop it (T3.6). Only when data actually changed:
+    // a non-top chain-splice rollback (§6.4) leaves current data untouched.
     return {
       rollback: () => {
         const before = entry.entry.data.peek()
         snapshot.rollback()
         const after = entry.entry.data.peek()
         if (!Object.is(before, after)) {
-          this.emitSetData(entry.query, entry.keyArgs, after, 'data', 'set')
-          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, after)
+          this.emitWrite(
+            entry.query,
+            entry.keyArgs,
+            after,
+            entry.entry.lastUpdatedAt.peek(),
+            'rollback',
+            origin,
+          )
+          if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, after, 'rollback')
         }
       },
       finalize: () => snapshot.finalize(),
@@ -1418,30 +1841,54 @@ export class QueryClient {
       this.infiniteMaps.set(internal, map)
       this.touchedInfiniteQueries.add(internal)
       internal.__clients.add(this)
+      this.index(internal)
     }
     const keyArgs = internal.__spec.key(...args)
     const hash = stableHash(keyArgs)
     let entry = map.get(hash) as InfiniteClientEntry<TPage, TItem, unknown> | undefined
     if (!entry) {
-      // Mirror the regular-query plumbing in `bindEntry`: build the
-      // SetDataEvent emitter here so `emitSetData` stays private. The
-      // closure captures (query, keyArgs, this) and is consumed by
-      // `InfiniteEntry.onSuccessData` from inside each successful page
-      // batch (initial, next, prev).
-      const onFetchSuccess: ((pages: TPage[]) => void) | undefined =
-        internal.__spec.queryId != null
-          ? (pages) => this.emitSetData(internal, keyArgs, pages, 'infinite', 'fetch')
-          : undefined
-      entry = new InfiniteClientEntry<TPage, TItem, unknown>(
-        this,
-        internal,
-        args,
-        keyArgs,
-        internal.__spec,
-        onFetchSuccess,
-      )
+      // Adopt a buffered hydration payload, as `bindEntry` does. Only one that
+      // carries aligned `pageParams`: a regular-shaped payload under an
+      // infinite query's id cannot seed pages.
+      const hkey = hydrationKey(internal.__id, hash)
+      const slot = this.hydratedData.get(hkey)
+      if (slot !== undefined) this.hydratedData.delete(hkey)
+      const payload = slot === undefined ? undefined : infinitePayload(slot.data, slot.pageParams)
+      const hydrated =
+        payload === undefined || slot === undefined
+          ? undefined
+          : {
+              pages: payload.pages as TPage[],
+              pageParams: payload.pageParams,
+              lastUpdatedAt: slot.lastUpdatedAt,
+            }
+      // Every successful page batch (initial, next, prev) reports through this
+      // closure, as in `bindEntry`.
+      const onFetched = (pages: TPage[]): void =>
+        this.emitWrite(
+          internal,
+          keyArgs,
+          pages,
+          created.entry.lastUpdatedAt.peek(),
+          'fetch',
+          undefined,
+          created.entry.pageParams.peek(),
+        )
+      const created: InfiniteClientEntry<TPage, TItem, unknown> = new InfiniteClientEntry<
+        TPage,
+        TItem,
+        unknown
+      >(this, internal, args, keyArgs, internal.__spec, hydrated, onFetched)
+      entry = created
       map.set(hash, entry as InfiniteClientEntry<unknown, unknown, unknown>)
       entry.scheduleGcIfOrphan()
+      if (hydrated !== undefined && slot !== undefined) {
+        this.emitInfiniteWrite(
+          entry as InfiniteClientEntry<unknown, unknown, unknown>,
+          'hydrate',
+          slot.origin,
+        )
+      }
     }
     return entry
   }
@@ -1456,12 +1903,16 @@ export class QueryClient {
     if (map.size === 0) {
       this.infiniteMaps.delete(entry.query)
     }
-    this.emitGc(entry.query, entry.keyArgs, 'infinite')
+    if (__DEV__) {
+      this.devtools?.emit({ type: 'cache:gc', queryId: entry.query.__id, queryKey: entry.keyArgs })
+    }
+    this.emitRemoved(entry.query, entry.keyArgs)
   }
 
   invalidateInfinite<Args extends unknown[]>(
     query: InfiniteQuery<Args, any, any>,
     args: Args,
+    origin?: string,
   ): Promise<void> {
     const internal = query as AnyInfiniteQuery
     const map = this.infiniteMaps.get(internal)
@@ -1470,19 +1921,29 @@ export class QueryClient {
     const hash = stableHash(keyArgs)
     const entry = map.get(hash)
     if (!entry) return Promise.resolve()
+    if (__DEV__) {
+      this.devtools?.emit({ type: 'cache:invalidated', queryId: internal.__id, queryKey: keyArgs })
+    }
     const settled = this.invalidateEntry(entry)
-    this.emitInvalidate(internal, keyArgs, 'infinite')
+    this.emitInvalidated(internal, keyArgs, origin)
     return settled
   }
 
-  invalidateAllInfinite(query: InfiniteQuery<any, any, any>): Promise<void> {
+  invalidateAllInfinite(query: InfiniteQuery<any, any, any>, origin?: string): Promise<void> {
     const internal = query as AnyInfiniteQuery
     const map = this.infiniteMaps.get(internal)
     if (!map) return Promise.resolve()
     const settled: Promise<void>[] = []
     for (const entry of map.values()) {
+      if (__DEV__) {
+        this.devtools?.emit({
+          type: 'cache:invalidated',
+          queryId: internal.__id,
+          queryKey: entry.keyArgs,
+        })
+      }
       settled.push(this.invalidateEntry(entry))
-      this.emitInvalidate(internal, entry.keyArgs, 'infinite')
+      this.emitInvalidated(internal, entry.keyArgs, origin)
     }
     return Promise.all(settled).then(() => {})
   }
@@ -1501,31 +1962,80 @@ export class QueryClient {
     for (const entry of map.values()) entry.entry.cancel()
   }
 
+  /** The infinite counterpart of `peekData`: non-creating and untracked. */
+  peekInfiniteData<Args extends unknown[], TPage>(
+    query: InfiniteQuery<Args, TPage, any>,
+    args: Args,
+  ): TPage[] | undefined {
+    const internal = query as AnyInfiniteQuery
+    const map = this.infiniteMaps.get(internal)
+    if (!map) return undefined
+    const pages = map.get(stableHash(internal.__spec.key(...args)))?.entry.pages.peek()
+    return pages === undefined || pages.length === 0 ? undefined : (pages as TPage[])
+  }
+
+  /**
+   * The infinite counterpart of `writeData`: a canonical patch that leaves an
+   * in-flight fetch alone (see `writeData` for why a patch must not supersede).
+   */
+  writeInfiniteData<Args extends unknown[], TPage>(
+    query: InfiniteQuery<Args, TPage, any>,
+    args: Args,
+    updater: (prev: TPage[] | undefined) => TPage[],
+    origin?: string,
+  ): void {
+    const entry = this.bindInfiniteEntry(query, args)
+    entry.entry.setData(updater, { track: false })
+    this.emitInfiniteWrite(entry as InfiniteClientEntry<unknown, unknown, unknown>, 'write', origin)
+  }
+
+  /**
+   * The infinite counterpart of `replaceData`: the pages are the record, so a
+   * fetch already in flight is superseded — only when the entry then holds a
+   * page, for the reason `replaceData` gives. An empty pages array is how an
+   * infinite entry spells "nothing here" (`peek` reads it as `undefined`).
+   */
+  replaceInfiniteData<Args extends unknown[], TPage>(
+    query: InfiniteQuery<Args, TPage, any>,
+    args: Args,
+    value: TPage[],
+    origin?: string,
+  ): void {
+    const entry = this.bindInfiniteEntry(query, args)
+    entry.entry.setData(() => value, { track: false })
+    if (entry.entry.data.peek() !== undefined) entry.entry.supersedeByWrite()
+    this.emitInfiniteWrite(
+      entry as InfiniteClientEntry<unknown, unknown, unknown>,
+      'replace',
+      origin,
+    )
+  }
+
   setInfiniteData<Args extends unknown[], TPage>(
     query: InfiniteQuery<Args, TPage, any>,
     args: Args,
     updater: (prev: TPage[] | undefined) => TPage[],
+    origin?: string,
   ): Snapshot {
     const entry = this.bindInfiniteEntry(query, args)
     const snapshot = entry.entry.setData(updater)
-    this.emitSetData(entry.query, entry.keyArgs, entry.entry.pages.peek(), 'infinite', 'set')
-    if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, entry.entry.pages.peek())
-    // Re-broadcast on rollback so peers drop the failed optimistic pages
-    // (T3.6); guard on an actual change (non-top chain-splice is a no-op).
+    const any = entry as InfiniteClientEntry<unknown, unknown, unknown>
+    this.emitInfiniteWrite(any, 'optimistic', origin)
+    // Report the rollback so plugins mirroring the optimistic pages drop them
+    // (T3.6); only on an actual change (a non-top chain-splice is a no-op).
     return {
       rollback: () => {
         const before = entry.entry.pages.peek()
         snapshot.rollback()
-        const after = entry.entry.pages.peek()
-        if (!Object.is(before, after)) {
-          this.emitSetData(entry.query, entry.keyArgs, after, 'infinite', 'set')
-          if (__DEV__) this.emitDevtoolsSetData(entry.keyArgs, after)
+        if (!Object.is(before, entry.entry.pages.peek())) {
+          this.emitInfiniteWrite(any, 'rollback', origin)
         }
       },
       finalize: () => snapshot.finalize(),
     }
   }
 
+  /** The infinite counterpart of `prefetch`, settling with the first page. */
   prefetchInfinite<Args extends unknown[], TPage>(
     query: InfiniteQuery<Args, TPage, any>,
     args: Args,
@@ -1539,11 +2049,21 @@ export class QueryClient {
       if (status === 'success' && !entry.entry.isStaleNow()) {
         return entry.entry.pages.peek()[0] as TPage
       }
-      return entry.entry.startFetch()
+      // Join a request in flight rather than restarting it, as `prefetch` does.
+      if (entry.entry.isFetching.peek()) return (await entry.entry.settled())[0] as TPage
+      return entry.entry.startFetch().catch(async (err: unknown) => {
+        if (isAbortError(err)) return (await entry.entry.settled())[0] as TPage
+        throw err
+      })
     })()
     return promise.finally(() => entry.release())
   }
 
+  /**
+   * Fetch into the cache without subscribing, holding the entry until the
+   * fetch settles. A fresh entry resolves with its data at once. A fetch
+   * already in flight is joined, not restarted.
+   */
   prefetch<Args extends unknown[], T>(query: Query<Args, T>, args: Args): Promise<T> {
     const entry = this.bindEntry(query, args)
     entry.acquire()
@@ -1553,29 +2073,33 @@ export class QueryClient {
         return entry.entry.data.peek() as T
       }
       if (entry.entry.isFetching.peek()) {
-        return entry.entry.firstValue()
+        return entry.entry.settled()
       }
       return entry.entry.startFetch().catch((err) => {
         // A supersede aborts this fetch without it being a failure — a newer refetch, a key
         // change, or a canonical `write` landing while this was outstanding (§6.4). Don't
-        // surface the spurious AbortError: resolve with whatever the entry settles on, which
-        // is what `subscription.refetch` has done since T3.9 (`use.ts`) and what an awaiting
-        // SSR loader needs. Real errors still reject.
-        if (isAbortError(err)) return entry.entry.firstValue()
+        // surface the spurious AbortError: settle with whatever the entry settles on, which
+        // is what `subscription.refetch` does too (`use.ts`) and what an awaiting SSR loader
+        // needs. Real errors still reject, and so does a `cancel()` that leaves the entry
+        // without data: nothing is coming to fill it, and waiting would hold the entry forever.
+        if (isAbortError(err)) return entry.entry.settled()
         throw err
       })
     })()
     return promise.finally(() => entry.release())
   }
 
-  inflightCount(): number {
-    let count = 0
-    for (const [, map] of this.maps) {
-      for (const [, entry] of map) {
-        if (entry.entry.isFetching.peek()) count++
-      }
-    }
-    return count
+  /**
+   * The root is about to dispose its controllers, and this client after them.
+   * Their subscriptions release entries on the way out; `close` tells those
+   * releases not to arm gc timers `dispose` would cancel straight away.
+   */
+  close(): void {
+    this.closing = true
+  }
+
+  get isClosing(): boolean {
+    return this.closing
   }
 
   dispose(): void {
@@ -1602,12 +2126,10 @@ export class QueryClient {
     }
     this.touchedInfiniteQueries.clear()
     this.hydratedData.clear()
-    for (const plugin of this.plugins) {
-      if (plugin.dispose) {
-        const cb = plugin.dispose
-        this.callPlugin(plugin, () => cb.call(plugin))
-      }
-    }
+    for (const mutation of this.pluginMutations.values()) mutation.dispose()
+    this.pluginMutations.clear()
+    this.byId.clear()
+    this.refs.clear()
   }
 }
 

@@ -1,12 +1,12 @@
-import { use, useQuery, useRoot } from '@kontsedal/olas-react'
-import type { AppApi } from '../../app.controller'
+import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { cx } from '../../ui'
+import { identityColor } from '../../ui/identity'
 
 export function LabelsRow() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const labels = useQuery(app.labels)
   const array = app.cardDetail.form.fields.labelIds
-  const value = use(array.value) as readonly string[]
+  const value = useValue(array)
   const selectedSet = new Set(value)
 
   return (
@@ -27,7 +27,7 @@ export function LabelsRow() {
                 for (const id of next) array.add(id)
               }}
               className={cx('olas-pill-tag', !isOn && 'olas-pill-tag-off')}
-              style={{ ['--label-hue' as string]: String(l.hue) } as React.CSSProperties}
+              style={{ ['--label-color' as string]: identityColor(l.hue) } as React.CSSProperties}
             >
               <span className="olas-pill-tag-dot" aria-hidden />
               <span>{l.name}</span>

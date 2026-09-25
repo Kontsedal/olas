@@ -1,0 +1,13 @@
+{
+  // What `svelte-check` reads: the `<script lang="ts">` of every Svelte test
+  // fixture, here and in the adapter-parity suite. `tsc` checks the `.ts`
+  // files through tsconfig.json, but it cannot see inside a `.svelte` file.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".."
+  },
+  "include": [
+    "tests/fixtures/**/*.svelte",
+    "../integration/tests/adapter-parity/svelte/**/*.svelte"
+  ]
+}

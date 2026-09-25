@@ -3,12 +3,12 @@ name: latest-wins-rollback-order
 description: For latest-wins mutations, roll back the previous snapshot BEFORE invoking the new onMutate. Order matters.
 type: pitfall
 covers:
-  - packages/core/src/query/mutation.ts:138-154
+  - packages/core/src/query/mutation.ts:475-484
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-21
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -47,7 +47,7 @@ case 'latest-wins':
   // run's onMutate runs, so the new optimistic update doesn't stack on
   // top of the obsolete one.
   for (const handle of this.inflight) {
-    handle.abort.abort()
+    this.cancel(handle, 'superseded')   # records the reason plugins hear on the old run's cancel
     handle.snapshot?.rollback()
     handle.snapshot = undefined   # prevent double-rollback in the old run's catch
   }

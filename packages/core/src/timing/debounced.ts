@@ -1,6 +1,23 @@
+import { scheduleExpiry } from '../expiry-timer'
 import { effect, signal } from '../signals'
 import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
+
+/** Options for `debounced` and `throttled`. */
+export type TimingOptions = {
+  /**
+   * Aborting it stops the timer and releases the source subscription.
+   */
+  signal?: AbortSignal
+  /**
+   * Emit on the leading edge of a window.
+   */
+  leading?: boolean
+  /**
+   * Emit on the trailing edge of a window.
+   */
+  trailing?: boolean
+}
 
 /**
  * A `ReadSignal<T>` returned by `debounced` / `throttled`. Extends the
@@ -28,6 +45,23 @@ export type TimingSignal<T> = ReadSignal<T> & {
 }
 
 /**
+ * The window a timing signal waits, with `NaN` read as `0` and a dev warning.
+ * The shared scheduler schedules nothing for a non-finite delay, the right
+ * reading of `Infinity` but not of `NaN`: a failed `Number(...)` parse left the
+ * signal never emitting, where a raw `setTimeout` fired at once. Internal;
+ * shared with `throttled`.
+ */
+export function timingWindow(ms: number, name: 'debounced' | 'throttled'): number {
+  if (!Number.isNaN(ms)) return ms
+  if (__DEV__) {
+    console.warn(
+      `[olas] ${name}: the window is NaN — expected a number of milliseconds. It runs as 0.`,
+    )
+  }
+  return 0
+}
+
+/**
  * Lag a signal by `ms`. The returned signal updates only after the source has
  * been unchanged for `ms`. Each new write resets the timer.
  *
@@ -40,12 +74,18 @@ export type TimingSignal<T> = ReadSignal<T> & {
  * - `options.signal` (`AbortSignal`) ties the internal effect to a
  *   lifecycle — when the signal aborts the effect disposes, the pending
  *   timer clears, and the subscriber chain on `source` drops.
+ *
+ * `ms` goes through the shared expiry scheduler (spec §21.5): `Infinity`
+ * never fires on its own, so only `flush()` emits, and a window past the
+ * 32-bit timer limit waits its full length. `NaN` runs as `0`, with a warning
+ * in development.
  */
 export function debounced<T>(
   source: ReadSignal<T>,
-  ms: number,
-  options?: { signal?: AbortSignal; leading?: boolean; trailing?: boolean },
+  windowMs: number,
+  options?: TimingOptions,
 ): TimingSignal<T> {
+  const ms = timingWindow(windowMs, 'debounced')
   const leading = options?.leading ?? false
   const trailing = options?.trailing ?? true
   if (!leading && !trailing) {
@@ -54,7 +94,11 @@ export function debounced<T>(
     )
   }
   const out = signal<T>(source.peek())
-  let timer: ReturnType<typeof setTimeout> | null = null
+  // The window goes through `scheduleExpiry`, as every user duration does
+  // (§21.5): `Infinity` schedules nothing, and a window past the 32-bit
+  // `setTimeout` limit cannot overflow into an immediate fire. `null` means no
+  // timer is pending, which for `Infinity` is for good.
+  let timer: (() => void) | null = null
   let pendingValue: T = source.peek()
   let hasPending = false
   let initial = true
@@ -76,36 +120,32 @@ export function debounced<T>(
       return
     }
     pendingValue = value
-    if (timer != null) clearTimeout(timer)
+    timer?.()
     if (leading && !inCooldown) {
       // Leading edge — emit now, start a cooldown timer that, if untouched
       // by another write, fires the trailing edge with the same value.
       out.set(value)
       hasPending = false
       inCooldown = true
-      timer = setTimeout(fireTrailing, ms)
+      timer = scheduleExpiry(ms, fireTrailing)
     } else {
       // Pending only matters if a trailing emit can actually happen. With
       // `trailing: false` the timer just resets the cooldown and must NOT
       // leave a value for a later `flush()` to emit. (T2.7)
       hasPending = trailing
-      timer = setTimeout(fireTrailing, ms)
+      timer = scheduleExpiry(ms, fireTrailing)
     }
   })
 
   const cancel = () => {
-    if (timer != null) {
-      clearTimeout(timer)
-      timer = null
-    }
+    timer?.()
+    timer = null
     hasPending = false
     inCooldown = false
   }
   const flush = () => {
-    if (timer != null) {
-      clearTimeout(timer)
-      timer = null
-    }
+    timer?.()
+    timer = null
     if (hasPending) {
       out.set(pendingValue)
       hasPending = false

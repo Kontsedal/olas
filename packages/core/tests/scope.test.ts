@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
+import { queryEngine } from '../src/query/engine'
 import { defineScope } from '../src/scope'
 import { signal } from '../src/signals'
 
@@ -9,9 +10,17 @@ describe('defineScope', () => {
   test('two scopes are distinct even when shaped identically', () => {
     const a = defineScope<string>()
     const b = defineScope<string>()
-    expect(a.__olas).toBe('scope')
-    expect(b.__olas).toBe('scope')
-    expect(a.__id).not.toBe(b.__id)
+    const brand = Symbol.for('olas.brand')
+    expect((a as unknown as Record<symbol, unknown>)[brand]).toBe('scope')
+    expect(a).not.toBe(b)
+    // The brand is a symbol key: nothing internal shows up in the object's keys.
+    expect(Object.keys(a)).toEqual(['hasDefault'])
+    // Distinct in use too: providing one does not satisfy the other.
+    const def = defineController((ctx) => {
+      ctx.provide(a, 'from-a')
+      return { a: ctx.inject(a), b: ctx.inject(b) }
+    })
+    expect(() => createRoot(def, { queries: queryEngine(), ...noDeps })).toThrow()
   })
 
   test('hasDefault flag distinguishes "no default" from "default: undefined"', () => {
@@ -128,7 +137,7 @@ describe('ctx.provide / ctx.inject', () => {
 
     const r = createRoot(root, noDeps)
     expect(observed).toEqual(['light'])
-    r.theme.set('dark')
+    r.api.theme.set('dark')
     expect(observed).toEqual(['light', 'dark'])
     r.dispose()
   })
@@ -174,7 +183,7 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       seenTheme = ctx.inject(themeScope)
       return {}
     })
-    const r = createRoot(root, { deps: {}, scopes: [[themeScope, 'dark']] })
+    const r = createRoot(root, { queries: queryEngine(), deps: {}, scopes: [[themeScope, 'dark']] })
     expect(seenTheme).toBe('dark')
     r.dispose()
   })
@@ -190,7 +199,11 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       ctx.child(leaf, undefined)
       return {}
     })
-    const r = createRoot(root, { deps: {}, scopes: [[userIdScope, 'u-42']] })
+    const r = createRoot(root, {
+      queries: queryEngine(),
+      deps: {},
+      scopes: [[userIdScope, 'u-42']],
+    })
     expect(leafSaw).toBe('u-42')
     r.dispose()
   })
@@ -215,7 +228,11 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       )
       return {}
     })
-    const r = createRoot(outer, { deps: {}, scopes: [[tenantScope, 'seeded']] })
+    const r = createRoot(outer, {
+      queries: queryEngine(),
+      deps: {},
+      scopes: [[tenantScope, 'seeded']],
+    })
     expect(outerSaw).toBe('seeded')
     expect(innerSaw).toBe('override')
     r.dispose()
@@ -229,6 +246,7 @@ describe('RootOptions.scopes — seed scopes from outside the factory', () => {
       return {}
     })
     const r = createRoot(root, {
+      queries: queryEngine(),
       deps: {},
       scopes: [
         [s, 1],

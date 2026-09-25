@@ -6,14 +6,27 @@
  * fail loudly.
  */
 import { describe, expect, test, vi } from 'vitest'
+import {
+  bindQuery,
+  createCache,
+  createField,
+  createFieldArray,
+  createForm,
+  createMutation,
+  createQuery,
+  type Mutation,
+} from '../src'
 import { createRoot, defineController } from '../src/controller'
 import type { FormIssue, StandardSchemaV1 } from '../src/forms'
 import { validator } from '../src/forms'
+import { definePlugin } from '../src/plugin/host'
+import type { PluginHost, WriteEvent } from '../src/plugin/types'
 import { defineInfiniteQuery, defineQuery } from '../src/query/define'
+import { queryEngine } from '../src/query/engine'
 import { Entry } from '../src/query/entry'
 import { InfiniteEntry } from '../src/query/infinite'
-import type { QueryClientPlugin, QueryClientPluginApi } from '../src/query/plugin'
 import { signal } from '../src/signals'
+import { isAbortError } from '../src/utils'
 
 const emptyDeps = {}
 /**
@@ -63,6 +76,7 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
     // Init with a no-op so TS CFA doesn't narrow to `null`.
     let resolveSecond: (p: Page) => void = () => {}
     const q = defineInfiniteQuery<[], number, Page>({
+      id: 'regressions/75',
       key: () => [],
       fetcher: abortingFetcher((pageParam) => {
         if (pageParam === 0) return { items: ['a'], next: 1, prev: null }
@@ -75,17 +89,17 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
       getNextPageParam: (page) => page.next,
     })
 
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.pages.value.length).toBe(1))
 
-    const nextPromise = root.chat.fetchNextPage()
-    await vi.waitFor(() => expect(root.chat.isFetchingNextPage.value).toBe(true))
+    const nextPromise = root.api.chat.fetchNextPage()
+    await vi.waitFor(() => expect(root.api.chat.isFetchingNextPage.value).toBe(true))
 
     // Supersede — invalidate aborts the pending fetcher's signal.
     q.invalidate()
     await nextPromise.catch(() => {})
-    await vi.waitFor(() => expect(root.chat.isFetchingNextPage.value).toBe(false))
+    await vi.waitFor(() => expect(root.api.chat.isFetchingNextPage.value).toBe(false))
     // Silence the hanging promise (it would otherwise stay alive in the
     // event loop tail until vitest tears down).
     resolveSecond({ items: [], next: null, prev: null })
@@ -95,6 +109,7 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
   test('fetchPreviousPage superseded clears isFetchingPreviousPage', async () => {
     let resolvePrev: (p: Page) => void = () => {}
     const q = defineInfiniteQuery<[], number, Page>({
+      id: 'regressions/107',
       key: () => [],
       fetcher: abortingFetcher((pageParam) => {
         if (pageParam === 1) return { items: ['b'], next: 2, prev: 0 }
@@ -106,14 +121,14 @@ describe('regression: InfiniteEntry direction flags reset on supersede', () => {
       getNextPageParam: (page) => page.next,
       getPreviousPageParam: (page) => page.prev,
     })
-    const def = defineController((ctx) => ({ chat: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.chat.pages.value.length).toBe(1))
-    const prevPromise = root.chat.fetchPreviousPage()
-    await vi.waitFor(() => expect(root.chat.isFetchingPreviousPage.value).toBe(true))
+    const def = defineController((ctx) => ({ chat: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.chat.pages.value.length).toBe(1))
+    const prevPromise = root.api.chat.fetchPreviousPage()
+    await vi.waitFor(() => expect(root.api.chat.isFetchingPreviousPage.value).toBe(true))
     q.invalidate()
     await prevPromise.catch(() => {})
-    await vi.waitFor(() => expect(root.chat.isFetchingPreviousPage.value).toBe(false))
+    await vi.waitFor(() => expect(root.api.chat.isFetchingPreviousPage.value).toBe(false))
     resolvePrev({ items: [], next: null, prev: null })
     root.dispose()
   })
@@ -126,7 +141,7 @@ describe('regression: Mutation.reset rejects queued serial runs', () => {
   test('reset() during a serial mutation rejects queued promises', async () => {
     const d1 = deferred<number>()
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         concurrency: 'serial' as const,
         mutate: async (vars: number) => {
           if (vars === 1) return d1.promise
@@ -134,19 +149,19 @@ describe('regression: Mutation.reset rejects queued serial runs', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Start one (will hang on d1) and queue two more.
-    const p1 = root.save.run(1)
-    const p2 = root.save.run(2)
-    const p3 = root.save.run(3)
+    const p1 = root.api.save.run(1)
+    const p2 = root.api.save.run(2)
+    const p3 = root.api.save.run(3)
     // Let isPending flip + the runs settle into the serial queue.
-    await vi.waitFor(() => expect(root.save.isPending.value).toBe(true))
+    await vi.waitFor(() => expect(root.api.save.isPending.value).toBe(true))
     // Reset — queued p2/p3 must reject; p1 must abort.
-    root.save.reset()
+    root.api.save.reset()
     await expect(p2).rejects.toThrow()
     await expect(p3).rejects.toThrow()
     await expect(p1).rejects.toThrow()
-    expect(root.save.isPending.value).toBe(false)
+    expect(root.api.save.isPending.value).toBe(false)
     root.dispose()
   })
 })
@@ -216,18 +231,19 @@ describe('regression: invalidate AbortError does not reach onError', () => {
       signal: AbortSignal
     }> = []
     const q = defineQuery({
+      id: 'regressions/228',
       key: () => ['k'],
       fetcher: async ({ signal }) =>
         new Promise<number>((resolve, reject) => {
           fetches.push({ resolve, reject, signal })
         }),
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps, onError })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, onError })
     await vi.waitFor(() => expect(fetches.length).toBe(1))
     // Resolve initial so a subsequent invalidate has something to supersede.
     fetches[0]!.resolve(1)
-    await vi.waitFor(() => expect(root.x.data.value).toBe(1))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
     q.invalidate()
     q.invalidate()
     q.invalidate()
@@ -247,15 +263,17 @@ describe('regression: sync validator throws are surfaced', () => {
   test('throwing validator on a field marks invalid AND calls root.onError', async () => {
     const onError = vi.fn()
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('', [
-        () => {
-          throw new Error('validator-boom')
-        },
-      ]),
+      name: createField<string>(ctx, '', {
+        validators: [
+          () => {
+            throw new Error('validator-boom')
+          },
+        ],
+      }),
     }))
-    const root = createRoot(def, { deps: emptyDeps, onError })
-    await vi.waitFor(() => expect(root.name.errors.value).toContain('validator-boom'))
-    expect(root.name.isValid.value).toBe(false)
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, onError })
+    await vi.waitFor(() => expect(root.api.name.errors.value).toContain('validator-boom'))
+    expect(root.api.name.isValid.value).toBe(false)
     const eff = onError.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'effect')
     expect(eff).toBeTruthy()
     root.dispose()
@@ -268,18 +286,18 @@ describe('regression: sync validator throws are surfaced', () => {
 describe('regression: Form.set({nestedForm: undefined}) does not throw', () => {
   test('undefined nested form value is a no-op', () => {
     const def = defineController((ctx) => ({
-      form: ctx.form({
-        name: ctx.field<string>('init'),
-        nested: ctx.form({ inner: ctx.field<string>('x') }),
+      form: createForm(ctx, {
+        name: createField<string>(ctx, 'init'),
+        nested: createForm(ctx, { inner: createField<string>(ctx, 'x') }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Should NOT throw.
     expect(() =>
-      root.form.set({ name: 'new', nested: undefined as unknown as undefined }),
+      root.api.form.set({ name: 'new', nested: undefined as unknown as undefined }),
     ).not.toThrow()
-    expect(root.form.fields.name.value).toBe('new')
-    expect(root.form.fields.nested.fields.inner.value).toBe('x')
+    expect(root.api.form.fields.name.value).toBe('new')
+    expect(root.api.form.fields.nested.fields.inner.value).toBe('x')
     root.dispose()
   })
 })
@@ -299,7 +317,7 @@ describe('regression: ctx.effect during suspend does not double-activate', () =>
       })
       return {}
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.suspend()
     expect(activations).toBe(0)
     root.resume()
@@ -315,6 +333,7 @@ describe('regression: invalidateAll re-runs every bound entry', () => {
   test('invalidateAll causes both keys to refetch', async () => {
     const counts = { a: 0, b: 0 }
     const q = defineQuery({
+      id: 'regressions/327',
       key: (id: string) => ['k', id],
       fetcher: async (_ctx, id: string) => {
         counts[id as 'a' | 'b'] += 1
@@ -323,15 +342,15 @@ describe('regression: invalidateAll re-runs every bound entry', () => {
     })
     const id = { current: 'a' as 'a' | 'b' }
     const def = defineController((ctx) => ({
-      sub: ctx.use(q, () => [id.current] as const),
+      sub: createQuery(ctx, q, () => [id.current] as const),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(counts.a).toBe(1))
     // Mount a second subscription via root re-creation to build a second entry.
-    const def2 = defineController((ctx) => ({ sub: ctx.use(q, () => ['b'] as const) }))
-    const root2 = createRoot(def2, { deps: emptyDeps })
+    const def2 = defineController((ctx) => ({ sub: createQuery(ctx, q, () => ['b'] as const) }))
+    const root2 = createRoot(def2, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(counts.b).toBe(1))
-    q.invalidateAll()
+    await Promise.all([root.bindQuery(q).invalidateAll(), root2.bindQuery(q).invalidateAll()])
     await vi.waitFor(() => {
       expect(counts.a).toBe(2)
       expect(counts.b).toBe(2)
@@ -349,6 +368,7 @@ describe('regression: suspend pauses refetchInterval', () => {
     vi.useFakeTimers()
     let calls = 0
     const q = defineQuery({
+      id: 'regressions/361',
       key: () => ['k'],
       fetcher: async () => {
         calls += 1
@@ -356,8 +376,8 @@ describe('regression: suspend pauses refetchInterval', () => {
       },
       refetchInterval: 100,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     // Wait initial fetch.
     await vi.advanceTimersByTimeAsync(0)
     expect(calls).toBe(1)
@@ -382,15 +402,19 @@ describe('regression: reactive Form initial re-seats while clean, not while dirt
     const { signal } = await import('../src/signals')
     const seed = signal('first')
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('') }, { initial: () => ({ name: seed.value }) }),
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
+        { initial: () => ({ name: seed.value }) },
+      ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    expect(root.form.fields.name.value).toBe('first')
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.form.fields.name.value).toBe('first')
     // Change tracked value.
     seed.set('second')
     // The effect runs synchronously on signal write.
-    expect(root.form.fields.name.value).toBe('second')
-    expect(root.form.isDirty.value).toBe(false)
+    expect(root.api.form.fields.name.value).toBe('second')
+    expect(root.api.form.isDirty.value).toBe(false)
     root.dispose()
   })
 
@@ -398,14 +422,18 @@ describe('regression: reactive Form initial re-seats while clean, not while dirt
     const { signal } = await import('../src/signals')
     const seed = signal('first')
     const def = defineController((ctx) => ({
-      form: ctx.form({ name: ctx.field<string>('') }, { initial: () => ({ name: seed.value }) }),
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
+        { initial: () => ({ name: seed.value }) },
+      ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    root.form.fields.name.set('user-typed')
-    expect(root.form.isDirty.value).toBe(true)
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    root.api.form.fields.name.set('user-typed')
+    expect(root.api.form.isDirty.value).toBe(true)
     seed.set('second')
     // Dirty → does not re-seat.
-    expect(root.form.fields.name.value).toBe('user-typed')
+    expect(root.api.form.fields.name.value).toBe('user-typed')
     root.dispose()
   })
 
@@ -413,15 +441,16 @@ describe('regression: reactive Form initial re-seats while clean, not while dirt
     const { signal } = await import('../src/signals')
     const seed = signal('first')
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { name: ctx.field<string>('') },
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
         { initial: () => ({ name: seed.value }), resetOnInitialChange: 'always' },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    root.form.fields.name.set('user-typed')
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    root.api.form.fields.name.set('user-typed')
     seed.set('second')
-    expect(root.form.fields.name.value).toBe('second')
+    expect(root.api.form.fields.name.value).toBe('second')
     root.dispose()
   })
 
@@ -429,15 +458,16 @@ describe('regression: reactive Form initial re-seats while clean, not while dirt
     const { signal } = await import('../src/signals')
     const seed = signal('first')
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { name: ctx.field<string>('') },
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
         { initial: () => ({ name: seed.value }), resetOnInitialChange: 'never' },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    expect(root.form.fields.name.value).toBe('first')
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.form.fields.name.value).toBe('first')
     seed.set('second')
-    expect(root.form.fields.name.value).toBe('first')
+    expect(root.api.form.fields.name.value).toBe('first')
     root.dispose()
   })
 })
@@ -449,8 +479,9 @@ describe('regression: Form.validate re-runs top-level validators', () => {
   test('top-level validator re-runs against the current value', async () => {
     let lastSeen = ''
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { name: ctx.field<string>('') },
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
         {
           validators: [
             (value) => {
@@ -461,13 +492,13 @@ describe('regression: Form.validate re-runs top-level validators', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(lastSeen).toBe(''))
-    root.form.fields.name.set('A')
+    root.api.form.fields.name.set('A')
     await vi.waitFor(() => expect(lastSeen).toBe('A'))
     // Now: clear lastSeen, set silently via direct signal-side; validate() should re-run.
     lastSeen = '__not-run__'
-    await root.form.validate()
+    await root.api.form.validate()
     expect(lastSeen).toBe('A')
     root.dispose()
   })
@@ -486,19 +517,19 @@ describe('debouncedValidator', () => {
       return value.length < 3 ? 'too short' : null
     }, 50)
     const def = defineController((ctx) => ({
-      name: ctx.field<string>('', [validator]),
+      name: createField<string>(ctx, '', { validators: [validator] }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
-    root.name.set('a')
-    root.name.set('ab')
-    root.name.set('abc')
+    root.api.name.set('a')
+    root.api.name.set('ab')
+    root.api.name.set('abc')
     // No call yet — debounce.
     expect(calls).toBe(0)
     await vi.advanceTimersByTimeAsync(60)
     // Only the latest survives.
     expect(calls).toBe(1)
-    expect(root.name.errors.value).toEqual([])
+    expect(root.api.name.errors.value).toEqual([])
     root.dispose()
     vi.useRealTimers()
   })
@@ -517,9 +548,11 @@ describe('field — async validator rejection (non-abort) surfaces as an error m
     const v = (async () => {
       throw new Error('network down')
     }) as (value: string, signal: AbortSignal) => Promise<string | null>
-    const def = defineController((ctx) => ({ name: ctx.field<string>('x', [v]) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.name.errors.value).toContain('network down'))
+    const def = defineController((ctx) => ({
+      name: createField<string>(ctx, 'x', { validators: [v] }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.name.errors.value).toContain('network down'))
     root.dispose()
   })
 
@@ -527,9 +560,11 @@ describe('field — async validator rejection (non-abort) surfaces as an error m
     const v = (async () => {
       throw 'plain string reason' // eslint-disable-line no-throw-literal
     }) as (value: string, signal: AbortSignal) => Promise<string | null>
-    const def = defineController((ctx) => ({ name: ctx.field<string>('x', [v]) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.name.errors.value).toContain('plain string reason'))
+    const def = defineController((ctx) => ({
+      name: createField<string>(ctx, 'x', { validators: [v] }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.name.errors.value).toContain('plain string reason'))
     root.dispose()
   })
 })
@@ -541,17 +576,18 @@ describe('gap: defineQuery isStale timer', () => {
   test('isStale flips from false → true after staleTime ms', async () => {
     vi.useFakeTimers()
     const q = defineQuery({
+      id: 'regressions/564',
       key: () => ['k'],
       fetcher: async () => 1,
       staleTime: 1_000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
     // Just-fetched data is fresh.
-    expect(root.x.isStale.value).toBe(false)
+    expect(root.api.x.isStale.value).toBe(false)
     await vi.advanceTimersByTimeAsync(1_500)
-    expect(root.x.isStale.value).toBe(true)
+    expect(root.api.x.isStale.value).toBe(true)
     root.dispose()
     vi.useRealTimers()
   })
@@ -564,6 +600,7 @@ describe('gap: query latest-wins under concurrent fetches', () => {
   test('a second startFetch supersedes the first; only the latter result lands', async () => {
     const sequence: { resolve: (n: number) => void; signal: AbortSignal }[] = []
     const q = defineQuery({
+      id: 'regressions/587',
       key: () => ['k'],
       fetcher: async ({ signal }) => {
         return new Promise<number>((resolve, reject) => {
@@ -572,23 +609,23 @@ describe('gap: query latest-wins under concurrent fetches', () => {
         })
       },
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(sequence.length).toBe(1))
     // Trigger a second fetch via refetch — supersedes the first.
-    const refetchPromise = root.x.refetch()
+    const refetchPromise = root.api.x.refetch()
     await vi.waitFor(() => expect(sequence.length).toBe(2))
     // First's signal must have been aborted.
     expect(sequence[0]!.signal.aborted).toBe(true)
     // Resolve the second; it lands as data.
     sequence[1]!.resolve(99)
     await refetchPromise.catch(() => {})
-    await vi.waitFor(() => expect(root.x.data.value).toBe(99))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(99))
     // Resolve the first (already superseded) — should NOT clobber. Drain a
     // few microtasks to give the stale resolution a chance to leak through.
     sequence[0]!.resolve(1)
     await flush()
-    expect(root.x.data.value).toBe(99)
+    expect(root.api.x.data.value).toBe(99)
     root.dispose()
   })
 })
@@ -599,26 +636,29 @@ describe('gap: query latest-wins under concurrent fetches', () => {
 describe('gap: dehydrate while a mutation is in flight', () => {
   test('waitForIdle blocks until in-flight mutation settles; dehydrate then includes the optimistic state', async () => {
     const q = defineQuery({
+      id: 'regression/ssr-mutation',
       key: (id: string) => ['user', id],
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
     const inFlight = deferred<{ id: string; name: string }>()
 
     const def = defineController((ctx) => {
-      const user = ctx.use(q, () => ['1'])
-      const save = ctx.mutation({
+      const user = createQuery(ctx, q, () => ['1'])
+      const save = createMutation(ctx, {
         mutate: () => inFlight.promise,
         onMutate: () =>
           q.setData('1', (prev) => ({ ...(prev ?? { id: '1' }), name: 'optimistic' })),
       })
       return { user, save }
     })
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'initial' }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.user.data.value).toEqual({ id: '1', name: 'initial' }))
 
     // Kick off the mutation; optimistic state lands immediately.
-    const runP = root.save.run()
-    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'optimistic' }))
+    const runP = root.api.save.run()
+    await vi.waitFor(() =>
+      expect(root.api.user.data.value).toEqual({ id: '1', name: 'optimistic' }),
+    )
 
     // waitForIdle MUST wait for the inflight mutation.
     const idlePromise = root.waitForIdle()
@@ -649,94 +689,91 @@ describe('gap: dehydrate while a mutation is in flight', () => {
 })
 
 // ---------------------------------------------------------------------------
-// R-Q1.1 (T1.1) — plugin/remote setData must NOT push an optimistic snapshot.
-// applyRemoteSetData / setEntryData are canonical cache writes (cross-tab
+// R-Q1.1 (T1.1) — a plugin's cache write must NOT push an optimistic snapshot.
+// `host.queries.write` / `replace` are canonical cache writes (cross-tab
 // receive, entities backprop, realtime patches). Before the fix they routed
 // through the *tracked* `Entry.setData`, discarded the returned Snapshot, and
 // so leaked a live record — wedging `hasPendingMutations` at `true` forever.
 // ---------------------------------------------------------------------------
-describe('regression: plugin/remote setData does not wedge hasPendingMutations (R-Q1.1)', () => {
-  test('applyRemoteSetData leaves hasPendingMutations false', async () => {
-    let api: QueryClientPluginApi | undefined
+describe('regression: plugin writes do not wedge hasPendingMutations (R-Q1.1)', () => {
+  const capturing = () => {
+    const box: { host?: PluginHost } = {}
+    const plugin = definePlugin({
+      name: 'capture',
+      setup(host) {
+        box.host = host
+      },
+    })
+    return { box, plugin }
+  }
+
+  test('host.queries.replace leaves hasPendingMutations false', async () => {
+    const { box, plugin } = capturing()
     const q = defineQuery({
-      queryId: 'r-q1a-user',
+      id: 'r-q1a-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
-    const capture: QueryClientPlugin = {
-      name: 'capture',
-      init: (a) => {
-        api = a
-      },
-    }
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1'] as const) }))
-    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
-    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'initial' }))
-    expect(root.user.hasPendingMutations.value).toBe(false)
+    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1'] as const) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [plugin] })
+    await vi.waitFor(() => expect(root.api.user.data.value).toEqual({ id: '1', name: 'initial' }))
+    expect(root.api.user.hasPendingMutations.value).toBe(false)
 
-    const [keyArgs] = api!.subscribedKeys('r-q1a-user')
-    api!.applyRemoteSetData('r-q1a-user', keyArgs!, { id: '1', name: 'remote' })
+    const queries = box.host?.queries
+    const [key] = queries?.keys('r-q1a-user') ?? []
+    queries?.replace('r-q1a-user', key!, { id: '1', name: 'remote' })
 
-    expect(root.user.data.value).toEqual({ id: '1', name: 'remote' })
-    expect(root.user.hasPendingMutations.value).toBe(false)
+    expect(root.api.user.data.value).toEqual({ id: '1', name: 'remote' })
+    expect(root.api.user.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
-  test('setEntryData leaves hasPendingMutations false', async () => {
-    let api: QueryClientPluginApi | undefined
+  test('host.queries.write leaves hasPendingMutations false', async () => {
+    const { box, plugin } = capturing()
     const q = defineQuery({
-      queryId: 'r-q1b-user',
+      id: 'r-q1b-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string) => ({ id, name: 'initial' }),
     })
-    const capture: QueryClientPlugin = {
-      name: 'capture',
-      init: (a) => {
-        api = a
-      },
-    }
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1'] as const) }))
-    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
-    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'initial' }))
+    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1'] as const) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [plugin] })
+    await vi.waitFor(() => expect(root.api.user.data.value).toEqual({ id: '1', name: 'initial' }))
 
-    const [keyArgs] = api!.subscribedKeys('r-q1b-user')
-    api!.setEntryData('r-q1b-user', keyArgs!, (prev) => ({
+    const queries = box.host?.queries
+    const [key] = queries?.keys('r-q1b-user') ?? []
+    queries?.write('r-q1b-user', key!, (prev) => ({
       ...(prev as { id: string; name: string }),
       name: 'patched',
     }))
 
-    expect(root.user.data.value).toEqual({ id: '1', name: 'patched' })
-    expect(root.user.hasPendingMutations.value).toBe(false)
+    expect(root.api.user.data.value).toEqual({ id: '1', name: 'patched' })
+    expect(root.api.user.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 
-  test('setEntryData on an infinite query leaves hasPendingMutations false', async () => {
-    let api: QueryClientPluginApi | undefined
+  test('host.queries.write on an infinite query leaves hasPendingMutations false', async () => {
+    const { box, plugin } = capturing()
     type Page = { items: string[]; next: number | null }
     const q = defineInfiniteQuery<[], number, Page>({
-      queryId: 'r-q1c-feed',
+      id: 'r-q1c-feed',
       key: () => [] as const,
       fetcher: async ({ pageParam }) => ({ items: [`p${pageParam}`], next: null }),
       initialPageParam: 0,
       getNextPageParam: (page) => page.next,
     })
-    const capture: QueryClientPlugin = {
-      name: 'capture',
-      init: (a) => {
-        api = a
-      },
-    }
-    const def = defineController((ctx) => ({ feed: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
-    await vi.waitFor(() => expect(root.feed.pages.value.length).toBe(1))
+    const def = defineController((ctx) => ({ feed: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [plugin] })
+    await vi.waitFor(() => expect(root.api.feed.pages.value.length).toBe(1))
 
-    const [keyArgs] = api!.subscribedKeys('r-q1c-feed')
-    api!.setEntryData('r-q1c-feed', keyArgs!, (prev) => {
+    const queries = box.host?.queries
+    const [key] = queries?.keys('r-q1c-feed') ?? []
+    queries?.write('r-q1c-feed', key!, (prev) => {
       const pages = prev as Page[]
       return [{ items: [...pages[0]!.items, 'patched'], next: null }]
     })
 
-    expect(root.feed.hasPendingMutations.value).toBe(false)
+    expect(root.api.feed.pages.value[0]?.items).toEqual(['p0', 'patched'])
+    expect(root.api.feed.hasPendingMutations.value).toBe(false)
     root.dispose()
   })
 })
@@ -750,34 +787,41 @@ describe('regression: plugin/remote setData does not wedge hasPendingMutations (
 describe('regression: hydration does not steal data across colliding-key queries (R-Q1.2)', () => {
   test('query B with a colliding key hydrates its OWN data, not query A payload', async () => {
     const qA = defineQuery({
+      id: 'regression/ssr-a',
       key: () => ['shared', 'k'] as const,
       fetcher: async () => 'A-data',
       staleTime: 60_000,
     })
     const qB = defineQuery({
+      id: 'regression/ssr-b',
       key: () => ['shared', 'k'] as const,
       fetcher: async () => 'B-data',
       staleTime: 60_000,
     })
 
     // Server: only A is subscribed + fetched.
-    const serverDef = defineController((ctx) => ({ a: ctx.use(qA) }))
-    const server = createRoot(serverDef, { deps: emptyDeps })
+    const serverDef = defineController((ctx) => ({ a: createQuery(ctx, qA) }))
+    const server = createRoot(serverDef, { queries: queryEngine(), deps: emptyDeps })
     await server.waitForIdle()
     const state = server.dehydrate()
     server.dispose()
 
     // Client: fresh root, hydrate A's state, subscribe only B (colliding key).
-    const clientDef = defineController((ctx) => ({ b: ctx.use(qB) }))
-    const client = createRoot(clientDef, { deps: emptyDeps, hydrate: state })
+    const clientDef = defineController((ctx) => ({ b: createQuery(ctx, qB) }))
+    const client = createRoot(clientDef, {
+      queries: queryEngine(),
+      deps: emptyDeps,
+      hydrate: state,
+    })
     // B must fetch its OWN data — not adopt A's payload and skip its fetch.
-    await vi.waitFor(() => expect(client.b.data.value).toBe('B-data'))
+    await vi.waitFor(() => expect(client.api.b.data.value).toBe('B-data'))
     client.dispose()
   })
 
   test('a query round-trips its own hydrated data without refetching (no regression)', async () => {
     let fetches = 0
     const q = defineQuery({
+      id: 'regression/ssr-solo',
       key: () => ['solo'] as const,
       fetcher: async () => {
         fetches += 1
@@ -785,18 +829,22 @@ describe('regression: hydration does not steal data across colliding-key queries
       },
       staleTime: 60_000,
     })
-    const serverDef = defineController((ctx) => ({ x: ctx.use(q) }))
-    const server = createRoot(serverDef, { deps: emptyDeps })
-    await vi.waitFor(() => expect(server.x.data.value).toBe('v1'))
+    const serverDef = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const server = createRoot(serverDef, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(server.api.x.data.value).toBe('v1'))
     const state = server.dehydrate()
     server.dispose()
 
-    const clientDef = defineController((ctx) => ({ x: ctx.use(q) }))
-    const client = createRoot(clientDef, { deps: emptyDeps, hydrate: state })
+    const clientDef = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const client = createRoot(clientDef, {
+      queries: queryEngine(),
+      deps: emptyDeps,
+      hydrate: state,
+    })
     // Hydrated data is present immediately and fresh (staleTime 60s) → no refetch.
-    expect(client.x.data.value).toBe('v1')
+    expect(client.api.x.data.value).toBe('v1')
     await flush()
-    expect(client.x.data.value).toBe('v1')
+    expect(client.api.x.data.value).toBe('v1')
     expect(fetches).toBe(1)
     client.dispose()
   })
@@ -814,6 +862,7 @@ describe('regression: key change while suspended survives resume (R-L2.1)', () =
     const { signal } = await import('../src/signals')
     const fetched: string[] = []
     const q = defineQuery({
+      id: 'regressions/851',
       key: (id: string) => ['item', id] as const,
       fetcher: async (_ctx, id: string) => {
         fetched.push(id)
@@ -821,8 +870,10 @@ describe('regression: key change while suspended survives resume (R-L2.1)', () =
       },
     })
     const id = signal('a')
-    const def = defineController((ctx) => ({ item: ctx.use(q, () => [id.value] as const) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({
+      item: createQuery(ctx, q, () => [id.value] as const),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(fetched).toContain('a'))
 
     root.suspend()
@@ -840,6 +891,7 @@ describe('regression: key change while suspended survives resume (R-L2.1)', () =
     let fetchCount = 0
     type Page = { items: number[]; next: number | null }
     const q = defineInfiniteQuery<[string], number, Page>({
+      id: 'regressions/879',
       key: (id: string) => ['feed', id] as const,
       fetcher: async ({ pageParam }) => {
         fetchCount += 1
@@ -849,8 +901,10 @@ describe('regression: key change while suspended survives resume (R-L2.1)', () =
       getNextPageParam: (p) => p.next,
     })
     const id = signal('a')
-    const def = defineController((ctx) => ({ feed: ctx.use(q, () => [id.value] as const) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({
+      feed: createQuery(ctx, q, () => [id.value] as const),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(fetchCount).toBe(1))
 
     root.suspend()
@@ -889,7 +943,7 @@ describe('regression: effect registered during resume activates exactly once (R-
       ctx.effect(() => {})
       return {}
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(runs).toBe(0) // onResume hasn't fired yet
 
     root.suspend()
@@ -935,9 +989,9 @@ describe('regression: collection reconcile ignores item-factory signal reads (R-
         propsOf: (i) => ({ id: i.id }),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     const keyOfAfterInit = keyOfCalls
-    expect(root.c.size.value).toBe(2)
+    expect(root.api.c.size.value).toBe(2)
 
     // Write the unrelated signal the item factory read. Pre-fix the reconcile
     // effect tracked it (factory ran in the tracked scope) → a spurious
@@ -947,7 +1001,7 @@ describe('regression: collection reconcile ignores item-factory signal reads (R-
 
     // Sanity: the source signal still drives reconcile.
     source.set([{ id: 'a' }, { id: 'b' }, { id: 'c' }])
-    expect(root.c.size.value).toBe(3)
+    expect(root.api.c.size.value).toBe(3)
     root.dispose()
   })
 })
@@ -964,28 +1018,31 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
     let captured: any
     let capturedEmitter: any
     const childDef = defineController(() => ({}))
-    const q = defineQuery({ key: () => ['k'] as const, fetcher: async () => 1 })
+    const q = defineQuery({
+      id: 'regressions/1006',
+      key: () => ['k'] as const,
+      fetcher: async () => 1,
+    })
     const def = defineController((ctx) => {
       captured = ctx
       capturedEmitter = ctx.emitter<number>()
       return {}
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.dispose()
 
     const throws = (fn: () => void) => expect(fn).toThrow(/disposed/)
     throws(() => captured.effect(() => {}))
-    throws(() => captured.cache(async () => 1))
-    throws(() => captured.use(q))
-    throws(() => captured.mutation({ mutate: async () => 1 }))
+    throws(() => createCache(captured, async () => 1))
+    throws(() => createQuery(captured, q))
+    throws(() => createMutation(captured, { mutate: async () => 1 }))
     throws(() => captured.emitter())
-    throws(() => captured.field(''))
-    throws(() => captured.form({}))
-    throws(() => captured.fieldArray(() => ({})))
+    throws(() => createField(captured, ''))
+    throws(() => createForm(captured, {}))
+    throws(() => createFieldArray(captured, () => ({}) as never))
     throws(() => captured.on(capturedEmitter, () => {}))
     throws(() => captured.child(childDef, {}))
     throws(() => captured.attach(childDef, {}))
-    throws(() => captured.session(childDef, {}))
     throws(() =>
       captured.collection({
         source: signal([]),
@@ -1001,7 +1058,7 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
     root.dispose()
   })
 
-  test('ctx.session after dispose does not construct a child (no leak)', async () => {
+  test('ctx.attach after dispose does not construct a child (no leak)', async () => {
     let captured: any
     let constructed = 0
     const childDef = defineController(() => {
@@ -1012,44 +1069,19 @@ describe('regression: ctx.* factories throw after dispose (R-L2.4)', () => {
       captured = ctx
       return {}
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     root.dispose()
     expect(constructed).toBe(0)
-    expect(() => captured.session(childDef, {})).toThrow(/disposed/)
+    expect(() => captured.attach(childDef, {})).toThrow(/disposed/)
     expect(constructed).toBe(0) // the child must NOT be constructed
     root.dispose()
   })
 })
 
 // ---------------------------------------------------------------------------
-// R-L2.5 (T2.5) — a root-controls NAME CONFLICT (api defines `dispose` etc.)
-// throws inside attachRootControls, AFTER the tree is fully constructed. That
-// throw was outside any try/catch, so instance.dispose() / queryClient.dispose()
-// never ran — leaking effects + focus/online/plugin listeners. Mirrors the
-// factory-throw teardown test in controller.test.ts.
-// ---------------------------------------------------------------------------
-describe('regression: root-controls conflict disposes the tree (R-L2.5)', () => {
-  test('an api that defines `dispose` tears down instance + queryClient before throwing', () => {
-    const pluginDispose = vi.fn()
-    const onDisposeHook = vi.fn()
-    const plugin = { init: vi.fn(), dispose: pluginDispose }
-    const conflicting = defineController((ctx) => {
-      ctx.onDispose(onDisposeHook)
-      return { dispose: () => {} } // collides with the root controls
-    })
-    expect(() => createRoot(conflicting, { deps: emptyDeps, plugins: [plugin] })).toThrow(
-      /conflicts with the root controls/,
-    )
-    // The fully-constructed tree must be torn down before the throw propagates.
-    expect(onDisposeHook).toHaveBeenCalledTimes(1) // instance.dispose() ran
-    expect(pluginDispose).toHaveBeenCalledTimes(1) // queryClient.dispose() ran
-  })
-})
-
-// ---------------------------------------------------------------------------
 // R-L2.6 (T2.6) — an explicitly-suspended child (attach.suspend / collection
 // suspendItem) must survive a whole-tree suspend()/resume() cascade (what
-// KeepAlive does). Before the fix the tree resume woke every child, so a
+// SuspendOnUnmount does). Before the fix the tree resume woke every child, so a
 // virtualized list's scrolled-out rows all resumed; and attach.resume() under
 // a still-suspended parent activated a child inside a frozen tree.
 // ---------------------------------------------------------------------------
@@ -1066,15 +1098,15 @@ describe('regression: explicit suspension survives tree suspend/resume (R-L2.6)'
         propsOf: () => ({}),
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    root.c.suspendItem('a')
-    expect(root.c.isItemSuspended('a')).toBe(true)
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    root.api.c.suspendItem('a')
+    expect(root.api.c.isItemSuspended('a')).toBe(true)
 
     root.suspend()
     root.resume()
 
-    expect(root.c.isItemSuspended('a')).toBe(true) // still suspended
-    expect(root.c.isItemSuspended('b')).toBe(false) // resumed with the tree
+    expect(root.api.c.isItemSuspended('a')).toBe(true) // still suspended
+    expect(root.api.c.isItemSuspended('b')).toBe(false) // resumed with the tree
     root.dispose()
   })
 
@@ -1091,7 +1123,7 @@ describe('regression: explicit suspension survives tree suspend/resume (R-L2.6)'
       handle = ctx.attach(child, undefined)
       return {}
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     handle!.suspend()
     root.suspend()
     root.resume()
@@ -1114,7 +1146,7 @@ describe('regression: explicit suspension survives tree suspend/resume (R-L2.6)'
       handle = ctx.attach(child, undefined)
       return {}
     })
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     handle!.suspend()
     root.suspend()
     handle!.resume() // resume under a suspended parent → defer, don't activate now
@@ -1144,7 +1176,7 @@ describe('regression: T2.8 minor batch (R-L2.8)', () => {
       })
       return {}
     })
-    const root = createRoot(def, { deps: emptyDeps, onError })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, onError })
     tick.set(1) // re-run → the previous run's cleanup fires (and throws)
     await flush()
     const eff = onError.mock.calls.find((c) => (c[1] as { kind: string }).kind === 'effect')
@@ -1160,8 +1192,8 @@ describe('regression: T2.8 minor batch (R-L2.8)', () => {
     const def = defineController((ctx) => ({
       c: ctx.collection({ source, keyOf: (i) => i.id, controller: item, propsOf: () => ({}) }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    expect((root.c.items as unknown as { set?: unknown }).set).toBeUndefined()
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect((root.api.c.items as unknown as { set?: unknown }).set).toBeUndefined()
     root.dispose()
   })
 })
@@ -1248,6 +1280,7 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
     let starts = 0
     let completions = 0
     const q = defineQuery({
+      id: 'regressions/1264',
       key: () => ['k'],
       fetcher: ({ signal }) => {
         starts += 1
@@ -1264,8 +1297,8 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
       },
       refetchInterval: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     await vi.advanceTimersByTimeAsync(10_000)
 
@@ -1273,7 +1306,7 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
     // undefined, ~10 aborted starts. With the join: the fetch runs to
     // completion and ticks during a fetch are no-ops.
     expect(completions).toBeGreaterThanOrEqual(1)
-    expect(root.x.data.value).not.toBeUndefined()
+    expect(root.api.x.data.value).not.toBeUndefined()
     // Did not hammer: far fewer starts than the ~10 ticks that elapsed.
     expect(starts).toBeLessThan(10)
 
@@ -1290,6 +1323,7 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
     vi.useFakeTimers()
     let starts = 0
     const q = defineQuery({
+      id: 'regressions/1306',
       key: () => ['k'],
       fetcher: ({ signal }) => {
         starts += 1
@@ -1303,8 +1337,8 @@ describe('regression: refetchInterval joins in-flight fetch (R-Q3.2)', () => {
       },
       refetchInterval: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
 
     // t=0 starts fetch #1. Ticks at 1000 and 2000 are skipped (in flight); #1
     // settles at 2500. The tick at exactly 3000 must fire: at 3000 because the
@@ -1453,45 +1487,42 @@ describe('regression: query cancellation + snapshot rebase (R-Q3.4)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// R-Q3.6 (T3.6) — an optimistic rollback must re-emit a SetDataEvent so
+// R-Q3.6 (T3.6) — an optimistic rollback must be reported to plugins, so
 // cross-tab / entity plugins drop the failed optimistic value. Before the fix,
-// client.setData emitted on the optimistic write, but snapshot.rollback() wrote
-// data directly (an Entry closure) with no emit — peer tabs kept the failed
-// optimistic state forever.
+// the optimistic write was reported but `snapshot.rollback()` wrote data
+// directly (an Entry closure) with nothing reported — peer tabs kept the
+// failed optimistic state forever.
 // ---------------------------------------------------------------------------
-describe('regression: optimistic rollback re-emits a SetDataEvent (R-Q3.6)', () => {
-  test('rollback broadcasts the restored value with source:set, isRemote:false', async () => {
+describe('regression: an optimistic rollback is reported to plugins (R-Q3.6)', () => {
+  test('the optimistic write and its rollback each emit one onWrite', async () => {
     type User = { id: string; name: string }
-    const events: Array<{ source: string; data: unknown; isRemote: boolean; kind: string }> = []
+    const events: WriteEvent[] = []
     const q = defineQuery({
-      queryId: 'r-q36-user',
+      id: 'r-q36-user',
       key: (id: string) => ['user', id] as const,
       fetcher: async (_ctx, id: string): Promise<User> => ({ id, name: 'server' }),
     })
-    const capture: QueryClientPlugin = {
+    const capture = definePlugin({
       name: 'capture',
-      onSetData: (e) => {
-        events.push({ source: e.source, data: e.data, isRemote: e.isRemote, kind: e.kind })
-      },
-    }
-    const def = defineController((ctx) => ({ user: ctx.use(q, () => ['1'] as const) }))
-    const root = createRoot(def, { deps: emptyDeps, plugins: [capture] })
-    await vi.waitFor(() => expect(root.user.data.value).toEqual({ id: '1', name: 'server' }))
+      setup: () => ({ onWrite: (e) => events.push(e) }),
+    })
+    const def = defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1'] as const) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps, plugins: [capture] })
+    await vi.waitFor(() => expect(root.api.user.data.value).toEqual({ id: '1', name: 'server' }))
 
-    // Optimistic write → broadcasts source:'set'.
     events.length = 0
     const snap = q.setData('1', (prev) => ({ ...(prev as User), name: 'optimistic' }))
-    expect(root.user.data.value).toEqual({ id: '1', name: 'optimistic' })
+    expect(root.api.user.data.value).toEqual({ id: '1', name: 'optimistic' })
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ source: 'set', isRemote: false, kind: 'data' })
+    expect(events[0]).toMatchObject({ source: 'optimistic', origin: undefined })
     expect((events[0]!.data as User).name).toBe('optimistic')
 
-    // Rollback → must broadcast the RESTORED value so peers drop the failed state.
+    // Rollback → reports the RESTORED value so peers drop the failed state.
     events.length = 0
     snap.rollback()
-    expect(root.user.data.value).toEqual({ id: '1', name: 'server' })
+    expect(root.api.user.data.value).toEqual({ id: '1', name: 'server' })
     expect(events).toHaveLength(1)
-    expect(events[0]).toMatchObject({ source: 'set', isRemote: false, kind: 'data' })
+    expect(events[0]).toMatchObject({ source: 'rollback', origin: undefined })
     expect((events[0]!.data as User).name).toBe('server')
 
     root.dispose()
@@ -1514,6 +1545,7 @@ describe('regression: infinite interval refetch retains all pages (R-Q3.7)', () 
     }
     const calls: number[] = []
     const q = defineInfiniteQuery({
+      id: 'regressions/1530',
       key: () => ['feed'],
       fetcher: async ({ pageParam }: { pageParam: number; signal: AbortSignal }) => {
         calls.push(pageParam)
@@ -1523,19 +1555,19 @@ describe('regression: infinite interval refetch retains all pages (R-Q3.7)', () 
       getNextPageParam: (page) => page.next,
       refetchInterval: 1000,
     })
-    const def = defineController((ctx) => ({ x: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.advanceTimersByTimeAsync(0)
-    await root.x.fetchNextPage()
-    await root.x.fetchNextPage()
-    expect(root.x.pages.value.length).toBe(3)
+    await root.api.x.fetchNextPage()
+    await root.api.x.fetchNextPage()
+    expect(root.api.x.pages.value.length).toBe(3)
 
     // One interval tick → refetch-all: fetches pages 0,1,2 in order; the pages
     // array stays length 3 (atomic update, no truncation flash).
     calls.length = 0
     await vi.advanceTimersByTimeAsync(1000)
     expect(calls).toEqual([0, 1, 2])
-    expect(root.x.pages.value.length).toBe(3)
+    expect(root.api.x.pages.value.length).toBe(3)
 
     root.dispose()
     vi.useRealTimers()
@@ -1549,7 +1581,7 @@ describe('regression: query minor batch (R-Q3.9)', () => {
   test('onMutate throw aborts the mutation: mutate never runs, run() rejects', async () => {
     let mutateCalled = false
     const def = defineController((ctx) => ({
-      save: ctx.mutation({
+      save: createMutation(ctx, {
         onMutate: () => {
           throw new Error('onMutate boom')
         },
@@ -1559,10 +1591,10 @@ describe('regression: query minor batch (R-Q3.9)', () => {
         },
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await expect(root.save.run()).rejects.toThrow('onMutate boom')
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await expect(root.api.save.run()).rejects.toThrow('onMutate boom')
     expect(mutateCalled).toBe(false)
-    expect(root.save.isPending.value).toBe(false)
+    expect(root.api.save.isPending.value).toBe(false)
     root.dispose()
   })
 
@@ -1570,6 +1602,7 @@ describe('regression: query minor batch (R-Q3.9)', () => {
     const held: Array<(v: number) => void> = []
     let call = 0
     const q = defineQuery({
+      id: 'regressions/1586',
       key: () => ['s'],
       fetcher: ({ signal }: { signal: AbortSignal }) => {
         call += 1
@@ -1584,12 +1617,12 @@ describe('regression: query minor batch (R-Q3.9)', () => {
         return Promise.resolve(42) // refetch #2 supersedes #1
       },
     })
-    const def = defineController((ctx) => ({ sub: ctx.use(q) }))
-    const root = createRoot(def, { deps: emptyDeps })
-    await vi.waitFor(() => expect(root.sub.data.value).toBe(0))
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.sub.data.value).toBe(0))
 
-    const pA = root.sub.refetch() // call 2 (held)
-    const pB = root.sub.refetch() // call 3 — supersedes A, resolves 42
+    const pA = root.api.sub.refetch() // call 2 (held)
+    const pB = root.api.sub.refetch() // call 3 — supersedes A, resolves 42
     await expect(pB).resolves.toBe(42)
     // A was superseded — it must resolve with the superseder's outcome, not
     // reject with the spurious AbortError.
@@ -1639,6 +1672,7 @@ describe('regression: query minor batch (R-Q3.9)', () => {
   test('invalidate on a subscriber-less entry marks stale only; refetches on next subscribe', async () => {
     const calls: Record<string, number> = {}
     const q = defineQuery({
+      id: 'regressions/1655',
       key: (id: string) => ['orphan', id],
       fetcher: async (_ctx, id: string) => {
         calls[id] = (calls[id] ?? 0) + 1
@@ -1648,8 +1682,8 @@ describe('regression: query minor batch (R-Q3.9)', () => {
       staleTime: 60_000, // fresh — so only invalidate can force a re-subscribe refetch
     })
     const idSig = signal('a')
-    const def = defineController((ctx) => ({ x: ctx.use(q, () => [idSig.value]) }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q, () => [idSig.value]) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() => expect(calls.a).toBe(1))
 
     // Switch key → entry 'a' is released (subscriber-less), kept alive by gcTime.
@@ -1669,14 +1703,23 @@ describe('regression: query minor batch (R-Q3.9)', () => {
     root.dispose()
   })
 
-  test('a different query overwriting a queryId dev-warns', () => {
+  test('a different query reusing an id warns when one root binds both', () => {
+    // The collision is per root now: defining two queries with one id is only
+    // a problem once a root uses both, and two roots never interfere.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    defineQuery({ queryId: 'r-q39-dup', key: () => ['a'], fetcher: async () => 1 })
-    expect(warn).not.toHaveBeenCalled()
-    // Re-register the SAME id with a DIFFERENT query object → collision warning.
-    defineQuery({ queryId: 'r-q39-dup', key: () => ['b'], fetcher: async () => 2 })
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('duplicate queryId'))
-    warn.mockRestore()
+    try {
+      const a = defineQuery({ id: 'r-q39-dup', key: () => ['a'], fetcher: async () => 1 })
+      const b = defineQuery({ id: 'r-q39-dup', key: () => ['b'], fetcher: async () => 2 })
+      expect(warn).not.toHaveBeenCalled()
+      const root = createRoot(
+        defineController((ctx) => ({ a: createQuery(ctx, a), b: createQuery(ctx, b) })),
+        { queries: queryEngine(), deps: emptyDeps },
+      )
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("share the id 'r-q39-dup'"))
+      root.dispose()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })
 
@@ -1689,25 +1732,25 @@ describe('regression: query minor batch (R-Q3.9)', () => {
 describe('regression: structural FieldArray edits mark isDirty (R-F5.1)', () => {
   test('add / remove / move flip isDirty; reset clears it', () => {
     const def = defineController((ctx) => ({
-      arr: ctx.fieldArray((initial) => ctx.field<string>((initial as string) ?? ''), {
+      arr: createFieldArray(ctx, (initial) => createField<string>(ctx, (initial as string) ?? ''), {
         initial: ['a', 'b', 'c'],
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    expect(root.arr.isDirty.value).toBe(false) // construction is not dirty
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.arr.isDirty.value).toBe(false) // construction is not dirty
 
-    root.arr.remove(0)
-    expect(root.arr.isDirty.value).toBe(true) // structural remove
-    root.arr.reset()
-    expect(root.arr.isDirty.value).toBe(false) // reset clears structural dirt
+    root.api.arr.remove(0)
+    expect(root.api.arr.isDirty.value).toBe(true) // structural remove
+    root.api.arr.reset()
+    expect(root.api.arr.isDirty.value).toBe(false) // reset clears structural dirt
 
-    root.arr.move(0, 2)
-    expect(root.arr.isDirty.value).toBe(true) // structural move
-    root.arr.reset()
-    expect(root.arr.isDirty.value).toBe(false)
+    root.api.arr.move(0, 2)
+    expect(root.api.arr.isDirty.value).toBe(true) // structural move
+    root.api.arr.reset()
+    expect(root.api.arr.isDirty.value).toBe(false)
 
-    root.arr.add('d')
-    expect(root.arr.isDirty.value).toBe(true) // structural add
+    root.api.arr.add('d')
+    expect(root.api.arr.isDirty.value).toBe(true) // structural add
     root.dispose()
   })
 
@@ -1715,24 +1758,29 @@ describe('regression: structural FieldArray edits mark isDirty (R-F5.1)', () => 
     const { signal } = await import('../src/signals')
     const seed = signal<string[]>(['a', 'b'])
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { tags: ctx.fieldArray((initial) => ctx.field<string>((initial as string) ?? '')) },
+      form: createForm(
+        ctx,
+        {
+          tags: createFieldArray(ctx, (initial) =>
+            createField<string>(ctx, (initial as string) ?? ''),
+          ),
+        },
         { initial: () => ({ tags: seed.value }) },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
-    expect(root.form.fields.tags.size.value).toBe(2)
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.form.fields.tags.size.value).toBe(2)
 
     // User adds a row → the form is now structurally dirty.
-    root.form.fields.tags.add('c')
-    expect(root.form.fields.tags.size.value).toBe(3)
-    expect(root.form.isDirty.value).toBe(true)
+    root.api.form.fields.tags.add('c')
+    expect(root.api.form.fields.tags.size.value).toBe(3)
+    expect(root.api.form.isDirty.value).toBe(true)
 
     // Background refetch changes the reactive initial. `when-clean` must REFUSE
     // to re-seat (form is dirty) — the user's row must survive.
     seed.set(['x', 'y'])
-    expect(root.form.fields.tags.size.value).toBe(3)
-    expect(root.form.fields.tags.at(2)?.value).toBe('c')
+    expect(root.api.form.fields.tags.size.value).toBe(3)
+    expect(root.api.form.fields.tags.at(2)?.value).toBe('c')
     root.dispose()
   })
 })
@@ -1748,8 +1796,9 @@ describe('regression: structural FieldArray edits mark isDirty (R-F5.1)', () => 
 describe('regression: cross-field validation targets fields (R-F5.2)', () => {
   test('a FormIssue with a non-empty path lands on the matching field', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { password: ctx.field<string>('secret'), confirm: ctx.field<string>('nope') },
+      form: createForm(
+        ctx,
+        { password: createField<string>(ctx, 'secret'), confirm: createField<string>(ctx, 'nope') },
         {
           validators: [
             (v): FormIssue[] =>
@@ -1760,40 +1809,42 @@ describe('regression: cross-field validation targets fields (R-F5.2)', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
 
     // The message lands on the confirm field, NOT in topLevelErrors.
-    expect(root.form.fields.confirm.errors.value).toContain('passwords must match')
-    expect(root.form.topLevelErrors.value).toEqual([])
-    expect(root.form.fields.password.errors.value).toEqual([])
-    expect(root.form.isValid.value).toBe(false)
+    expect(root.api.form.fields.confirm.errors.value).toContain('passwords must match')
+    expect(root.api.form.topLevelErrors.value).toEqual([])
+    expect(root.api.form.fields.password.errors.value).toEqual([])
+    expect(root.api.form.isValid.value).toBe(false)
 
     // Fixing the mismatch clears the field error on the next form-level run.
-    root.form.fields.confirm.set('secret')
+    root.api.form.fields.confirm.set('secret')
     await flush()
-    expect(root.form.fields.confirm.errors.value).toEqual([])
-    expect(root.form.isValid.value).toBe(true)
+    expect(root.api.form.fields.confirm.errors.value).toEqual([])
+    expect(root.api.form.isValid.value).toBe(true)
     root.dispose()
   })
 
   test('an empty-path FormIssue still routes to topLevelErrors', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { a: ctx.field<string>('x') },
+      form: createForm(
+        ctx,
+        { a: createField<string>(ctx, 'x') },
         { validators: [(): FormIssue[] => [{ path: [], message: 'whole form bad' }]] },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.form.topLevelErrors.value).toContain('whole form bad')
+    expect(root.api.form.topLevelErrors.value).toContain('whole form bad')
     root.dispose()
   })
 
   test('a nested path routes to a nested form field', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { address: ctx.form({ city: ctx.field<string>('') }) },
+      form: createForm(
+        ctx,
+        { address: createForm(ctx, { city: createField<string>(ctx, '') }) },
         {
           validators: [
             (v): FormIssue[] =>
@@ -1804,9 +1855,9 @@ describe('regression: cross-field validation targets fields (R-F5.2)', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.form.fields.address.fields.city.errors.value).toContain('city required')
+    expect(root.api.form.fields.address.fields.city.errors.value).toContain('city required')
     root.dispose()
   })
 
@@ -1827,23 +1878,25 @@ describe('regression: cross-field validation targets fields (R-F5.2)', () => {
       },
     }
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { a: ctx.field<string>(''), b: ctx.field<string>('') },
+      form: createForm(
+        ctx,
+        { a: createField<string>(ctx, ''), b: createField<string>(ctx, '') },
         { validators: [validator(schema) as never] },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.form.fields.a.errors.value).toContain('a required')
-    expect(root.form.fields.b.errors.value).toContain('b required')
-    expect(root.form.topLevelErrors.value).toEqual([])
+    expect(root.api.form.fields.a.errors.value).toContain('a required')
+    expect(root.api.form.fields.b.errors.value).toContain('b required')
+    expect(root.api.form.topLevelErrors.value).toEqual([])
     root.dispose()
   })
 
   test('an async form-level validator routes issues to fields once settled', async () => {
     const def = defineController((ctx) => ({
-      form: ctx.form(
-        { password: ctx.field<string>('a'), confirm: ctx.field<string>('b') },
+      form: createForm(
+        ctx,
+        { password: createField<string>(ctx, 'a'), confirm: createField<string>(ctx, 'b') },
         {
           validators: [
             async (v): Promise<FormIssue[]> => {
@@ -1856,17 +1909,17 @@ describe('regression: cross-field validation targets fields (R-F5.2)', () => {
         },
       ),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await vi.waitFor(() =>
-      expect(root.form.fields.confirm.errors.value).toContain('must match (async)'),
+      expect(root.api.form.fields.confirm.errors.value).toContain('must match (async)'),
     )
-    expect(root.form.topLevelErrors.value).toEqual([])
+    expect(root.api.form.topLevelErrors.value).toEqual([])
     root.dispose()
   })
 
   test('a field-array-level validator targets a specific item by index', async () => {
     const def = defineController((ctx) => ({
-      arr: ctx.fieldArray((initial) => ctx.field<string>((initial as string) ?? ''), {
+      arr: createFieldArray(ctx, (initial) => createField<string>(ctx, (initial as string) ?? ''), {
         initial: ['ok', ''],
         validators: [
           (items): FormIssue[] =>
@@ -1874,12 +1927,873 @@ describe('regression: cross-field validation targets fields (R-F5.2)', () => {
         ],
       }),
     }))
-    const root = createRoot(def, { deps: emptyDeps })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     await flush()
-    expect(root.arr.at(0)?.errors.value).toEqual([])
-    expect(root.arr.at(1)?.errors.value).toContain('item 1 empty')
+    expect(root.api.arr.at(0)?.errors.value).toEqual([])
+    expect(root.api.arr.at(1)?.errors.value).toContain('item 1 empty')
     // The array itself is invalid because a routed item is invalid.
-    expect(root.arr.isValid.value).toBe(false)
+    expect(root.api.arr.isValid.value).toBe(false)
     root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A `serial` mutation's queue must stay serial across a `reset()`. `reset()`
+// abandons the active run (aborting it) and unlocks the queue, so the next
+// `run(...)` starts a NEW queue. The abandoned run's continuation still fires
+// when its abort lands, and it used to advance — and unlock — whatever queue it
+// found, starting a queued run on top of a pending one.
+// ---------------------------------------------------------------------------
+describe('regression: a stale serial continuation cannot advance a newer queue', () => {
+  const serialRoot = () => {
+    const started: number[] = []
+    const ds = new Map<number, ReturnType<typeof deferred<number>>>()
+    const def = defineController((ctx) => ({
+      save: createMutation(ctx, {
+        concurrency: 'serial',
+        mutate: (v: number, { signal }) => {
+          started.push(v)
+          const d = deferred<number>()
+          ds.set(v, d)
+          signal.addEventListener('abort', () => d.reject(new DOMException('a', 'AbortError')))
+          return d.promise
+        },
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    return { root, started, ds }
+  }
+
+  test('after reset(), a queued run waits for the new active run', async () => {
+    const { root, started, ds } = serialRoot()
+
+    const a = root.api.save.run(1).catch((e) => e)
+    expect(started).toEqual([1])
+
+    // Walk away from A: it is aborted, and the queue is unlocked.
+    root.api.save.reset()
+    // A fresh queue: B runs, C waits behind it.
+    const b = root.api.save.run(2).catch((e) => e)
+    const c = root.api.save.run(3).catch((e) => e)
+    expect(started).toEqual([1, 2])
+
+    // A's abort lands here. Its continuation belongs to the queue that reset()
+    // threw away, so it must not start C on top of the pending B.
+    expect(isAbortError(await a)).toBe(true)
+    await flush()
+    expect(started).toEqual([1, 2])
+
+    // B settles, then C runs — one at a time, each resolving its own caller.
+    ds.get(2)?.resolve(2)
+    expect(await b).toBe(2)
+    await flush()
+    expect(started).toEqual([1, 2, 3])
+    ds.get(3)?.resolve(3)
+    expect(await c).toBe(3)
+    root.dispose()
+  })
+
+  test('the abandoned run does not unlock a queue that is still busy', async () => {
+    const { root, started, ds } = serialRoot()
+
+    const a = root.api.save.run(1).catch((e) => e)
+    root.api.save.reset()
+    const b = root.api.save.run(2).catch((e) => e)
+    expect(isAbortError(await a)).toBe(true)
+    await flush()
+
+    // The stale continuation found an empty queue. If it cleared the lock, this
+    // run would start immediately instead of queueing behind B.
+    const c = root.api.save.run(3).catch((e) => e)
+    await flush()
+    expect(started).toEqual([1, 2])
+
+    ds.get(2)?.resolve(2)
+    expect(await b).toBe(2)
+    await flush()
+    expect(started).toEqual([1, 2, 3])
+    ds.get(3)?.resolve(3)
+    expect(await c).toBe(3)
+    root.dispose()
+  })
+
+  test('reset() still rejects queued runs, and a later queue drains normally', async () => {
+    const { root, started, ds } = serialRoot()
+
+    const a = root.api.save.run(1).catch((e) => e)
+    const queued = root.api.save.run(2).catch((e) => e)
+    root.api.save.reset()
+    expect(isAbortError(await a)).toBe(true)
+    expect(isAbortError(await queued)).toBe(true)
+    await flush()
+    // The rejected queue entry never ran, and never runs later.
+    expect(started).toEqual([1])
+
+    const c = root.api.save.run(3).catch((e) => e)
+    await flush()
+    expect(started).toEqual([1, 3])
+    ds.get(3)?.resolve(3)
+    expect(await c).toBe(3)
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// A fetcher that rejects with an `AbortError` nobody in the engine asked for —
+// its own timeout signal, an axios cancel token, a rethrown stale abort — was
+// treated as a supersede: rethrown with no state written. Nothing else was
+// coming to write it, so `isFetching` stayed true, the spinner never stopped,
+// and `root.waitForIdle()` (SSR) never resolved. §5.6 drops errors from
+// OUTDATED fetches; this one is the latest.
+// ---------------------------------------------------------------------------
+describe('regression: a fetcher-originated AbortError settles the entry', () => {
+  test('initial fetch: the in-flight flags clear and the error surfaces', async () => {
+    const entry = new Entry<number>({
+      fetcher: () => () => Promise.reject(new DOMException('timeout', 'AbortError')),
+    })
+    const err = await entry.startFetch().then(
+      () => undefined,
+      (e) => e,
+    )
+    expect(isAbortError(err)).toBe(true)
+    expect(entry.isFetching.peek()).toBe(false)
+    expect(entry.isLoading.peek()).toBe(false)
+    expect(entry.status.peek()).toBe('error')
+    expect(entry.error.peek()).toBe(err)
+    entry.dispose()
+  })
+
+  test('refetch with existing data: data is kept and the flags clear', async () => {
+    let fail = false
+    const entry = new Entry<number>({
+      fetcher: () => () =>
+        fail ? Promise.reject(new DOMException('timeout', 'AbortError')) : Promise.resolve(7),
+    })
+    expect(await entry.startFetch()).toBe(7)
+    fail = true
+    const err = await entry.refetch().then(
+      () => undefined,
+      (e) => e,
+    )
+    expect(isAbortError(err)).toBe(true)
+    expect(entry.isFetching.peek()).toBe(false)
+    expect(entry.isLoading.peek()).toBe(false)
+    expect(entry.data.peek()).toBe(7)
+    expect(entry.status.peek()).toBe('error')
+    expect(entry.error.peek()).toBe(err)
+    entry.dispose()
+  })
+
+  test('a superseded fetch aborting late never clears the newer fetch state', async () => {
+    const calls: Array<ReturnType<typeof deferred<number>>> = []
+    const entry = new Entry<number>({
+      fetcher: () => () => {
+        const d = deferred<number>()
+        calls.push(d)
+        return d.promise // deliberately ignores the signal
+      },
+    })
+    const first = entry.startFetch().catch((e) => e)
+    const second = entry.startFetch().catch((e) => e)
+    expect(calls.length).toBe(2)
+
+    // The superseded fetcher answers late, with an abort of its own.
+    calls[0]?.reject(new DOMException('its own timeout', 'AbortError'))
+    expect(isAbortError(await first)).toBe(true)
+    await flush()
+    // The newer fetch still owns the entry.
+    expect(entry.isFetching.peek()).toBe(true)
+    expect(entry.status.peek()).toBe('pending')
+    expect(entry.error.peek()).toBeUndefined()
+
+    calls[1]?.resolve(9)
+    expect(await second).toBe(9)
+    expect(entry.status.peek()).toBe('success')
+    expect(entry.isFetching.peek()).toBe(false)
+    entry.dispose()
+  })
+
+  test('root.waitForIdle() resolves after a self-aborting fetcher', async () => {
+    const q = defineQuery({
+      id: 'regressions/2088',
+      key: () => ['self-abort'],
+      fetcher: () => Promise.reject(new DOMException('timeout', 'AbortError')),
+    })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.x.status.value).toBe('error'))
+    const outcome = await Promise.race([
+      root.waitForIdle().then(() => 'idle'),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve('still fetching'), 100)
+      }),
+    ])
+    expect(outcome).toBe('idle')
+    root.dispose()
+  })
+})
+
+describe('regression: a fetcher-originated AbortError settles an infinite entry', () => {
+  type Page = { n: number; next: number | null }
+  const selfAbort = () => new DOMException('timeout', 'AbortError')
+
+  test('initial fetch: flags clear, error surfaces, retry is not consulted', async () => {
+    const retry = vi.fn(() => true)
+    const q = defineInfiniteQuery({
+      id: 'regressions/2112',
+      key: () => ['infinite-self-abort-initial'],
+      fetcher: (): Promise<Page> => Promise.reject(selfAbort()),
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+      retry,
+    })
+    const def = defineController((ctx) => ({ list: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.list.status.value).toBe('error'))
+    expect(isAbortError(root.api.list.error.value)).toBe(true)
+    expect(root.api.list.isFetching.value).toBe(false)
+    expect(root.api.list.isLoading.value).toBe(false)
+    expect(retry).not.toHaveBeenCalled()
+    const outcome = await Promise.race([
+      root.waitForIdle().then(() => 'idle'),
+      new Promise<string>((resolve) => {
+        setTimeout(() => resolve('still fetching'), 100)
+      }),
+    ])
+    expect(outcome).toBe('idle')
+    root.dispose()
+  })
+
+  test('fetchNextPage: the direction flag clears and loaded pages are kept', async () => {
+    let failNext = false
+    const q = defineInfiniteQuery({
+      id: 'regressions/2138',
+      key: () => ['infinite-self-abort-next'],
+      fetcher: ({ pageParam }: { pageParam: number }): Promise<Page> =>
+        failNext && pageParam > 0
+          ? Promise.reject(selfAbort())
+          : Promise.resolve({ n: pageParam, next: pageParam + 1 }),
+      initialPageParam: 0,
+      getNextPageParam: (page: Page) => page.next,
+    })
+    const def = defineController((ctx) => ({ list: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await vi.waitFor(() => expect(root.api.list.status.value).toBe('success'))
+    failNext = true
+    const err = await root.api.list.fetchNextPage().then(
+      () => undefined,
+      (e) => e,
+    )
+    expect(isAbortError(err)).toBe(true)
+    expect(root.api.list.isFetchingNextPage.value).toBe(false)
+    expect(root.api.list.isFetching.value).toBe(false)
+    expect(root.api.list.status.value).toBe('error')
+    expect(root.api.list.pages.value).toEqual([{ n: 0, next: 1 }])
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// W9 — three query bugs the 1.0 coverage pass found.
+// ---------------------------------------------------------------------------
+describe('W9 query regressions', () => {
+  test('resume honours an enabled that turned false during suspension (§5.7)', async () => {
+    const on = signal(true)
+    const q = defineQuery({ id: 'w9/resume-disabled', key: () => ['k'], fetcher: async () => 'v' })
+    const def = defineController((ctx) => ({
+      s: createQuery(ctx, q, { enabled: () => on.value }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await root.waitForIdle()
+    expect(root.api.s.data.value).toBe('v')
+    root.suspend()
+    on.set(false)
+    root.resume()
+    expect(root.api.s.isEnabled.value).toBe(false)
+    expect(root.api.s.status.value).toBe('idle')
+    expect(root.api.s.data.value).toBeUndefined()
+    await expect(root.api.s.refetch()).rejects.toMatchObject({ name: 'QueryDisabledError' })
+    on.set(true) // and it re-enables normally afterwards
+    await root.waitForIdle()
+    expect(root.api.s.data.value).toBe('v')
+    root.dispose()
+  })
+
+  test('an infinite query without itemsOf keeps flat equal to pages while retained pages show', async () => {
+    const key = signal('a')
+    let release: (v: { n: number }) => void = () => {}
+    const q = defineInfiniteQuery({
+      id: 'w9/flat-retained',
+      key: (k: string) => [k],
+      fetcher: async ({ pageParam }: { pageParam: number }, k: string) =>
+        k === 'a'
+          ? { n: pageParam }
+          : new Promise<{ n: number }>((resolve) => {
+              release = resolve
+            }),
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      keepPreviousData: true,
+    })
+    const def = defineController((ctx) => ({
+      feed: createQuery(ctx, q, () => [key.value] as [string]),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await root.waitForIdle()
+    expect(root.api.feed.flat.value).toEqual([{ n: 0 }])
+    key.set('b') // pending: the previous pages stay on screen
+    expect(root.api.feed.pages.value).toEqual([{ n: 0 }])
+    expect(root.api.feed.flat.value).toEqual(root.api.feed.pages.value)
+    release({ n: 9 })
+    await root.waitForIdle()
+    root.dispose()
+  })
+
+  test('root.hydrate drops a payload of another version, as createRoot does', () => {
+    const q = defineQuery({
+      id: 'w9/hydrate-version',
+      key: () => [],
+      fetcher: async () => 'fetched',
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const def = defineController((ctx) => ({ q: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    root.hydrate({
+      version: 2,
+      entries: [{ id: 'w9/hydrate-version', key: [], data: 'from-v2', lastUpdatedAt: Date.now() }],
+    } as unknown as Parameters<typeof root.hydrate>[0])
+    expect(root.api.q.data.value).not.toBe('from-v2')
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+    root.dispose()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// W9 — bugs the Stryker survivor triage found.
+// ---------------------------------------------------------------------------
+describe('W9 mutation-testing regressions', () => {
+  const phaseRecorder = (phases: string[]) =>
+    definePlugin({
+      name: 'phases',
+      setup: () => ({
+        onMutation: (e) => {
+          phases.push(e.phase)
+        },
+      }),
+    })
+
+  test('dispose() inside onMutate cancels the run: mutate never runs and the guess rolls back', async () => {
+    const calls: unknown[] = []
+    const phases: string[] = []
+    const q = defineQuery({ id: 'w9m/dispose-in-onmutate', key: () => [], fetcher: async () => 1 })
+    const root = createRoot(
+      defineController((ctx) => {
+        const sub = createQuery(ctx, q)
+        const cached = bindQuery(ctx, q)
+        const m: Mutation<number, number> = createMutation(ctx, {
+          id: 'w9m/dispose-in-onmutate/m',
+          mutate: async (v: number) => {
+            calls.push(v)
+            return v
+          },
+          onMutate: () => {
+            const snap = cached.setData(() => 99)
+            m.dispose()
+            return snap
+          },
+        })
+        return { sub, m }
+      }),
+      { queries: queryEngine(), deps: emptyDeps, plugins: [phaseRecorder(phases)] },
+    )
+    await root.waitForIdle()
+    const outcome = await root.api.m.run(1).then(
+      () => 'resolved',
+      (err: unknown) => (isAbortError(err) ? 'aborted' : 'other'),
+    )
+    expect(outcome).toBe('aborted')
+    expect(calls).toEqual([])
+    expect(root.api.m.status.value).not.toBe('pending')
+    expect(root.api.m.isPending.value).toBe(false)
+    expect(root.api.sub.data.value).toBe(1)
+    expect(phases).toEqual([])
+    root.dispose()
+  })
+
+  test('an AbortError thrown by mutate itself is a failure, not a cancellation', async () => {
+    const phases: string[] = []
+    const onError = vi.fn()
+    const inner = new DOMException('inner', 'AbortError')
+    const q = defineQuery({ id: 'w9m/own-abort', key: () => [], fetcher: async () => 1 })
+    const root = createRoot(
+      defineController((ctx) => ({
+        sub: createQuery(ctx, q),
+        m: createMutation(ctx, {
+          id: 'w9m/own-abort/m',
+          mutate: async () => {
+            throw inner
+          },
+          onMutate: () => bindQuery(ctx, q).setData(() => 99),
+          onError,
+        }),
+      })),
+      { queries: queryEngine(), deps: emptyDeps, plugins: [phaseRecorder(phases)] },
+    )
+    await root.waitForIdle()
+    await expect(root.api.m.run()).rejects.toBe(inner)
+    expect(root.api.m.isPending.value).toBe(false)
+    expect(root.api.m.status.value).toBe('error')
+    expect(root.api.m.error.value).toBe(inner)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(root.api.sub.data.value).toBe(1)
+    expect(phases).toEqual(['start', 'error'])
+    root.dispose()
+  })
+
+  test('an onResume handler that disposes the controller leaves no live effect', () => {
+    const count = signal(0)
+    const runs: number[] = []
+    const holder: { root?: { dispose(): void } } = {}
+    const root = createRoot(
+      defineController((ctx) => {
+        ctx.onResume(() => holder.root?.dispose())
+        ctx.effect(() => {
+          runs.push(count.value)
+        })
+        return {}
+      }),
+      { deps: emptyDeps },
+    )
+    holder.root = root
+    root.suspend()
+    root.resume()
+    count.set(1)
+    expect(runs).toEqual([0])
+  })
+
+  test('an onResume handler that suspends again leaves the controller suspended', () => {
+    const count = signal(0)
+    const runs: number[] = []
+    const holder: { again: boolean; root?: { suspend(): void } } = { again: false }
+    const root = createRoot(
+      defineController((ctx) => {
+        ctx.onResume(() => {
+          if (holder.again) holder.root?.suspend()
+        })
+        ctx.effect(() => {
+          runs.push(count.value)
+        })
+        return {}
+      }),
+      { deps: emptyDeps },
+    )
+    holder.root = root
+    root.suspend()
+    holder.again = true
+    root.resume()
+    count.set(1)
+    expect(runs).toEqual([0])
+    root.dispose()
+  })
+
+  test('an onSuspend handler that disposes the controller stops the remaining handlers', () => {
+    const fired: string[] = []
+    const holder: { root?: { dispose(): void } } = {}
+    const root = createRoot(
+      defineController((ctx) => {
+        // Suspend walks entries in reverse, so `second` runs first.
+        ctx.onSuspend(() => fired.push('first'))
+        ctx.onSuspend(() => {
+          fired.push('second')
+          holder.root?.dispose()
+        })
+        return {}
+      }),
+      { deps: emptyDeps },
+    )
+    holder.root = root
+    root.suspend()
+    expect(fired).toEqual(['second'])
+  })
+})
+
+describe('W9 mutation-testing regressions: outdated fetches and late releases', () => {
+  test('an outdated fetch that fails reaches no onError, as one that succeeds does not (§5.6)', async () => {
+    const onError = vi.fn()
+    let gate: ReturnType<typeof deferred<string>> | null = null
+    const q = defineQuery({
+      id: 'w9m/outdated-error',
+      key: () => ['k'],
+      fetcher: () => (gate ? gate.promise : Promise.resolve('a')),
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ s: createQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+        onError,
+      },
+    )
+    await root.waitForIdle()
+    const outdated = deferred<string>()
+    gate = outdated
+    const handle = root.bindQuery(q)
+    const invalidated = handle.invalidate()
+    gate = null // the catch-up the replace starts answers at once (§6.4)
+    handle.replace('b') // supersedes the refetch the invalidate started
+    outdated.reject(new Error('late'))
+    await invalidated
+    expect(root.api.s.data.value).toBe('a')
+    expect(onError).not.toHaveBeenCalled()
+    root.dispose()
+  })
+
+  test('a prefetch whose request is superseded resolves with the value that won', async () => {
+    let gate: ReturnType<typeof deferred<string>> | null = null
+    const q = defineQuery({
+      id: 'w9m/outdated-prefetch',
+      key: () => ['k'],
+      fetcher: () => (gate ? gate.promise : Promise.resolve('a')),
+    })
+    const root = createRoot(
+      defineController(() => ({})),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+      },
+    )
+    gate = deferred<string>()
+    const handle = root.bindQuery(q)
+    const prefetched = handle.prefetch()
+    handle.replace('b')
+    gate.reject(new Error('late'))
+    await expect(prefetched).resolves.toBe('b')
+    root.dispose()
+  })
+
+  test('a prefetch in flight when the root is disposed leaves no timer behind', async () => {
+    vi.useFakeTimers()
+    try {
+      const q = defineQuery({
+        id: 'w9m/prefetch-dispose-timer',
+        key: () => ['k'],
+        fetcher: ({ signal }) =>
+          new Promise<string>((_resolve, reject) => {
+            signal.addEventListener('abort', () => reject(new DOMException('x', 'AbortError')))
+          }),
+      })
+      const root = createRoot(
+        defineController(() => ({})),
+        {
+          queries: queryEngine(),
+          deps: emptyDeps,
+        },
+      )
+      const prefetched = root
+        .bindQuery(q)
+        .prefetch()
+        .catch(() => {})
+      root.dispose()
+      await prefetched
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+describe('W9 mutation-testing regressions: infinite queries', () => {
+  test('a page that succeeds after a write superseded the first load clears isLoading', async () => {
+    const gates: Array<(p: { n: number }) => void> = []
+    const inf = defineInfiniteQuery({
+      id: 'w9m/loading-wedge',
+      key: () => ['feed'],
+      fetcher: ({ pageParam }: { pageParam: number }) =>
+        new Promise<{ n: number }>((resolve) => {
+          gates[pageParam] = resolve
+        }),
+      initialPageParam: 0,
+      getNextPageParam: (p: { n: number }) => (p.n < 2 ? p.n + 1 : null),
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, inf), h: bindQuery(ctx, inf) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const { feed, h } = root.api
+    expect(feed.isLoading.value).toBe(true)
+    h.write(() => [{ n: 0 }]) // a realtime patch lands during the first load
+    const paging = feed.fetchNextPage()
+    expect(feed.isLoading.value).toBe(false)
+    gates[1]?.({ n: 1 })
+    await paging
+    expect(feed.status.value).toBe('success')
+    expect(feed.isFetching.value).toBe(false)
+    expect(feed.isLoading.value).toBe(false)
+    root.dispose()
+  })
+
+  test('an outdated infinite fetch that fails reaches no onError (§5.6)', async () => {
+    const onError = vi.fn()
+    let gate: ReturnType<typeof deferred<number[]>> | null = null
+    const inf = defineInfiniteQuery({
+      id: 'w9m/infinite-outdated-error',
+      key: () => ['k'],
+      fetcher: () => (gate ? gate.promise : Promise.resolve([1])),
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, inf) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+        onError,
+      },
+    )
+    await root.waitForIdle()
+    const outdated = deferred<number[]>()
+    gate = outdated
+    const handle = root.bindQuery(inf)
+    const invalidated = handle.invalidate()
+    gate = null // the catch-up the replace starts answers at once (§6.4)
+    handle.replace([[2]])
+    outdated.reject(new Error('late'))
+    await invalidated
+    expect(root.api.feed.pages.value).toEqual([[1]])
+    expect(onError).not.toHaveBeenCalled()
+    root.dispose()
+  })
+})
+
+describe('W13 regression: an async validator abandoned by a failing sync one settles quietly', () => {
+  // A sync failure ends the pass before the async results are awaited. The
+  // async promises were already started, and the next pass or dispose aborts
+  // them: unobserved, each rejection was unhandled.
+  type NodeEvents = {
+    on(event: string, handler: (reason: unknown) => void): void
+    off(event: string, handler: (reason: unknown) => void): void
+  }
+  const collectUnhandled = () => {
+    const seen: unknown[] = []
+    const onUnhandled = (reason: unknown) => {
+      seen.push(reason)
+    }
+    // Core's tsconfig has no Node types; the tests run on Node, so reach `process` untyped.
+    const proc = (globalThis as unknown as { process: NodeEvents }).process
+    proc.on('unhandledRejection', onUnhandled)
+    return {
+      seen,
+      stop: () => proc.off('unhandledRejection', onUnhandled),
+    }
+  }
+  const tick = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+  test('a field', async () => {
+    const { debouncedValidator } = await import('../src/forms/field')
+    const { required } = await import('../src/forms/validators')
+    const probe = collectUnhandled()
+    try {
+      const root = createRoot(
+        defineController((ctx) => ({
+          f: createField<string>(ctx, 'ok', {
+            validators: [required('Required'), debouncedValidator(async () => null, 50)],
+          }),
+        })),
+        { deps: emptyDeps },
+      )
+      root.api.f.set('') // `required` fails while the debounced check is pending
+      expect(root.api.f.errors.value).toEqual(['Required'])
+      root.dispose()
+      await tick()
+      expect(probe.seen).toEqual([])
+    } finally {
+      probe.stop()
+    }
+  })
+
+  test('a form', async () => {
+    const probe = collectUnhandled()
+    try {
+      const pending = (_v: unknown, signal: AbortSignal) =>
+        new Promise<null>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('x', 'AbortError')))
+        })
+      const root = createRoot(
+        defineController((ctx) => ({
+          form: createForm(
+            ctx,
+            { a: createField<string>(ctx, '') },
+            { validators: [pending, () => [{ path: [], message: 'bad' }]] },
+          ),
+        })),
+        { deps: emptyDeps },
+      )
+      root.api.form.fields.a.set('x')
+      root.dispose()
+      await tick()
+      expect(probe.seen).toEqual([])
+    } finally {
+      probe.stop()
+    }
+  })
+
+  test('a field array', async () => {
+    const probe = collectUnhandled()
+    try {
+      const pending = (_v: unknown, signal: AbortSignal) =>
+        new Promise<null>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('x', 'AbortError')))
+        })
+      const root = createRoot(
+        defineController((ctx) => ({
+          list: createFieldArray(ctx, (initial?: string) => createField(ctx, initial ?? ''), {
+            validators: [pending, () => 'bad'],
+          }),
+        })),
+        { deps: emptyDeps },
+      )
+      root.api.list.add('x')
+      root.dispose()
+      await tick()
+      expect(probe.seen).toEqual([])
+    } finally {
+      probe.stop()
+    }
+  })
+})
+
+describe('W15 regression: teardown costs', () => {
+  test('a settled fetch keeps its signal unaborted when the entry refetches or is disposed', async () => {
+    const signals: AbortSignal[] = []
+    const q = defineQuery({
+      id: 'w15/settled-signal',
+      key: () => [],
+      fetcher: async ({ signal }) => {
+        signals.push(signal)
+        return signals.length
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ s: createQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+      },
+    )
+    await root.waitForIdle()
+    await root.api.s.refetch()
+    root.dispose()
+    // Aborting a finished request's controller cancels nothing and still
+    // builds a DOMException; it also fired late abort listeners.
+    expect(signals.map((s) => s.aborted)).toEqual([false, false])
+  })
+
+  test('a settled infinite fetch keeps its signal unaborted too', async () => {
+    const signals: AbortSignal[] = []
+    const q = defineInfiniteQuery({
+      id: 'w15/settled-infinite-signal',
+      key: () => [],
+      fetcher: async ({ pageParam, signal }: { pageParam: number; signal: AbortSignal }) => {
+        signals.push(signal)
+        return [pageParam]
+      },
+      initialPageParam: 0,
+      getNextPageParam: (_last: number[], all: number[][]) => (all.length < 2 ? all.length : null),
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+      },
+    )
+    await root.waitForIdle()
+    await root.api.feed.fetchNextPage()
+    root.dispose()
+    expect(signals.map((s) => s.aborted)).toEqual([false, false])
+  })
+
+  test('disposing a root arms no gc timer for the entries it is about to drop', async () => {
+    const q = defineQuery({
+      id: 'w15/dispose-timers',
+      key: (i: number) => [i],
+      fetcher: async (_c, i) => i,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({
+        subs: [0, 1, 2].map((i) => createQuery(ctx, q, () => [i] as [number])),
+      })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await root.waitForIdle()
+    const spy = vi.spyOn(globalThis, 'setTimeout')
+    try {
+      root.dispose()
+      expect(spy).not.toHaveBeenCalled()
+    } finally {
+      spy.mockRestore()
+    }
+  })
+})
+
+describe('W15 regression: a form partial carrying prototype keys', () => {
+  test('Form.set and setAsInitial skip keys the form does not own', () => {
+    const root = createRoot(
+      defineController((ctx) => ({
+        form: createForm(ctx, { name: createField<string>(ctx, '') }),
+      })),
+      { deps: emptyDeps },
+    )
+    // Parsed JSON keeps `__proto__` as an own key; the rest name Object.prototype members.
+    const partial = JSON.parse(
+      '{"__proto__":{"x":1},"constructor":"c","toString":"t","name":"Ada"}',
+    )
+    expect(() => root.api.form.set(partial)).not.toThrow()
+    expect(root.api.form.fields.name.value).toBe('Ada')
+    expect(() => root.api.form.setAsInitial(partial)).not.toThrow()
+    expect(root.api.form.fields.name.isDirty.value).toBe(false)
+    expect(({} as Record<string, unknown>).x).toBeUndefined()
+    root.dispose()
+  })
+})
+
+describe('W15 regression: a malformed hydration payload', () => {
+  const deepKey = (depth: number): unknown[] => {
+    let key: unknown[] = []
+    for (let i = 0; i < depth; i++) key = [key]
+    return key
+  }
+
+  test('one bad entry does not fail createRoot, and the good ones still hydrate', () => {
+    const q = defineQuery({
+      id: 'w15/hydrate-guard',
+      key: () => [],
+      fetcher: async () => 'fetched',
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const root = createRoot(
+        defineController((ctx) => ({ q: createQuery(ctx, q) })),
+        {
+          queries: queryEngine(),
+          deps: emptyDeps,
+          hydrate: {
+            version: 1,
+            entries: [
+              null,
+              { id: 'w15/deep', key: deepKey(20_000), data: 1, lastUpdatedAt: 1 },
+              { id: 'w15/hydrate-guard', key: [], data: 'hydrated', lastUpdatedAt: Date.now() },
+            ],
+          } as unknown as Parameters<typeof createRoot>[1]['hydrate'],
+        },
+      )
+      expect(root.api.q.data.value).toBe('hydrated')
+      root.hydrate({ version: 1, entries: [null] } as unknown as Parameters<typeof root.hydrate>[0])
+      root.hydrate({ version: 1, entries: null } as unknown as Parameters<typeof root.hydrate>[0])
+      root.dispose()
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

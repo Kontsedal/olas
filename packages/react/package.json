@@ -1,7 +1,7 @@
 {
   "name": "@kontsedal/olas-react",
   "version": "0.8.0",
-  "description": "Olas React adapter — OlasProvider, useRoot, useQuery, useField, KeepAlive, useSuspendOnHidden.",
+  "description": "Olas React adapter — OlasProvider, useRoot, useValue, useQuery, useField, useMutation, SuspendOnUnmount, SSR hydration and streaming.",
   "keywords": [
     "olas",
     "controller-tree",
@@ -10,12 +10,11 @@
     "state-management",
     "react",
     "hooks",
-    "keep-alive",
     "concurrent-react"
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   },
   "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
   "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/react#readme",
@@ -28,19 +27,12 @@
     "url": "https://github.com/Kontsedal/olas/issues"
   },
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.cts",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": {
-        "types": "./dist/index.d.mts",
-        "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./dist/index.d.cts",
-        "default": "./dist/index.cjs"
-      }
+      "types": "./dist/index.d.ts",
+      "development": "./dist/dev/index.js",
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -50,20 +42,21 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ambient-deps.json"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": ">=0.3.0",
+    "@kontsedal/olas-core": ">=0.3.0 <1.0.0",
     "react": ">=18"
   },
   "devDependencies": {
     "@kontsedal/olas-core": "workspace:^",
-    "@testing-library/react": "^16.3.2",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "jsdom": "^29.1.1",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "@testing-library/react": "^16.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "jsdom": "^30.1.1",
+    "preact": "^10.29.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
   },
   "publishConfig": {
     "access": "public"

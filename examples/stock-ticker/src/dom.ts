@@ -90,7 +90,7 @@ export function makeSparkline(values: readonly number[]): SVGSVGElement {
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
   path.setAttribute('d', d)
   path.setAttribute('fill', 'none')
-  path.setAttribute('stroke', trend ? 'var(--green)' : 'var(--red)')
+  path.setAttribute('stroke', trend ? 'var(--color-success)' : 'var(--color-danger)')
   path.setAttribute('stroke-width', '1.4')
   path.setAttribute('stroke-linejoin', 'round')
   path.setAttribute('stroke-linecap', 'round')

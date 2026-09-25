@@ -6,77 +6,27 @@ covers:
   - packages/core/src/query/client.ts
   - packages/core/src/query/define.ts
 edges:
+  - { type: tested-by, target: ../../packages/core/tests/query-isolation.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-25
 confidence: high
 ---
 
 # Per-root QueryClient
 
-## The choice
+Every root owns a QueryClient and its cache entries. Definitions are module-scoped, so roots can reuse a query while fetching with different deps.
 
-`createRoot(...)` instantiates a fresh `QueryClient`. Queries (`defineQuery(...)`) are module-scoped values, but their cache entries live on per-root clients. There is no global `queryClient` singleton.
+## Selecting a root
 
-## Why
+As of 0.9, use `bindQuery(ctx, query)` or `root.bindQuery(query)` for imperative operations. The handle routes directly to its client (`packages/core/src/query/client.ts`, `bindQuery`; shared methods in `packages/core/src/query/actions.ts`). Binding does not fetch or subscribe. It registers the client so an unbound call can detect ambiguity. Bound prefetch works before subscriptions; retained handles fail after root disposal.
 
-### Test isolation
+Unbound helpers remain single-root shortcuts. More than one registered root causes an error before any read, write, cancellation or fetch. Previously, writes/invalidation fanned out while reads/prefetch chose the first root. That behavior could cross SSR request boundaries even though storage was per root. The new guard and bound handles prevent the reproduced cross-root writes. An intentional broadcast must select each root explicitly. Cross-tab transport remains an opt-in plugin concern.
 
-Tests create a root, run, dispose. Without per-root clients, cache state would bleed between tests. Per-root clients give you a fresh cache for every test with zero ceremony — `createTestController(def, { deps, props })` is enough.
+## Lifetime
 
-The mechanism: each `Query` carries `__clients: Set<QueryClient>`. When a client binds an entry for a query, it adds itself to that set. `query.invalidate(...)` iterates the set and reaches every live client. On root dispose, the client removes itself from every touched query's `__clients`. After dispose + GC, the set is empty again.
+A definition holds a Set of clients that have bound a handle or entry. The client tracks touched definitions and removes itself from their sets on disposal. One root's disposal does not invalidate another root's handle. Cache entries and deps remain root-local.
 
-### Multiple roots in one process
+## Evidence
 
-Sometimes useful: SSR + client hydration, web-worker controllers, micro-frontends, A/B variants. A singleton would force them to share cache state by accident.
-
-### Deps and `onError` are per-root
-
-A `QueryClient` carries the root's `onError`. Different roots can use different error handlers. A singleton would force one handler for all roots.
-
-## The cost
-
-Some duplicated cache when multiple roots are alive at once. In practice: rare, and the spec accepts this trade.
-
-`query.prefetch(...)` is the one place where "which client?" is ambiguous when called outside a controller. Current behavior (`define.ts`): use the **first** client in `__clients`. For multi-root setups, that may be wrong. Spec §21.5 acknowledges this is implementation detail. If the multi-root prefetch case matters, the API needs to take a client explicitly.
-
-## How the multi-root binding works mechanically
-
-```ts
-// define.ts
-const query = {
-  __olas: 'query',
-  __spec: spec,
-  __clients: new Set<QueryClient>(),
-
-  invalidate(...args) {
-    // Promise<void>: resolves when every client's triggered refetch settles.
-    return Promise.all([...this.__clients].map((c) => c.invalidate(this, args))).then(() => {})
-  },
-  invalidateAll() {
-    return Promise.all([...this.__clients].map((c) => c.invalidateAll(this))).then(() => {})
-  },
-  setData(...rest) {
-    // collect rollbacks across clients; aggregate
-  },
-  prefetch(...args) {
-    const [first] = this.__clients
-    if (!first) return Promise.reject(...)
-    return first.prefetch(this, args)
-  },
-}
-```
-
-```ts
-// client.ts
-bindEntry(query, args) {
-  // ...
-  query.__clients.add(this)
-  this.touchedQueries.add(query)
-  // ...
-}
-dispose() {
-  for (const q of this.touchedQueries) q.__clients.delete(this)
-  // ...
-}
-```
+`packages/core/tests/query-isolation.test.ts` covers separate request data, optimistic rollback, canonical writes, cancellation, invalidation, prefetch, infinite queries, ambiguity guards and disposal. SPEC §21.5 defines the contract.

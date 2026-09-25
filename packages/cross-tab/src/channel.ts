@@ -1,9 +1,8 @@
 /**
  * Tiny `BroadcastChannel`-shaped abstraction. Lets tests inject a fake
  * (a shared in-memory bus across multiple "tabs" in the same process) and
- * keeps SSR-safety in one place — when `BroadcastChannel` is absent and
- * no `channelFactory` override is supplied, the plugin returns a no-op
- * variant up the stack.
+ * keeps server safety in one place: outside a browser, and with no
+ * `channelFactory` override, the plugin opens no channel and installs no hooks.
  */
 
 export type ChannelLike = {
@@ -14,12 +13,37 @@ export type ChannelLike = {
 }
 
 /**
- * Default factory: wraps the platform `BroadcastChannel`. Returns
- * `undefined` when `BroadcastChannel` is not defined (SSR / Node without
- * `--experimental-broadcastchannel`, older browsers).
+ * Whether this global scope is a browser's: a document (a tab or an iframe),
+ * or a web worker (dedicated, shared or service). Node, Bun and Deno define
+ * `BroadcastChannel` too, but there a channel reaches every root in the
+ * process, and other worker threads or isolates as well. A server that builds
+ * a root per request would render one user's writes into another user's page.
+ * A Deno or Bun worker has a `WorkerGlobalScope` like a browser worker, so
+ * those runtimes are ruled out by name. The document check comes first: in a
+ * tab, HTML named access makes an element with the id `Bun` the global `Bun`.
+ */
+function isBrowserScope(): boolean {
+  const g = globalThis as {
+    Deno?: unknown
+    Bun?: unknown
+    document?: unknown
+    WorkerGlobalScope?: unknown
+  }
+  if (typeof g.document === 'object' && g.document !== null) return true
+  if (g.Deno !== undefined || g.Bun !== undefined) return false
+  const Scope = g.WorkerGlobalScope
+  return typeof Scope === 'function' && globalThis instanceof Scope
+}
+
+/**
+ * Default factory: wraps the platform `BroadcastChannel` in a browser tab or
+ * a web worker. Returns `undefined` anywhere else, such as on a Node, Bun or
+ * Deno server, and where `BroadcastChannel` is not defined. A
+ * `channelFactory` passed to `crossTabPlugin` opens a channel wherever it
+ * returns one.
  */
 export function defaultChannelFactory(name: string): ChannelLike | undefined {
-  if (typeof BroadcastChannel === 'undefined') return undefined
+  if (typeof BroadcastChannel === 'undefined' || !isBrowserScope()) return undefined
   const ch = new BroadcastChannel(name)
   return {
     postMessage(data) {

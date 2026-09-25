@@ -3,12 +3,12 @@ name: raceabort-for-misbehaving-mutate
 description: Wrap the mutate fn's promise in a raceAbort against the abort signal. Otherwise misbehaving mutates can hang forever.
 type: pitfall
 covers:
-  - packages/core/src/query/mutation.ts:184-247
-  - packages/core/src/query/mutation.ts:347-374
+  - packages/core/src/query/mutation.ts:836-869
+  - packages/core/src/query/mutation.ts:608-679
 edges:
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: uses, target: ../entities/mutation.md }
-last_verified: 2026-05-21
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -16,10 +16,10 @@ confidence: high
 
 ## The trap
 
-`AbortSignal` is cooperative — the holder of the signal must check / honor it. If a user's `mutate` function ignores its signal:
+`AbortSignal` is cooperative — the holder of the signal must check and honor it. If a user's `mutate` function ignores its signal:
 
 ```ts
-ctx.mutation({
+createMutation(ctx, {
   mutate: async (vars) => {
     return externalLibrary.doStuff(vars)   # does not pass the AbortSignal through
   },
@@ -48,14 +48,19 @@ Wrap the awaited promise in `raceAbort`:
 
 ```ts
 try {
-  const result = await raceAbort(this.runWithRetry(vars, abort.signal), abort.signal)
-  if (abort.signal.aborted || this.disposed) {
-    snapshot?.rollback()
+  const result = await raceAbort(this.runWithRetry(vars, abort.signal, runId), abort.signal)
+  if (abort.signal.aborted || this.cancelledByDispose) {
+    // The work finished and the abort landed in the gap: commit, report success.
+    snapshot?.finalize()
+    this.report(runId, vars, 'success', { result })
+    settledOutcome = true
     throw new DOMException('Superseded', 'AbortError')
   }
   ...
 }
 ```
+
+The late-abort branch finalizes rather than rolls back (`mutation.ts:610-632`). Once `raceAbort` resolved, the server holds the write, so a rollback would put a known-stale value into the cache. The catch block rolls back only when the abort came first (`mutation.ts:644-668`).
 
 ```ts
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

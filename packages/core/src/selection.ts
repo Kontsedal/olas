@@ -3,13 +3,13 @@ import { readOnly } from './signals/readonly'
 import type { ReadSignal } from './signals/types'
 
 /**
- * Multi-select state for tables / lists with bulk actions (spec §17.5).
+ * Multi-select state for tables / lists with bulk actions (spec §16.5).
  *
  * Plain function — not bound to `ctx`. Place it in a controller's closure so
  * it dies with the closure. The phantom `T` parameter brands the selection by
  * item type; IDs are always strings.
  */
-// biome-ignore lint/correctness/noUnusedVariables: phantom branding param (spec §17.5)
+// biome-ignore lint/correctness/noUnusedVariables: phantom branding param (spec §16.5)
 export type Selection<T = unknown> = {
   selectedIds: ReadSignal<ReadonlySet<string>>
   size: ReadSignal<number>
@@ -37,23 +37,44 @@ export type Selection<T = unknown> = {
  * - shift-click → range from anchor to `id` along `ordered` (anchor sticks,
  *   so subsequent shift-clicks extend from the same origin)
  *
- * Spec §16.5 / §17.5.
+ * Spec §16.5.
  */
-export function selection<T = unknown>(options?: { initial?: readonly string[] }): Selection<T> {
+export function createSelection<T = unknown>(options?: {
+  initial?: readonly string[]
+}): Selection<T> {
   const ids = signal<ReadonlySet<string>>(new Set(options?.initial))
   let anchor: string | null = options?.initial?.length
     ? (options.initial[options.initial.length - 1] ?? null)
     : null
   // Snapshot of the selection just before the first shift-click of a run.
   // Subsequent shift-clicks re-compute the range against this snapshot so the
-  // user can shrink or grow the range. Reset on any non-shift click.
+  // user can shrink or grow the range. Reset on any non-shift click, and by
+  // every programmatic change below: a stale snapshot dropped the ids selected
+  // since, and brought back the ids deselected since, on the next shift-click.
   let preShiftSelection: ReadonlySet<string> | null = null
 
   const size = computed(() => ids.value.size)
 
-  const isSelected = (id: string): ReadSignal<boolean> => computed(() => ids.value.has(id))
+  // One computed per id, handed out again for as long as anything holds it.
+  // A row that renders `use(sel.isSelected(id))` therefore gets the same signal
+  // every render, instead of a fresh one that makes the hook unsubscribe and
+  // re-subscribe each time. The cache holds its computeds weakly. A 50k-row
+  // table scrolled end to end would otherwise pin one computed per row forever.
+  const selectedById = new Map<string, WeakRef<ReadSignal<boolean>>>()
+  const collected = new FinalizationRegistry<string>((id) => {
+    if (selectedById.get(id)?.deref() === undefined) selectedById.delete(id)
+  })
+  const isSelected = (id: string): ReadSignal<boolean> => {
+    const cached = selectedById.get(id)?.deref()
+    if (cached !== undefined) return cached
+    const created = computed(() => ids.value.has(id))
+    selectedById.set(id, new WeakRef(created))
+    collected.register(created, id)
+    return created
+  }
 
   const select = (id: string): void => {
+    preShiftSelection = null
     const prev = ids.peek()
     if (!prev.has(id)) {
       const next = new Set(prev)
@@ -64,6 +85,9 @@ export function selection<T = unknown>(options?: { initial?: readonly string[] }
   }
 
   const deselect = (id: string): void => {
+    // Ends the shift run even when `id` is not selected, as every other
+    // programmatic call does (spec §16.5).
+    preShiftSelection = null
     const prev = ids.peek()
     if (!prev.has(id)) return
     const next = new Set(prev)
@@ -75,6 +99,7 @@ export function selection<T = unknown>(options?: { initial?: readonly string[] }
   }
 
   const toggle = (id: string): void => {
+    preShiftSelection = null
     const prev = ids.peek()
     const next = new Set(prev)
     if (prev.has(id)) {
@@ -87,6 +112,7 @@ export function selection<T = unknown>(options?: { initial?: readonly string[] }
   }
 
   const clear = (): void => {
+    preShiftSelection = null
     if (ids.peek().size === 0) {
       anchor = null
       return
@@ -96,6 +122,7 @@ export function selection<T = unknown>(options?: { initial?: readonly string[] }
   }
 
   const selectAll = (incoming: readonly string[]): void => {
+    preShiftSelection = null
     ids.set(new Set(incoming))
     anchor = incoming.length > 0 ? (incoming[incoming.length - 1] ?? null) : null
   }

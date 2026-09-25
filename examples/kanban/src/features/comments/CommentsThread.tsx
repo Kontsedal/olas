@@ -1,14 +1,14 @@
-import { use, useRoot } from '@kontsedal/olas-react'
+import { useRoot, useValue } from '@kontsedal/olas-react'
 import { Send } from 'lucide-react'
-import type { AppApi } from '../../app.controller'
+import type { Comment } from '../../api'
 import { UserEntity } from '../../entities'
 import { Avatar, Button } from '../../ui'
 
 export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
-  const app = useRoot<AppApi>()
-  const visible = use(app.comments.visible)
-  const draft = use(app.comments.draft)
-  const isPending = use(app.comments.addComment.isPending)
+  const app = useRoot()
+  const visible = useValue(app.comments.visible)
+  const draft = useValue(app.comments.draft)
+  const isPending = useValue(app.comments.addComment.isPending)
 
   const onSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
@@ -27,21 +27,7 @@ export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
         {visible.length === 0 ? (
           <li className="olas-comments-empty">No comments yet. Start the conversation.</li>
         ) : (
-          visible.map((c) => {
-            const author = app.entities.get(UserEntity, c.authorId)
-            return (
-              <li key={c.id} className="olas-comment">
-                <Avatar name={author?.name ?? 'Unknown'} hue={author?.hue} size="sm" />
-                <div className="olas-comment-body">
-                  <div className="olas-comment-meta">
-                    <strong>{author?.name ?? 'Someone'}</strong>
-                    <span>{relTime(c.createdAt)}</span>
-                  </div>
-                  <p className="olas-comment-text">{c.body}</p>
-                </div>
-              </li>
-            )
-          })
+          visible.map((c) => <CommentRow key={c.id} comment={c} />)
         )}
       </ul>
 
@@ -64,6 +50,33 @@ export function CommentsThread({ cardId: _cardId }: { cardId: string }) {
         </Button>
       </form>
     </section>
+  )
+}
+
+/**
+ * One comment, with its author read reactively.
+ *
+ * `entities.get(...)` is a documented non-reactive peek: a profile rename
+ * arriving from anywhere else would not reach this row until the comments
+ * query refetched. `entities.signal(...)` is the reactive read. It lives in
+ * its own component because React matches hooks by call order, and a
+ * `use(...)` inside the `.map` above would change the hook count with the
+ * comment count.
+ */
+function CommentRow({ comment }: { comment: Comment }) {
+  const app = useRoot()
+  const author = useValue(app.entities.signal(UserEntity, comment.authorId))
+  return (
+    <li className="olas-comment">
+      <Avatar name={author?.name ?? 'Unknown'} hue={author?.hue} size="sm" />
+      <div className="olas-comment-body">
+        <div className="olas-comment-meta">
+          <strong>{author?.name ?? 'Someone'}</strong>
+          <span>{relTime(comment.createdAt)}</span>
+        </div>
+        <p className="olas-comment-text">{comment.body}</p>
+      </div>
+    </li>
   )
 }
 

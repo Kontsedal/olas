@@ -1,6 +1,14 @@
 // @vitest-environment jsdom
 
-import { createRoot, defineController, defineQuery, effect } from '@kontsedal/olas-core'
+import {
+  createQuery,
+  createRoot,
+  defineController,
+  defineInfiniteQuery,
+  defineQuery,
+  effect,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   createStreamingHydrator,
@@ -8,6 +16,7 @@ import {
   installStreamingIntake,
   STREAMING_GLOBAL,
 } from '../src/streaming'
+import { entriesOf } from './_streaming'
 
 afterEach(() => {
   // Wipe the global between tests so leaks don't infect the next case.
@@ -15,44 +24,27 @@ afterEach(() => {
 })
 
 describe('createStreamingHydrator (server side)', () => {
-  test('captures local setData writes to queries with a queryId', async () => {
+  test('captures a fetch result written to a query with an id', async () => {
     const users = defineQuery({
-      queryId: 'streaming-test-users',
+      id: 'streaming-test-users',
       key: () => [],
       fetcher: async () => ['alice', 'bob'],
     })
-    const def = defineController((ctx) => ({ users: ctx.use(users) }))
+    const def = defineController((ctx) => ({ users: createQuery(ctx, users) }))
 
     const { plugin, flush, dispose } = createStreamingHydrator()
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
 
     // Wait for the initial fetch to settle.
     await root.waitForIdle()
 
     const html = flush()
-    expect(html).toContain('<script>')
-    expect(html).toContain('"queryId":"streaming-test-users"')
-    expect(html).toContain('"data":["alice","bob"]')
+    expect(html.startsWith('<script>')).toBe(true)
+    expect(entriesOf(html)).toMatchObject([
+      { queryId: 'streaming-test-users', key: [], data: ['alice', 'bob'] },
+    ])
 
     // Second flush is empty (no new entries).
-    expect(flush()).toBe('')
-
-    dispose()
-    root.dispose()
-  })
-
-  test("skips queries without a queryId — they can't round-trip", async () => {
-    const anon = defineQuery({
-      key: () => [],
-      fetcher: async () => 'x',
-    })
-    const def = defineController((ctx) => ({ anon: ctx.use(anon) }))
-
-    const { plugin, flush, dispose } = createStreamingHydrator()
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
-    await root.waitForIdle()
-
-    // No queryId → cross-tab / streaming hooks don't fire.
     expect(flush()).toBe('')
 
     dispose()
@@ -63,26 +55,28 @@ describe('createStreamingHydrator (server side)', () => {
   // and corrupt the whole stream chunk; skip it (dev-warn), keep the rest.
   test('flush skips an un-serializable entry instead of corrupting the chunk', async () => {
     const bad = defineQuery({
-      queryId: 'streaming-bad',
+      id: 'streaming-bad',
       key: () => [],
       fetcher: async () => ({ n: 10n }), // BigInt → JSON.stringify throws
     })
     const good = defineQuery({
-      queryId: 'streaming-good',
+      id: 'streaming-good',
       key: () => [],
       fetcher: async () => ['ok'],
     })
-    const def = defineController((ctx) => ({ bad: ctx.use(bad), good: ctx.use(good) }))
+    const def = defineController((ctx) => ({
+      bad: createQuery(ctx, bad),
+      good: createQuery(ctx, good),
+    }))
 
     const { plugin, flush, dispose } = createStreamingHydrator()
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await root.waitForIdle()
 
     // Must NOT throw. The good entry survives; the BigInt one is skipped + warned.
     const html = flush()
-    expect(html).toContain('"queryId":"streaming-good"')
-    expect(html).not.toContain('streaming-bad')
+    expect(entriesOf(html).map((e) => e.queryId)).toEqual(['streaming-good'])
     expect(warn).toHaveBeenCalled()
 
     warn.mockRestore()
@@ -92,21 +86,21 @@ describe('createStreamingHydrator (server side)', () => {
 
   test('escapes </ in serialized data to prevent script-tag breakout', async () => {
     const evil = defineQuery({
-      queryId: 'streaming-evil',
+      id: 'streaming-evil',
       key: () => [],
       fetcher: async () => '</script><img src=x onerror=alert(1)>',
     })
-    const def = defineController((ctx) => ({ evil: ctx.use(evil) }))
+    const def = defineController((ctx) => ({ evil: createQuery(ctx, evil) }))
 
     const { plugin, flush } = createStreamingHydrator()
-    const root = createRoot(def, { deps: {}, plugins: [plugin] })
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
     await root.waitForIdle()
 
     const html = flush()
-    // The literal `</` must not appear unescaped between <script> tags.
-    expect(html).toContain('<script>')
-    expect(html).not.toContain('</script><img')
-    expect(html).toContain('\\u003c/script')
+    // The payload cannot end the script: its one `</script>` is the tag's own.
+    expect(html.match(/<\/script>/g)).toHaveLength(1)
+    expect(html).not.toContain('<img')
+    expect(entriesOf(html)[0]?.data).toBe('</script><img src=x onerror=alert(1)>')
     root.dispose()
   })
 })
@@ -135,19 +129,19 @@ describe('installStreamingIntake (client side)', () => {
 
   test('drains a pre-mount queue + forwards subsequent pushes to the root', async () => {
     const users = defineQuery({
-      queryId: 'streaming-test-users',
+      id: 'streaming-test-users',
       key: () => [],
       fetcher: async () => ['fresh-from-fetcher'],
     })
-    const def = defineController((ctx) => ({ users: ctx.use(users) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ users: createQuery(ctx, users) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // Don't subscribe yet — the entry isn't bound. installStreamingIntake
     // should buffer the preloaded data so a future subscribe picks it up.
     const uninstall = installStreamingIntake(root)
 
     // Now subscribe (mimics a component mounting after the intake drain).
-    const sub = (root as { users: { data: { peek: () => unknown[] | undefined } } }).users
-    // Wait a microtask for the intake's `applyDehydratedEntry` to settle
+    const sub = (root.api as { users: { data: { peek: () => unknown[] | undefined } } }).users
+    // Wait a microtask for the intake's `root.hydrate` to settle
     // any buffered hydratedData slot — bind is synchronous here so peek
     // returns the preloaded value.
     await Promise.resolve()
@@ -174,17 +168,17 @@ describe('installStreamingIntake (client side)', () => {
 
   test('intake apply runs inside a single signal batch per arriving batch', async () => {
     const q1 = defineQuery({
-      queryId: 'streaming-batch-q1',
+      id: 'streaming-batch-q1',
       key: () => [],
       fetcher: async () => 'v1',
     })
     const q2 = defineQuery({
-      queryId: 'streaming-batch-q2',
+      id: 'streaming-batch-q2',
       key: () => [],
       fetcher: async () => 'v2',
     })
-    const def = defineController((ctx) => ({ a: ctx.use(q1), b: ctx.use(q2) }))
-    const root = createRoot(def, { deps: {} })
+    const def = defineController((ctx) => ({ a: createQuery(ctx, q1), b: createQuery(ctx, q2) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     // Override the pre-populated queue from `beforeEach` — irrelevant to
     // this test.
     ;(globalThis as unknown as Record<string, unknown>)[STREAMING_GLOBAL] = {
@@ -195,7 +189,7 @@ describe('installStreamingIntake (client side)', () => {
       },
     }
     const uninstall = installStreamingIntake(root)
-    const sub = root as {
+    const sub = root.api as {
       a: { data: { value: unknown; peek: () => unknown } }
       b: { data: { value: unknown; peek: () => unknown } }
     }
@@ -219,8 +213,8 @@ describe('installStreamingIntake (client side)', () => {
     ]
     if (intake === undefined) throw new Error('intake missing')
     intake.push([
-      { queryId: 'streaming-batch-q1', key: [], data: 'next-v1', lastUpdatedAt: 100 },
-      { queryId: 'streaming-batch-q2', key: [], data: 'next-v2', lastUpdatedAt: 100 },
+      { queryId: 'streaming-batch-q1', key: [], data: 'next-v1', lastUpdatedAt: Date.now() },
+      { queryId: 'streaming-batch-q2', key: [], data: 'next-v2', lastUpdatedAt: Date.now() },
     ])
     // Effect runs once for the batch, not twice.
     expect(runs - baseline).toBe(1)
@@ -243,9 +237,9 @@ describe('installStreamingIntake (client side)', () => {
         if (g !== undefined) g.q.push(batch)
       },
     }
-    const q = defineQuery({ queryId: 'streaming-late', key: () => [], fetcher: async () => 'x' })
-    const def = defineController((ctx) => ({ v: ctx.use(q) }))
-    const root = createRoot(def, { deps: {} })
+    const q = defineQuery({ id: 'streaming-late', key: () => [], fetcher: async () => 'x' })
+    const def = defineController((ctx) => ({ v: createQuery(ctx, q) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
     const uninstall = installStreamingIntake(root)
     uninstall() // teardown → re-installs a bootstrap-style queue
 
@@ -258,6 +252,38 @@ describe('installStreamingIntake (client side)', () => {
     expect(intake.q.length).toBe(1)
 
     root.dispose()
+  })
+})
+
+describe('installStreamingIntake — several roots', () => {
+  test('every installed root receives each batch, and a late root catches up', async () => {
+    const q = defineQuery({
+      id: 'streaming-fanout',
+      key: () => [],
+      fetcher: async () => 'fetched',
+      staleTime: 60_000,
+    })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const a = createRoot(def, { queries: queryEngine(), deps: {} })
+    const offA = installStreamingIntake(a)
+    const intake = (globalThis as unknown as Record<string, { push: (b: unknown) => void }>)[
+      STREAMING_GLOBAL
+    ]
+    const b = createRoot(def, { queries: queryEngine(), deps: {} })
+    const offB = installStreamingIntake(b)
+    intake?.push([{ queryId: 'streaming-fanout', key: [], data: 'streamed', lastUpdatedAt: 1 }])
+    expect(a.api.x.data.peek()).toBe('streamed')
+    expect(b.api.x.data.peek()).toBe('streamed')
+
+    // A root installed after the batch arrived still gets it.
+    const late = createRoot(def, { queries: queryEngine(), deps: {} })
+    const offLate = installStreamingIntake(late)
+    expect(late.api.x.data.peek()).toBe('streamed')
+
+    offA()
+    offB()
+    offLate()
+    for (const r of [a, b, late]) r.dispose()
   })
 })
 
@@ -311,5 +337,59 @@ describe('createStreamingTransform', () => {
       seen.push(dec.decode(value))
     }
     expect(seen).toEqual(['<script>trailing</script>'])
+  })
+})
+
+describe('streaming an infinite query', () => {
+  test('the server captures pages with params, and the client pages on from them', async () => {
+    type Page = { items: string[]; next: number | null }
+    const pageAt = (n: number): Page => ({ items: [`item-${n}`], next: n < 3 ? n + 1 : null })
+    const serverFeed = defineInfiniteQuery({
+      id: 'streaming-feed',
+      key: () => [],
+      fetcher: async ({ pageParam }) => pageAt(pageParam),
+      initialPageParam: 0,
+      getNextPageParam: (p: Page) => p.next,
+      itemsOf: (p: Page) => p.items,
+    })
+    const { plugin, flush, dispose } = createStreamingHydrator()
+    const server = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, serverFeed) })),
+      { queries: queryEngine(), deps: {}, plugins: [plugin] },
+    )
+    await server.waitForIdle()
+    await server.api.feed.fetchNextPage()
+    const html = flush()
+    const payload = entriesOf(html)
+    expect(payload[0]?.pageParams).toEqual([0, 1])
+    dispose()
+    server.dispose()
+
+    // The client receives the batch the bootstrap script would have pushed.
+    const fetched: number[] = []
+    const clientFeed = defineInfiniteQuery({
+      id: 'streaming-feed',
+      key: () => [],
+      fetcher: async ({ pageParam }) => {
+        fetched.push(pageParam)
+        return pageAt(pageParam)
+      },
+      initialPageParam: 0,
+      getNextPageParam: (p: Page) => p.next,
+      itemsOf: (p: Page) => p.items,
+      staleTime: 60_000,
+    })
+    ;(globalThis as Record<string, unknown>)[STREAMING_GLOBAL] = { q: [payload], push() {} }
+    const client = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, clientFeed) })),
+      { queries: queryEngine(), deps: {} },
+    )
+    const uninstall = installStreamingIntake(client)
+    await client.waitForIdle()
+    expect(client.api.feed.flat.value).toEqual(['item-0', 'item-1'])
+    await client.api.feed.fetchNextPage()
+    expect(fetched.at(-1)).toBe(2) // paged on from the streamed params
+    uninstall()
+    client.dispose()
   })
 })

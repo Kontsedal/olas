@@ -6,5 +6,6 @@
     "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*", "tests/**/*"]
+  "include": ["src/**/*", "tests/**/*", "bench/**/*"],
+  "exclude": ["tests/ambient-deps.test-d.ts"]
 }

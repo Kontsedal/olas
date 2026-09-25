@@ -19,6 +19,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "verbatimModuleSyntax": false,
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    "stripInternal": true
   }
 }

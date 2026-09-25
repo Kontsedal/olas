@@ -14,8 +14,17 @@ type Sub = () => void
 const focusSubs = new Set<Sub>()
 const onlineSubs = new Set<Sub>()
 
-function fireFocus(): void {
-  for (const fn of focusSubs) {
+/**
+ * Call every subscriber present when the event fired, as the DOM dispatches:
+ * one added during the dispatch waits for the next event, and one removed
+ * before its turn is skipped. Iterating the live set instead visits entries
+ * added mid-loop. An entry parked offline re-subscribes from inside its
+ * handler, so one `online` event that arrived while `navigator.onLine` still
+ * read false spun without end.
+ */
+function fire(subs: Set<Sub>): void {
+  for (const fn of [...subs]) {
+    if (!subs.has(fn)) continue
     try {
       fn()
     } catch {
@@ -24,14 +33,12 @@ function fireFocus(): void {
   }
 }
 
+function fireFocus(): void {
+  fire(focusSubs)
+}
+
 function fireOnline(): void {
-  for (const fn of onlineSubs) {
-    try {
-      fn()
-    } catch {
-      // ditto
-    }
-  }
+  fire(onlineSubs)
 }
 
 // A tab-return commonly fires BOTH `focus` and `visibilitychange` in the same
@@ -51,41 +58,44 @@ function onVisibilityChange(): void {
   if (document.visibilityState === 'visible') scheduleFocus()
 }
 
-let focusInstalled = false
-let onlineInstalled = false
+type Target = Pick<Window, 'addEventListener' | 'removeEventListener'>
+type DocTarget = Pick<Document, 'addEventListener' | 'removeEventListener'>
+
+// The objects the shared listeners were installed ON. Uninstalling removes
+// from these, not from whatever `window` exists at uninstall time — so a
+// global swapped in between (tests stubbing `window`, a teardown after the
+// environment went away) cannot strand a listener or leave the "installed"
+// state stuck and block the next install.
+let focusTarget: { win: Target; doc: DocTarget | undefined } | null = null
+let onlineTarget: Target | null = null
 
 function installFocus(): void {
-  if (focusInstalled) return
+  if (focusTarget !== null) return
   if (typeof window === 'undefined') return
+  const doc = typeof document !== 'undefined' ? document : undefined
   window.addEventListener('focus', scheduleFocus)
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', onVisibilityChange)
-  }
-  focusInstalled = true
+  doc?.addEventListener('visibilitychange', onVisibilityChange)
+  focusTarget = { win: window, doc }
 }
 
 function uninstallFocus(): void {
-  if (!focusInstalled) return
-  if (typeof window === 'undefined') return
-  window.removeEventListener('focus', scheduleFocus)
-  if (typeof document !== 'undefined') {
-    document.removeEventListener('visibilitychange', onVisibilityChange)
-  }
-  focusInstalled = false
+  if (focusTarget === null) return
+  focusTarget.win.removeEventListener('focus', scheduleFocus)
+  focusTarget.doc?.removeEventListener('visibilitychange', onVisibilityChange)
+  focusTarget = null
 }
 
 function installOnline(): void {
-  if (onlineInstalled) return
+  if (onlineTarget !== null) return
   if (typeof window === 'undefined') return
   window.addEventListener('online', fireOnline)
-  onlineInstalled = true
+  onlineTarget = window
 }
 
 function uninstallOnline(): void {
-  if (!onlineInstalled) return
-  if (typeof window === 'undefined') return
-  window.removeEventListener('online', fireOnline)
-  onlineInstalled = false
+  if (onlineTarget === null) return
+  onlineTarget.removeEventListener('online', fireOnline)
+  onlineTarget = null
 }
 
 export function subscribeWindowFocus(fn: Sub): () => void {

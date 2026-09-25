@@ -1,5 +1,25 @@
 import { resolve } from 'node:path'
+import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { defineConfig } from 'vitest/config'
+
+const repoRoot = import.meta.dirname
+
+const satellite = { statements: 94, branches: 90, functions: 94, lines: 96 }
+
+// Svelte component tests need two things no other suite should get: the
+// compiler plugin, and the `browser` resolve condition, without which `svelte`
+// resolves to its server build and `mount` throws. They run as their own
+// project; everything else keeps the default resolution.
+const SVELTE_TESTS = [
+  'packages/svelte/tests/**/*.test.ts',
+  'packages/integration/tests/adapter-parity/svelte.test.ts',
+]
+
+// Each codemod test builds a TypeScript program through ts-morph: 2–5 s on a
+// fast machine, and past vitest's 5 s default on a two-core CI runner under
+// coverage. They run as their own project with a longer timeout, so the rest
+// of the suite keeps the default and a real hang there still fails fast.
+const CODEMOD_TESTS = ['packages/codemod/tests/**/*.test.ts']
 
 export default defineConfig({
   define: {
@@ -7,38 +27,88 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@kontsedal/olas-core/testing': resolve(__dirname, 'packages/core/src/testing.ts'),
-      '@kontsedal/olas-core': resolve(__dirname, 'packages/core/src/index.ts'),
-      '@kontsedal/olas-react': resolve(__dirname, 'packages/react/src/index.ts'),
-      '@kontsedal/olas-persist': resolve(__dirname, 'packages/persist/src/index.ts'),
-      '@kontsedal/olas-realtime': resolve(__dirname, 'packages/realtime/src/index.ts'),
-      '@kontsedal/olas-cross-tab': resolve(__dirname, 'packages/cross-tab/src/index.ts'),
-      '@kontsedal/olas-entities': resolve(__dirname, 'packages/entities/src/index.ts'),
-      '@kontsedal/olas-zod': resolve(__dirname, 'packages/zod/src/index.ts'),
-      '@kontsedal/olas-devtools': resolve(__dirname, 'packages/devtools/src/index.ts'),
-      '@kontsedal/olas-mutation-queue': resolve(__dirname, 'packages/mutation-queue/src/index.ts'),
-      '@kontsedal/olas-router': resolve(__dirname, 'packages/router/src/index.ts'),
+      '@kontsedal/olas-core/testing': resolve(repoRoot, 'packages/core/src/testing.ts'),
+      '@kontsedal/olas-core': resolve(repoRoot, 'packages/core/src/index.ts'),
+      '@kontsedal/olas-react': resolve(repoRoot, 'packages/react/src/index.ts'),
+      '@kontsedal/olas-vue': resolve(repoRoot, 'packages/vue/src/index.ts'),
+      '@kontsedal/olas-svelte': resolve(repoRoot, 'packages/svelte/src/index.ts'),
+      '@kontsedal/olas-persist': resolve(repoRoot, 'packages/persist/src/index.ts'),
+      '@kontsedal/olas-realtime': resolve(repoRoot, 'packages/realtime/src/index.ts'),
+      '@kontsedal/olas-cross-tab': resolve(repoRoot, 'packages/cross-tab/src/index.ts'),
+      '@kontsedal/olas-entities': resolve(repoRoot, 'packages/entities/src/index.ts'),
+      '@kontsedal/olas-zod': resolve(repoRoot, 'packages/zod/src/index.ts'),
+      '@kontsedal/olas-devtools': resolve(repoRoot, 'packages/devtools/src/index.ts'),
+      '@kontsedal/olas-mutation-queue': resolve(repoRoot, 'packages/mutation-queue/src/index.ts'),
+      '@kontsedal/olas-router': resolve(repoRoot, 'packages/router/src/index.ts'),
+      '@kontsedal/olas-eslint-plugin': resolve(repoRoot, 'packages/eslint-plugin/src/index.ts'),
     },
   },
   test: {
-    include: ['packages/*/tests/**/*.test.ts', 'packages/*/tests/**/*.test.tsx'],
     // Mocha-style: Devtools tests target jsdom, set per-file via @vitest-environment.
     environment: 'node',
     globals: false,
     pool: 'forks',
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'default',
+          include: ['packages/*/tests/**/*.test.ts', 'packages/*/tests/**/*.test.tsx'],
+          exclude: [...SVELTE_TESTS, ...CODEMOD_TESTS],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'codemod',
+          include: CODEMOD_TESTS,
+          testTimeout: 30_000,
+          benchmark: { include: [] },
+        },
+      },
+      {
+        extends: true,
+        plugins: [svelte()],
+        resolve: { conditions: ['browser'] },
+        test: {
+          name: 'svelte',
+          include: SVELTE_TESTS,
+          environment: 'jsdom',
+          // Benchmarks run once, in the default project.
+          benchmark: { include: [] },
+        },
+      },
+    ],
     coverage: {
       provider: 'v8',
-      include: ['packages/*/src/**/*.ts'],
-      exclude: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/index.ts'],
-      // Ratchet: seeded a few points below the current measured levels
-      // (~83 stmts / 71 branch / 86 funcs / 87 lines as of the T7.2 pass) so CI
-      // fails on a real regression without flaking on measurement jitter. Raise
-      // these as coverage improves — never lower them to make a red build pass.
+      include: ['packages/*/src/**/*.{ts,tsx}'],
+      exclude: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.d.ts'],
+      // Gates, set a little below the levels the 1.0 coverage pass reached
+      // (2026-09-25: core 99.4 lines / 94.9 branches; every satellite >= 99
+      // lines, >= 90 branches), so CI fails on a real regression without
+      // flaking on measurement jitter. Raise them as coverage improves; never
+      // lower them to make a red build pass. What is left uncovered is listed,
+      // with a reason per branch, in `.wiki/decisions/engine-assurance.md`.
       thresholds: {
-        statements: 80,
-        branches: 68,
-        functions: 82,
-        lines: 83,
+        statements: 96,
+        branches: 92,
+        functions: 96,
+        lines: 97,
+        'packages/core/src/**': { statements: 96, branches: 92, functions: 96, lines: 97 },
+        // One gate per satellite, so a package cannot slip while others carry it.
+        'packages/codemod/src/**': satellite,
+        'packages/cross-tab/src/**': satellite,
+        'packages/devtools/src/**': satellite,
+        'packages/entities/src/**': satellite,
+        'packages/eslint-plugin/src/**': satellite,
+        'packages/mutation-queue/src/**': satellite,
+        'packages/persist/src/**': satellite,
+        'packages/react/src/**': satellite,
+        'packages/realtime/src/**': satellite,
+        'packages/router/src/**': satellite,
+        'packages/svelte/src/**': satellite,
+        'packages/vue/src/**': satellite,
+        'packages/zod/src/**': satellite,
       },
     },
   },

@@ -3,12 +3,12 @@ name: callargs-vs-keyargs
 description: Two arg arrays inside ClientEntry. One goes to the fetcher; one goes to the hash. They are not the same.
 type: pitfall
 covers:
-  - packages/core/src/query/client.ts:31-222
-  - packages/core/src/query/client.ts:881-960
+  - packages/core/src/query/client.ts:304-388
+  - packages/core/src/query/client.ts:1469-1692
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -28,7 +28,7 @@ defineQuery({
 
 Inside `ClientEntry` we store two different arrays:
 
-- **`callArgs`** — what `ctx.use(query, () => ['u1'])` passed: `['u1']`. This is what the fetcher needs.
+- **`callArgs`** — what `createQuery(ctx, query, () => ['u1'])` passed: `['u1']`. This is what the fetcher needs.
 - **`keyArgs`** — what `spec.key('u1')` returned: `['user', 'u1']`. This is what we hash for identity.
 
 If you pass `keyArgs` to the fetcher, you'll call `getUser('user', { signal })` — wrong `id`, broken request.
@@ -46,7 +46,7 @@ this.entry = new Entry<T>({
 
 Test `defineQuery + ctx.use > subscribing fetches; data lands on success` failed because the fetcher received `['user', 'u1']` instead of `['u1']`.
 
-Fix: separate both args arrays explicitly on `ClientEntry` (`client.ts:31-89`):
+Fix: separate both args arrays explicitly on `ClientEntry` (`client.ts:304-388`):
 
 ```ts
 constructor(
@@ -68,7 +68,7 @@ constructor(
 }
 ```
 
-`dropEntry`, `invalidate`, `invalidateAll`, and `bindEntry`'s hash-collision dedupe path (`client.ts:881-960`) all hash with `stableHash(...)` over `keyArgs`.
+`bindEntry` (`client.ts:1479-1480`), `dropEntry` (`client.ts:1559`), `invalidate` (`client.ts:1625-1626`), `cancel` and `peekData` (`client.ts:1660`, `client.ts:1690`) all hash `keyArgs` with `stableHash(...)`. `invalidateAll` walks the map without hashing.
 
 ## Why have both?
 
@@ -76,7 +76,7 @@ constructor(
 
 - Add discriminators (`'user'` prefix to avoid colliding with `['post', id]`).
 - Normalize args (e.g. lowercasing an email before hashing).
-- Drop irrelevant args (`{ pageSize: 10, sort: 'newest' }` → just `[sort]` if pageSize is fixed).
+- Drop irrelevant args (`{ pageSize: 10, sort: 'newest' }` → only `[sort]` if pageSize is fixed).
 
 If `key` always returned the args unchanged, we'd merge them. But it doesn't — and that's the point.
 

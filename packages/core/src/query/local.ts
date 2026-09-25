@@ -1,8 +1,9 @@
 import { effect, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { Entry } from './entry'
-import type { LocalCache, Snapshot } from './types'
+import type { FetchCtx, LocalCache, Snapshot } from './types'
 
+/** Options for `createCache(ctx, fetcher, options?)`. Spec §5.1. */
 export type LocalCacheOptions<T> = {
   key?: () => readonly unknown[]
   staleTime?: number
@@ -10,19 +11,50 @@ export type LocalCacheOptions<T> = {
   initialData?: T | undefined
 }
 
+/** A local cache has no `enabled` switch; its `isEnabled` never changes. */
+const ALWAYS_ENABLED: ReadSignal<boolean> = Object.freeze({
+  value: true,
+  peek: () => true,
+  subscribe(handler: (value: boolean) => void): () => void {
+    handler(true)
+    return () => {}
+  },
+  subscribeChanges: (): (() => void) => () => {},
+})
+
 class LocalCacheImpl<T> implements LocalCache<T> {
   private readonly entry: Entry<T>
   private keyEffectDispose: (() => void) | null = null
   private disposed = false
   private readonly keepPreviousData: boolean
   private lastSucceededFor: unknown[] | null = null
+  /** The key of the key effect's latest run. */
+  private currentKey: unknown[] | null = null
+  /**
+   * True from a key change until a fetch lands for the new key, while the data
+   * on hand is the previous key's (`keepPreviousData`). `firstValue()` then
+   * waits for the new key, as a shared query's subscription does.
+   */
+  private previousKeyData = false
 
-  constructor(fetcher: (signal: AbortSignal) => Promise<T>, options: LocalCacheOptions<T>) {
+  constructor(
+    fetcher: (ctx: FetchCtx) => Promise<T>,
+    options: LocalCacheOptions<T>,
+    deps: FetchCtx['deps'],
+  ) {
     this.keepPreviousData = options.keepPreviousData ?? false
     this.entry = new Entry<T>({
-      fetcher: () => fetcher,
+      fetcher: () => (signal) => fetcher({ signal, deps }),
       staleTime: options.staleTime ?? 0,
       initialData: options.initialData,
+      // A key change supersedes the fetch in flight, so any fetch that lands
+      // was requested for the current key.
+      onSuccessData: () => {
+        this.previousKeyData = false
+      },
+      // The owning controller is the cache's one subscriber, for as long as the
+      // cache exists: a discarded invalidation fetch is re-run (§6.4).
+      hasSubscribers: () => true,
     })
 
     if (options.key) {
@@ -31,12 +63,21 @@ class LocalCacheImpl<T> implements LocalCache<T> {
         // Track keys.
         const keyArgs = keyFn() as unknown[]
         untracked(() => {
+          const previousKey = this.currentKey
+          this.currentKey = keyArgs
           if (!this.keepPreviousData) {
             // Reset data on key change so consumers see "loading" rather than
             // the previous key's stale value.
             if (this.lastSucceededFor != null && !arraysEqual(this.lastSucceededFor, keyArgs)) {
               this.entry.data.set(undefined)
             }
+          }
+          if (
+            previousKey !== null &&
+            !arraysEqual(previousKey, keyArgs) &&
+            this.entry.data.peek() !== undefined
+          ) {
+            this.previousKeyData = true
           }
           this.entry.startFetch().then(
             () => {
@@ -82,11 +123,17 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   get isPaused(): ReadSignal<boolean> {
     return this.entry.isPaused
   }
+  get isEnabled(): ReadSignal<boolean> {
+    return ALWAYS_ENABLED
+  }
 
   refetch = (): Promise<T> => this.entry.refetch()
   reset = (): void => this.entry.reset()
-  firstValue = (): Promise<T> => this.entry.firstValue()
-  promise = (): Promise<T> => this.entry.firstValue()
+  // After a key change the data on hand can be the previous key's: then settle
+  // with the fetch for the new key instead of resolving with it (§5.3).
+  firstValue = (): Promise<T> =>
+    this.previousKeyData ? this.entry.settled() : this.entry.firstValue()
+  cancel = (): void => this.entry.cancel()
   invalidate = (): Promise<void> =>
     // Resolves when the refetch settles; errors surface on the cache's `error`
     // signal (AsyncState), so the awaiter's promise resolves rather than rejects.
@@ -95,6 +142,15 @@ class LocalCacheImpl<T> implements LocalCache<T> {
       () => {},
     )
   setData = (updater: (prev: T | undefined) => T): Snapshot => this.entry.setData(updater)
+  // The canonical writes, with `Query`'s semantics (§6.4): no snapshot, and a
+  // fetch in flight left alone by `write` and superseded by `replace`.
+  write = (updater: (prev: T | undefined) => T): void => {
+    this.entry.setData(updater, { track: false })
+  }
+  replace = (value: T): void => {
+    this.entry.setData(() => value, { track: false })
+    if (value !== undefined) this.entry.supersedeByWrite()
+  }
 
   dispose(): void {
     if (this.disposed) return
@@ -106,10 +162,11 @@ class LocalCacheImpl<T> implements LocalCache<T> {
 }
 
 export function createLocalCache<T>(
-  fetcher: (signal: AbortSignal) => Promise<T>,
+  fetcher: (ctx: FetchCtx) => Promise<T>,
   options?: LocalCacheOptions<T>,
+  deps?: FetchCtx['deps'],
 ): LocalCache<T> {
-  return new LocalCacheImpl(fetcher, options ?? {})
+  return new LocalCacheImpl(fetcher, options ?? {}, deps ?? {})
 }
 
 function arraysEqual(a: readonly unknown[], b: readonly unknown[]): boolean {

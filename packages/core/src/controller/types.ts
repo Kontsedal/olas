@@ -1,20 +1,13 @@
 import type { Emitter } from '../emitter'
 import type { ErrorContext } from '../errors'
-import type {
-  FieldArray,
-  FieldArrayOptions,
-  Form,
-  FormOptions,
-  FormSchema,
-  ItemInitial,
-} from '../forms/form-types'
-import type { Validator } from '../forms/types'
-import type { InfiniteQuery, InfiniteQuerySubscription } from '../query/infinite'
-import type { Mutation, MutationSpec } from '../query/mutation'
-import type { QueryClientPlugin } from '../query/plugin'
-import type { LocalCache, Query, QuerySubscription, UseOptions } from '../query/types'
+import type { OlasPlugin } from '../plugin/types'
+import type { BindQueryOptions } from '../query/client'
+import type { QueryEngine } from '../query/engine'
+import type { InfiniteQuery, InfiniteQueryActions } from '../query/infinite'
+import type { Query, QueryActions } from '../query/types'
 import type { Scope } from '../scope'
-import type { Computed, ReadSignal, Signal } from '../signals/types'
+import type { ReadSignal } from '../signals/types'
+import type { CTX_INTERNALS, CtxInternals } from './internals'
 
 /**
  * App-wide deps available on every controller's `ctx.deps`.
@@ -32,6 +25,7 @@ import type { Computed, ReadSignal, Signal } from '../signals/types'
  * ```
  */
 export interface AmbientDeps {
+  /** A key the app has not declared still reads, typed `unknown`. */
   [key: string]: unknown
 }
 
@@ -39,7 +33,7 @@ export interface AmbientDeps {
  * A reactive form field. Extends `ReadSignal<T>` for the current value, plus
  * five signals for state (errors / isValid / isDirty / touched / isValidating)
  * and four methods (`set`, `reset`, `markTouched`, `revalidate`). Created via
- * `ctx.field(initial, validators?)`. Spec §8, §20.7.
+ * `createField(ctx, initial, { validators, validateOn })`. Spec §8, §20.7.
  */
 export type Field<T> = ReadSignal<T> & {
   /**
@@ -72,8 +66,20 @@ export type Field<T> = ReadSignal<T> & {
    * the field (via `set`), or explicitly via `setErrors([])` / `reset()`.
    */
   setErrors(errors: ReadonlyArray<string>): void
-  /** Idempotent. Called by the owning controller's dispose. */
+  /**
+   * Idempotent. Called by the owning controller's dispose.
+   */
   dispose(): void
+}
+
+/** Options for `root.suspend(options?)`. */
+export type SuspendOptions = {
+  /**
+   * Dispose the root if it is not resumed within this many milliseconds. A
+   * second `suspend({ maxIdleTime })` restarts the timer, and a second
+   * `suspend()` without it keeps the timer running.
+   */
+  maxIdleTime?: number
 }
 
 /**
@@ -82,8 +88,8 @@ export type Field<T> = ReadSignal<T> & {
  * for inference via `CtrlProps<C>` / `CtrlApi<C>`.
  */
 export type ControllerDef<Props, Api> = {
-  readonly __olas: 'controller'
-  readonly __types?: { props: Props; api: Api }
+  readonly [BRAND]: 'controller'
+  readonly [PHANTOM]?: { props: Props; api: Api }
 }
 
 /** Extract a controller's Props type. */
@@ -111,13 +117,17 @@ export type Collection<K, Api> = {
    *
    * No-op if the key isn't in the collection. Neither the collection
    * reconcile nor a whole-tree `suspend()`/`resume()` cascade (e.g.
-   * KeepAlive) will auto-resume a suspended item — call `resumeItem(key)`
+   * SuspendOnUnmount) will auto-resume a suspended item — call `resumeItem(key)`
    * to bring it back (spec §4.1).
    */
   suspendItem(key: K): void
-  /** Resume a previously-suspended item. No-op if not suspended / not present. */
+  /**
+   * Resume a previously-suspended item. No-op if not suspended / not present.
+   */
   resumeItem(key: K): void
-  /** Whether the item is currently suspended. False when not present. */
+  /**
+   * Whether the item is currently suspended. False when not present.
+   */
   isItemSuspended(key: K): boolean
 }
 
@@ -183,74 +193,19 @@ export type LazyChild<Api> = {
 /**
  * `ctx` is the lifecycle-bound surface every controller factory receives.
  * Every primitive constructed through `ctx` is owned by the controller and
- * disposed when the controller disposes.
- *
- * Phase 3 surface — caches, mutations, forms, collections, scopes, etc.
- * land in later phases.
+ * disposed when the controller disposes. The primitives are free functions
+ * that take `ctx` first (`createField`, `createQuery`, `createMutation` and
+ * the rest); `ctx` itself carries the tree and the lifetime.
  */
 export type Ctx<TDeps = AmbientDeps> = {
-  cache<T>(
-    fetcher: (signal: AbortSignal) => Promise<T>,
-    options?: {
-      key?: () => readonly unknown[]
-      staleTime?: number
-      keepPreviousData?: boolean
-      initialData?: T | undefined
-    },
-  ): LocalCache<T>
-
-  // Select-projecting overload — picked when the options object has a
-  // required `select` field. `key`'s return is `readonly [...Args]` so
-  // callers writing `() => [id] as const` flow through cleanly.
-  use<Args extends unknown[], T, U>(
-    source: Query<Args, T>,
-    options: {
-      key?: () => readonly [...Args]
-      enabled?: () => boolean
-      select: (data: T) => U
-    },
-  ): QuerySubscription<U>
-  use<Args extends unknown[], T>(
-    source: Query<Args, T>,
-    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
-  ): QuerySubscription<T>
-  use<Args extends unknown[], TPage, TItem>(
-    source: InfiniteQuery<Args, TPage, TItem>,
-    keyOrOptions?: (() => readonly [...Args]) | UseOptions<Args>,
-  ): InfiniteQuerySubscription<TPage, TItem>
-
-  mutation<V, R>(spec: MutationSpec<V, R>): Mutation<V, R>
+  /**
+   * @internal Escape hatch for the `ctx`-taking primitives (`createField`,
+   * `createQuery`, …). Not for application code — the shape can change in a
+   * patch release. See `controller/internals.ts`.
+   */
+  readonly [CTX_INTERNALS]: CtxInternals
 
   emitter<T = void>(): Emitter<T>
-
-  /**
-   * Convenience re-export of the standalone `signal(initial)` function bound
-   * to the controller's surface. Identical semantics — there's no lifecycle
-   * to manage for a plain signal — but having it on `ctx` makes "everything
-   * I need is on ctx" feel honest and lets consumers avoid importing from
-   * `@kontsedal/olas-core` separately.
-   */
-  signal<T>(initial: T): Signal<T>
-
-  /**
-   * Convenience re-export of the standalone `computed(fn)` function bound
-   * to the controller's surface. Re-evaluates on tracked-dep change; same
-   * caveat as `signal` — no lifecycle binding, just discoverability.
-   */
-  computed<T>(fn: () => T): Computed<T>
-
-  field<T>(
-    initial: T,
-    validators?: ReadonlyArray<Validator<T>>,
-    options?: { validateOn?: 'change' | 'blur' | 'submit' },
-  ): Field<T>
-
-  form<S extends FormSchema>(schema: S, options?: FormOptions<S>): Form<S>
-
-  fieldArray<I extends Field<any> | Form<any>>(
-    itemFactory: (initial?: ItemInitial<I>) => I,
-    options?: FieldArrayOptions<I>,
-  ): FieldArray<I>
 
   child<Props, Api>(
     def: ControllerDef<Props, Api>,
@@ -265,7 +220,7 @@ export type Ctx<TDeps = AmbientDeps> = {
    * The child is still disposed automatically when the parent disposes;
    * `dispose()` / `suspend()` / `resume()` are idempotent.
    *
-   * `<KeepAlive controller={…}>` in `@kontsedal/olas-react` consumes the
+   * `<SuspendOnUnmount controller={…}>` in `@kontsedal/olas-react` consumes the
    * returned `{ suspend, resume }` directly — no hand-rolled `isPaused`
    * signal needed on the child's `Api`. Useful for "openable" sub-
    * controllers driven by a user gesture (modal, side panel, wizard).
@@ -281,23 +236,6 @@ export type Ctx<TDeps = AmbientDeps> = {
     props: Props,
     options?: { deps?: Partial<TDeps> },
   ): { api: Api; dispose: () => void; suspend: () => void; resume: () => void }
-
-  /**
-   * Ephemeral child controller bound to either (a) the explicit `dispose()`
-   * call returned in the tuple, or (b) the parent's disposal — whichever
-   * comes first. Same lifecycle semantics as `ctx.attach` minus suspend /
-   * resume (sessions are short-lived, not pause-able). Returns a `[api,
-   * dispose]` tuple so the api shape is exactly the controller's return
-   * type, with no wrapper to unpack.
-   *
-   * Use cases: modal forms, inline edit sessions, wizards, command palette.
-   * SPEC §11.1.
-   */
-  session<Props, Api>(
-    def: ControllerDef<Props, Api>,
-    props: Props,
-    options?: { deps?: Partial<TDeps> },
-  ): readonly [api: Api, dispose: () => void]
 
   /**
    * Diff-by-key set of child controllers driven by a reactive `source`.
@@ -326,7 +264,7 @@ export type Ctx<TDeps = AmbientDeps> = {
    * Code-split child controller. The loader is invoked on `load()`
    * (idempotent), then the controller is constructed with the supplied
    * `props`. `status` / `api` / `error` are reactive signals; subscribe
-   * via `use(child.api)` in your view layer.
+   * via `useValue(child.api)` in your view layer.
    *
    * Parent disposal disposes the loaded child (if any) and flags any
    * in-flight load so its eventual settle is dropped on the floor.
@@ -348,7 +286,7 @@ export type Ctx<TDeps = AmbientDeps> = {
    * snapshot. Names come from the object keys; call it more than once to merge.
    *
    * Dev-only: a no-op in production builds (stripped like the rest of the
-   * `__debug` bus), so it costs nothing and retains nothing there.
+   * debug bus), so it costs nothing and retains nothing there.
    *
    * ```ts
    * const count = signal(0)
@@ -371,8 +309,9 @@ export type Ctx<TDeps = AmbientDeps> = {
   readonly deps: TDeps
 }
 
+import type { BRAND, PHANTOM } from '../brand'
 import type { DebugBus } from '../devtools'
-import type { DefaultQueryOptions, DehydratedState } from '../query/types'
+import type { DehydratedState } from '../query/types'
 
 /**
  * Configuration passed to `createRoot(def, options)`. `deps` is required and
@@ -385,77 +324,110 @@ export type RootOptions<TDeps> = {
   onError?: (err: unknown, context: ErrorContext) => void
   hydrate?: DehydratedState
   /**
-   * Default for queries that don't set `refetchOnWindowFocus` on their spec
-   * (§5.9). Shorthand for `defaultQueryOptions.refetchOnWindowFocus`, which
-   * wins if both are set.
-   */
-  refetchOnWindowFocus?: boolean
-  /**
-   * Default for queries that don't set `refetchOnReconnect` on their spec
-   * (§5.9). Shorthand for `defaultQueryOptions.refetchOnReconnect`, which
-   * wins if both are set.
-   */
-  refetchOnReconnect?: boolean
-  /**
-   * Root-wide defaults for every query, infinite query, and `ctx.cache` under
-   * this root. A per-query spec field always overrides its default here.
-   * Resolution: `spec.X ?? defaultQueryOptions.X ?? <built-in default>`.
-   *
-   * Without this, quiet built-in defaults (`staleTime: 0`, `retry: 0`) have to
-   * be restated on every `defineQuery`, which is easy to forget and presents
-   * as "why is everything refetching?" rather than as an error. Spec §5.9.
+   * The query engine. Omit it and this root has no cache: `createQuery`,
+   * `createMutation` and `bindQuery` throw a message naming the fix, and
+   * `query/client.ts` — the largest module in the package — never enters the
+   * bundle.
    *
    * ```ts
-   * createRoot(app, { deps, defaultQueryOptions: { staleTime: 5 * 60_000, retry: 1 } })
+   * createRoot(app, { deps, queries: queryEngine() })
    * ```
+   *
+   * Query defaults (`staleTime`, `retry`, focus and reconnect refetch, …)
+   * are configured on the engine: `queryEngine({ defaults })`. The client is
+   * created eagerly inside `createRoot`, before the factory runs.
    */
-  defaultQueryOptions?: DefaultQueryOptions
+  queries?: QueryEngine
   /**
-   * `QueryClientPlugin`s — cross-tab sync, server-push patches, etc.
-   * Installed when the root's `QueryClient` is constructed; disposed when
-   * the root disposes. SPEC §13.2.
+   * Plugins, set up in this order before the root controller's factory runs
+   * and disposed in reverse when the root disposes. A plugin's query and
+   * mutation hooks need `queries`; without it, `host.queries` is `null`.
+   * Spec §13.
    */
-  plugins?: QueryClientPlugin[]
+  plugins?: readonly OlasPlugin[]
   /**
    * Pre-seed scopes on the root controller before its factory runs. Useful
-   * for cross-cutting values an adapter wants to provide once (route
-   * params from a router bridge, theme tokens, etc.) without forcing the
-   * user's root controller to call `ctx.provide(...)`.
+   * for cross-cutting values an adapter wants to provide once (theme tokens,
+   * a fake of a plugin's service in a test) without forcing the user's root
+   * controller to call `ctx.provide(...)`.
    *
-   * Bindings are flat `[scope, value]` tuples; later bindings for the
-   * same scope override earlier ones. `ctx.inject` from any descendant
-   * resolves these via the normal scope chain walk. SPEC §10.3.
+   * Bindings are flat `[scope, value]` tuples; later bindings for the same
+   * scope override earlier ones, and all of them override a value a plugin
+   * `provide`d. `ctx.inject` from any descendant resolves these via the normal
+   * scope chain walk. SPEC §10.3.
    */
   scopes?: ReadonlyArray<readonly [Scope<unknown>, unknown]>
 }
 
 /**
- * The root's public surface: the controller's `Api` plus lifecycle controls
- * (`dispose`, `suspend`, `resume`), SSR (`dehydrate`, `waitForIdle`), and
- * devtools (`__debug`). Spec §20.8.
+ * The handle `createRoot(...)` returns. The root controller's public api lives
+ * on `api`; everything else is the root's own surface — lifecycle, SSR, scope
+ * lookup, imperative query operations and the devtools bus. Keeping the two
+ * apart means a controller may return anything, including members named
+ * `dispose` or `suspend`, and the root can grow new controls without taking a
+ * name from anyone's api. Spec §20.8.
  */
-export type Root<Api> = Api & {
+export type Root<Api> = {
+  /**
+   * What the root controller's factory returned.
+   */
+  readonly api: Api
+  /**
+   * Bind imperative query operations to this root without subscribing or
+   * fetching. `options.origin` tags the handle's writes for plugins.
+   */
+  bindQuery<Args extends unknown[], T>(
+    query: Query<Args, T>,
+    options?: BindQueryOptions,
+  ): QueryActions<Args, T>
+  bindQuery<Args extends unknown[], TPage, TItem>(
+    query: InfiniteQuery<Args, TPage, TItem>,
+    options?: BindQueryOptions,
+  ): InfiniteQueryActions<Args, TPage, TItem>
+  /**
+   * Resolve a scope as the root controller would through `ctx.inject(...)`:
+   * a value it provided, a value seeded through `RootOptions.scopes` or a
+   * plugin, else the scope's default. Throws when none exists.
+   */
+  inject<T>(scope: Scope<T>): T
+  /**
+   * Tear down the whole tree and the query client. Idempotent.
+   */
   dispose(): void
-  suspend(options?: { maxIdle?: number }): void
+  /**
+   * Freeze the tree: effects stop, subscriptions release their entries,
+   * `onSuspend` handlers run. With `maxIdleTime`, the root disposes itself if it
+   * is not resumed within that many milliseconds. Spec §4.1, §4.3.
+   */
+  suspend(options?: SuspendOptions): void
+  /**
+   * Thaw a suspended tree: effects re-run, stale entries refetch.
+   */
   resume(): void
+  /**
+   * Serialize the query cache for SSR: every entry that holds data, one
+   * mid-refetch or after a failed refetch included. Spec §15.
+   */
   dehydrate(): DehydratedState
+  /**
+   * Apply dehydrated entries to this root's cache. An entry whose key is
+   * already bound is written through and supersedes any inflight fetch; the
+   * rest are buffered until a subscription binds that key, and a buffered key
+   * keeps its newest row. A row older than the entry's server data is
+   * skipped; an optimistic write does not count as server data. A row older
+   * than an invalidation leaves the entry stale, and a held entry refetches.
+   * Used by streaming SSR, where each resolved `<Suspense>` boundary pushes
+   * its entries into the live client root, and by warm starts from storage.
+   * Idempotent.
+   */
+  hydrate(state: DehydratedState): void
+  /**
+   * Resolves when no fetch, no mutation and no work a plugin `track`ed is in
+   * flight. Spec §15.
+   */
   waitForIdle(): Promise<void>
   /**
-   * Apply a single dehydrated query entry to this root's cache. Idempotent
-   * across pre-bind / post-bind: if a `ClientEntry` for `queryId + keyArgs`
-   * already exists, the data is written through and supersedes any inflight
-   * fetch; otherwise it's buffered for the next `bindEntry`.
-   *
-   * Designed for streaming SSR — each `<Suspense>` boundary that resolves
-   * on the server can push its entry into the live client root as the
-   * bootstrap script executes. Also useful for `localStorage` warm-starts
-   * and similar "I have fresh data from elsewhere, inject it" patterns.
+   * The devtools event bus. Dev-only events; see spec §14.
    */
-  applyDehydratedEntry(
-    queryId: string,
-    keyArgs: readonly unknown[],
-    data: unknown,
-    lastUpdatedAt: number,
-  ): void
-  readonly __debug: DebugBus
+  readonly debug: DebugBus
 }

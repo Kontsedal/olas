@@ -6,7 +6,7 @@
 // action.
 
 import type { ReadSignal } from '@kontsedal/olas-core'
-import { use } from '@kontsedal/olas-react'
+import { useValue } from '@kontsedal/olas-react'
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import type { Issue, Status } from '../api'
 import { useApi } from './useApi'
@@ -23,7 +23,7 @@ const STATUS_OPTIONS: readonly Status[] = ['todo', 'in_progress', 'review', 'don
 const PRIORITY_DOT: Record<Issue['priority'], string> = {
   urgent: 'bg-(--color-danger)',
   high: 'bg-(--color-warning)',
-  medium: 'bg-(--color-accent)',
+  medium: 'bg-(--color-info)',
   low: 'bg-(--color-fg-mute)',
 }
 
@@ -57,14 +57,14 @@ function RowInner({
   const renderCount = useRef(0)
   renderCount.current += 1
 
-  const issue = use(sig)
-  const selected = use(api.table.selection.isSelected(id))
+  const issue = useValue(sig)
+  const selected = useValue(api.table.selection.isSelected(id))
 
   return (
     <div
       style={{ height }}
       data-row-id={id}
-      className={`grid grid-cols-[36px_1fr_180px_120px_120px_56px] items-center gap-3 border-b border-(--color-border) px-3 text-sm transition-colors ${
+      className={`grid grid-cols-[36px_1fr_180px_120px_120px_56px] items-center gap-3 border-b border-(--color-border) px-3 text-[length:var(--text-body)] transition-colors ${
         selected ? 'bg-(--color-accent)/10' : 'odd:bg-(--color-bg-elev) even:bg-(--color-bg-sunk)'
       }`}
     >
@@ -85,7 +85,9 @@ function RowInner({
       />
       <div className="flex items-center gap-2 min-w-0">
         <span className={`size-2 rounded-full ${PRIORITY_DOT[issue.priority]}`} />
-        <span className="truncate font-mono text-[11px] text-(--color-fg-mute)">{issue.id}</span>
+        <span className="truncate font-mono text-[length:var(--text-chrome)] text-(--color-fg-mute)">
+          {issue.id}
+        </span>
         <span className="truncate font-medium text-(--color-fg)">{issue.title}</span>
       </div>
       <span className="truncate text-(--color-fg-mute)">{issue.assignee}</span>
@@ -93,15 +95,15 @@ function RowInner({
         <StatusCell
           id={id}
           current={issue.status}
-          isPending={use(api.table.updateStatus.isPending)}
+          isPending={useValue(api.table.updateStatus.isPending)}
         />
       </FlashOnChange>
-      <span className="font-mono text-[11px] text-(--color-fg-mute) tabular-nums">
+      <span className="font-mono text-[length:var(--text-chrome)] text-(--color-fg-mute) tabular-nums">
         {new Date(issue.updatedAt).toISOString().slice(0, 10)}
       </span>
       <span
         title="Render counter for THIS row — only this row re-renders when its signal changes"
-        className="text-right font-mono text-[10px] text-(--color-fg-mute) tabular-nums"
+        className="text-right font-mono text-[length:var(--text-mark)] text-(--color-fg-mute) tabular-nums"
       >
         {renderCount.current}
       </span>
@@ -128,7 +130,7 @@ function StatusCell({
         const next = e.target.value as Status
         api.table.updateStatus.run({ id, status: next }).catch(() => {})
       }}
-      className={`w-full rounded-md border border-(--color-border) bg-(--color-bg-elev) px-2 py-0.5 text-xs ${
+      className={`w-full rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-elev) px-2 py-0.5 text-[length:var(--text-meta)] ${
         current === 'done' ? 'text-(--color-success)' : 'text-(--color-fg)'
       } disabled:opacity-60`}
     >
@@ -158,7 +160,7 @@ function FlashOnChange({
     }
   }, [epoch])
   return (
-    <div key={flashKey} className="row-flash rounded-md">
+    <div key={flashKey} className="row-flash rounded-[var(--radius-control)]">
       {children}
     </div>
   )

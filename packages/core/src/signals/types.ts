@@ -6,7 +6,9 @@
  */
 export type ReadSignal<T> = {
   readonly value: T
-  /** Read the current value without registering a dependency. */
+  /**
+   * Read the current value without registering a dependency.
+   */
   peek(): T
   /**
    * Subscribe to value changes. The handler is called synchronously with the
@@ -19,7 +21,7 @@ export type ReadSignal<T> = {
    * callback on subscribe — only fires on subsequent changes. Useful for
    * "react to user changes" semantics where the initial fire would be a
    * spurious notification (the most common consumer pattern — `useField`,
-   * `usePersisted`, and the React adapter all hand-rolled this).
+   * `createPersisted`, and the React adapter all hand-rolled this).
    *
    * Returns the unsubscribe function.
    */

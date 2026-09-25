@@ -36,7 +36,7 @@ describe('SSR dehydrate → hydrate', () => {
     // the cache so the subscription read from it directly.
     expect(clientApi.callCount).toBe(0)
     // Data is visible immediately.
-    expect(client.reader.flatArticles.value.length).toBe(4)
+    expect(client.api.reader.flatArticles.value.length).toBe(4)
 
     client.dispose()
   })
@@ -51,12 +51,12 @@ describe('SSR dehydrate → hydrate', () => {
     const clientApi = createFakeApi()
     const client = createAppRoot({ api: clientApi }, state)
     await flush()
-    expect(client.reader.flatArticles.value.length).toBe(4)
+    expect(client.api.reader.flatArticles.value.length).toBe(4)
     expect(clientApi.callCount).toBe(0)
 
-    await client.reader.loadMore()
+    await client.api.reader.loadMore()
     await flush()
-    expect(client.reader.flatArticles.value.length).toBe(8)
+    expect(client.api.reader.flatArticles.value.length).toBe(8)
     expect(clientApi.callCount).toBe(1) // exactly one new fetch for cursor=1
 
     client.dispose()

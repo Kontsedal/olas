@@ -43,12 +43,19 @@ describe('formatPayload', () => {
     expect(formatPayload('abcdef', 3)).toBe('"ab…')
   })
 
-  test('falls back to String() when JSON.stringify throws (circular)', () => {
+  test('marks a circular reference instead of throwing', () => {
     const obj: Record<string, unknown> = { name: 'cycle' }
     obj.self = obj
-    const out = formatPayload(obj)
-    expect(typeof out).toBe('string')
-    expect(out.length).toBeGreaterThan(0)
+    expect(formatPayload(obj)).toBe('{"name":"cycle","self":"[Circular]"}')
+  })
+
+  test('falls back to a placeholder when even String() throws', () => {
+    const hostile = new Proxy(Object.create(null), {
+      get() {
+        throw new Error('no reads')
+      },
+    })
+    expect(formatPayload(hostile)).toBe('[unserializable]')
   })
 
   test('falls back to String() when JSON.stringify returns undefined (top-level fn)', () => {
@@ -85,5 +92,32 @@ describe('formatPath', () => {
 
   test('stringifies non-string path entries', () => {
     expect(formatPath([1, true, null])).toBe('1 › true › null')
+  })
+
+  test('renders an object member of a query key as compact JSON', () => {
+    expect(formatPath(['users', { page: 1 }])).toBe('users › {"page":1}')
+    expect(formatPath(['users', [1, 'a']])).toBe('users › [1,"a"]')
+  })
+
+  test('a null-prototype object member renders instead of throwing', () => {
+    const params = Object.assign(Object.create(null) as Record<string, unknown>, { q: 'ada' })
+    expect(formatPath(['search', params])).toBe('search › {"q":"ada"}')
+  })
+
+  test('a cycle, a bigint and a function inside a member stay printable', () => {
+    const member: Record<string, unknown> = { n: 1n, fn: () => 1 }
+    member.self = member
+    expect(formatPath(['k', member])).toBe('k › {"n":"1","fn":"[fn]","self":"[Circular]"}')
+  })
+
+  test('a reference repeated in two places is not a cycle', () => {
+    const shared = { v: 1 }
+    expect(formatPath([{ a: shared, b: shared }])).toBe('{"a":{"v":1},"b":{"v":1}}')
+  })
+
+  test('a long member is cut with an ellipsis', () => {
+    const out = formatPath([{ text: 'x'.repeat(500) }])
+    expect(out.length).toBe(61)
+    expect(out.endsWith('…')).toBe(true)
   })
 })

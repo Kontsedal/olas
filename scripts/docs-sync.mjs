@@ -1,0 +1,120 @@
+/**
+ * Build the docs site's generated pages from the repo's own docs, so the site
+ * and the snippet-checked Markdown share one source.
+ *
+ * - Synced pages: RECIPES, PLUGINS, MIGRATING and every package README are
+ *   copied under `docs/`. Relative links are rewritten: to the page's site
+ *   route when the target is another synced doc, otherwise to the file on
+ *   GitHub.
+ * - The API reference: `api-documenter` turns the doc model that
+ *   `pnpm api:update` / `api:check` writes (`temp/api-model/`) into
+ *   `docs/reference/`.
+ *
+ * Every generated file is gitignored. Run `pnpm build && pnpm api:check`
+ * first, or use `pnpm docs:build`, which runs the chain.
+ */
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, posix, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+const docs = join(root, 'docs')
+const GITHUB = 'https://github.com/Kontsedal/olas'
+
+/** Repo file → site page (a path under docs/, without `.md`). */
+const synced = new Map([
+  ['RECIPES.md', 'guide/recipes'],
+  ['PLUGINS.md', 'guide/plugins'],
+  ['MIGRATING.md', 'guide/migration'],
+  ['packages/react/README.md', 'adapters/react'],
+  ['packages/vue/README.md', 'adapters/vue'],
+  ['packages/svelte/README.md', 'adapters/svelte'],
+])
+for (const dir of readdirSync(join(root, 'packages'))) {
+  const readme = `packages/${dir}/README.md`
+  const pkg = join(root, 'packages', dir, 'package.json')
+  if (!existsSync(join(root, readme)) || !existsSync(pkg)) continue
+  if (JSON.parse(readFileSync(pkg, 'utf8')).private) continue
+  if (!synced.has(readme)) synced.set(readme, `packages/${dir}`)
+}
+
+/** The site route for a repo path, if that path is a synced doc. */
+const routeFor = (repoPath) => synced.get(repoPath)
+
+function rewriteLink(target, sourceRepoPath, pagePath) {
+  if (/^[a-z]+:/i.test(target) || target.startsWith('#') || target.startsWith('/')) return target
+  const [path, hash] = target.split('#')
+  const repoPath = posix.normalize(posix.join(posix.dirname(sourceRepoPath), path))
+  const anchor = hash === undefined ? '' : `#${hash}`
+  const route = routeFor(repoPath)
+  if (route !== undefined) {
+    const rel = posix.relative(posix.dirname(pagePath), route)
+    return `${rel.startsWith('.') ? rel : `./${rel}`}${anchor}`
+  }
+  if (repoPath.startsWith('..')) return target
+  const abs = join(root, repoPath)
+  const kind = existsSync(abs) && !repoPath.includes('.') ? 'tree' : 'blob'
+  return `${GITHUB}/${kind}/main/${repoPath}${anchor}`
+}
+
+function sync(sourceRepoPath, pagePath) {
+  let text = readFileSync(join(root, sourceRepoPath), 'utf8').replace(/\r\n/g, '\n')
+  const fences = []
+  // Leave code blocks alone: a link-shaped string in code is code.
+  text = text.replace(/^(\s*)(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\1\2[^\S\n]*$/gm, (block) => {
+    fences.push(block)
+    return `@@OLAS_DOCS_SYNC_FENCE_${fences.length - 1}@@`
+  })
+  text = text.replace(/\]\(([^)\s]+)(\s+"[^"]*")?\)/g, (_m, target, title = '') => {
+    return `](${rewriteLink(target, sourceRepoPath, pagePath)}${title})`
+  })
+  text = text.replace(
+    /href="([^"]+)"/g,
+    (_m, target) => `href="${rewriteLink(target, sourceRepoPath, pagePath)}"`,
+  )
+  text = text.replace(/@@OLAS_DOCS_SYNC_FENCE_(\d+)@@/g, (_m, i) => fences[Number(i)])
+  const edit = `${GITHUB}/edit/main/${sourceRepoPath}`
+  const out = join(docs, `${pagePath}.md`)
+  mkdirSync(dirname(out), { recursive: true })
+  writeFileSync(
+    out,
+    `---\neditLink: false\n---\n\n<!-- Generated from ${sourceRepoPath} by scripts/docs-sync.mjs. Edit that file: ${edit} -->\n\n${text}`,
+  )
+}
+
+for (const [source, page] of synced) sync(source, page)
+
+// The API reference, from api-extractor's doc model.
+const model = join(root, 'temp', 'api-model')
+const reference = join(docs, 'reference')
+if (!existsSync(model) || readdirSync(model).length === 0) {
+  console.error('[docs-sync] temp/api-model is empty. Run `pnpm build && pnpm api:check` first.')
+  process.exit(1)
+}
+rmSync(reference, { recursive: true, force: true })
+execFileSync(
+  process.execPath,
+  [
+    join(root, 'node_modules/@microsoft/api-documenter/bin/api-documenter'),
+    'markdown',
+    '-i',
+    model,
+    '-o',
+    reference,
+  ],
+  { stdio: 'ignore' },
+)
+// api-documenter opens each page with an H2 ("createQuery() function"), so
+// VitePress finds no H1 for the tab title. Lift the heading into frontmatter.
+for (const file of readdirSync(reference)) {
+  const path = join(reference, file)
+  const text = readFileSync(path, 'utf8')
+  const heading = /^## (.+)$/m.exec(text)?.[1]
+  if (heading === undefined || text.startsWith('---')) continue
+  const title = heading.replace(/\\/g, '').replace(/"/g, '\\"')
+  writeFileSync(path, `---\ntitle: "${title}"\neditLink: false\n---\n\n${text}`)
+}
+console.log(
+  `[docs-sync] ${synced.size} synced pages, ${readdirSync(reference).length} reference pages (${relative(root, reference)})`,
+)

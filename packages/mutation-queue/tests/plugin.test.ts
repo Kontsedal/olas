@@ -1,8 +1,20 @@
-import { createRoot, defineController, defineMutation, type Mutation } from '@kontsedal/olas-core'
+import {
+  createMutation,
+  createQuery,
+  createRoot,
+  defineController,
+  defineMutation,
+  defineQuery,
+  type Mutation,
+  type MutationEvent,
+  type OlasPlugin,
+  type PluginHost,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { mutationQueuePlugin } from '../src/plugin'
+import { MutationQueue, mutationQueuePlugin } from '../src/plugin'
 import { PROTOCOL_VERSION, type QueueEntry } from '../src/protocol'
 
 /**
@@ -36,6 +48,79 @@ const settle = async () => {
   for (let i = 0; i < 10; i++) await flush()
 }
 
+/**
+ * Drive a queue plugin's `onMutation` directly, without a root. The host is a
+ * fake: online, with no registered definitions, so the startup replay is a
+ * no-op against an empty store. The adapters translate the enqueue/settle
+ * vocabulary these tests were written in into `MutationEvent`s.
+ */
+function directHooks(plugin: OlasPlugin) {
+  const host: PluginHost = {
+    deps: {},
+    provide() {},
+    reportError() {},
+    onDispose() {},
+    track() {},
+    network: { isOnline: () => true, onReconnect: () => () => {}, onFocus: () => () => {} },
+    queries: {
+      get: () => undefined,
+      keys: () => [],
+      peek: () => undefined,
+      write() {},
+      replace() {},
+      invalidate: async () => {},
+      hydrate() {},
+      dehydrate: () => ({ version: 1, entries: [] }),
+      hashKey: (key) => JSON.stringify(key),
+    },
+    mutations: {
+      has: () => false,
+      get: () => undefined,
+      run: () => Promise.reject(new Error('no definitions')),
+    },
+    debug() {},
+  }
+  const hooks = plugin.setup(host) ?? {}
+  const emit = (event: Omit<MutationEvent, 'origin'>) =>
+    hooks.onMutation?.({ ...event, origin: undefined })
+  return {
+    /** `start`, then the run's first attempt — which is when the queue writes. */
+    enqueue(e: { mutationId: string; runId: string; variables: unknown; attempt?: number }) {
+      const mutation = { id: e.mutationId, meta: { persist: true } }
+      emit({ mutation, runId: e.runId, variables: e.variables, phase: 'start' })
+      void hooks.wrapMutate?.(
+        {
+          mutation,
+          runId: e.runId,
+          variables: e.variables,
+          signal: new AbortController().signal,
+          attempt: 0,
+          origin: undefined,
+        },
+        () => Promise.resolve(undefined),
+      )
+    },
+    settle(e: {
+      mutationId: string
+      runId: string
+      outcome: 'success' | 'error' | 'cancelled'
+      error?: unknown
+      variables?: unknown
+    }) {
+      emit({
+        mutation: { id: e.mutationId, meta: { persist: true } },
+        runId: e.runId,
+        variables: e.variables,
+        phase: e.outcome === 'cancelled' ? 'cancel' : e.outcome,
+        ...(e.error !== undefined ? { error: e.error } : {}),
+      })
+    },
+    dispose() {
+      hooks.dispose?.()
+    },
+  }
+}
+
 afterEach(() => {
   // Tests reuse mutationIds within the file via deliberate cleanup; isolate.
 })
@@ -50,22 +135,22 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
   test('persists an entry on enqueue and deletes on success', async () => {
     const adapter = memoryAdapter()
     const createOrder = defineMutation({
-      mutationId: MUTATION_ID,
+      id: MUTATION_ID,
       mutate: async (vars: { sku: string }) => ({ id: 'srv-1', ...vars }),
+      meta: { persist: true },
     })
     const def = defineController((ctx) => ({
-      create: ctx.mutation(createOrder) as Mutation<{ sku: string }, unknown>,
+      create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
     }))
-
-    type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
-    }) as unknown as Api & { dispose(): void }
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/v1' })],
+    })
 
     expect(adapter.store.size).toBe(0)
 
-    const promise = root.create.run({ sku: 'A-1' })
+    const promise = root.api.create.run({ sku: 'A-1' })
     // Synchronously after run, the enqueue event has fired and storage has
     // an entry.
     expect(adapter.store.size).toBe(1)
@@ -89,24 +174,30 @@ describe('mutationQueuePlugin — enqueue / settle', () => {
     const adapter = memoryAdapter()
     const calls = vi.fn()
     const failingMutation = defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (_vars: { x: number }) => {
         calls()
         throw new Error('server 500')
       },
+      meta: { persist: true },
     })
 
     const def = defineController((ctx) => ({
-      run: ctx.mutation({ ...failingMutation, retry: 0 }) as Mutation<{ x: number }, unknown>,
+      run: createMutation(ctx, { ...failingMutation, retry: 0 }) as Mutation<
+        { x: number },
+        unknown
+      >,
     }))
-    type Api = { run: Mutation<{ x: number }, unknown> }
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/err', maxAttempts: 3 })],
-    }) as unknown as Api & { dispose(): void }
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/err', maxAttempts: 3 }),
+      ],
+    })
 
-    await root.run.run({ x: 1 }).catch(() => {})
+    await root.api.run.run({ x: 1 }).catch(() => {})
     await settle()
     // attempts < maxAttempts, so the plugin keeps the entry for a future
     // page-load replay.
@@ -135,17 +226,19 @@ describe('mutationQueuePlugin — replay on init', () => {
 
     const replayCalls: Array<{ sku: string }> = []
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: { sku: string }) => {
         replayCalls.push(vars)
         return { id: 'srv-9', ...vars }
       },
+      meta: { persist: true },
     })
 
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/replay' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/replay' })],
     })
     await settle()
 
@@ -172,10 +265,11 @@ describe('mutationQueuePlugin — replay on init', () => {
     const errors: Array<{ err: unknown; entry: QueueEntry }> = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/orphan',
           onReplayError: (err, e) => errors.push({ err, entry: e }),
         }),
@@ -187,7 +281,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     // either import the missing module or drop the entry.
     expect(adapter.store.size).toBe(1)
     expect(errors).toHaveLength(1)
-    expect((errors[0]?.err as Error).message).toMatch(/no registered mutation/)
+    expect((errors[0]?.err as Error | undefined)?.message).toMatch(/no registered mutation/)
 
     root.dispose()
   })
@@ -208,17 +302,19 @@ describe('mutationQueuePlugin — replay on init', () => {
     adapter.store.set(`test/mq/giveup/${id}/run-x`, JSON.stringify(entry))
 
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async () => 'success',
+      meta: { persist: true },
     })
 
     const errors: Array<{ err: unknown; entry: QueueEntry }> = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/giveup',
           maxAttempts: 5,
           onReplayError: (err, e) => errors.push({ err, entry: e }),
@@ -230,7 +326,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     // Entry dropped, error surfaced.
     expect(adapter.store.size).toBe(0)
     expect(errors).toHaveLength(1)
-    expect((errors[0]?.err as Error).message).toMatch(/giving up/)
+    expect((errors[0]?.err as Error | undefined)?.message).toMatch(/giving up/)
 
     root.dispose()
   })
@@ -276,23 +372,27 @@ describe('mutationQueuePlugin — replay on init', () => {
 
     const aOrder: unknown[] = []
     defineMutation({
-      mutationId: idA,
+      id: idA,
       mutate: async (vars: unknown) => {
         await flush() // give the parallel B run a chance to interleave
         aOrder.push(vars)
       },
+      meta: { persist: true },
     })
     defineMutation({
-      mutationId: idB,
+      id: idB,
       mutate: async (vars: unknown) => vars,
+      meta: { persist: true },
     })
 
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/serial' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/serial' })],
     })
-    await settle()
+    // Waits for the startup replay: the plugin tracks it.
+    await root.waitForIdle()
 
     // A's two entries must have run in enqueuedAt order.
     expect(aOrder).toEqual([1, 2])
@@ -310,10 +410,11 @@ describe('mutationQueuePlugin — replay on init', () => {
     const warnings: string[] = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/bad',
           onWarn: (msg) => warnings.push(msg),
         }),
@@ -330,7 +431,9 @@ describe('mutationQueuePlugin — replay on init', () => {
 describe('mutationQueuePlugin — config', () => {
   test('throws on missing keyPrefix', () => {
     const adapter = memoryAdapter()
-    expect(() => mutationQueuePlugin({ adapter, keyPrefix: '' })).toThrow(/keyPrefix is required/)
+    expect(() => mutationQueuePlugin({ storage: adapter, keyPrefix: '' })).toThrow(
+      /keyPrefix is required/,
+    )
   })
 
   test('warns and disables replay when adapter has no keys() method', async () => {
@@ -342,10 +445,11 @@ describe('mutationQueuePlugin — config', () => {
     const warnings: string[] = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter: minimal,
+          storage: minimal,
           keyPrefix: 'test/mq/no-keys',
           onWarn: (msg) => warnings.push(msg),
         }),
@@ -356,25 +460,14 @@ describe('mutationQueuePlugin — config', () => {
     root.dispose()
   })
 
-  test('defineMutation throws on empty mutationId', () => {
+  test('defineMutation throws on an empty id', () => {
     expect(() =>
       defineMutation({
-        mutationId: '',
+        id: '',
         mutate: async () => undefined,
+        meta: { persist: true },
       }),
-    ).toThrow(/non-empty `mutationId`/)
-  })
-
-  test('ctx.mutation throws when persist: true without mutationId', () => {
-    expect(() => {
-      const def = defineController((ctx) =>
-        ctx.mutation({
-          persist: true,
-          mutate: async () => undefined,
-        }),
-      )
-      createRoot(def, { deps: {} })
-    }).toThrow(/persist: true.*requires.*mutationId/)
+    ).toThrow(/non-empty `id`/)
   })
 })
 
@@ -401,6 +494,10 @@ function stubOnlineEnv(initialOnline: boolean) {
     goOnline() {
       nav.onLine = true
       for (const cb of listeners.get('online') ?? []) cb()
+    },
+    /** How many `online` listeners the plugin currently holds on `window`. */
+    listenerCount(ev: string) {
+      return listeners.get(ev)?.size ?? 0
     },
     restore() {
       vi.unstubAllGlobals()
@@ -430,17 +527,18 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
   test('dedupeBy collapses a second enqueue with the same key onto the first', async () => {
     const adapter = memoryAdapter()
     const plugin = mutationQueuePlugin({
-      adapter,
+      storage: adapter,
       keyPrefix: 'test/mq/dedupe',
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
-    plugin.onMutationEnqueue?.({
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
       attempt: 0,
     })
-    plugin.onMutationEnqueue?.({
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
@@ -449,17 +547,18 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     await settle()
     // Only the first enqueue wrote a durable entry.
     expect(adapter.store.size).toBe(1)
-    plugin.dispose?.()
+    hooks.dispose()
   })
 
   test('a cancelled settle keeps the dedupe key active (re-enqueue does NOT double-write)', async () => {
     const adapter = memoryAdapter()
     const plugin = mutationQueuePlugin({
-      adapter,
+      storage: adapter,
       keyPrefix: 'test/mq/cancel',
       dedupeBy: (_id, vars) => (vars as { key: string }).key,
     })
-    plugin.onMutationEnqueue?.({
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-1',
       variables: { key: 'K' },
@@ -468,9 +567,13 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     await settle()
     expect(adapter.store.size).toBe(1)
     // Reload mid-run looks like a cancel — entry + key must survive.
-    plugin.onMutationSettle?.({ mutationId: 'm', runId: 'run-1', outcome: 'cancelled' })
+    hooks.settle({
+      mutationId: 'm',
+      runId: 'run-1',
+      outcome: 'cancelled',
+    })
     // Re-enqueue the same logical mutation under a new runId → collapses.
-    plugin.onMutationEnqueue?.({
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'run-2',
       variables: { key: 'K' },
@@ -478,41 +581,125 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     })
     await settle()
     expect(adapter.store.size).toBe(1) // NOT two entries
-    plugin.dispose?.()
+    hooks.dispose()
+  })
+
+  test('a replay that drops an entry releases its dedupe key', async () => {
+    // A failed run keeps its entry and its key for a replay. When the replay
+    // drops the entry, the key must go too: left pointing at a runId that is
+    // gone, it made the next run with that key collapse onto nothing, write
+    // no entry, and vanish on a reload.
+    const id = 'mq-test/replay-releases-key'
+    _unregisterMutationById(id)
+    const adapter = memoryAdapter()
+    const outcomes: Array<'fail' | 'ok' | 'hang'> = ['fail', 'ok', 'hang']
+    const save = defineMutation({
+      id,
+      meta: { persist: true },
+      mutate: (_vars: { key: string; n: number }) => {
+        const outcome = outcomes.shift()
+        if (outcome === 'fail') return Promise.reject(new Error('server 500'))
+        if (outcome === 'ok') return Promise.resolve('ok')
+        return new Promise<string>(() => {})
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ save: createMutation(ctx, save) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        onError: () => {},
+        plugins: [
+          mutationQueuePlugin({
+            storage: adapter,
+            keyPrefix: 'test/mq/replay-key',
+            dedupeBy: (_id, vars) => (vars as { key: string }).key,
+          }),
+        ],
+      },
+    )
+    try {
+      await settle()
+
+      await root.api.save.run({ key: 'K', n: 1 }).catch(() => {})
+      await settle()
+      expect(adapter.store.size).toBe(1) // retained for a replay, key still held
+
+      await root.inject(MutationQueue).replayNow()
+      await settle()
+      expect(adapter.store.size).toBe(0) // the replay landed it
+
+      void root.api.save.run({ key: 'K', n: 2 }).catch(() => {})
+      await settle()
+      // A new operation under the released key: it is durable while in flight.
+      expect(adapter.store.size).toBe(1)
+      const [stored] = [...adapter.store.values()]
+      expect((JSON.parse(stored as string) as QueueEntry).variables).toEqual({ key: 'K', n: 2 })
+    } finally {
+      // The last run never settles; the root's dispose cancels it.
+      root.dispose()
+    }
   })
 })
 
 describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T6.2)', () => {
-  test('onReplaySettle fires with the result + an invalidate api after a successful replay', async () => {
+  test('onReplaySettle fires with the result and the root query host after a successful replay', async () => {
     const id = 'mq-test/settle'
     _unregisterMutationById(id)
     const adapter = memoryAdapter()
     seed(adapter, 'test/mq/settle', { mutationId: id, runId: 'r1', variables: { a: 1 } })
-    defineMutation({ mutationId: id, mutate: async () => 'server-truth' })
+    let finishReplay!: (value: string) => void
+    defineMutation({
+      id: id,
+      mutate: () =>
+        new Promise<string>((resolve) => {
+          finishReplay = resolve
+        }),
+      meta: { persist: true },
+    })
 
     const settled: Array<{ result: unknown; runId: string }> = []
-    let invalidatedWith: readonly unknown[] | null = null
-    const fakeQuery = { invalidate: (...args: unknown[]) => (invalidatedWith = args) }
+    const calls: string[] = []
+    const query = defineQuery({
+      id: 'plugin/523',
+      key: (id: number) => ['user', id],
+      fetcher: async ({ deps }, id: number) => {
+        calls.push(`${deps.owner}:${id}`)
+        return id
+      },
+      staleTime: Infinity,
+    })
 
-    const def = defineController(() => ({}))
+    const def = defineController((ctx) => ({ sub: createQuery(ctx, query, () => [1]) }))
+    const other = createRoot(def, { queries: queryEngine(), deps: { owner: 'other' } })
     const root = createRoot(def, {
-      deps: {},
+      queries: queryEngine(),
+      deps: { owner: 'queue' },
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/settle',
-          onReplaySettle: (entry, result, api) => {
+          onReplaySettle: (entry, result, queries) => {
             settled.push({ result, runId: entry.runId })
-            api.invalidate(fakeQuery as never, ['user', 1])
+            void queries.invalidate('plugin/523', ['user', 1])
           },
         }),
       ],
     })
+    // Not `root.waitForIdle()`: it waits for the startup replay, which is
+    // parked on `finishReplay` below.
+    await other.waitForIdle()
+    await vi.waitFor(() => expect(finishReplay).toBeTypeOf('function'))
+    // Both roots have fetched once before the replay settles.
+    await vi.waitFor(() => expect(calls).toHaveLength(2))
+    calls.length = 0
+    finishReplay('server-truth')
     await settle()
     expect(settled).toEqual([{ result: 'server-truth', runId: 'r1' }])
-    expect(invalidatedWith).toEqual(['user', 1])
+    expect(calls).toEqual(['queue:1'])
     expect(adapter.store.size).toBe(0)
     root.dispose()
+    other.dispose()
   })
 
   test('replayNow() re-drives a pending entry in-session', async () => {
@@ -522,22 +709,32 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
     seed(adapter, 'test/mq/replaynow', { mutationId: id, runId: 'r1' })
     let calls = 0
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async () => {
         calls += 1
         if (calls === 1) throw new Error('transient')
         return 'ok'
       },
+      meta: { persist: true },
     })
-    const plugin = mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/replaynow', maxAttempts: 5 })
+    const plugin = mutationQueuePlugin({
+      storage: adapter,
+      keyPrefix: 'test/mq/replaynow',
+      maxAttempts: 5,
+    })
     const def = defineController(() => ({}))
-    const root = createRoot(def, { deps: {}, onError: () => {}, plugins: [plugin] })
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      onError: () => {},
+      plugins: [plugin],
+    })
     await settle()
     // First replay failed transiently; entry retained for another attempt.
     expect(calls).toBe(1)
     expect(adapter.store.size).toBe(1)
     // Manual re-drive → succeeds, entry dropped.
-    await plugin.replayNow()
+    await root.inject(MutationQueue).replayNow()
     await settle()
     expect(calls).toBe(2)
     expect(adapter.store.size).toBe(0)
@@ -552,11 +749,12 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       const adapter = memoryAdapter()
       seed(adapter, 'test/mq/online', { mutationId: id, runId: 'r1' })
       let calls = 0
-      defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
+      defineMutation({ id: id, mutate: async () => (calls += 1), meta: { persist: true } })
       const def = defineController(() => ({}))
       const root = createRoot(def, {
+        queries: queryEngine(),
         deps: {},
-        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/online' })],
+        plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/online' })],
       })
       await settle()
       expect(calls).toBe(0) // offline → gated
@@ -578,14 +776,15 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const adapter = memoryAdapter()
     seed(adapter, 'test/mq/ttl', { mutationId: id, runId: 'r1', enqueuedAt: Date.now() - 60_000 })
     let replayed = 0
-    defineMutation({ mutationId: id, mutate: async () => (replayed += 1) })
+    defineMutation({ id: id, mutate: async () => (replayed += 1), meta: { persist: true } })
     const errors: Array<{ code?: string }> = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/ttl',
           ttlMs: 1000,
           onReplayError: (err) => errors.push(err as { code?: string }),
@@ -609,13 +808,18 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       JSON.stringify({ v: 0, mutationId: id, runId: 'r1', legacyVars: { n: 7 } }),
     )
     const replayed: unknown[] = []
-    defineMutation({ mutationId: id, mutate: async (vars: unknown) => replayed.push(vars) })
+    defineMutation({
+      id: id,
+      mutate: async (vars: unknown) => replayed.push(vars),
+      meta: { persist: true },
+    })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/migrate',
           migrate: (raw, from) => {
             const o = raw as { mutationId: string; runId: string; legacyVars: unknown }
@@ -642,12 +846,13 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const adapter = memoryAdapter()
     const warnings: string[] = []
     const plugin = mutationQueuePlugin({
-      adapter,
+      storage: adapter,
       keyPrefix: 'test/mq/bytes',
       maxEntryBytes: 50,
       onWarn: (m) => warnings.push(m),
     })
-    plugin.onMutationEnqueue?.({
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
       mutationId: 'm',
       runId: 'r1',
       variables: { blob: 'x'.repeat(500) },
@@ -657,7 +862,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     expect(warnings.some((w) => w.includes('soft cap'))).toBe(true)
     // The entry is still written (soft cap — warn, don't block).
     expect(adapter.store.size).toBe(1)
-    plugin.dispose?.()
+    hooks.dispose()
   })
 
   test('onReplayAttempt fires on a non-final replay failure', async () => {
@@ -666,19 +871,21 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     const adapter = memoryAdapter()
     seed(adapter, 'test/mq/attempt', { mutationId: id, runId: 'r1', attempts: 0 })
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async () => {
         throw new Error('still down')
       },
+      meta: { persist: true },
     })
     const attemptFailures: unknown[] = []
     const finalErrors: unknown[] = []
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
       plugins: [
         mutationQueuePlugin({
-          adapter,
+          storage: adapter,
           keyPrefix: 'test/mq/attempt',
           maxAttempts: 5,
           onReplayAttempt: (err) => attemptFailures.push(err),
@@ -715,16 +922,18 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
     })
     const order: unknown[] = []
     defineMutation({
-      mutationId: id,
+      id: id,
       mutate: async (vars: unknown) => {
         await flush()
         order.push(vars)
       },
+      meta: { persist: true },
     })
     const def = defineController(() => ({}))
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/seq' })],
+      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/seq' })],
     })
     await settle()
     expect(order).toEqual(['A', 'B'])
@@ -739,11 +948,14 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       const adapter = memoryAdapter()
       seed(adapter, 'test/mq/backoff', { mutationId: id, runId: 'r1', attempts: 1 })
       let calls = 0
-      defineMutation({ mutationId: id, mutate: async () => (calls += 1) })
+      defineMutation({ id: id, mutate: async () => (calls += 1), meta: { persist: true } })
       const def = defineController(() => ({}))
       const root = createRoot(def, {
+        queries: queryEngine(),
         deps: {},
-        plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/backoff', backoffMs: 1000 })],
+        plugins: [
+          mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/backoff', backoffMs: 1000 }),
+        ],
       })
       await vi.advanceTimersByTimeAsync(0) // reach the backoff sleep
       expect(calls).toBe(0) // still waiting out the backoff window
@@ -756,55 +968,311 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
   })
 })
 
-describe('a run that completed before dispose must not be replayed', () => {
-  const MUTATION_ID = 'mq-test/completed-then-disposed'
+describe('mutationQueuePlugin — a manual retry must not leave a second entry', () => {
+  const MUTATION_ID = 'mq-test/manual-retry'
 
   beforeEach(() => {
     _unregisterMutationById(MUTATION_ID)
   })
 
-  test('settles as success, so the durable entry is dropped rather than left for replay', async () => {
-    // `outcome: 'cancelled'` tells this plugin to KEEP the entry and replay it
-    // on the next page load. For a run whose request the server already
-    // accepted that is a second write of the same mutation — so a completed
-    // run reports success even when the abort beat its continuation.
+  test('a retry that succeeds drops the entry the failed run left behind', async () => {
+    // The failed run's entry stays on disk for a cross-load replay. The user
+    // then retries by hand, which is a NEW runId, so its success only knows
+    // about its own entry. Leave the first one and the next page load writes
+    // the order a second time.
     const adapter = memoryAdapter()
-    let resolveWrite: (v: { id: string }) => void = () => {}
-    const pending = new Promise<{ id: string }>((res) => {
-      resolveWrite = res
-    })
+    let calls = 0
     const createOrder = defineMutation({
-      mutationId: MUTATION_ID,
-      // Not `async`: an async wrapper adds a microtask hop, and the window
-      // below is measured in hops.
-      mutate: (_vars: { sku: string }) => pending,
+      id: MUTATION_ID,
+      mutate: async (vars: { sku: string }) => {
+        calls += 1
+        if (calls === 1) throw new Error('server 500')
+        return { id: 'srv-1', ...vars }
+      },
+      meta: { persist: true },
     })
     const def = defineController((ctx) => ({
-      create: ctx.mutation(createOrder) as Mutation<{ sku: string }, unknown>,
+      create: createMutation(ctx, { ...createOrder, retry: 0 }) as Mutation<
+        { sku: string },
+        unknown
+      >,
     }))
-    type Api = { create: Mutation<{ sku: string }, unknown> }
     const root = createRoot(def, {
+      queries: queryEngine(),
       deps: {},
-      plugins: [mutationQueuePlugin({ adapter, keyPrefix: 'test/mq/v1' })],
-    }) as unknown as Api & { dispose(): void }
+      onError: () => {},
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/retry', maxAttempts: 5 }),
+      ],
+    })
 
-    const run = root.create.run({ sku: 'A-1' }).catch((e: unknown) => e)
+    await root.api.create.run({ sku: 'A-1' }).catch(() => {})
+    await settle()
+    expect(adapter.store.size).toBe(1) // retained for replay
+
+    await root.api.create.run({ sku: 'A-1' })
+    await settle()
+    expect(calls).toBe(2)
+    // Nothing left to replay: the write the first entry describes is the one
+    // the retry just landed.
+    expect(adapter.store.size).toBe(0)
+
+    root.dispose()
+  })
+
+  test('a different operation under the same mutationId keeps its own entry', async () => {
+    // The supersede rule keys on the variables, not the mutationId — two
+    // distinct orders that both fail must both stay queued.
+    const adapter = memoryAdapter()
+    const createOrder = defineMutation({
+      id: MUTATION_ID,
+      mutate: async (vars: { sku: string }) => {
+        if (vars.sku === 'A-1') throw new Error('server 500')
+        return { id: 'srv-2', ...vars }
+      },
+      meta: { persist: true },
+    })
+    const def = defineController((ctx) => ({
+      create: createMutation(ctx, { ...createOrder, retry: 0 }) as Mutation<
+        { sku: string },
+        unknown
+      >,
+    }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      onError: () => {},
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/retry2', maxAttempts: 5 }),
+      ],
+    })
+
+    await root.api.create.run({ sku: 'A-1' }).catch(() => {})
+    await settle()
     expect(adapter.store.size).toBe(1)
 
-    resolveWrite({ id: 'srv-1' }) // the server accepts the write…
-    // …and the screen closes in the window after the work completed but before
-    // the run's continuation ran.
-    await Promise.resolve()
-    await Promise.resolve()
-    root.create.dispose()
+    await root.api.create.run({ sku: 'B-2' })
+    await settle()
+    // B-2 succeeded and dropped its own entry; A-1 is still pending replay.
+    expect(adapter.store.size).toBe(1)
+    const [stored] = [...adapter.store.values()]
+    expect((JSON.parse(stored as string) as QueueEntry).variables).toEqual({ sku: 'A-1' })
 
-    // Proves the window was hit: the run reports the abort, and the entry is
-    // still gone. Without this the assertion below would also pass on the
-    // ordinary success path, where the branch under test never runs.
-    expect(((await run) as Error).name).toBe('AbortError')
+    root.dispose()
+  })
+
+  test('a dedupeBy collapse settles the entry it collapsed onto', async () => {
+    // The collapsed run writes no entry of its own. Deleting `event.runId` on
+    // its success targets a key that was never written and leaves the owner
+    // on disk to replay a write the server already took.
+    const adapter = memoryAdapter()
+    const plugin = mutationQueuePlugin({
+      storage: adapter,
+      keyPrefix: 'test/mq/alias',
+      maxAttempts: 5,
+      dedupeBy: (_id, vars) => (vars as { key: string }).key,
+    })
+    const hooks = directHooks(plugin)
+    hooks.enqueue({
+      mutationId: 'm',
+      runId: 'run-1',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
+    await settle()
+    hooks.settle({
+      mutationId: 'm',
+      runId: 'run-1',
+      outcome: 'error',
+    })
+    await settle()
+    expect(adapter.store.size).toBe(1) // retained below maxAttempts
+
+    hooks.enqueue({
+      mutationId: 'm',
+      runId: 'run-2',
+      variables: { key: 'K' },
+      attempt: 0,
+    })
+    hooks.settle({
+      mutationId: 'm',
+      runId: 'run-2',
+      outcome: 'success',
+    })
     await settle()
     expect(adapter.store.size).toBe(0)
 
+    hooks.dispose()
+  })
+})
+
+describe('mutationQueuePlugin — replay skips runs executing in this tab', () => {
+  const MUTATION_ID = 'mq-test/inflight-replay'
+
+  beforeEach(() => {
+    _unregisterMutationById(MUTATION_ID)
+  })
+
+  test('replayNow() inside the enqueue→settle window does not re-fire the run', async () => {
+    // A network flap fires `online` (or the app calls `replayNow()`) while a
+    // run is still awaiting its response. Its entry is already on disk, so an
+    // unguarded replay issues the same POST a second time.
+    const adapter = memoryAdapter()
+    let calls = 0
+    let release: (v: { id: string }) => void = () => {}
+    const pending = new Promise<{ id: string }>((res) => {
+      release = res
+    })
+    const createOrder = defineMutation({
+      id: MUTATION_ID,
+      mutate: (_vars: { sku: string }) => {
+        calls += 1
+        return pending
+      },
+      meta: { persist: true },
+    })
+    const plugin = mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/inflight' })
+    const def = defineController((ctx) => ({
+      create: createMutation(ctx, createOrder) as Mutation<{ sku: string }, unknown>,
+    }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [plugin],
+    })
+    // Let `init`'s own (empty) replay pass finish, or its `replaying` guard
+    // would turn the `replayNow()` below into a no-op and the test would
+    // pass without exercising anything.
+    await settle()
+
+    const run = root.api.create.run({ sku: 'A-1' })
+    expect(adapter.store.size).toBe(1)
+    // The request goes out once the entry is durable.
+    await vi.waitFor(() => expect(calls).toBe(1))
+
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(calls).toBe(1) // the live run was skipped, not replayed
+
+    release({ id: 'srv-1' })
+    await run
+    await settle()
+    expect(adapter.store.size).toBe(0)
+
+    root.dispose()
+  })
+})
+
+describe('mutationQueuePlugin — dispose releases the offline wait', () => {
+  test('dispose() drops every online listener, including the parked replay pass', async () => {
+    const env = stubOnlineEnv(false)
+    try {
+      const id = 'mq-test/dispose-offline'
+      _unregisterMutationById(id)
+      const adapter = memoryAdapter()
+      seed(adapter, 'test/mq/dispose-offline', { mutationId: id, runId: 'r1' })
+      let calls = 0
+      defineMutation({ id: id, mutate: async () => (calls += 1), meta: { persist: true } })
+      const def = defineController(() => ({}))
+      const root = createRoot(def, {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/dispose-offline' })],
+      })
+      await settle()
+      expect(calls).toBe(0)
+      // The reconnect subscription and the parked `waitForOnline` both go
+      // through the engine's one shared `online` listener.
+      expect(env.listenerCount('online')).toBe(1)
+
+      root.dispose()
+      await settle()
+      // Both are gone: the pass released the cross-tab replay lock instead of
+      // holding it until a network that may never return.
+      expect(env.listenerCount('online')).toBe(0)
+      expect(calls).toBe(0)
+    } finally {
+      env.restore()
+    }
+  })
+})
+
+describe('mutationQueuePlugin — the entry is durable before mutate runs', () => {
+  test('mutate waits for the storage write to resolve', async () => {
+    const id = 'mq-test/durable-first'
+    _unregisterMutationById(id)
+    const memory = memoryAdapter()
+    const order: string[] = []
+    let releaseWrite: () => void = () => {}
+    const slowStorage: StorageAdapter = {
+      ...memory,
+      set(key: string, value: string) {
+        order.push('write')
+        return new Promise<void>((resolve) => {
+          releaseWrite = () => {
+            memory.set(key, value)
+            order.push('written')
+            resolve()
+          }
+        })
+      },
+    }
+    const save = defineMutation({
+      id,
+      mutate: async (_v: { n: number }) => {
+        order.push('mutate')
+        return 'ok'
+      },
+      meta: { persist: true },
+    })
+    const def = defineController((ctx) => ({ save: createMutation(ctx, save) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [mutationQueuePlugin({ storage: slowStorage, keyPrefix: 'test/mq/durable' })],
+    })
+
+    const run = root.api.save.run({ n: 1 })
+    await settle()
+    // The write is in flight, and the request has not gone out.
+    expect(order).toEqual(['write'])
+
+    releaseWrite()
+    await expect(run).resolves.toBe('ok')
+    expect(order).toEqual(['write', 'written', 'mutate'])
+    root.dispose()
+  })
+
+  test('a rejected write is reported, and the run still proceeds', async () => {
+    const id = 'mq-test/durable-reject'
+    _unregisterMutationById(id)
+    const memory = memoryAdapter()
+    const warnings: string[] = []
+    const fullStorage: StorageAdapter = {
+      ...memory,
+      set() {
+        return Promise.reject(new DOMException('quota', 'QuotaExceededError'))
+      },
+    }
+    const mutate = vi.fn(async (_v: { n: number }) => 'ok')
+    const save = defineMutation({ id, mutate, meta: { persist: true } })
+    const def = defineController((ctx) => ({ save: createMutation(ctx, save) }))
+    const root = createRoot(def, {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [
+        mutationQueuePlugin({
+          storage: fullStorage,
+          keyPrefix: 'test/mq/reject',
+          onWarn: (msg) => warnings.push(msg),
+        }),
+      ],
+    })
+
+    await expect(root.api.save.run({ n: 1 })).resolves.toBe('ok')
+    expect(mutate).toHaveBeenCalledTimes(1)
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('failed to persist enqueue')
     root.dispose()
   })
 })

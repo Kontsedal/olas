@@ -1,24 +1,38 @@
+import type { BRAND } from '../brand'
 import type { ReadSignal } from '../signals/types'
 
 /** Lifecycle phase of an async resource. */
 export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
 
 /**
- * The nine reactive signals + three actions a subscriber sees for any async
+ * The ten reactive signals + four actions a subscriber sees for any async
  * resource (`LocalCache<T>` or a `Query` subscription). Spec §20.4.
  *
  * - `data` / `error` / `status` — current outcome.
  * - `isLoading` — true only on the first pending fetch (no `data` yet).
  * - `isFetching` — true on any pending fetch.
- * - `isStale` — true when `staleTime` has elapsed since `lastUpdatedAt`.
- * - `lastUpdatedAt` — epoch ms of last success.
+ * - `isStale` — true when `staleTime` has elapsed since the last fetch,
+ *   hydrated row or canonical write. An optimistic `setData` does not reset it.
+ * - `lastUpdatedAt` — epoch ms of the last change to `data`, an optimistic
+ *   `setData` included.
  * - `hasPendingMutations` — at least one mutation has a snapshot on this entry.
  * - `isPaused` — a fetch is parked waiting for network reconnect.
+ * - `isEnabled` — false while a subscription's `enabled` returns false;
+ *   always true for a local cache.
  *
  * Actions:
  * - `refetch()` — force a fetch; resolves with the result.
  * - `reset()` — clear `error` + `status` without re-fetching.
- * - `firstValue()` — resolves on the first success after subscribe.
+ * - `cancel()` — abort the in-flight fetch, if any.
+ * - `firstValue()` — resolves at once when data for the current key is already
+ *   there, even while a background refetch runs or after one failed. Otherwise
+ *   it resolves on the first success and rejects on the first failure. The
+ *   previous key's data that `keepPreviousData` keeps on screen does not
+ *   count. It is the promise to hand to Suspense or React 19's `use(...)`.
+ *
+ * `status` reads `'pending'` during every fetch, a background refetch
+ * included, while `data` stays. Test `data !== undefined` for "something to
+ * show".
  */
 export type AsyncState<T> = {
   data: ReadSignal<T | undefined>
@@ -38,17 +52,23 @@ export type AsyncState<T> = {
    * flips to `error` for the parked attempt). Spec §5.5.
    */
   isPaused: ReadSignal<boolean>
+  /**
+   * `false` while a subscription's `enabled` returns `false`. A disabled
+   * subscription holds no entry: `refetch()` rejects with `QueryDisabledError`,
+   * and `firstValue()` waits until it is enabled and loaded. Always `true` for
+   * a `LocalCache`.
+   */
+  isEnabled: ReadSignal<boolean>
 
   refetch: () => Promise<T>
   reset: () => void
-  firstValue: () => Promise<T>
   /**
-   * Alias of `firstValue()` — clearer name for Suspense / `React.use(...)`
-   * use cases. Resolves with `data` on first success (short-circuits if
-   * already settled), rejects with `error` on the first failure. Use this
-   * to suspend a React tree until the query lands its first value.
+   * Abort the in-flight fetch, if any; `isFetching` drops and the data stays.
+   * The canonical optimistic update cancels first, so an older response
+   * cannot land over the optimistic value. See `Query.cancel`.
    */
-  promise: () => Promise<T>
+  cancel: () => void
+  firstValue: () => Promise<T>
 }
 
 /**
@@ -72,33 +92,65 @@ export type Snapshot = {
 
 /**
  * A cache owned by one controller — no sharing across the tree. Returned by
- * `ctx.cache(fetcher, options?)`. Disposed automatically with the controller.
+ * `createCache(ctx, fetcher, options?)`. Disposed automatically with the controller.
  */
 export type LocalCache<T> = AsyncState<T> & {
   /**
    * Mark stale and trigger an immediate refetch. The returned promise resolves
-   * when that refetch settles (errors surface on the `error` signal, so it
-   * resolves rather than rejects). Ignore it for fire-and-forget.
+   * when that refetch settles, or, when a `replace` discarded it, when the
+   * catch-up fetch settles. Errors surface on the `error` signal, so it
+   * resolves rather than rejects. Ignore it for fire-and-forget.
    */
   invalidate(): Promise<void>
-  /** Patch the current data. Returns a `Snapshot` for rollback. */
+  /**
+   * Patch the current data **optimistically**. Returns a `Snapshot` the caller
+   * must settle, as with `Query.setData`: until then `hasPendingMutations`
+   * stays `true`. Use `write` or `replace` for data that is already true.
+   */
   setData(updater: (prev: T | undefined) => T): Snapshot
-  /** Idempotent — also called when the owning controller disposes. */
+  /**
+   * Patch the current data **canonically**, as `Query.write` does: no
+   * snapshot, `hasPendingMutations` untouched, and a fetch already in flight
+   * left alone. Live optimistic snapshots rebase onto the written value.
+   */
+  write(updater: (prev: T | undefined) => T): void
+  /**
+   * Replace the data with a value that **is** the whole record, as
+   * `Query.replace` does, superseding a fetch already in flight. Supersedes
+   * only when `value` is defined. When the superseded fetch was an
+   * `invalidate()`'s, the cache fetches once more to reconcile (spec §6.4).
+   */
+  replace(value: T): void
+  /**
+   * Idempotent — also called when the owning controller disposes.
+   */
   dispose(): void
 }
 
 /** One entry inside a `DehydratedState`. */
 export type DehydratedEntry = {
   /**
-   * Stable query identity — `spec.queryId` when set, else an auto-assigned
-   * registration id. Namespaces the hydration buffer so a subscriber of query
+   * The query's required `id`. Namespaces the hydration buffer so a subscriber of query
    * B can't adopt query A's payload just because their `key()` outputs hash
    * the same (spec §15).
    */
   id: string
+  /**
+   * The key args. The client hashes them as JSON round-trips them (§5.4), so a
+   * key holding an `undefined` member, a Date or `NaN` is adopted after the
+   * payload crosses JSON.
+   */
   key: readonly unknown[]
+  /**
+   * The cached value. For an infinite query, its pages.
+   */
   data: unknown
   lastUpdatedAt: number
+  /**
+   * Present for an infinite query: the params of `data`'s pages, one per page,
+   * so the client can continue paging from where the server stopped.
+   */
+  pageParams?: readonly unknown[]
 }
 
 /**
@@ -112,10 +164,11 @@ export type DehydratedState = {
 }
 
 /**
- * Retry policy for queries and mutations. A number is a max-attempt count
- * (default backoff). A function decides per-attempt (return `true` to retry).
+ * Retry policy for queries and mutations. `false` never retries, as `0` does.
+ * A number is a max-attempt count (default backoff). A function decides
+ * per-attempt (return `true` to retry).
  */
-export type RetryPolicy = number | ((attempt: number, error: unknown) => boolean)
+export type RetryPolicy = false | number | ((attempt: number, error: unknown) => boolean)
 
 /** Backoff in ms. A number is constant delay; a function computes per-attempt. */
 export type RetryDelay = number | ((attempt: number) => number)
@@ -153,11 +206,11 @@ export type RetryDelay = number | ((attempt: number) => number)
  *   reschedules nothing. Drive the decision off the `data` argument.
  * - **Per entry, not per subscriber.** The timer belongs to the shared cache
  *   entry, so ten controllers on one key share one interval. That's why
- *   `UseOptions` has no `refetchInterval`: per-subscriber intervals need a
+ *   `QuerySubscriptionOptions` has no `refetchInterval`: per-subscriber intervals need a
  *   "whose interval wins" rule and every answer to that surprises somebody.
- *   Same reason it stays out of `DefaultQueryOptions` (§5.9) — a root-wide
+ *   Same reason it stays out of `QueryDefaults` (§5.9) — a root-wide
  *   interval polls the entire app.
- * - `ctx.cache` (`LocalCache`) has no interval of any kind. This is a
+ * - `createCache` (`LocalCache`) has no interval of any kind. This is a
  *   `defineQuery` / `defineInfiniteQuery` feature only.
  *
  * For infinite queries `T` is the pages array (`TPage[]`) — whatever the entry
@@ -176,13 +229,20 @@ export type FetchCtx = {
 }
 
 /**
- * Configuration passed to `defineQuery({ ... })`. The `Args` tuple is what
- * callers pass as cache keys and to the fetcher. Spec §20.4.
+ * Per-query plugin settings, carried on `QuerySpec.meta`. Empty in core:
+ * plugin packages add their fields through declaration merging.
  *
- * The fetcher's first argument is a `FetchCtx` (signal + deps); positional
- * cache args come after. This shape lets module-scoped queries read
- * `ctx.deps.api` etc. — no `setApiForQuery(api)` module-level capture needed.
+ * ```ts
+ * declare module '@kontsedal/olas-core' {
+ *   interface QueryMeta {
+ *     crossTab?: boolean
+ *   }
+ * }
+ * ```
  */
+// biome-ignore lint/suspicious/noEmptyInterface: augmented by plugin packages
+export interface QueryMeta {}
+
 /**
  * How a query behaves with respect to the network reachability signal.
  *
@@ -190,7 +250,9 @@ export type FetchCtx = {
  *   automatically resume when reconnect fires (via `subscribeReconnect`).
  *   Inflight fetches are NOT aborted on offline; a `bindEntry` / `acquire`
  *   that lands while offline simply defers the initial fetch. The deferred
- *   entry reports `isPaused: true` until reconnect.
+ *   entry reports `isPaused: true` until reconnect. A fetch requested while
+ *   offline does supersede one already in flight, as a request made online
+ *   does, so the older response never lands.
  * - `always` — never gate on connectivity; fetcher runs whenever requested.
  *   Useful for queries against `localhost` / IPC / a service worker that
  *   doesn't surface through `navigator.onLine`.
@@ -203,7 +265,23 @@ export type FetchCtx = {
  */
 export type NetworkMode = 'online' | 'always' | 'offlineFirst'
 
+/**
+ * Configuration passed to `defineQuery({ ... })`. The `Args` tuple is what
+ * callers pass as cache keys and to the fetcher. Spec §20.4.
+ *
+ * The fetcher's first argument is a `FetchCtx` (signal + deps); positional
+ * cache args come after. This shape lets module-scoped queries read
+ * `ctx.deps.api` etc. — no `setApiForQuery(api)` module-level capture needed.
+ */
 export type QuerySpec<Args extends unknown[], T> = {
+  /**
+   * Stable identity for this query: unique per query, and identical in the
+   * server and client bundles. It names the query in SSR payloads, plugin
+   * events, devtools and error contexts. Write it by hand — derived names
+   * (`fetcher.name`, a hash of the source) change under minification.
+   * Spec §5.2.
+   */
+  id: string
   key: (...args: Args) => unknown[]
   fetcher: (ctx: FetchCtx, ...args: Args) => Promise<T>
   staleTime?: number
@@ -233,34 +311,18 @@ export type QuerySpec<Args extends unknown[], T> = {
    */
   structuralShare?: boolean
   /**
-   * Stable identifier used by `QueryClientPlugin`s (e.g. `@kontsedal/olas-cross-tab`)
-   * to locate the same query across tabs / processes / persistence layers.
-   * REQUIRED for queries with `crossTab: true`. SPEC §13.2.
-   *
-   * Don't auto-derive from `fetcher.name` or argument hashing — both are
-   * fragile under minification.
+   * Per-query settings for plugins. Each plugin package declares its fields
+   * by augmenting `QueryMeta`, so `meta` accepts exactly what the installed
+   * plugins understand. Core never reads it. Spec §13.
    */
-  queryId?: string
-  /**
-   * Opt this query into cross-tab cache sync (`@kontsedal/olas-cross-tab`).
-   * No effect without a `queryId` and without a plugin installed. SPEC §13.2.
-   *
-   * - `true` (legacy) — equivalent to `'data'`.
-   * - `'data'` — propagate explicit `setData`/`invalidate` writes.
-   *
-   * The `'infinite'` / `'both'` values were removed (T6.4): peers can't apply
-   * infinite-query page arrays cross-tab, so those broadcasts were channel
-   * noise. Infinite cross-tab is tracked in `BACKLOG.md`.
-   */
-  crossTab?: boolean | 'data'
+  meta?: QueryMeta
 }
 
 /**
- * Root-wide defaults for query behavior, passed as
- * `createRoot(def, { defaultQueryOptions })`. Every field mirrors the
- * same-named field on `QuerySpec` — resolution is
- * `spec.X ?? defaultQueryOptions.X ?? <built-in default>`, so a per-query
- * spec always wins. Spec §5.9.
+ * Defaults for every query, infinite query and `createCache` under a root,
+ * passed as `queryEngine({ defaults })`. Every field mirrors the same-named
+ * field on `QuerySpec`, and a per-query spec always wins:
+ * `spec.X ?? defaults.X ?? <built-in default>`. Spec §5.9.
  *
  * Derived via `Pick` rather than re-declared so the types can't drift from
  * `QuerySpec`. None of the picked fields reference `Args`/`T`, which is why
@@ -269,14 +331,13 @@ export type QuerySpec<Args extends unknown[], T> = {
  * Deliberately NOT defaultable:
  * - `refetchInterval` — a root-wide interval would silently start polling
  *   every query in the app. Opt in per query.
- * - `key` / `fetcher` / `queryId` / `crossTab` — per-query identity and
- *   behavior; meaningless as an app-wide default.
+ * - `id` / `key` / `fetcher` / `meta` — per-query identity and plugin
+ *   settings; meaningless as an app-wide default.
  *
- * `refetchOnWindowFocus` / `refetchOnReconnect` apply to regular queries
- * only — infinite queries have no focus/reconnect subscription (see
- * `InfiniteClientEntry`), so setting them here is a no-op for those.
+ * Every default applies to infinite queries too. A focus or reconnect
+ * refetch of an infinite query re-fetches every loaded page.
  */
-export type DefaultQueryOptions = Pick<
+export type QueryDefaults = Pick<
   QuerySpec<never[], unknown>,
   | 'staleTime'
   | 'gcTime'
@@ -291,23 +352,29 @@ export type DefaultQueryOptions = Pick<
 
 /**
  * A module-scoped shared query handle. Bind a subscriber via
- * `ctx.use(query, () => [...args])`. The same `Query` value can be used by
+ * `createQuery(ctx, query, () => [...args])`. The same `Query` value can be used by
  * many controllers across many roots — each root has its own cache.
+ * Use `bindQuery(ctx, query)` or `root.bindQuery(query)` for imperative operations.
+ * Unbound operations reject/throw when more than one root has touched the query.
  */
 export type Query<Args extends unknown[], T> = {
-  readonly __olas: 'query'
+  readonly [BRAND]: 'query'
   /**
    * Mark a specific keyed entry stale + trigger refetch if any subscribers. The
-   * returned promise resolves when the triggered refetch settles **or is discarded**
-   * (a supersede — a newer refetch, a key change, or a canonical `write`, §6.4 —
-   * resolves it rather than rejecting, so a caller cannot tell the two apart from
-   * the promise alone) — immediately if
-   * the entry is subscriber-less (marked stale only). It never rejects (fetch errors
-   * are reported via the root's `onError`), so `await invalidate(...)` is safe to
-   * use as a sequencing point; ignore it for fire-and-forget.
+   * returned promise resolves when the triggered refetch settles, and at once if
+   * the entry is subscriber-less (marked stale only).
+   *
+   * A `replace` that discards the refetch makes the entry fetch once more to
+   * reconcile, and the promise resolves when that catch-up settles (§6.4). Any
+   * other supersede — a newer refetch, a `cancel`, a hydration — resolves it
+   * rather than rejecting. Fetch errors are reported via the root's `onError`.
+   * Ambiguous unbound calls and operations on a disposed root reject; use a
+   * bound handle to select the root explicitly.
    */
   invalidate(...args: Args): Promise<void>
-  /** Like `invalidate` for every keyed entry; resolves when all triggered refetches settle. */
+  /**
+   * Like `invalidate` for every keyed entry; resolves when all triggered refetches settle.
+   */
   invalidateAll(): Promise<void>
   /**
    * Patch the current data for a specific key **optimistically**. Returns a
@@ -341,9 +408,9 @@ export type Query<Args extends unknown[], T> = {
    * and no mutation to settle it, which is why using `setData` for one leaks a
    * live snapshot per call.
    *
-   * Same entry (created if absent) and same `source: 'set'` plugin/devtools event
-   * as `setData`, so cross-tab and entity plugins treat it as any other local
-   * write. Guard with `peek(...)` when patching an absent key would produce
+   * Same entry as `setData` (created if absent). It reports a `source: 'write'`
+   * plugin and devtools event, where `setData` reports `'optimistic'`, so
+   * cross-tab and entity plugins mirror it as canonical data. Guard with `peek(...)` when patching an absent key would produce
    * nonsense (a merge over `undefined` usually does).
    *
    * It rebases live optimistic snapshots onto the written value, so a mutation
@@ -372,6 +439,12 @@ export type Query<Args extends unknown[], T> = {
    * to `success` whatever it is handed, so replacing with `undefined` and
    * cancelling together would strand it at `success` over no data with nothing to
    * refetch it. Like `write`, it pushes no snapshot and rebases live ones.
+   *
+   * When the superseded fetch was an invalidation's and the entry has
+   * subscribers, the entry fetches once more: the discarded response was the
+   * reconciliation the invalidation asked for. A `replace` landing while that
+   * catch-up is in flight leaves it alone, so a burst of pushes cannot keep it
+   * from landing.
    */
   replace(...args: [...Args, value: T]): void
   /**
@@ -382,7 +455,7 @@ export type Query<Args extends unknown[], T> = {
    * gc'd), or an entry that has not settled. A peek never creates an entry, so
    * asking cannot change the answer, and it registers no reactive dependency:
    * calling it inside a `computed` or an effect will NOT re-run them when the
-   * data changes. Reactive reads are what `ctx.use(...)` is for; this is for
+   * data changes. Reactive reads are what `createQuery(ctx, ...)` is for; this is for
    * imperative moments — an event handler that needs the current value, or a
    * guard before a `write(...)`.
    */
@@ -396,34 +469,42 @@ export type Query<Args extends unknown[], T> = {
    * by itself when a subscription acquires or resumes.
    */
   cancel(...args: Args): void
-  /** Cancel in-flight fetches for every keyed entry of this query. */
+  /**
+   * Cancel in-flight fetches for every keyed entry of this query.
+   */
   cancelAll(): void
-  /** Eagerly fetch into the cache without subscribing. */
+  /**
+   * Eagerly fetch into the cache without subscribing. A fresh entry resolves
+   * with its data at once. A fetch already in flight is joined, and the
+   * promise settles with it, not with the stale data it replaces. Rejects with
+   * the fetch's error, or with an `AbortError` when a `cancel()` leaves the
+   * entry without data (spec §5.7).
+   */
   prefetch(...args: Args): Promise<T>
 }
 
-/** What `ctx.use(query, ...)` returns — `AsyncState<T>` plus `cancel()`. */
-export type QuerySubscription<T> = AsyncState<T> & {
-  /** Cancel this subscription's in-flight fetch (if any). See `Query.cancel`. */
-  cancel: () => void
-}
+/** Imperative query operations bound to one root, without a subscription. */
+export type QueryActions<Args extends unknown[], T> = Omit<Query<Args, T>, typeof BRAND>
+
+/** What `createQuery(ctx, query, ...)` returns: the query's `AsyncState<T>`. */
+export type QuerySubscription<T> = AsyncState<T>
 
 /**
- * Options passed to `ctx.use(query, opts)` to control the subscription
+ * Options passed to `createQuery(ctx, query, opts)` to control the subscription
  * (reactive key, enabled-gating). The `key` thunk reads signals —
  * re-evaluating when they change re-keys the subscription.
  *
  * A `select` projection that maps the underlying data shape to a view
- * shape is accepted via a dedicated overload on `Ctx.use` rather than this
+ * shape is accepted via a dedicated overload on `createQuery` rather than this
  * options bag — the overload threads `T → U` types through cleanly.
  */
-export type UseOptions<Args extends readonly unknown[]> = {
+export type QuerySubscriptionOptions<Args extends readonly unknown[]> = {
   key?: () => Args
   enabled?: () => boolean
   /**
    * When `enabled` flips to `false`, keep reporting the last `data` this
    * subscription held (snapshotted at disable time) instead of blanking to
-   * `undefined`. Default `false` — the spec's disable behaviour (§5.7:
+   * `undefined`. Default `false` — the spec's disable behaviour (§5.2:
    * `status: 'idle'`, `data: undefined`). Turn it on to port react-query's
    * "a disabled observer still reads the cache" behaviour: the entry is still
    * released (refcount / GC unchanged) and `status` stays `'idle'`, but `data`
@@ -434,10 +515,27 @@ export type UseOptions<Args extends readonly unknown[]> = {
 }
 
 /**
+ * `createQuery`'s options with a `select` projection: the subscription reports
+ * `select(data)` instead of the cached value. The projection runs per
+ * subscriber; the cache keeps the raw value.
+ */
+export type QuerySelectOptions<
+  Args extends readonly unknown[],
+  T,
+  U,
+> = QuerySubscriptionOptions<Args> & {
+  select: (data: T) => U
+}
+
+/**
  * Internal shape — what `createUse` accepts. Includes the optional `select`
- * field used by the `select` overload on `Ctx.use`. Not exported on the
+ * field used by the `select` overload on `createQuery`. Not exported on the
  * public surface; consumers use the typed overload.
  */
-export type UseInternalOptions<Args extends readonly unknown[], T, U> = UseOptions<Args> & {
+export type SubscriptionInternalOptions<
+  Args extends readonly unknown[],
+  T,
+  U,
+> = QuerySubscriptionOptions<Args> & {
   select?: (data: T) => U
 }

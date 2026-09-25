@@ -8,16 +8,18 @@ import { App } from './App'
 import { createFakeApi } from './api'
 import { createAppRoot } from './controller'
 
+export { renderPage } from './page'
+
 export async function render(_url: string): Promise<{ html: string; state: DehydratedState }> {
   const api = createFakeApi()
   const root = createAppRoot({
     api,
     // Deliberately omit `storage` — localStorage is not available server-side.
-    // `usePersisted` handles this via `typeof localStorage === 'undefined'`.
+    // `createPersisted` handles this via `typeof localStorage === 'undefined'`.
   })
 
   // Subscribe at least once so `waitForIdle` sees the fetch.
-  // Subscriptions are created during construction (ctx.use), so a microtask
+  // Subscriptions are created during construction (createQuery), so a microtask
   // tick is enough to schedule the first fetch.
   await Promise.resolve()
   await root.waitForIdle()

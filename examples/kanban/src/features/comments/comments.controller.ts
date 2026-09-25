@@ -2,7 +2,7 @@
  * Comments thread for the currently selected card.
  *
  * Library primitive demonstrated:
- *  - `useLiveStream(ctx, channel)` over the BroadcastChannel-backed realtime
+ *  - `createLiveStream(ctx, channel)` over the BroadcastChannel-backed realtime
  *    service. The stream buffers events; we filter by `cardId` and append to
  *    the local thread.
  *
@@ -11,15 +11,25 @@
  * stream (when a sibling tab adds one).
  */
 
-import { type Ctx, computed, defineController, defineQuery, signal } from '@kontsedal/olas-core'
-import { useLiveStream } from '@kontsedal/olas-realtime'
+import {
+  bindQuery,
+  type Ctx,
+  computed,
+  createMutation,
+  createQuery,
+  defineController,
+  defineQuery,
+  signal,
+} from '@kontsedal/olas-core'
+import { Entities } from '@kontsedal/olas-entities'
+import { createLiveStream } from '@kontsedal/olas-realtime'
 import { type Comment, REALTIME_CHANNEL, type RealtimeEvent } from '../../api'
 import { UserEntity } from '../../entities'
 import { activityScope, selectedCardScope } from '../../scopes'
 
 const commentsQuery = defineQuery({
-  queryId: 'comments',
-  crossTab: true,
+  id: 'comments',
+  meta: { crossTab: true },
   key: (cardId: string) => [cardId],
   fetcher: ({ signal, deps }, cardId: string): Promise<Comment[]> =>
     deps.api.listComments(cardId, signal),
@@ -28,18 +38,19 @@ const commentsQuery = defineQuery({
 
 export const commentsController = defineController(
   (ctx: Ctx) => {
+    const commentsQueryActions = bindQuery(ctx, commentsQuery)
     const { selectedCardId } = ctx.inject(selectedCardScope)
     const activity = ctx.inject(activityScope)
 
     const draft = signal('')
 
     // The thread query — reactive on the active card id.
-    const thread = ctx.use(commentsQuery, () => [selectedCardId.value ?? '__none__'])
+    const thread = createQuery(ctx, commentsQuery, () => [selectedCardId.value ?? '__none__'])
 
     // Live stream from broadcast. Events filtered to `comment.added`
     // matching the current card id. Coalesced flush at 32ms — fast enough
     // for "feels live", slow enough to coalesce bursts.
-    const stream = useLiveStream<RealtimeEvent>(ctx, REALTIME_CHANNEL, { flushMs: 32 })
+    const stream = createLiveStream<RealtimeEvent>(ctx, REALTIME_CHANNEL, { flushMs: 32 })
 
     /**
      * Comments that arrived via realtime since the last refetch — keyed by
@@ -83,18 +94,19 @@ export const commentsController = defineController(
     // The author is the first user in the entities store. In a real app
     // this would be `session.user.id`. We pick the first registered user as
     // a stand-in so the demo doesn't need a sign-in flow.
-    const addComment = ctx.mutation<{ body: string }, Comment>({
-      name: 'addComment',
+    const addComment = createMutation<{ body: string }, Comment>(ctx, {
+      id: 'addComment',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const id = selectedCardId.peek()
         if (id === null) throw new Error('No card open')
         // Stand-in for "the current user" — first registered user. A real app
         // would read `session.user.id` from a session dep.
-        const firstUser = ctx.deps.entities.entries(UserEntity).keys().next().value
+        const firstUser = ctx.inject(Entities).entries(UserEntity).keys().next().value
         const authorId = firstUser ?? 'u_ada'
         const comment = await ctx.deps.api.addComment(id, authorId, vars.body, signal)
-        commentsQuery.setData(id, (prev) => [...(prev ?? []), comment])
+        // Canonical: the comment exists on the server. `write` leaves no snapshot.
+        commentsQueryActions.write(id, (prev) => [...(prev ?? []), comment])
         return comment
       },
       onSuccess: (comment) => {

@@ -1,13 +1,14 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createRoot, defineController } from '../src/controller'
+import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
 
 const emptyDeps = {}
 
-// ─── ctx.session ────────────────────────────────────────────────────────────
+// ─── ctx.attach ─────────────────────────────────────────────────────────────
 
-describe('ctx.session', () => {
-  test('returns [api, dispose]; explicit dispose tears down early', () => {
+describe('ctx.attach', () => {
+  test('dispose is idempotent', () => {
     const log: string[] = []
     const editor = defineController(
       (ctx, props: { initial: string }) => {
@@ -16,64 +17,23 @@ describe('ctx.session', () => {
       },
       { name: 'editor' },
     )
-
-    let session: readonly [{ draft: { value: string } }, () => void] | undefined
+    let handle: { api: { draft: { value: string } }; dispose: () => void } | undefined
     const root = createRoot(
       defineController((ctx) => {
-        session = ctx.session(editor, { initial: 'hello' })
+        handle = ctx.attach(editor, { initial: 'hello' })
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
-
-    expect(session![0].draft.value).toBe('hello')
-    session![1]()
+    expect(handle?.api.draft.value).toBe('hello')
+    handle?.dispose()
+    handle?.dispose()
     expect(log).toEqual(['editor:hello:disposed'])
-    // Idempotent.
-    session![1]()
+    root.dispose()
     expect(log).toEqual(['editor:hello:disposed'])
-
-    root.dispose()
   })
 
-  test('parent dispose tears down a session that was never explicitly disposed', () => {
-    const log: string[] = []
-    const child = defineController((ctx) => {
-      ctx.onDispose(() => log.push('child:disposed'))
-      return {}
-    })
-    const root = createRoot(
-      defineController((ctx) => {
-        ctx.session(child, undefined)
-        return {}
-      }),
-      { deps: emptyDeps },
-    )
-    root.dispose()
-    expect(log).toEqual(['child:disposed'])
-  })
-
-  test('session children participate in suspend/resume cascade', () => {
-    const log: string[] = []
-    const child = defineController((ctx) => {
-      ctx.onSuspend(() => log.push('child:suspend'))
-      ctx.onResume(() => log.push('child:resume'))
-      return {}
-    })
-    const root = createRoot(
-      defineController((ctx) => {
-        ctx.session(child, undefined)
-        return {}
-      }),
-      { deps: emptyDeps },
-    )
-    root.suspend()
-    root.resume()
-    expect(log).toEqual(['child:suspend', 'child:resume'])
-    root.dispose()
-  })
-
-  test('dispose-override on options.deps applies to the session controller', () => {
+  test('options.deps overrides the parent deps for the attached controller', () => {
     type Deps = { tag: string }
     let seen: string | undefined
     const child = defineController((ctx) => {
@@ -82,10 +42,10 @@ describe('ctx.session', () => {
     })
     const root = createRoot(
       defineController((ctx) => {
-        ctx.session(child, undefined, { deps: { tag: 'override' } })
+        ctx.attach(child, undefined, { deps: { tag: 'override' } })
         return {}
       }),
-      { deps: { tag: 'parent' } },
+      { queries: queryEngine(), deps: { tag: 'parent' } },
     )
     expect(seen).toBe('override')
     root.dispose()
@@ -121,20 +81,20 @@ describe('ctx.collection — homogeneous', () => {
         })
         return { c }
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
-    expect(root.c.size.value).toBe(2)
-    expect(root.c.items.value.map((x) => x.key)).toEqual(['a', 'b'])
-    expect(root.c.has('a')).toBe(true)
-    expect(root.c.get('a')?.id).toBe('a')
+    expect(root.api.c.size.value).toBe(2)
+    expect(root.api.c.items.value.map((x) => x.key)).toEqual(['a', 'b'])
+    expect(root.api.c.has('a')).toBe(true)
+    expect(root.api.c.get('a')?.id).toBe('a')
 
     source.set([
       { id: 'b', name: 'B' },
       { id: 'c', name: 'C' },
       { id: 'a', name: 'A' },
     ])
-    expect(root.c.items.value.map((x) => x.key)).toEqual(['b', 'c', 'a'])
-    expect(root.c.size.value).toBe(3)
+    expect(root.api.c.items.value.map((x) => x.key)).toEqual(['b', 'c', 'a'])
+    expect(root.api.c.size.value).toBe(3)
     root.dispose()
   })
 
@@ -160,7 +120,7 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id }),
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     expect(constructed).toEqual(['a', 'b'])
     expect(disposed).toEqual([])
@@ -191,7 +151,7 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id, name: i.name }),
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     expect(propsSeen).toEqual(['x/first'])
 
@@ -219,7 +179,7 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id }),
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     expect(constructed).toEqual(['a'])
 
@@ -258,11 +218,11 @@ describe('ctx.collection — homogeneous', () => {
           propsOf: (i) => ({ id: i.id }),
         }),
       })),
-      { deps: emptyDeps, onError },
+      { queries: queryEngine(), deps: emptyDeps, onError },
     )
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError.mock.calls[0]![1].kind).toBe('construction')
-    expect(root.c.items.value.map((x) => x.key)).toEqual(['good', 'also-good'])
+    expect(root.api.c.items.value.map((x) => x.key)).toEqual(['good', 'also-good'])
     root.dispose()
   })
 })
@@ -302,7 +262,7 @@ describe('ctx.collection — factory (heterogeneous) form', () => {
           },
         }),
       })),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
 
     expect(log).toEqual(['text:construct:hello'])
@@ -343,7 +303,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.resolve(loaded), { content: 'hi' })
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
 
     expect(lazy!.status.value).toBe('idle')
@@ -370,7 +330,7 @@ describe('ctx.lazyChild', () => {
         }, undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     const a = lazy!.load()
     const b = lazy!.load()
@@ -390,7 +350,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.reject(new Error('import failed')), undefined)
         return {}
       }),
-      { deps: emptyDeps, onError },
+      { queries: queryEngine(), deps: emptyDeps, onError },
     )
     await expect(lazy!.load()).rejects.toThrow('import failed')
     expect(lazy!.status.value).toBe('error')
@@ -411,7 +371,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.resolve(broken), undefined)
         return {}
       }),
-      { deps: emptyDeps, onError },
+      { queries: queryEngine(), deps: emptyDeps, onError },
     )
     await expect(lazy!.load()).rejects.toThrow('factory broken')
     expect(lazy!.status.value).toBe('error')
@@ -436,7 +396,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => loaderPromise as Promise<typeof def>, undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     const loadPromise = lazy!.load()
     root.dispose()
@@ -457,7 +417,7 @@ describe('ctx.lazyChild', () => {
         lazy = ctx.lazyChild(() => Promise.resolve(def), undefined)
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     await lazy!.load()
     expect(log).toEqual([])
@@ -487,7 +447,7 @@ describe('ctx.lazyChild', () => {
         }
         return {}
       }),
-      { deps: emptyDeps },
+      { queries: queryEngine(), deps: emptyDeps },
     )
     for (const l of lazies) await l.load()
     for (const l of lazies) l.dispose()

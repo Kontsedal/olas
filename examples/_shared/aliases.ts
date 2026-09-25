@@ -15,6 +15,8 @@ export const olasAliases: Record<string, string> = {
   '@kontsedal/olas-core/testing': resolve(repoRoot, 'packages/core/src/testing.ts'),
   '@kontsedal/olas-core': resolve(repoRoot, 'packages/core/src/index.ts'),
   '@kontsedal/olas-react': resolve(repoRoot, 'packages/react/src/index.ts'),
+  '@kontsedal/olas-vue': resolve(repoRoot, 'packages/vue/src/index.ts'),
+  '@kontsedal/olas-svelte': resolve(repoRoot, 'packages/svelte/src/index.ts'),
   '@kontsedal/olas-zod': resolve(repoRoot, 'packages/zod/src/index.ts'),
   '@kontsedal/olas-persist': resolve(repoRoot, 'packages/persist/src/index.ts'),
   '@kontsedal/olas-devtools': resolve(repoRoot, 'packages/devtools/src/index.ts'),

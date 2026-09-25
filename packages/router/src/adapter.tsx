@@ -1,6 +1,17 @@
-import { batch, type Scope, type Signal, signal } from '@kontsedal/olas-core'
-import { type ReactElement, type ReactNode, useLayoutEffect } from 'react'
+import { batch, type OlasPlugin, type Signal, signal } from '@kontsedal/olas-core'
+import { type ReactElement, type ReactNode, useEffect, useLayoutEffect } from 'react'
 import { RouteParamsScope, RoutePathnameScope, RouteSearchScope } from './scopes'
+
+/**
+ * `useLayoutEffect` on the client, `useEffect` on the server. React warns
+ * that `useLayoutEffect` does nothing on the server and asks you to use
+ * `useEffect` instead — and it means it: neither runs during
+ * `renderToString`. The swap only silences the warning for a `Bridge` that
+ * is rendered on the server, which the SSR path is not supposed to do (seed
+ * with `createRouterAdapter(initial)` instead) but which a consumer's
+ * shared layout can reach anyway.
+ */
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 /**
  * A snapshot of route state. Params values are `string | undefined` to match
@@ -32,14 +43,17 @@ type AdapterStore = {
   pathname: Signal<string>
 }
 
+/** The plugin's name. */
+export const ROUTER_PLUGIN_NAME = 'olas-router'
+
 /**
- * Result of `createRouterAdapter()`. `scopes` plugs into
- * `createRoot({ scopes: adapter.scopes })`; `Bridge` mounts inside the
- * React tree and pushes router state into the underlying signals on every
- * change.
+ * Result of `createRouterAdapter()`. `plugin` goes in
+ * `createRoot({ plugins: [adapter.plugin] })` and provides the three route
+ * scopes; `Bridge` mounts inside the React tree and pushes router state into
+ * them on every change.
  */
 export type RouterAdapter = {
-  readonly scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]>
+  readonly plugin: OlasPlugin
   readonly Bridge: (props: {
     params: Record<string, string | undefined>
     search?: Record<string, unknown>
@@ -49,7 +63,7 @@ export type RouterAdapter = {
 }
 
 /**
- * Build a router adapter — a paired `{ scopes, Bridge }`.
+ * Build a router adapter — a paired `{ plugin, Bridge }`.
  *
  * Wire-up:
  *
@@ -57,7 +71,7 @@ export type RouterAdapter = {
  * import { createRouterAdapter, RouteParamsScope } from '@kontsedal/olas-router'
  *
  * const adapter = createRouterAdapter()
- * const root = createRoot(appController, { deps, scopes: adapter.scopes })
+ * const root = createRoot(appController, { deps, plugins: [adapter.plugin] })
  *
  * function App() {
  *   // TanStack Router:
@@ -88,8 +102,8 @@ export type RouterAdapter = {
  * ```
  *
  * The adapter is router-agnostic by design — wire whatever client-side
- * router you use. **Next.js is not supported**; see `BACKLOG.md` for the
- * philosophy reasoning.
+ * router you use. Next.js's app router is not supported: its server
+ * components run outside the browser tree a controller lives in.
  *
  * **SSR:** pass `initial` so the scopes hold real route state during the
  * server render — the `Bridge` pushes state in a client-only effect, so
@@ -111,11 +125,16 @@ export function createRouterAdapter(initial?: RouteState): RouterAdapter {
     pathname: signal<string>(initial?.pathname ?? ''),
   }
 
-  const scopes: ReadonlyArray<readonly [Scope<unknown>, unknown]> = [
-    [RouteParamsScope as unknown as Scope<unknown>, store.params],
-    [RouteSearchScope as unknown as Scope<unknown>, store.search],
-    [RoutePathnameScope as unknown as Scope<unknown>, store.pathname],
-  ]
+  // The route state is one app's, so every root this plugin is installed in
+  // reads the same signals — one adapter per app (per request, on the server).
+  const plugin: OlasPlugin = {
+    name: ROUTER_PLUGIN_NAME,
+    setup(host) {
+      host.provide(RouteParamsScope, store.params)
+      host.provide(RouteSearchScope, store.search)
+      host.provide(RoutePathnameScope, store.pathname)
+    },
+  }
 
   function Bridge(props: {
     params: Record<string, string | undefined>
@@ -124,13 +143,14 @@ export function createRouterAdapter(initial?: RouteState): RouterAdapter {
     children?: ReactNode
   }): ReactElement | null {
     const { params, search, pathname, children } = props
-    // Push router state into the underlying signals. `useLayoutEffect` (not
-    // `useEffect`) runs before the browser paints, shrinking the window where
-    // a consumer reads the pre-Bridge value on the client's first commit. It
-    // still doesn't run on the server — seed via `createRouterAdapter(initial)`
-    // for SSR. `batch` collapses the three writes into one notification round
-    // so consumers depending on multiple slots don't see an intermediate state.
-    useLayoutEffect(() => {
+    // Push router state into the underlying signals. A layout effect (not a
+    // plain one) runs before the browser paints, shrinking the window where
+    // a consumer reads the pre-Bridge value on the client's first commit. No
+    // effect of either kind runs on the server — seed via
+    // `createRouterAdapter(initial)` for SSR. `batch` collapses the three
+    // writes into one notification round so consumers depending on multiple
+    // slots don't see an intermediate state.
+    useIsomorphicLayoutEffect(() => {
       batch(() => {
         if (!shallowEqual(store.params.peek(), params)) store.params.set(params)
         const nextSearch = search ?? EMPTY
@@ -142,7 +162,7 @@ export function createRouterAdapter(initial?: RouteState): RouterAdapter {
     return (children ?? null) as ReactElement | null
   }
 
-  return { scopes, Bridge }
+  return { plugin, Bridge }
 }
 
 const EMPTY: Record<string, unknown> = Object.freeze({})

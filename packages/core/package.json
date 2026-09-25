@@ -17,7 +17,7 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19"
   },
   "author": "Bohdan Kontsedal <kontsedalbohdan@gmail.com>",
   "homepage": "https://github.com/Kontsedal/olas/tree/main/packages/core#readme",
@@ -30,29 +30,17 @@
     "url": "https://github.com/Kontsedal/olas/issues"
   },
   "type": "module",
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.cts",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": {
-        "types": "./dist/index.d.mts",
-        "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./dist/index.d.cts",
-        "default": "./dist/index.cjs"
-      }
+      "types": "./dist/index.d.ts",
+      "development": "./dist/dev/index.js",
+      "default": "./dist/index.js"
     },
     "./testing": {
-      "import": {
-        "types": "./dist/testing.d.mts",
-        "default": "./dist/testing.mjs"
-      },
-      "require": {
-        "types": "./dist/testing.d.cts",
-        "default": "./dist/testing.cjs"
-      }
+      "types": "./dist/testing.d.ts",
+      "development": "./dist/dev/testing.js",
+      "default": "./dist/testing.js"
     }
   },
   "files": [
@@ -62,13 +50,15 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ambient-deps.json"
   },
   "peerDependencies": {
     "@preact/signals-core": "^1.8.0"
   },
   "devDependencies": {
-    "@preact/signals-core": "^1.14.2"
+    "@preact/signals-core": "^1.14.4",
+    "@tanstack/query-core": "^5.103.2",
+    "mobx": "^7.0.4"
   },
   "publishConfig": {
     "access": "public"

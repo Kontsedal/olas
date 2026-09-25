@@ -6,7 +6,7 @@
   flex-direction: column;
   background: var(--color-bg-elev);
   border-left: 1px solid var(--color-border);
-  animation: olas-slide-in-right var(--motion-base);
+  animation: olas-slide-in-right var(--motion-base) var(--ease-out);
   max-height: 100vh;
   overflow: hidden;
 }
@@ -24,11 +24,21 @@
 }
 .olas-detail-id {
   font-family: var(--font-mono);
-  font-size: 0.68rem;
+  font-size: var(--text-chrome);
   color: var(--color-fg-dim);
-  letter-spacing: 0.02em;
 }
 .olas-detail-head-spacer { flex: 1; }
+/* The controller's `isPaused`. A tag hugs the top of a column it sits in; in
+ * this row it centres on the id beside it. */
+.olas-detail-state { align-self: center; }
+
+/* What stands in for the details while they are collapsed. Same treatment as
+ * every other empty state in the app. */
+.olas-detail-collapsed {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--color-fg-dim);
+}
 
 .olas-detail-title-row {
   display: flex; gap: 6px; align-items: center;
@@ -39,12 +49,11 @@
   background: transparent;
   outline: none;
   padding: 2px 0;
-  font-weight: 600;
-  font-size: 1.0625rem;
-  letter-spacing: -0.01em;
+  font-weight: var(--weight-semibold);
+  font-size: var(--text-display);
   color: var(--color-fg);
 }
-.olas-detail-title-input::placeholder { color: var(--color-fg-dim); font-weight: 500; }
+.olas-detail-title-input::placeholder { color: var(--color-fg-dim); font-weight: var(--weight-medium); }
 .olas-detail-title-input[aria-invalid="true"] { color: var(--color-fg); }
 
 .olas-detail-spinner {
@@ -74,25 +83,27 @@
   background: var(--color-bg-sunk);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-pill);
-  font-size: 0.72rem;
+  font-size: var(--text-meta);
   color: var(--color-fg-mute);
-  transition: background var(--motion-fast), color var(--motion-fast);
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 .olas-pill:hover { background: var(--color-bg-hover); color: var(--color-fg); }
-.olas-pill-on { background: var(--color-accent-soft); color: var(--color-accent); border-color: transparent; }
+/* Chosen is a state, so the accent is right — as the wash. The label stays
+ * on --color-fg, because accent-on-accent-tint is the pair that converges. */
+.olas-pill-on { background: var(--color-accent-soft); color: var(--color-fg); border-color: transparent; }
 
+/* A label pill used to set its text in a hue and its ground in a 4% mix of
+ * that same hue — ground and text converging by construction, at a hue
+ * nobody chose, so no ratio could be stated for it at all. The dot is the
+ * identity now and the text is a foreground tier, which is checkable. */
 .olas-pill-tag {
   display: inline-flex; align-items: center; gap: 5px;
   padding: 2px 8px;
-  background: oklch(0.95 0.04 var(--label-hue, 270));
-  color: oklch(0.42 0.14 var(--label-hue, 270));
-  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-fg);
+  border: 1px solid var(--color-border-control);
   border-radius: var(--radius-pill);
-  font-size: 0.72rem;
-}
-:root[data-theme="dark"] .olas-pill-tag {
-  background: oklch(0.28 0.08 var(--label-hue, 270));
-  color: oklch(0.82 0.14 var(--label-hue, 270));
+  font-size: var(--text-meta);
 }
 .olas-pill-tag-off {
   background: transparent;
@@ -100,13 +111,13 @@
   border-color: var(--color-border);
   opacity: 0.7;
 }
-.olas-pill-tag-dot { width: 6px; height: 6px; border-radius: 999px; background: oklch(0.62 0.18 var(--label-hue, 270)); }
+.olas-pill-tag-dot { width: 6px; height: 6px; border-radius: var(--radius-pill); background: var(--label-color, var(--color-border-control)); }
 
 .olas-subtasks { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 4px; }
 .olas-subtask {
   display: grid; grid-template-columns: auto 1fr auto; gap: 6px; align-items: center;
 }
-.olas-subtask-input { padding: 3px 6px; font-size: 0.78rem; }
+.olas-subtask-input { padding: 3px 6px; font-size: var(--text-body); }
 
 .olas-detail-foot {
   padding: 10px 14px;
@@ -117,5 +128,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* The panel still appears; it stops travelling. */
   .olas-detail { animation: none; }
+  /* A frozen spinner says nothing, so this one slows rather than stops. */
+  .olas-spin { animation-duration: 3s; }
 }

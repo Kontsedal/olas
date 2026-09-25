@@ -1,21 +1,15 @@
 import type { Ctx, ReadSignal } from '@kontsedal/olas-core'
 import { signal } from '@kontsedal/olas-core'
+import { LOCAL_STORAGE, type StorageAdapter } from './storage'
 
-export type StorageAdapter = {
-  get(key: string): string | null | Promise<string | null>
-  set(key: string, value: string): void | Promise<void>
-  delete(key: string): void | Promise<void>
-  onChange?(handler: (key: string, value: string | null) => void): () => void
-  /**
-   * Optional — list every key currently in storage. Consumers that need to
-   * enumerate keys (e.g. `@kontsedal/olas-mutation-queue` replaying the
-   * pending queue on init) require this extension; consumers that only
-   * `get` / `set` known keys (the typical `usePersisted` shape) don't need
-   * it. Both built-in adapters (`localStorageAdapter`, `indexedDbAdapter`)
-   * implement it.
-   */
-  keys?(): Iterable<string> | Promise<Iterable<string>>
-}
+export {
+  PERSIST_QUERY_CACHE_PLUGIN_NAME,
+  type PersistQueryCacheOptions,
+  persistQueryCachePlugin,
+  type QueryCacheErrorOp,
+  restoreQueryCache,
+} from './query-cache'
+export { localStorageAdapter, type StorageAdapter } from './storage'
 
 /**
  * Where a `PersistOptions.onError` fired. Distinguishes the failing operation
@@ -30,42 +24,67 @@ export type PersistErrorOp =
   | 'migrate'
   | 'remoteChange'
 
+/** Options for `createPersisted(ctx, key, source, options?)`. */
 export type PersistOptions<T> = {
   /**
    * Storage backend. When omitted *or explicitly `undefined`* (handy for app
    * code that forwards a deps slot like `ctx.deps.storage`), the browser
-   * `localStorageAdapter` is used. SSR-safe — `localStorageAdapter` no-ops
+   * `localStorageAdapter()` is used. SSR-safe — the localStorage adapter no-ops
    * when `localStorage` isn't defined.
    */
   storage?: StorageAdapter | undefined
+  /**
+   * Turns a value into the stored string. Default `JSON.stringify`.
+   */
   serialize?: (value: T) => string
+  /**
+   * Turns a stored string back into a value. Default `JSON.parse`.
+   */
   deserialize?: (raw: string) => T
+  /**
+   * Apply another tab's write to the same key. Needs a storage adapter with
+   * `onChange`. Default `false`. Another tab's value is read as a load is: a
+   * payload of an older version goes through `migrate`, and is dropped without
+   * one. A payload of a newer version is dropped. A migrated value is not
+   * written back, because the tab that wrote it still reads that key. A throttled write still waiting here is dropped,
+   * since the other tab's value is newer.
+   */
   crossTab?: boolean
   /**
-   * Schema version. When the value loaded from storage carries a different
+   * Schema version. When the value loaded from storage carries an older
    * `version`, `migrate(raw, fromVersion)` is invoked to bring it forward;
-   * the migrated value is written back atomically. When omitted, no version
-   * gate runs — payloads are read and written raw (current default).
+   * the migrated value is written back, unless another tab's change arrived
+   * during the load. A newer `version`, which a later build wrote, is
+   * ignored and left in storage. When omitted, no version gate runs:
+   * payloads are written raw, and a versioned payload that a newer build
+   * wrote is unwrapped and read.
    *
-   * The on-disk shape with versioning enabled is `{"v": N, "d": <serialized>}`
-   * — `usePersisted` wraps every write and reads both shapes (legacy raw and
-   * versioned). Versioned writes only happen once `version` is set.
+   * With `version` set, every write is the envelope
+   * `{"$olas":1,"v":N,"d":<serialized>}`. The `$olas` marker keeps a reader
+   * from taking a user value of that shape for an envelope. Reads accept the
+   * marked envelope, the unmarked `{"v":N,"d":…}` that earlier versions
+   * wrote, and a raw payload.
    */
   version?: number
   /**
    * Migrate a raw payload of a prior version. Receives the pre-deserialize
    * string and the version number it was written with (or `undefined` if no
    * version stamp existed, i.e. the legacy raw shape). Return the migrated
-   * payload AS A `T` value (post-deserialize); `usePersisted` re-serializes
+   * payload AS A `T` value (post-deserialize); `createPersisted` re-serializes
    * it before writing. Return `undefined` to drop the entry (the source
-   * keeps its current value).
+   * keeps its current value). A cross-tab change of an older version goes
+   * through it too, and an async result applies only if no newer change or
+   * local write came first. A payload of a newer version never reaches it.
    */
   migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
   /**
-   * Debounce writes by `throttleMs` milliseconds. Useful for high-frequency
-   * sources (cursor position, scroll, every-keystroke field) where the
-   * default "write on every change" is too chatty. Defaults to `0` (no
-   * debounce). On `ctx.onDispose`, any pending write is flushed.
+   * Throttle writes: at most one per `throttleMs` milliseconds, carrying the
+   * latest value (a trailing write — the first change opens the window, and
+   * the value current when it closes is what lands). Useful for
+   * high-frequency sources (cursor position, scroll, every-keystroke field)
+   * where "write on every change" is too chatty. Defaults to `0`, a write per
+   * change. A pending write is flushed when the controller disposes, and
+   * dropped when a cross-tab change arrives first.
    */
   throttleMs?: number
   /**
@@ -79,10 +98,20 @@ export type PersistOptions<T> = {
   onError?: (err: unknown, op: PersistErrorOp, key: string) => void
 }
 
+/** What `createPersisted` returns. */
 export type Persisted = {
+  /**
+   * `true` once the stored value has loaded: at once for `localStorage`, and
+   * after the read resolves for an async adapter.
+   */
   ready: ReadSignal<boolean>
 }
 
+/**
+ * What `createPersisted` can persist: anything with `value`, `set` and
+ * `subscribe`, such as a `Signal<T>` or a `Field<T>`. `subscribe` may call the
+ * handler at once with the current value, or only on a change.
+ */
 export type PersistableSource<T> = {
   readonly value: T
   set(value: T): void
@@ -94,9 +123,13 @@ export type PersistableSource<T> = {
  * picked for typical app use.
  */
 export type IndexedDbAdapterOptions = {
-  /** Database name. Defaults to `'olas-persist'`. */
+  /**
+   * Database name. Defaults to `'olas-persist'`.
+   */
   databaseName?: string
-  /** Object store inside the database. Defaults to `'kv'`. */
+  /**
+   * Object store inside the database. Defaults to `'kv'`.
+   */
   storeName?: string
   /**
    * `BroadcastChannel` name used to notify other tabs of writes through this
@@ -113,22 +146,24 @@ export type IndexedDbAdapterOptions = {
    */
   indexedDB?: IDBFactory
   /**
-   * Override the `BroadcastChannel` constructor. Defaults to
-   * `globalThis.BroadcastChannel`. When undefined and no global, `onChange`
-   * subscriptions still register but never fire.
+   * Override the `BroadcastChannel` constructor. Defaults to the global one
+   * in a browser tab or web worker, and to none on a server (Node, Bun,
+   * Deno), where a channel reaches every adapter in the process. Pass one to
+   * opt in anywhere. Without a channel, `onChange` subscriptions still
+   * register but never fire.
    */
   broadcastChannel?: typeof BroadcastChannel
 }
 
 /**
  * IndexedDB-backed `StorageAdapter`. Async on every operation; cross-tab
- * change notifications layered via `BroadcastChannel` (IDB has no native
- * change event, so external IDB writes by code that doesn't go through
- * this adapter are *not* observed). When no `IDBFactory` is available
+ * change notifications layered via `BroadcastChannel` in a browser (IDB has
+ * no native change event, so external IDB writes by code that doesn't go
+ * through this adapter are *not* observed). When no `IDBFactory` is available
  * (SSR, restricted environments), every method resolves to a no-op.
  *
  * Storage is a single key/value object store inside a single database;
- * fine for the persisted-signal use case `usePersisted` is built around.
+ * fine for the persisted-signal use case `createPersisted` is built around.
  * For larger or schema-shaped data, write a custom adapter against your
  * own IDB layout.
  */
@@ -230,7 +265,7 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
     async get(key: string): Promise<string | null> {
       if (idbFactory === undefined) return null
       // A real read error (db closed, corrupt store) REJECTS so the caller's
-      // error routing runs (`usePersisted` → `onError('load')`). A missing key
+      // error routing runs (`createPersisted` → `onError('load')`). A missing key
       // is not an error — `req.result` is `undefined`, so we return null.
       const result = await runRequest<unknown>('readonly', (s) => s.get(key))
       return typeof result === 'string' ? result : null
@@ -238,7 +273,7 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
     async set(key: string, value: string): Promise<void> {
       if (idbFactory === undefined) return
       // Do NOT swallow — a rejected write (quota, closed db, aborted commit)
-      // propagates so `usePersisted`'s `onError('write')` fires (T6.1). The
+      // propagates so `createPersisted`'s `onError('write')` fires (T6.1). The
       // cross-tab broadcast only runs once the commit actually lands.
       await runRequest('readwrite', (s) => s.put(value, key))
       ensureChannel()?.postMessage({ key, value })
@@ -278,42 +313,47 @@ function getGlobalIndexedDb(): IDBFactory | undefined {
   return typeof indexedDB === 'undefined' ? undefined : indexedDB
 }
 
+/**
+ * The platform `BroadcastChannel`, in a browser scope only: a document (a tab
+ * or an iframe), or a web worker. Node, Bun and Deno define one too, but there
+ * it reaches every adapter in the process, so per-request server roots would
+ * read each other's writes. The same rule as `@kontsedal/olas-cross-tab`'s
+ * default factory. The document check comes first, since in a tab HTML named
+ * access makes an element with the id `Bun` the global `Bun`.
+ */
 function getGlobalBroadcastChannel(): typeof BroadcastChannel | undefined {
-  return typeof BroadcastChannel === 'undefined' ? undefined : BroadcastChannel
+  const g = globalThis as { Deno?: unknown; Bun?: unknown; WorkerGlobalScope?: unknown }
+  const browser =
+    (typeof document === 'object' && document !== null) ||
+    (g.Deno === undefined &&
+      g.Bun === undefined &&
+      typeof g.WorkerGlobalScope === 'function' &&
+      globalThis instanceof g.WorkerGlobalScope)
+  return typeof BroadcastChannel === 'undefined' || !browser ? undefined : BroadcastChannel
 }
 
-/** Default localStorage adapter — only viable in the browser. */
-export const localStorageAdapter: StorageAdapter = {
-  get(key: string): string | null {
-    if (typeof localStorage === 'undefined') return null
-    return localStorage.getItem(key)
-  },
-  set(key: string, value: string): void {
-    if (typeof localStorage === 'undefined') return
-    localStorage.setItem(key, value)
-  },
-  delete(key: string): void {
-    if (typeof localStorage === 'undefined') return
-    localStorage.removeItem(key)
-  },
-  onChange(handler) {
-    if (typeof window === 'undefined') return () => {}
-    const listener = (event: StorageEvent) => {
-      if (event.key === null) return
-      handler(event.key, event.newValue)
+/**
+ * The envelope a stored string holds, as `[payload, version, marked]`, or
+ * `undefined` for a raw payload. `marked` is true for the
+ * `{"$olas":1, v?, d}` shape 1.0 writes: the `$olas` key is the marker. An
+ * unmarked `{v, d}` is the shape earlier versions wrote, and a user value can
+ * have it too. The reader and the writer both ask this function, so they
+ * agree on what an envelope is. A string that does not start with `{` or
+ * never names a `"d"` key is not one, which spares most writes a parse.
+ */
+function envelopeOf(raw: string): [string, number | undefined, boolean] | undefined {
+  if (raw[0] === '{' && raw.includes('"d"')) {
+    try {
+      const { d, v, $olas: mark } = JSON.parse(raw)
+      const marked = mark === 1
+      if (typeof d === 'string' && (typeof v === 'number' || (marked && v === undefined))) {
+        return [d, v, marked]
+      }
+    } catch {
+      /* not JSON, so a raw payload */
     }
-    window.addEventListener('storage', listener)
-    return () => window.removeEventListener('storage', listener)
-  },
-  keys(): string[] {
-    if (typeof localStorage === 'undefined') return []
-    const out: string[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)
-      if (k !== null) out.push(k)
-    }
-    return out
-  },
+  }
+  return undefined
 }
 
 /**
@@ -323,13 +363,13 @@ export const localStorageAdapter: StorageAdapter = {
  *
  * Cleanup (unsubscribe + cross-tab listener removal) is bound to `ctx`.
  */
-export function usePersisted<T>(
+export function createPersisted<T>(
   ctx: Ctx,
   key: string,
   source: PersistableSource<T>,
   options?: PersistOptions<T>,
 ): Persisted {
-  const storage = options?.storage ?? localStorageAdapter
+  const storage = options?.storage ?? LOCAL_STORAGE
   const serialize = options?.serialize ?? JSON.stringify
   const deserialize = options?.deserialize ?? JSON.parse
   const crossTab = options?.crossTab ?? false
@@ -359,194 +399,44 @@ export function usePersisted<T>(
   let pendingRemoteRaw: string | null = null
 
   /**
-   * On-disk envelope when `version` is set: `{"v": N, "d": "<serializedT>"}`.
-   * Without `version`, we read/write raw (legacy shape). Migration takes the
-   * raw inner string + the parsed `v` (or `undefined` for legacy) so the
-   * consumer's migrator can replay arbitrary historical formats.
+   * With `version` set, every write is the marked envelope
+   * `{"$olas":1,"v":N,"d":"<serialized>"}`. Without it, a write is the raw
+   * serialized string, unless a reader could take that string for an
+   * envelope: then it is wrapped as `{"$olas":1,"d":"<serialized>"}`, so it
+   * reads back as itself. Migration takes the inner string and the version it
+   * was written under (`undefined` for a raw payload), so the consumer's
+   * migrator can replay arbitrary historical formats.
    */
-  type Envelope = { v: number; d: string }
-  const isEnvelope = (raw: unknown): raw is Envelope =>
-    typeof raw === 'object' &&
-    raw !== null &&
-    typeof (raw as { v?: unknown }).v === 'number' &&
-    typeof (raw as { d?: unknown }).d === 'string'
-
   const encodeForStorage = (value: T): string => {
     const inner = serialize(value)
-    if (version === undefined) return inner
-    return JSON.stringify({ v: version, d: inner })
+    // `JSON.stringify` drops `v` when `version` is undefined.
+    return version === undefined && envelopeOf(inner) === undefined
+      ? inner
+      : JSON.stringify({ $olas: 1, v: version, d: inner })
   }
 
-  // Apply a cross-tab raw value to the source (a null → `undefined` delete;
-  // otherwise parse/deserialize, honoring the version envelope). Shared by the
-  // live `onChange` path and the buffered-until-ready replay (T6.1).
-  const applyRemote = (rawValue: string | null): void => {
-    if (rawValue == null) {
-      writingFromLoad = true
-      try {
-        source.set(undefined as T)
-      } finally {
-        writingFromLoad = false
-      }
-      return
-    }
-    try {
-      let parsed: unknown
-      try {
-        parsed = JSON.parse(rawValue)
-      } catch {
-        parsed = undefined
-      }
-      let value: T
-      if (version !== undefined && isEnvelope(parsed)) {
-        if (parsed.v !== version) return // peer on a different schema; ignore.
-        value = deserialize(parsed.d) as T
-      } else {
-        value = deserialize(rawValue) as T
-      }
-      writingFromLoad = true
-      try {
-        source.set(value)
-      } finally {
-        writingFromLoad = false
-      }
-    } catch (err) {
-      reportError(err, 'remoteChange')
-    }
+  /**
+   * The serialized payload in a stored string, and the version it was
+   * written under. A marked envelope is unwrapped for every reader, so a tab
+   * without `version` reads a value a newer build wrote with one. An unmarked
+   * `{v, d}` is an envelope only to a reader with `version`: to one without,
+   * it is a value stored before 1.0 that happens to have that shape, and it
+   * stays whole.
+   */
+  const decode = (raw: string): [payload: string, from: number | undefined] => {
+    const env = envelopeOf(raw)
+    return env !== undefined && (env[2] || version !== undefined)
+      ? [env[0], env[1]]
+      : [raw, undefined]
   }
 
-  // Flip `ready` and reconcile anything that raced the initial load: a local
-  // user write wins outright (and is flushed to storage); otherwise a buffered
-  // cross-tab change (the freshest one) is applied. `scheduleWrite` is only
-  // reached in the async-load path, where it is already defined below.
-  const settleReady = (): void => {
-    ready$.set(true)
-    if (userWroteBeforeReady) {
-      userWroteBeforeReady = false
-      hasPendingRemote = false
-      scheduleWrite(pendingUserValueBeforeReady as T)
-      return
-    }
-    if (hasPendingRemote) {
-      hasPendingRemote = false
-      applyRemote(pendingRemoteRaw)
-    }
-  }
+  // A payload a newer build wrote. `migrate` brings values forward only, and a
+  // step migrator would pass the newer shape through unchanged, so both the
+  // load and the cross-tab path drop it.
+  const isNewer = (from: number | undefined): boolean =>
+    from !== undefined && version !== undefined && from > version
 
-  // Load initial value.
-  const loaded = storage.get(key)
-  const applyLoaded = async (raw: string | null): Promise<void> => {
-    // A local write already raced the load — it wins; don't apply storage.
-    // `settleReady` flushes the user's value.
-    if (userWroteBeforeReady) {
-      settleReady()
-      return
-    }
-    if (raw == null) {
-      settleReady()
-      return
-    }
-    let value: T | undefined
-    let needsRewrite = false
-    try {
-      // Try the envelope shape first (for version-aware reads). If it isn't
-      // an envelope, treat the raw string as a legacy v=undefined payload.
-      let parsedEnvelope: unknown
-      try {
-        parsedEnvelope = JSON.parse(raw)
-      } catch {
-        parsedEnvelope = undefined
-      }
-      if (version !== undefined && isEnvelope(parsedEnvelope)) {
-        if (parsedEnvelope.v === version) {
-          value = deserialize(parsedEnvelope.d) as T
-        } else if (migrate !== undefined) {
-          try {
-            const migrated = await migrate(parsedEnvelope.d, parsedEnvelope.v)
-            if (migrated === undefined) {
-              settleReady()
-              return
-            }
-            value = migrated
-            needsRewrite = true
-          } catch (err) {
-            reportError(err, 'migrate')
-            settleReady()
-            return
-          }
-        } else {
-          // Version mismatch with no migrator — discard.
-          settleReady()
-          return
-        }
-      } else if (version !== undefined && migrate !== undefined) {
-        // Legacy raw payload but we now require versioning — invoke migrator
-        // with `fromVersion: undefined`.
-        try {
-          const migrated = await migrate(raw, undefined)
-          if (migrated === undefined) {
-            settleReady()
-            return
-          }
-          value = migrated
-          needsRewrite = true
-        } catch (err) {
-          reportError(err, 'migrate')
-          settleReady()
-          return
-        }
-      } else {
-        value = deserialize(raw) as T
-      }
-    } catch (err) {
-      reportError(err, 'deserialize')
-      settleReady()
-      return
-    }
-    // A write may have landed while we awaited an async migrate — it wins.
-    if (userWroteBeforeReady) {
-      settleReady()
-      return
-    }
-    writingFromLoad = true
-    try {
-      source.set(value as T)
-    } finally {
-      writingFromLoad = false
-    }
-    settleReady()
-    if (needsRewrite) {
-      // Persist the migrated value so the next load doesn't re-migrate. Split
-      // serialize vs write so a storage-quota throw isn't mislabeled (T6.1).
-      let encoded: string
-      try {
-        encoded = encodeForStorage(value as T)
-      } catch (err) {
-        reportError(err, 'serialize')
-        return
-      }
-      try {
-        const writeResult = storage.set(key, encoded)
-        if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
-      } catch (err) {
-        reportError(err, 'write')
-      }
-    }
-  }
-
-  if (loaded instanceof Promise) {
-    loaded.then(
-      (raw) => applyLoaded(raw),
-      (err) => {
-        reportError(err, 'load')
-        settleReady()
-      },
-    )
-  } else {
-    applyLoaded(loaded)
-  }
-
-  // Optional throttled writer. State is captured per-`usePersisted` call so
+  // Optional throttled writer. State is captured per-`createPersisted` call so
   // multiple persisted signals in the same controller don't interfere.
   let pendingWriteValue: T | undefined
   let hasPendingWrite = false
@@ -577,6 +467,16 @@ export function usePersisted<T>(
     }
   }
 
+  // A peer's change supersedes a throttled write still waiting here: that
+  // write holds an older value, and flushing it would put it back in storage
+  // while this tab shows the peer's.
+  const dropPendingWrite = (): void => {
+    if (writeTimer !== null) clearTimeout(writeTimer)
+    writeTimer = null
+    hasPendingWrite = false
+    pendingWriteValue = undefined
+  }
+
   const scheduleWrite = (value: T): void => {
     if (throttleMs <= 0) {
       pendingWriteValue = value
@@ -591,16 +491,201 @@ export function usePersisted<T>(
     }
   }
 
-  // Persist on every CHANGE. The signal's subscribe fires immediately with
-  // the current value — skip that initial call so we don't write back what
-  // we just loaded (or the source's default before load).
-  let skipFirstDelivery = true
-  const unsub = source.subscribe((value) => {
-    if (skipFirstDelivery) {
-      skipFirstDelivery = false
+  // Bumped by every cross-tab change and every local write after ready. A
+  // peer's payload that is still migrating applies only if nothing came since.
+  let lastChange = 0
+
+  // Put a peer's value in the source, and drop the throttled write it
+  // supersedes. `writingFromLoad` keeps the write from echoing to storage.
+  const setFromRemote = (value: T): void => {
+    writingFromLoad = true
+    try {
+      source.set(value)
+    } catch (err) {
+      reportError(err, 'remoteChange')
+      return
+    } finally {
+      writingFromLoad = false
+    }
+    dropPendingWrite()
+  }
+
+  // Apply a cross-tab raw value to the source: a null is a delete, mirrored
+  // as `undefined`. Anything else is read as the load path reads it, so a
+  // payload of another version, or a raw one from a build before versioning,
+  // goes through `migrate`, and without a migrator it is dropped. A migrated
+  // peer value is not written back: the build that wrote it still reads that
+  // key. Shared by the live `onChange` path and the buffered-until-ready
+  // replay (T6.1).
+  const applyRemote = (rawValue: string | null): void => {
+    const change = ++lastChange
+    if (rawValue == null) {
+      setFromRemote(undefined as T)
       return
     }
-    if (writingFromLoad) return
+    const [payload, from] = decode(rawValue)
+    if (
+      version === undefined ||
+      from === version ||
+      (from === undefined && migrate === undefined)
+    ) {
+      let value: T
+      try {
+        value = deserialize(payload) as T
+      } catch (err) {
+        reportError(err, 'remoteChange')
+        return
+      }
+      setFromRemote(value)
+      return
+    }
+    if (migrate === undefined || isNewer(from)) return
+    const settle = (migrated: T | undefined): void => {
+      if (migrated === undefined || change !== lastChange) return
+      setFromRemote(migrated)
+    }
+    let migrated: T | undefined | Promise<T | undefined>
+    try {
+      migrated = migrate(payload, from)
+    } catch (err) {
+      reportError(err, 'migrate')
+      return
+    }
+    if (migrated instanceof Promise) {
+      migrated.then(settle, (err: unknown) => reportError(err, 'migrate'))
+    } else {
+      settle(migrated)
+    }
+  }
+
+  // Flip `ready` and reconcile anything that raced the initial load: a local
+  // user write wins outright (and is flushed to storage); otherwise a buffered
+  // cross-tab change (the freshest one) is applied.
+  const settleReady = (): void => {
+    ready$.set(true)
+    if (userWroteBeforeReady) {
+      userWroteBeforeReady = false
+      hasPendingRemote = false
+      scheduleWrite(pendingUserValueBeforeReady as T)
+      return
+    }
+    if (hasPendingRemote) {
+      hasPendingRemote = false
+      applyRemote(pendingRemoteRaw)
+    }
+  }
+
+  // Load initial value.
+  const loaded = storage.get(key)
+  const applyLoaded = async (raw: string | null): Promise<void> => {
+    // A local write already raced the load — it wins; don't apply storage.
+    // `settleReady` flushes the user's value.
+    if (userWroteBeforeReady) {
+      settleReady()
+      return
+    }
+    if (raw == null) {
+      settleReady()
+      return
+    }
+    let value: T | undefined
+    let needsRewrite = false
+    try {
+      const [payload, from] = decode(raw)
+      if (
+        version === undefined ||
+        from === version ||
+        (from === undefined && migrate === undefined)
+      ) {
+        value = deserialize(payload) as T
+      } else if (migrate !== undefined && !isNewer(from)) {
+        // An older envelope, or a raw payload now that we require versioning
+        // (`fromVersion: undefined`).
+        try {
+          const migrated = await migrate(payload, from)
+          if (migrated === undefined) {
+            settleReady()
+            return
+          }
+          value = migrated
+          needsRewrite = true
+        } catch (err) {
+          reportError(err, 'migrate')
+          settleReady()
+          return
+        }
+      } else {
+        // No migrator, or a newer build's payload: discard, and leave storage
+        // to the build that wrote it.
+        settleReady()
+        return
+      }
+    } catch (err) {
+      reportError(err, 'deserialize')
+      settleReady()
+      return
+    }
+    // A write may have landed while we awaited an async migrate — it wins.
+    if (userWroteBeforeReady) {
+      settleReady()
+      return
+    }
+    writingFromLoad = true
+    try {
+      source.set(value as T)
+    } catch (err) {
+      // The stored value parsed but the source refused it, a shape it does not
+      // accept. Report it, and settle `ready` so later writes still persist.
+      reportError(err, 'deserialize')
+      settleReady()
+      return
+    } finally {
+      writingFromLoad = false
+    }
+    const change = lastChange
+    settleReady()
+    // A peer's change that raced the load was just applied. Storage holds it,
+    // and it is newer than the migrated value, so the rewrite is skipped.
+    if (needsRewrite && change === lastChange) {
+      // Persist the migrated value so the next load doesn't re-migrate. Split
+      // serialize vs write so a storage-quota throw isn't mislabeled (T6.1).
+      let encoded: string
+      try {
+        encoded = encodeForStorage(value as T)
+      } catch (err) {
+        reportError(err, 'serialize')
+        return
+      }
+      try {
+        const writeResult = storage.set(key, encoded)
+        if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
+      } catch (err) {
+        reportError(err, 'write')
+      }
+    }
+  }
+
+  if (loaded instanceof Promise) {
+    loaded.then(
+      (raw) => applyLoaded(raw),
+      (err) => {
+        reportError(err, 'load')
+        settleReady()
+      },
+    )
+  } else {
+    applyLoaded(loaded)
+  }
+
+  // Persist on every CHANGE. A signal's `subscribe` calls the handler at once,
+  // inside `subscribe()`, with the current value. That call is not a change:
+  // writing it would store what we just loaded, or the source's default
+  // before an async load. Only a call made while `subscribe()` runs is
+  // skipped, so a source that does not call back on subscribe keeps its
+  // first real change.
+  let subscribing = true
+  const unsub = source.subscribe((value) => {
+    if (subscribing || writingFromLoad) return
     if (!ready$.peek()) {
       // A real user write before the initial load settled — remember it so
       // `settleReady` flushes it and `applyLoaded` doesn't clobber the source.
@@ -610,8 +695,10 @@ export function usePersisted<T>(
       pendingUserValueBeforeReady = value
       return
     }
+    lastChange += 1
     scheduleWrite(value)
   })
+  subscribing = false
 
   // Cross-tab sync.
   let unsubChange: (() => void) | null = null
@@ -649,17 +736,70 @@ export function usePersisted<T>(
 }
 
 /**
- * Clear every key under a `prefix` (default: clear all). Useful for "log out"
- * flows that want to drop persisted state without enumerating consumers.
- * Errors are routed through the optional `onError` (e.g. quota or security
- * exceptions on `delete`).
+ * Options for `clearPersisted(storage?, options)`. Pass a non-empty `prefix`,
+ * or `all: true`. With neither, the call throws.
+ */
+export type ClearPersistedOptions = {
+  /**
+   * Delete only keys starting with this. Must be non-empty.
+   */
+  prefix?: string
+  /**
+   * Delete EVERY key the adapter enumerates. Required when no `prefix` is
+   * given, because the default adapter is `localStorage` — which the whole
+   * origin shares. Without the opt-in, a "log out" would also take the
+   * analytics ids, the consent record, and whatever a third-party script
+   * put there.
+   */
+  all?: boolean
+  /**
+   * Receives each failed delete with its key, and a failed enumeration under `'<keys>'`.
+   */
+  onError?: (err: unknown, key: string) => void
+}
+
+/**
+ * Clear persisted keys. Useful for "log out" flows that want to drop stored
+ * state without enumerating consumers. Errors — quota, security exceptions
+ * on `delete` — are routed through the optional `onError`; a failed
+ * enumeration reports under the key `'<keys>'`.
+ *
+ * Scope is never implicit: pass a `prefix`, or pass `all: true` to accept
+ * that everything the adapter can see goes. With neither, it throws.
+ *
+ * ```ts
+ * await clearPersisted(localStorageAdapter(), { prefix: 'my-app/' })
+ * await clearPersisted(sessionAdapter, { all: true })
+ * ```
+ *
+ * An adapter without `keys()` cannot be enumerated, so the call reports
+ * `'<keys>'` through `onError` and deletes nothing.
  */
 export async function clearPersisted(
-  storage: StorageAdapter = localStorageAdapter,
-  prefix?: string,
-  onError?: (err: unknown, key: string) => void,
+  storage: StorageAdapter = LOCAL_STORAGE,
+  options: ClearPersistedOptions = {},
 ): Promise<void> {
-  if (storage.keys === undefined) return
+  const prefix = options.prefix
+  const onError = options.onError
+  if (prefix === undefined || prefix === '') {
+    if (options.all !== true) {
+      throw new Error(
+        '[olas/persist] clearPersisted: pass a non-empty `prefix`, or `{ all: true }` to' +
+          ' delete every key the adapter enumerates. The default adapter is localStorage,' +
+          ' which the whole origin shares, so an unscoped clear takes keys this app never wrote.',
+      )
+    }
+  }
+  if (storage.keys === undefined) {
+    onError?.(
+      new Error(
+        '[olas/persist] clearPersisted: the storage adapter has no keys(), so its contents' +
+          ' cannot be enumerated. Nothing was deleted.',
+      ),
+      '<keys>',
+    )
+    return
+  }
   let keys: Iterable<string>
   try {
     const result = storage.keys()
@@ -668,8 +808,11 @@ export async function clearPersisted(
     onError?.(err, '<keys>')
     return
   }
-  for (const key of keys) {
-    if (prefix !== undefined && !key.startsWith(prefix)) continue
+  // Snapshot before deleting — an adapter whose `keys()` returns a live view
+  // (localStorage's does not, but a Map-backed one might) would otherwise be
+  // mutated mid-iteration.
+  for (const key of [...keys]) {
+    if (prefix !== undefined && prefix !== '' && !key.startsWith(prefix)) continue
     try {
       const r = storage.delete(key)
       if (r instanceof Promise) await r

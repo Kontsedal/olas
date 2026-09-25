@@ -1,18 +1,15 @@
+import { INTERNAL } from '../brand'
 import { DevtoolsEmitter } from '../devtools'
-import { QueryClient } from '../query/client'
+import { scheduleExpiry } from '../expiry-timer'
+import { PluginSet } from '../plugin/host'
+import type { BindQueryOptions, QueryClient } from '../query/client'
+import { missingQueryEngine } from '../query/missing-engine'
+import type { DehydratedState } from '../query/types'
+import type { Scope } from '../scope'
 import { getFactory } from './define'
 import { ControllerInstance, type RootShared } from './instance'
-import type { AmbientDeps, ControllerDef, Root, RootOptions } from './types'
-
-const ROOT_METHODS = [
-  'dispose',
-  'suspend',
-  'resume',
-  'dehydrate',
-  'waitForIdle',
-  'applyDehydratedEntry',
-  '__debug',
-] as const
+import type { LocalWork } from './internals'
+import type { AmbientDeps, ControllerDef, Root, RootOptions, SuspendOptions } from './types'
 
 /**
  * Construct a root controller.
@@ -26,170 +23,237 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
   options: RootOptions<TDeps>,
 ): Root<Api> {
   const devtools = new DevtoolsEmitter()
-  const queryClient = new QueryClient({
-    onError: options.onError,
-    hydrate: options.hydrate,
-    devtools,
-    deps: options.deps as Record<string, unknown>,
-    refetchOnWindowFocus: options.refetchOnWindowFocus,
-    refetchOnReconnect: options.refetchOnReconnect,
-    defaultQueryOptions: options.defaultQueryOptions,
-    plugins: options.plugins,
-  })
+  const deps = options.deps as Record<string, unknown>
+  const plugins =
+    options.plugins !== undefined && options.plugins.length > 0
+      ? new PluginSet(options.onError, devtools)
+      : null
+  // The client is created EAGERLY, before any plugin setup or controller
+  // factory, so a plugin's setup can already reach the cache — the mutation
+  // queue replays a previous session's writes from there. This module imports
+  // `QueryClient` as a TYPE only; `query/engine.ts` is the single value
+  // importer, which is what keeps the cache engine out of a query-free bundle.
+  const queryClient =
+    options.queries?.[INTERNAL].create({
+      onError: options.onError,
+      devtools,
+      deps,
+      hydrate: options.hydrate,
+      plugins,
+    }) ?? null
+  if (__DEV__ && options.queries === undefined && options.hydrate !== undefined) {
+    // Only a QueryClient reads it, so without an engine it is inert. Silence
+    // here would discard an SSR payload without a symptom.
+    console.warn(
+      '[olas] createRoot got `hydrate` but no `queries` engine — the payload is discarded. ' +
+        'Pass `queries: queryEngine()`.',
+    )
+  }
   const rootShared: RootShared = {
     devtools,
     onError: options.onError,
     queryClient,
+    queryDefaults: options.queries?.[INTERNAL].options.defaults ?? {},
+    localCaches: new Set(),
     scopesVersion: { value: 0 },
   }
 
-  const instance = new ControllerInstance(
-    null,
-    rootShared,
-    'root',
-    options.deps as Record<string, unknown>,
-  )
+  const instance = new ControllerInstance(null, rootShared, 'root', deps)
 
-  // Pre-seed scopes from RootOptions before the factory runs so
-  // ctx.inject() resolves them from any descendant. SPEC §10.3.
+  // Plugins set up in order, before the factory, so a scope a plugin provides
+  // is visible to every controller. A setup throw disposes the plugins already
+  // set up (PluginSet.install does that) and the client, then propagates:
+  // a bootstrap failure, like a factory throw (spec §12.1.5).
+  if (plugins !== null && options.plugins !== undefined) {
+    let provided: ReadonlyArray<readonly [Scope<unknown>, unknown]>
+    try {
+      provided = plugins.install(options.plugins, {
+        deps: deps as AmbientDeps,
+        engine: queryClient,
+      })
+    } catch (err) {
+      queryClient?.close()
+      queryClient?.dispose()
+      throw err
+    }
+    if (provided.length > 0) instance.seedScopes(provided)
+  }
+
+  // Explicit root scopes seed after the plugins', so they win — a test can
+  // stand a fake in for a plugin's service this way. SPEC §10.3.
   if (options.scopes !== undefined && options.scopes.length > 0) {
     instance.seedScopes(options.scopes)
   }
 
   // Bootstrap failure throws straight out of createRoot. Spec §12.1.5.
-  // Tear down the QueryClient and any plugins it spawned (window/storage
-  // listeners, transports) before re-throwing so the failure doesn't leak.
+  // Tear down the plugins and the client before re-throwing so the failure
+  // doesn't leak their listeners and transports. The order is `dispose`'s:
+  // plugin delivery and the client close before the factory's partial state
+  // rolls back, so no plugin hears the rollback's events.
   let api: Api
   try {
-    api = instance.construct(getFactory(def), props)
+    api = instance.construct(getFactory(def), props, () => {
+      plugins?.close()
+      queryClient?.close()
+    })
   } catch (err) {
-    queryClient.dispose()
+    plugins?.dispose()
+    queryClient?.dispose()
     throw err
   }
 
-  // Non-object apis get wrapped so root controls have somewhere to live.
-  let target = api
-  if (typeof api !== 'object' || api === null) {
-    // Allow primitive APIs in principle but root controls must live somewhere.
-    // Wrap in a holder. The declared `Root<Api>` type intersection lies in
-    // this branch — `(holder as Api).dispose` won't be present on the
-    // primitive itself. Dev-warn so the footgun is visible at first run
-    // instead of as a confusing "undefined.value" later.
-    if (__DEV__) {
-      // eslint-disable-next-line no-console
-      console.warn(
-        '[olas] createRoot: controller returned a non-object api ' +
-          `(${api === null ? 'null' : typeof api}). ` +
-          'Wrapping as { value: api } so root controls (dispose / suspend / ...) ' +
-          "can be attached. Prefer returning an object from a root controller's factory.",
-      )
-    }
-    target = { value: api } as unknown as Api
-  }
-
-  // attachRootControls throws on a root-controls NAME CONFLICT (the api defines
-  // `dispose`/`suspend`/...) — AFTER the tree is fully constructed. Tear down
-  // the live instance + queryClient (effects, focus/online listeners, plugin
-  // transports) before rethrowing so the conflict doesn't leak the whole tree.
-  // The construct-throw path above rolls back via queryClient.dispose(); this
-  // is the symmetric guard for the post-construction failure. (T2.5)
-  try {
-    return attachRootControls(target, instance, devtools, queryClient)
-  } catch (err) {
-    instance.dispose()
-    queryClient.dispose()
-    throw err
-  }
+  return buildRootHandle(api, instance, devtools, queryClient, plugins, rootShared.localCaches)
 }
 
-function attachRootControls<Api>(
+/** Resolves once `cache` is not fetching. */
+function untilIdle(cache: LocalWork): Promise<void> {
+  if (!cache.isFetching.peek()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const unsub = cache.isFetching.subscribe((fetching) => {
+      if (fetching) return
+      unsub()
+      resolve()
+    })
+  })
+}
+
+function buildRootHandle<Api>(
   api: Api,
   instance: ControllerInstance,
   devtools: DevtoolsEmitter,
-  queryClient: QueryClient,
+  queryClient: QueryClient | null,
+  plugins: PluginSet | null,
+  localCaches: ReadonlySet<LocalWork>,
 ): Root<Api> {
-  let suspendTimer: ReturnType<typeof setTimeout> | null = null
+  /** Cancellation closure from `scheduleExpiry`; `null` = no auto-dispose armed. */
+  let suspendTimer: (() => void) | null = null
 
-  const dispose = () => {
+  let disposed = false
+  const dispose = (): void => {
+    if (disposed) return
+    disposed = true
     if (suspendTimer != null) {
-      clearTimeout(suspendTimer)
+      suspendTimer()
       suspendTimer = null
     }
+    // Plugins stop hearing events first, so nothing the teardown itself
+    // causes (entries releasing, runs cancelling) reaches a plugin that is
+    // about to be disposed. Then controllers, then the plugins in reverse
+    // install order, then the cache.
+    plugins?.close()
+    queryClient?.close()
     instance.dispose()
-    queryClient.dispose()
+    plugins?.dispose()
+    queryClient?.dispose()
   }
 
-  const suspend = (opts?: { maxIdle?: number }) => {
+  const suspend = (opts?: SuspendOptions): void => {
     instance.suspend()
+    const maxIdleTime = opts?.maxIdleTime
+    // A plain suspend() keeps an armed auto-dispose. A visibility hook that
+    // suspends an already-suspended root must not lift the memory bound.
+    if (maxIdleTime == null) return
+    // A new `maxIdleTime` restarts the timer.
     if (suspendTimer != null) {
-      clearTimeout(suspendTimer)
+      suspendTimer()
       suspendTimer = null
     }
-    const maxIdle = opts?.maxIdle
-    if (maxIdle != null && maxIdle !== Number.POSITIVE_INFINITY) {
-      suspendTimer = setTimeout(() => {
-        suspendTimer = null
-        dispose()
-      }, maxIdle)
-    }
+    // `scheduleExpiry` returns `null` for `Infinity` (stay suspended until
+    // something else disposes) and chunks a finite value, so a `maxIdleTime`
+    // above the signed 32-bit limit can't overflow into "dispose on the next
+    // tick" — the opposite of asking to idle for a month. §21.5.
+    suspendTimer = scheduleExpiry(maxIdleTime, () => {
+      suspendTimer = null
+      dispose()
+    })
   }
 
-  const resume = () => {
+  const resume = (): void => {
     if (suspendTimer != null) {
-      clearTimeout(suspendTimer)
+      suspendTimer()
       suspendTimer = null
     }
     instance.resume()
   }
 
-  const debug = {
-    subscribe: (handler: Parameters<DevtoolsEmitter['subscribe']>[0]) =>
-      devtools.subscribe(handler),
-    queryEntries: () => queryClient.queryEntriesSnapshot(),
-  }
-
-  const target = api as Record<string, unknown>
-  for (const method of ROOT_METHODS) {
-    // Use `in` rather than `Object.hasOwn` so class-based apis with
-    // prototype methods like `dispose()` still trigger the conflict
-    // detection instead of being silently overwritten by defineProperty.
-    if (method in target) {
-      throw new Error(
-        `[olas] Root controller api defines '${method}' which conflicts with the root controls.`,
-      )
+  // Streaming SSR pushes entries in through `hydrate` before any controller
+  // has subscribed. Dropping them silently on an engine-less root would present
+  // as "hydration did nothing" with no symptom to chase. `bindQuery` throws in
+  // the same situation; this cannot, because the intake runs from a script
+  // tag, so it warns.
+  const hydrate = (state: DehydratedState): void => {
+    if (queryClient === null) {
+      if (__DEV__ && state.entries.length > 0) {
+        const ids = state.entries.slice(0, 3).map((e) => `'${e.id}'`)
+        const more = state.entries.length > 3 ? ` and ${state.entries.length - 3} more` : ''
+        console.warn(
+          `[olas] hydration payload for ${ids.join(', ')}${more} discarded — this root has ` +
+            'no query engine. Pass `queries: queryEngine()` to createRoot.',
+        )
+      }
+      return
     }
+    queryClient.hydrateLive(state)
   }
-  // Lock root controls: writable:false + configurable:false so user code
-  // can't `delete api.dispose` (orphaning the root) or shadow them with a
-  // typo. The `in`-check above is the friendly preflight; this is the
-  // hard fence in case a consumer mutates the api after construction.
-  const lock = { enumerable: false, writable: false, configurable: false }
-  Object.defineProperty(target, 'dispose', { value: dispose, ...lock })
-  Object.defineProperty(target, 'suspend', { value: suspend, ...lock })
-  Object.defineProperty(target, 'resume', { value: resume, ...lock })
-  Object.defineProperty(target, '__debug', { value: debug, ...lock })
-  Object.defineProperty(target, 'dehydrate', {
-    value: () => queryClient.dehydrate(),
-    ...lock,
-  })
-  Object.defineProperty(target, 'waitForIdle', {
-    value: () => queryClient.waitForIdle(),
-    ...lock,
-  })
-  Object.defineProperty(target, 'applyDehydratedEntry', {
-    value: (queryId: string, keyArgs: readonly unknown[], data: unknown, lastUpdatedAt: number) =>
-      queryClient.applyDehydratedEntry(queryId, keyArgs, data, lastUpdatedAt),
-    ...lock,
-  })
 
-  return api as Root<Api>
+  const root: Root<Api> = {
+    api,
+    bindQuery: ((query: unknown, options?: BindQueryOptions) => {
+      if (queryClient === null) throw missingQueryEngine('root.bindQuery')
+      return queryClient.bindQuery(query as never, options)
+    }) as Root<Api>['bindQuery'],
+    inject: (scope) => instance.resolveScope(scope, 'root.inject'),
+    dispose,
+    suspend,
+    resume,
+    // No engine means no cache, so nothing to dehydrate. Returning an empty
+    // state beats throwing: an SSR render of a query-free root is legitimate,
+    // and the client hydrates the same nothing.
+    dehydrate: () => queryClient?.dehydrate() ?? { version: 1 as const, entries: [] },
+    hydrate,
+    waitForIdle: async () => {
+      // Plugin work (a replay, a restore) can start fetches, and a fetch
+      // settling can start plugin work, so settle both until neither moves.
+      // A `createCache` fetch is not a query-client entry's, so it is waited
+      // on here, beside the plugin work.
+      for (let round = 0; round < 100; round++) {
+        await queryClient?.waitForIdle()
+        const work: Promise<unknown>[] = plugins?.pendingWork() ?? []
+        for (const cache of localCaches) {
+          if (cache.isFetching.peek()) work.push(untilIdle(cache))
+        }
+        if (work.length === 0) return
+        await Promise.all(work)
+      }
+      throw new Error(
+        '[olas] waitForIdle: plugin work or local-cache fetches kept restarting for 100 rounds',
+      )
+    },
+    debug: {
+      subscribe: (handler) => devtools.subscribe(handler),
+      queryEntries: () => queryClient?.queryEntriesSnapshot() ?? [],
+    },
+  }
+  return Object.freeze(root)
 }
 
 /**
  * Construct a root controller. Root factories take no props — startup config
  * goes in `deps`.
+ *
+ * `deps` is checked against `AmbientDeps`: in an app that augments it with
+ * `api: ApiClient`, a root whose `deps` has no `api` does not compile. Extra
+ * members are allowed. `createTestController` does not check, so a test can
+ * pass only the fakes the controller under test reads.
+ *
+ * @example
+ * ```ts
+ * const root = createRoot(counter, { deps, queries: queryEngine() })
+ * root.api.increment()
+ * root.dispose()
+ * ```
  */
-export function createRoot<Api extends object, TDeps extends Record<string, unknown> = AmbientDeps>(
+export function createRoot<Api, TDeps extends AmbientDeps = AmbientDeps>(
   def: ControllerDef<void, Api>,
   options: RootOptions<TDeps>,
 ): Root<Api> {

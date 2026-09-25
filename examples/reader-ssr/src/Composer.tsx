@@ -3,10 +3,13 @@
 // field shows `isValidating` while the server thinks, then either
 // `errors[0]` or "ready to post".
 
-import { use, useField } from '@kontsedal/olas-react'
+import { useField, useFieldInput, useValue } from '@kontsedal/olas-react'
 import { Loader2, MessageCircle, Send, X } from 'lucide-react'
-import { type ReactElement, useEffect, useMemo } from 'react'
+import { type ReactElement, useEffect, useReducer, useRef } from 'react'
 import type { AppApi } from './controller'
+
+/** `{ api, dispose }` — what `ctx.attach(composerController, …)` returns. */
+type ComposerHandle = ReturnType<AppApi['reader']['openComposer']>
 
 export function Composer({
   api,
@@ -17,17 +20,46 @@ export function Composer({
   articleId: string
   onClose: () => void
 }): ReactElement {
-  // ctx.attach returns { api, dispose } — let the parent close it.
-  const handle = useMemo(() => api.reader.openComposer(articleId), [api, articleId])
-  // Tear down when the React component unmounts (e.g. switching articles).
-  useEffect(() => () => handle.dispose(), [handle])
+  // `ctx.attach` is side-effectful: the composer controller it builds starts
+  // a comments query and a debounced validator the moment it exists. That
+  // rules out `useMemo` and the `useState` initializer — React is free to
+  // discard a memo, and StrictMode invokes both twice, which would leave a
+  // live controller running with nobody holding its `dispose`. A ref mutated
+  // during render constructs exactly one across StrictMode's double render.
+  // Same pattern `HydrationBoundary` uses for `createRoot`, in
+  // `packages/react/src/context.ts`.
+  //
+  // `articleId` is fixed for the life of one Composer: the caller renders it
+  // under `key={article.id}`, so a different article is a different instance.
+  const handleRef = useRef<ComposerHandle | null>(null)
+  const [, forceRender] = useReducer((n: number) => n + 1, 0)
+  if (handleRef.current === null) {
+    handleRef.current = api.reader.openComposer(articleId)
+  }
+  const handle = handleRef.current
 
-  const author = useField(handle.api.author)
+  useEffect(() => {
+    // StrictMode simulates mount → unmount → remount without re-rendering in
+    // between, so the remount has to rebuild what the cleanup tore down —
+    // otherwise the fields below read a disposed controller.
+    if (handleRef.current === null) {
+      handleRef.current = api.reader.openComposer(articleId)
+      forceRender()
+    }
+    return () => {
+      handleRef.current?.dispose()
+      handleRef.current = null
+    }
+  }, [api, articleId])
+
+  // A plain text input: `useFieldInput` supplies value, onChange, onBlur and
+  // aria-invalid in one spread.
+  const authorInput = useFieldInput(handle.api.author, { name: 'author' })
   const body = useField(handle.api.body)
-  const isPending = use(handle.api.submit.isPending)
-  const error = use(handle.api.submit.error)
-  const commentsData = use(handle.api.comments.data)
-  const commentsLoading = use(handle.api.comments.isLoading)
+  const isPending = useValue(handle.api.submit.isPending)
+  const error = useValue(handle.api.submit.error)
+  const commentsData = useValue(handle.api.comments.data)
+  const commentsLoading = useValue(handle.api.comments.isLoading)
 
   const onSubmit = (e: React.FormEvent): void => {
     e.preventDefault()
@@ -35,12 +67,12 @@ export function Composer({
   }
 
   return (
-    <section className="mt-4 rounded-xl border border-(--color-border) bg-(--color-bg-elev) p-4 shadow-[var(--shadow-card)] font-sans">
+    <section className="mt-4 rounded-[var(--radius-surface)] border border-(--color-border) bg-(--color-bg-elev) p-4 font-sans">
       <header className="flex items-center justify-between mb-3">
-        <h3 className="m-0 inline-flex items-center gap-2 text-sm font-semibold">
+        <h3 className="m-0 inline-flex items-center gap-2 text-[length:var(--text-body)] font-semibold">
           <MessageCircle className="size-4 text-(--color-accent)" />
           Comments
-          <span className="text-xs font-normal text-(--color-fg-mute)">
+          <span className="text-[length:var(--text-meta)] font-normal text-(--color-fg-mute)">
             · {commentsData?.length ?? 0}
           </span>
         </h3>
@@ -48,19 +80,17 @@ export function Composer({
           type="button"
           onClick={onClose}
           aria-label="Close composer"
-          className="rounded-md p-1 text-(--color-fg-mute) hover:bg-(--color-bg-sunk) hover:text-(--color-fg)"
+          className="rounded-[var(--radius-control)] p-1 text-(--color-fg-mute) hover:bg-(--color-bg-sunk) hover:text-(--color-fg)"
         >
           <X className="size-3.5" />
         </button>
       </header>
 
-      <form onSubmit={onSubmit} className="flex flex-col gap-2 text-sm">
+      <form onSubmit={onSubmit} className="flex flex-col gap-2 text-[length:var(--text-body)]">
         <input
-          value={author.value}
-          onChange={(e) => author.set(e.target.value)}
-          onBlur={author.markTouched}
+          {...authorInput}
           placeholder="Your name"
-          className="rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30"
+          className="rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30"
         />
         <div className="relative">
           <textarea
@@ -69,7 +99,7 @@ export function Composer({
             onBlur={body.markTouched}
             rows={3}
             placeholder="Write a comment (server-validated, 220 ms debounce)"
-            className="w-full rounded-md border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30 resize-y"
+            className="w-full rounded-[var(--radius-control)] border border-(--color-border) bg-(--color-bg-sunk) px-3 py-1.5 outline-none focus:border-(--color-accent) focus:ring-2 focus:ring-(--color-accent)/30 resize-y"
           />
           {body.isValidating && (
             <Loader2 className="absolute right-2 top-2 size-4 animate-spin text-(--color-fg-mute)" />
@@ -85,7 +115,7 @@ export function Composer({
         {error !== undefined && (
           <div
             role="alert"
-            className="rounded-md bg-(--color-accent-bg) px-3 py-2 text-xs text-(--color-accent)"
+            className="rounded-[var(--radius-control)] bg-(--color-accent-soft) px-3 py-2 text-[length:var(--text-meta)] text-(--color-fg)"
           >
             {String((error as Error)?.message ?? error)}
           </div>
@@ -95,7 +125,7 @@ export function Composer({
           <button
             type="submit"
             disabled={isPending}
-            className="inline-flex items-center gap-1.5 rounded-md bg-(--color-accent) px-3 py-1.5 text-xs font-medium text-white hover:brightness-110 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-[var(--radius-control)] bg-(--color-accent) px-3 py-1.5 text-[length:var(--text-meta)] font-medium text-white hover:brightness-110 disabled:opacity-50"
           >
             {isPending ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -109,21 +139,23 @@ export function Composer({
 
       <div className="mt-4 border-t border-(--color-border) pt-3">
         {commentsLoading ? (
-          <p className="text-xs text-(--color-fg-mute)">Loading comments…</p>
+          <p className="text-[length:var(--text-meta)] text-(--color-fg-mute)">Loading comments…</p>
         ) : commentsData && commentsData.length > 0 ? (
           <ul className="flex flex-col gap-3 list-none p-0 m-0">
             {commentsData.map((c) => (
               <li key={c.id}>
-                <div className="text-xs text-(--color-fg-mute) mb-0.5">
+                <div className="text-[length:var(--text-meta)] text-(--color-fg-mute) mb-0.5">
                   <strong className="text-(--color-fg)">{c.author}</strong> ·{' '}
                   {new Date(c.ts).toLocaleTimeString()}
                 </div>
-                <p className="m-0 text-sm">{c.body}</p>
+                <p className="m-0 text-[length:var(--text-body)]">{c.body}</p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-xs text-(--color-fg-mute)">No comments yet — be first.</p>
+          <p className="text-[length:var(--text-meta)] text-(--color-fg-mute)">
+            No comments yet — be first.
+          </p>
         )}
       </div>
     </section>
@@ -139,16 +171,20 @@ function ValidationStatus(props: {
   if (!props.touched) return null
   if (props.isValidating) {
     return (
-      <span className="text-xs text-(--color-fg-mute) inline-flex items-center gap-1">
+      <span className="text-[length:var(--text-meta)] text-(--color-fg-mute) inline-flex items-center gap-1">
         <Loader2 className="size-3 animate-spin" /> checking with server…
       </span>
     )
   }
   if (props.error !== undefined) {
-    return <span className="text-xs text-(--color-accent)">{props.error}</span>
+    return (
+      <span className="text-[length:var(--text-meta)] text-(--color-accent)">{props.error}</span>
+    )
   }
   if (props.isValid) {
-    return <span className="text-xs text-(--color-fg-mute)">✓ ready to post</span>
+    return (
+      <span className="text-[length:var(--text-meta)] text-(--color-fg-mute)">✓ ready to post</span>
+    )
   }
   return null
 }

@@ -1,0 +1,31 @@
+{
+  "name": "@kontsedal/olas-example-vue-tasks",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Vue example — a task list whose data, optimistic writes and form live in an Olas controller",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@kontsedal/olas-core": "workspace:^",
+    "@kontsedal/olas-vue": "workspace:^",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@preact/signals-core": "^1.14.4",
+    "@types/node": "^26.6.2",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "jsdom": "^30.1.1",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vite": "^8.3.1",
+    "vitest": "^5.0.1",
+    "vue-tsc": "^3.3.11"
+  }
+}

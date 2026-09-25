@@ -28,7 +28,7 @@ Three reasons:
 
 ### 2. Custom `.set()` / `.update()`
 
-The Olas spec uses `.set(value)` / `.update(fn)` methods on `Signal<T>`. `@preact/signals-core` uses property setters (`signal.value = x`). Both work; ours composes better with method-style usage and tools like Immer (`update(prev => produce(prev, ...))`).
+The Olas spec uses `.set(value)` and `.update(fn)` methods on `Signal<T>`. `@preact/signals-core` uses property setters (`signal.value = x`). Both work; ours composes better with method-style usage and tools like Immer (`update(prev => produce(prev, ...))`).
 
 The wrapper class exposes both:
 
@@ -41,7 +41,7 @@ update(fn: (prev: T) => T): void { this.inner.value = fn(this.inner.peek()) }
 
 ### 3. `readOnly(...)` projection
 
-`readOnly(signal)` returns an object that hides `set` / `update` / writable `.value` at runtime, not just at the type level. Re-exporting raw signals would mean users could cast through type checks to get a writer. The wrapper plus `readOnly` gives a defense-in-depth boundary.
+`readOnly(signal)` returns an object that hides `set`, `update` and writable `.value` at runtime, not only at the type level. Re-exporting raw signals would mean users could cast through type checks to get a writer. The wrapper plus `readOnly` gives a defense-in-depth boundary.
 
 ## What we'd lose by NOT wrapping
 

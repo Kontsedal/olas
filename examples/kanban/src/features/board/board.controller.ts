@@ -10,24 +10,28 @@
  *                        when the user keeps typing.
  *
  * Also demonstrated here:
- *  - `selection<string>()` for bulk move.
+ *  - `createSelection<string>()` for bulk move.
  *  - `signal` + `computed` for filter intersection.
  *  - `throttled` for streaming drag progress over the realtime channel.
- *  - `useRealtimePatcher` for receiving moves from other tabs.
+ *  - `createRealtimePatcher` for receiving moves from other tabs.
  *  - `entitiesPlugin` writes — patching a User propagates across cards.
  *  - `defineScope` provisions: currentBoard, selectedCard.
  */
 
 import {
+  bindQuery,
   type Ctx,
   computed,
+  createMutation,
+  createQuery,
+  createSelection,
   debounced,
   defineController,
-  selection,
   signal,
   throttled,
 } from '@kontsedal/olas-core'
-import { useRealtimePatcher } from '@kontsedal/olas-realtime'
+import { Entities } from '@kontsedal/olas-entities'
+import { createRealtimePatcher } from '@kontsedal/olas-realtime'
 import type { Board, Card, Column, Priority, RealtimeEvent, SearchResults } from '../../api'
 import { REALTIME_CHANNEL } from '../../api'
 import { UserEntity } from '../../entities'
@@ -51,13 +55,14 @@ const errMessage = (err: unknown): string => (err instanceof Error ? err.message
 
 export const boardController = defineController(
   (ctx: Ctx) => {
+    const boardQueryActions = bindQuery(ctx, boardQuery)
     const { activeBoardId } = ctx.inject(activeBoardScope)
     const activity = ctx.inject(activityScope)
     const notifications = ctx.inject(notificationsScope)
 
     // Reactive key thunk — switching boards via the sidebar refetches under
     // a new entry without re-mounting boardController.
-    const board = ctx.use(boardQuery, () => [activeBoardId.value])
+    const board = createQuery(ctx, boardQuery, () => [activeBoardId.value])
 
     // ───────── Selected card (right-hand detail pane) ─────────
 
@@ -69,7 +74,7 @@ export const boardController = defineController(
 
     // ───────── Multi-select (bulk move) ─────────
 
-    const sel = selection<string>()
+    const sel = createSelection<string>()
 
     // Switching boards closes the detail panel — selection is per-board.
     ctx.effect(() => {
@@ -93,10 +98,10 @@ export const boardController = defineController(
     const selectedLabelIds = signal<ReadonlySet<string>>(new Set())
     const selectedAssigneeIds = signal<ReadonlySet<string>>(new Set())
 
-    const applyFilter = ctx.mutation<{ q: string }, SearchResults>({
-      name: 'applyFilter',
+    const applyFilter = createMutation<{ q: string }, SearchResults>(ctx, {
+      id: 'applyFilter',
       concurrency: 'latest-wins',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         isSearching.set(true)
         try {
           const r = await ctx.deps.api.search(activeBoardId.peek(), vars.q, signal)
@@ -178,15 +183,18 @@ export const boardController = defineController(
 
     // ───────── Move card (parallel, optimistic with snapshot auto-rollback) ─────────
 
-    const moveCard = ctx.mutation<MoveVars, void>({
-      name: 'moveCard',
+    const moveCard = createMutation<MoveVars, void>(ctx, {
+      id: 'moveCard',
       concurrency: 'parallel',
-      onMutate: (vars) =>
-        boardQuery.setData(activeBoardId.peek(), (prev) => {
+      onMutate: (vars) => {
+        // Cancel first: a board fetch in flight would land over the guess.
+        boardQueryActions.cancel(activeBoardId.peek())
+        return boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('moveCard before board loaded')
           return applyMove(prev, vars)
-        }),
-      mutate: (vars, signal) =>
+        })
+      },
+      mutate: (vars, { signal }) =>
         ctx.deps.api.moveCard(
           activeBoardId.peek(),
           vars.cardId,
@@ -223,10 +231,10 @@ export const boardController = defineController(
 
     // ───────── Create card (serial) ─────────
 
-    const createCard = ctx.mutation<{ columnId: string; title: string }, Card>({
-      name: 'createCard',
+    const createCard = createMutation<{ columnId: string; title: string }, Card>(ctx, {
+      id: 'createCard',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const card = await ctx.deps.api.createCard(
           activeBoardId.peek(),
           {
@@ -241,7 +249,10 @@ export const boardController = defineController(
           },
           signal,
         )
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        // `write`, not `setData`: the server already accepted this, so there is
+        // no snapshot to roll back. A fire-and-forget `setData` would leak one
+        // live snapshot per call and wedge `hasPendingMutations` true.
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev
             ? {
                 ...prev,
@@ -275,13 +286,13 @@ export const boardController = defineController(
 
     // ───────── Create column (serial) ─────────
 
-    const createColumn = ctx.mutation<{ title: string; hue?: number }, Column>({
-      name: 'createColumn',
+    const createColumn = createMutation<{ title: string; hue?: number }, Column>(ctx, {
+      id: 'createColumn',
       concurrency: 'serial',
-      mutate: async (vars, signal) => {
+      mutate: async (vars, { signal }) => {
         const hue = vars.hue ?? randomColumnHue()
         const col = await ctx.deps.api.createColumn(activeBoardId.peek(), vars.title, hue, signal)
-        boardQuery.setData(activeBoardId.peek(), (prev) =>
+        boardQueryActions.write(activeBoardId.peek(), (prev) =>
           prev ? { ...prev, columns: [...prev.columns, col] } : (prev as never),
         )
         return col
@@ -298,11 +309,13 @@ export const boardController = defineController(
 
     // ───────── Reorder a single column (serial) ─────────
 
-    const reorderColumn = ctx.mutation<{ columnId: string; cardIds: string[] }, void>({
-      name: 'reorderColumn',
+    const reorderColumn = createMutation<{ columnId: string; cardIds: string[] }, void>(ctx, {
+      id: 'reorderColumn',
       concurrency: 'serial',
-      onMutate: (vars) =>
-        boardQuery.setData(activeBoardId.peek(), (prev) => {
+      onMutate: (vars) => {
+        // Cancel first: a board fetch in flight would land over the guess.
+        boardQueryActions.cancel(activeBoardId.peek())
+        return boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('reorderColumn before board loaded')
           return {
             ...prev,
@@ -310,8 +323,9 @@ export const boardController = defineController(
               c.id === vars.columnId ? { ...c, cardIds: vars.cardIds.slice() } : c,
             ),
           }
-        }),
-      mutate: (vars, signal) =>
+        })
+      },
+      mutate: (vars, { signal }) =>
         ctx.deps.api.reorderColumn(activeBoardId.peek(), vars.columnId, vars.cardIds, signal),
       onSuccess: (_r, vars) => activity.emit(makeActivity('move', `Reordered ${vars.columnId}`)),
       onError: (err, _vars, snapshot) => {
@@ -329,15 +343,19 @@ export const boardController = defineController(
 
     // ───────── Archive (serial) ─────────
 
-    const archiveCard = ctx.mutation<{ cardId: string }, void>({
-      name: 'archiveCard',
+    const archiveCard = createMutation<{ cardId: string }, void>(ctx, {
+      id: 'archiveCard',
       concurrency: 'serial',
-      onMutate: (vars) =>
-        boardQuery.setData(activeBoardId.peek(), (prev) => {
+      onMutate: (vars) => {
+        // Cancel first: a board fetch in flight would land over the guess.
+        boardQueryActions.cancel(activeBoardId.peek())
+        return boardQueryActions.setData(activeBoardId.peek(), (prev) => {
           if (!prev) throw new Error('archiveCard before board loaded')
           return removeCard(prev, vars.cardId)
-        }),
-      mutate: (vars, signal) => ctx.deps.api.archiveCard(activeBoardId.peek(), vars.cardId, signal),
+        })
+      },
+      mutate: (vars, { signal }) =>
+        ctx.deps.api.archiveCard(activeBoardId.peek(), vars.cardId, signal),
       onSuccess: (_r, vars) => {
         activity.emit(makeActivity('archive', 'Archived a card'))
         ctx.deps.broadcaster.publish({
@@ -388,14 +406,10 @@ export const boardController = defineController(
 
     // ───────── Realtime patcher — react to events from other tabs ─────────
     //
-    // `useRealtimePatcher` types each handler's arg as the full event union,
-    // so we narrow with a small `Variant` alias on the way in.
+    // Each handler receives its own variant of `RealtimeEvent`, keyed by `type`.
 
-    type Variant<K extends RealtimeEvent['type']> = Extract<RealtimeEvent, { type: K }>
-
-    useRealtimePatcher<RealtimeEvent>(ctx, REALTIME_CHANNEL, {
-      'card.moved': (raw) => {
-        const e = raw as Variant<'card.moved'>
+    createRealtimePatcher<RealtimeEvent>(ctx, REALTIME_CHANNEL, {
+      'card.moved': (e) => {
         if (e.by === ctx.deps.tabId) return
         activity.emit({
           id: uid(),
@@ -408,8 +422,7 @@ export const boardController = defineController(
         // The patcher's job here is the activity entry + any side effects
         // that the cache write alone can't produce.
       },
-      'card.created': (raw) => {
-        const e = raw as Variant<'card.created'>
+      'card.created': (e) => {
         if (e.by === ctx.deps.tabId) return
         activity.emit({
           id: uid(),
@@ -419,8 +432,7 @@ export const boardController = defineController(
           text: `Another tab created "${e.card.title}"`,
         })
       },
-      'card.archived': (raw) => {
-        const e = raw as Variant<'card.archived'>
+      'card.archived': (e) => {
         if (e.by === ctx.deps.tabId) return
         activity.emit({
           id: uid(),
@@ -430,12 +442,11 @@ export const boardController = defineController(
           text: 'Another tab archived a card',
         })
       },
-      'user.updated': (raw) => {
-        const e = raw as Variant<'user.updated'>
+      'user.updated': (e) => {
         if (e.by === ctx.deps.tabId) return
         // Propagate the rename through the entities store so every card
         // showing this user updates without a refetch.
-        ctx.deps.entities.upsert(UserEntity, e.user)
+        ctx.inject(Entities).upsert(UserEntity, e.user)
       },
     })
 

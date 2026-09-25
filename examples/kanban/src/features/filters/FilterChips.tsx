@@ -3,27 +3,19 @@
  * board controller, renders chips, and toggles individual entries.
  */
 
-import { use, useQuery, useRoot } from '@kontsedal/olas-react'
+import { useQuery, useRoot, useValue } from '@kontsedal/olas-react'
 import { X } from 'lucide-react'
 import type { Priority } from '../../api'
-import type { AppApi } from '../../app.controller'
 import { cx } from '../../ui'
 
 const ALL_PRIORITIES: Priority[] = ['urgent', 'high', 'med', 'low']
 
-const PRIORITY_HUE: Record<Priority, number> = {
-  urgent: 18,
-  high: 85,
-  med: 270,
-  low: 215,
-}
-
 export function FilterChips() {
-  const app = useRoot<AppApi>()
+  const app = useRoot()
   const labels = useQuery(app.labels)
-  const selPri = use(app.board.selectedPriorities)
-  const selLab = use(app.board.selectedLabelIds)
-  const selAss = use(app.board.selectedAssigneeIds)
+  const selPri = useValue(app.board.selectedPriorities)
+  const selLab = useValue(app.board.selectedLabelIds)
+  const selAss = useValue(app.board.selectedAssigneeIds)
   const hasFilter = selPri.size > 0 || selLab.size > 0 || selAss.size > 0
 
   return (
@@ -34,7 +26,6 @@ export function FilterChips() {
           type="button"
           onClick={() => app.board.togglePriority(p)}
           className={cx('olas-chip', selPri.has(p) && 'olas-chip-on')}
-          style={{ ['--chip-hue' as string]: String(PRIORITY_HUE[p]) } as React.CSSProperties}
         >
           {p}
         </button>
@@ -45,7 +36,6 @@ export function FilterChips() {
           type="button"
           onClick={() => app.board.toggleLabel(l.id)}
           className={cx('olas-chip', selLab.has(l.id) && 'olas-chip-on')}
-          style={{ ['--chip-hue' as string]: String(l.hue) } as React.CSSProperties}
         >
           {l.name}
         </button>

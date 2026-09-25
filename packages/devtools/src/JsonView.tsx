@@ -137,7 +137,12 @@ function CollapsibleArray({
   }
   if (!open) {
     return (
-      <button type="button" className="olas-devtools-json-toggle" onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        className="olas-devtools-json-toggle"
+        aria-expanded={false}
+        onClick={() => setOpen(true)}
+      >
         <span className="olas-devtools-json-bracket">[</span>
         <span className="olas-devtools-json-summary">
           {value.length} item{value.length === 1 ? '' : 's'}
@@ -151,6 +156,8 @@ function CollapsibleArray({
       <button
         type="button"
         className="olas-devtools-json-toggle olas-devtools-json-toggle-open"
+        aria-expanded={true}
+        aria-label={`Collapse array of ${value.length} item${value.length === 1 ? '' : 's'}`}
         onClick={() => setOpen(false)}
       >
         <span className="olas-devtools-json-bracket">[</span>
@@ -186,7 +193,12 @@ function CollapsibleObject({
   }
   if (!open) {
     return (
-      <button type="button" className="olas-devtools-json-toggle" onClick={() => setOpen(true)}>
+      <button
+        type="button"
+        className="olas-devtools-json-toggle"
+        aria-expanded={false}
+        onClick={() => setOpen(true)}
+      >
         <span className="olas-devtools-json-bracket">{'{'}</span>
         <span className="olas-devtools-json-summary">
           {keys.slice(0, 3).join(', ')}
@@ -201,6 +213,8 @@ function CollapsibleObject({
       <button
         type="button"
         className="olas-devtools-json-toggle olas-devtools-json-toggle-open"
+        aria-expanded={true}
+        aria-label={`Collapse object with ${keys.length} key${keys.length === 1 ? '' : 's'}`}
         onClick={() => setOpen(false)}
       >
         <span className="olas-devtools-json-bracket">{'{'}</span>

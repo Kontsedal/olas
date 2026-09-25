@@ -146,3 +146,82 @@ describe('structuralShare', () => {
     expect(result).toBe(prev)
   })
 })
+
+describe('structuralShare — own `__proto__` and exotic prototypes', () => {
+  // `JSON.parse` is the one thing in a fetcher's path that can hand the walker
+  // an object with an OWN `__proto__` property. Assigning it with `out[key] =`
+  // hits `Object.prototype`'s accessor: the result's prototype is replaced and
+  // the property is never created.
+  const withOwnProto = (value: number): Record<string, unknown> =>
+    JSON.parse(`{"__proto__":{"inherited":true},"value":${value}}`)
+
+  test('an own `__proto__` stays an own property; the prototype is untouched', () => {
+    const prev = withOwnProto(1)
+    const next = withOwnProto(2)
+    const result = structuralShare(prev, next)
+
+    expect(result.value).toBe(2)
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+    expect(Object.hasOwn(result, '__proto__')).toBe(true)
+    expect(Object.keys(result)).toEqual(['__proto__', 'value'])
+    // Nothing leaked onto the result through the prototype chain.
+    expect((result as { inherited?: boolean }).inherited).toBeUndefined()
+  })
+
+  test('the own `__proto__` subtree keeps `prev`s ref when it did not change', () => {
+    const prev = withOwnProto(1)
+    const next = withOwnProto(2)
+    const result = structuralShare(prev, next)
+    expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toBe(
+      Object.getOwnPropertyDescriptor(prev, '__proto__')?.value,
+    )
+  })
+
+  test('an unchanged payload carrying an own `__proto__` returns the prev ref', () => {
+    const prev = withOwnProto(1)
+    const next = withOwnProto(1)
+    expect(structuralShare(prev, next)).toBe(prev)
+  })
+
+  test('a changed own `__proto__` value is written through', () => {
+    const prev = withOwnProto(1)
+    const next = JSON.parse('{"__proto__":{"inherited":false},"value":1}')
+    const result = structuralShare(prev, next)
+    expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toEqual({
+      inherited: false,
+    })
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype)
+  })
+
+  test('an own `__proto__` nested in an array item is preserved', () => {
+    const prev = [withOwnProto(1)]
+    const next = [withOwnProto(2)]
+    const result = structuralShare(prev, next)
+    expect(Object.hasOwn(result[0] as object, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(result[0])).toBe(Object.prototype)
+  })
+
+  test('a null-prototype object keeps its null prototype', () => {
+    const prev = Object.assign(Object.create(null) as Record<string, number>, { a: 1, b: 2 })
+    const next = Object.assign(Object.create(null) as Record<string, number>, { a: 1, b: 3 })
+    const result = structuralShare(prev, next)
+    expect(Object.getPrototypeOf(result)).toBeNull()
+    expect(result.b).toBe(3)
+    expect(result.a).toBe(1)
+  })
+
+  // biome-ignore-start lint/suspicious/noProto: on a null-prototype object `__proto__` is a plain own key, which is the case this pins
+  test('a null-prototype object takes a plain own `__proto__` too', () => {
+    const prev = Object.create(null) as Record<string, unknown>
+    prev.__proto__ = { inherited: true }
+    prev.value = 1
+    const next = Object.create(null) as Record<string, unknown>
+    next.__proto__ = { inherited: true }
+    next.value = 2
+    const result = structuralShare(prev, next)
+    expect(Object.getPrototypeOf(result)).toBeNull()
+    expect(result.value).toBe(2)
+    expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toBe(prev.__proto__)
+  })
+  // biome-ignore-end lint/suspicious/noProto: see above
+})

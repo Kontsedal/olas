@@ -3,7 +3,7 @@
 import { act, cleanup, render } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { KeepAlive, type SuspendableController, useSuspendOnHidden } from '../src'
+import { type SuspendableController, SuspendOnUnmount, useSuspendOnHidden } from '../src'
 
 afterEach(() => {
   cleanup()
@@ -31,13 +31,13 @@ const makeController = (): SuspendableController & {
   }
 }
 
-describe('KeepAlive', () => {
+describe('SuspendOnUnmount', () => {
   test('mount calls resume, unmount calls suspend', () => {
     const c = makeController()
     const { unmount } = render(
-      <KeepAlive controller={c}>
+      <SuspendOnUnmount controller={c}>
         <div>child</div>
-      </KeepAlive>,
+      </SuspendOnUnmount>,
     )
     expect(c.resumeCalls).toBe(1)
     expect(c.suspendCalls).toBe(0)
@@ -57,9 +57,9 @@ describe('KeepAlive', () => {
           <button type="button" onClick={() => setWhich(b)} data-testid="swap">
             swap
           </button>
-          <KeepAlive controller={which}>
+          <SuspendOnUnmount controller={which}>
             <div>x</div>
-          </KeepAlive>
+          </SuspendOnUnmount>
         </>
       )
     }
@@ -118,12 +118,148 @@ describe('useSuspendOnHidden', () => {
     addSpy.mockRestore()
     removeSpy.mockRestore()
   })
+
+  test('unmounting while hidden resumes instead of stranding the controller', () => {
+    // Nothing else is listening for `visibilitychange` once this effect is
+    // gone, so a controller left suspended here stays suspended forever.
+    const c = makeController()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+
+    function Probe() {
+      useSuspendOnHidden(c)
+      return null
+    }
+    const { unmount } = render(<Probe />)
+    expect(c.suspendCalls).toBe(1)
+    expect(c.resumeCalls).toBe(0)
+
+    act(() => unmount())
+    expect(c.resumeCalls).toBe(1)
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  })
+
+  test('unmounting while visible leaves the controller alone', () => {
+    // The hook never resumed a visible controller on mount, so it has
+    // nothing to undo on unmount either — the caller owns that state.
+    const c = makeController()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+
+    function Probe() {
+      useSuspendOnHidden(c)
+      return null
+    }
+    const { unmount } = render(<Probe />)
+    act(() => unmount())
+    expect(c.suspendCalls).toBe(0)
+    expect(c.resumeCalls).toBe(0)
+  })
+
+  test('swapping the controller while hidden resumes the one being dropped', () => {
+    const a = makeController()
+    const b = makeController()
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+
+    function Probe({ controller }: { controller: SuspendableController }) {
+      useSuspendOnHidden(controller)
+      return null
+    }
+    const { rerender } = render(<Probe controller={a} />)
+    expect(a.suspendCalls).toBe(1)
+
+    act(() => rerender(<Probe controller={b} />))
+    expect(a.resumeCalls).toBe(1) // handed back, not stranded
+    expect(b.suspendCalls).toBe(1)
+
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+  })
+})
+
+// Both helpers on one controller: it resumes only when neither has a reason
+// left to keep it suspended.
+describe('SuspendOnUnmount with useSuspendOnHidden on the same controller', () => {
+  const recorder = () => {
+    const calls: string[] = []
+    const controller: SuspendableController = {
+      suspend() {
+        calls.push('suspend')
+      },
+      resume() {
+        calls.push('resume')
+      },
+    }
+    return { calls, controller }
+  }
+  const setVisibility = (state: 'hidden' | 'visible') => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: state })
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+  }
+
+  test('unmounting the wrapped subtree while hidden leaves the controller suspended', () => {
+    const { calls, controller } = recorder()
+    function Screen() {
+      useSuspendOnHidden(controller)
+      return null
+    }
+    const { unmount } = render(
+      <SuspendOnUnmount controller={controller}>
+        <Screen />
+      </SuspendOnUnmount>,
+    )
+    setVisibility('hidden')
+    act(() => unmount())
+    // The hook's cleanup used to resume after the wrapper's suspended it.
+    expect(calls.at(-1)).toBe('suspend')
+    setVisibility('visible')
+    expect(calls.at(-1)).toBe('suspend')
+  })
+
+  test('a visible tab does not resume a controller whose wrapper unmounted while hidden', () => {
+    const { calls, controller } = recorder()
+    function App({ screen }: { screen: boolean }) {
+      useSuspendOnHidden(controller)
+      return screen ? (
+        <SuspendOnUnmount controller={controller}>
+          <div />
+        </SuspendOnUnmount>
+      ) : null
+    }
+    const { rerender } = render(<App screen />)
+    setVisibility('hidden')
+    act(() => rerender(<App screen={false} />))
+    setVisibility('visible')
+    expect(calls.at(-1)).toBe('suspend')
+
+    // Mounting a wrapper again resumes it.
+    act(() => rerender(<App screen />))
+    expect(calls.at(-1)).toBe('resume')
+  })
+
+  test('a wrapper that mounts while hidden waits for the tab to show', () => {
+    const { calls, controller } = recorder()
+    function App({ screen }: { screen: boolean }) {
+      useSuspendOnHidden(controller)
+      return screen ? (
+        <SuspendOnUnmount controller={controller}>
+          <div />
+        </SuspendOnUnmount>
+      ) : null
+    }
+    const { rerender } = render(<App screen={false} />)
+    setVisibility('hidden')
+    act(() => rerender(<App screen />))
+    expect(calls.at(-1)).toBe('suspend')
+    setVisibility('visible')
+    expect(calls.at(-1)).toBe('resume')
+  })
 })
 
 // R4.6 (T4.6) — cross-fade overlap: two wrappers around the SAME controller must
 // refcount so the exiting screen's unmount doesn't suspend a controller the
 // entering screen is still using.
-describe('KeepAlive refcounting (R4.6)', () => {
+describe('SuspendOnUnmount refcounting (R4.6)', () => {
   test('overlapping consumers keep the controller resumed until the LAST unmounts', () => {
     let resumed = false
     const controller: SuspendableController = {
@@ -138,14 +274,14 @@ describe('KeepAlive refcounting (R4.6)', () => {
       return (
         <>
           {a && (
-            <KeepAlive controller={controller}>
+            <SuspendOnUnmount controller={controller}>
               <div />
-            </KeepAlive>
+            </SuspendOnUnmount>
           )}
           {b && (
-            <KeepAlive controller={controller}>
+            <SuspendOnUnmount controller={controller}>
               <div />
-            </KeepAlive>
+            </SuspendOnUnmount>
           )}
         </>
       )

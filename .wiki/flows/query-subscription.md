@@ -1,11 +1,11 @@
 ---
 name: query-subscription
-description: ctx.use(query, keyFn) — from call site to reactive AsyncState. The hottest path in the library.
+description: createQuery(ctx, query, keyFn) — from call site to reactive AsyncState. The hottest path in the library.
 type: flow
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/controller/instance.ts:302-330
+  - packages/core/src/query/bind.ts:44-89
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
@@ -13,36 +13,36 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
   - { type: related, target: ../pitfalls/suspended-effects-lose-deps.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-25
 confidence: high
 ---
 
 # Flow: query subscription
 
-End-to-end walkthrough of `ctx.use(query, keyFn)` from call site to reactive AsyncState. Spec §5.4–5.6, §21.
+End-to-end walkthrough of `createQuery(ctx, query, keyFn)` from call site to reactive AsyncState. Spec §5.4–5.6, §21.
 
 ## The call site
 
 ```ts
 const userController = defineController((ctx, props: { id: string }) => {
-  const user = ctx.use(userQuery, () => [props.id])
+  const user = createQuery(ctx, userQuery, () => [props.id])
   return { user }
 })
 ```
 
 ## Step by step
 
-### 1. Dispatch on brand — `instance.ts:303`
+### 1. Dispatch on brand — `bind.ts:72`
 
-`ctx.use(query, keyOrOptions)`:
+`createQuery(ctx, query, keyOrOptions)`:
 
 ```ts
-const brand = query.__olas
+const brand = query[BRAND]   // core's non-exported brand symbol
 if (brand === 'infiniteQuery') return createInfiniteUse(...)
 return createUse(...)
 ```
 
-### 2. `createUse(client, query, keyOrOptions)` — `use.ts:83`
+### 2. `createUse(client, query, keyOrOptions)` — `use.ts:233`
 
 Builds a `SubscriptionImpl<T>` and an `effect` that owns the binding:
 
@@ -52,10 +52,11 @@ let currentEntry: ClientEntry<T> | null = null
 
 const effectDispose = effect(() => {
   if (!enabled()) {                     # enabledFn from options
-    # sub.detach(keepDataWhileDisabled): when that opt-in is set, detach snapshots
-    # the entry's current data into previousData$ first, so `data` keeps reporting
-    # it while disabled (rq-style) instead of blanking. Default false → blanks (§5.7).
-    untracked(() => { release(currentEntry); sub.detach(keepDataWhileDisabled) })
+    # sub.disable(): with keepPreviousData or keepDataWhileDisabled set, it snapshots
+    # the data on screen into previousData$ first. keepDataWhileDisabled shows it
+    # while disabled (rq-style); otherwise `data` blanks (§5.2). keepPreviousData
+    # bridges a re-enable on a new key with it.
+    untracked(() => { release(currentEntry); sub.disable() })
     return
   }
   const args = keyFn() as Args          # TRACKED — re-runs when these signals change
@@ -63,8 +64,8 @@ const effectDispose = effect(() => {
   untracked(() => {                     # everything that mutates entries is outside the tracking scope
     const entry = client.bindEntry(query, args)
     if (currentEntry === entry) return  # same key, nothing to do
-    currentEntry?.release()
-    entry.acquire()
+    currentEntry?.release(subscriberPath)
+    entry.acquire(subscriberPath)       # the controller's path, from createQuery
     currentEntry = entry
     sub.attach(entry)
 
@@ -80,9 +81,11 @@ Key tricks:
 
 - `keyFn()` runs **inside the tracking scope**. Any signal it reads becomes a dep — the effect re-runs when those signals change. That's how `props.id` flipping causes an entry swap.
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
-- We refetch on subscribe only if status is `idle` / stale / errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
+- We refetch on subscribe only if status is `idle`, stale or errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
+- `isStaleNow()` measures from the last fetch, hydrated row or canonical write, never from an optimistic write. It answers `false` while an optimistic write is live, and the entry runs the fetch once that write settles (spec §5.9, `../entities/entry.md`).
+- Joining can pick up a fetch requested before a subscriber-less invalidation. The entry, not `use.ts`, handles that: when such a response lands while someone holds the entry, it fetches once more (`Entry.catchUpIfStillStale`, see `../entities/entry.md`). `resume()` and `prefetch` join the same way and get the same catch-up.
 
-### 3. `client.bindEntry(query, args)` — `client.ts:771`
+### 3. `client.bindEntry(query, args)` — `client.ts:1469`
 
 Looks up the entry in `client.maps`. If absent:
 
@@ -95,15 +98,15 @@ Looks up the entry in `client.maps`. If absent:
 
 `ClientEntry`'s constructor builds an `Entry<T>` with a fetcher closure that captures the original `args` (the user's call args, not the hash key — these are distinct, see `../pitfalls/callargs-vs-keyargs.md`).
 
-### 4. `entry.acquire()` — `client.ts:104`
+### 4. `entry.acquire(subscriberPath)` — `client.ts:395`
 
-Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer.
+Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer. The subscribing controller's path, which `createQuery` reads from `ctxInternals.path`, moves the entry's `subscriptions` count and sends the devtools `cache:subscribed`. Every `release` passes the same path and sends `cache:unsubscribed`: a key change, a disable, a suspend and dispose each release (1.0).
 
-### 5. `SubscriptionImpl.attach(entry)` — `use.ts:48`
+### 5. `SubscriptionImpl.attach(entry)` — `use.ts:142`
 
 Sets the subscription's `current$` signal to the new entry. The subscription's `data`/`error`/`status`/... are all computeds over `current$.value?.entry.<sig>.value` — flipping `current$` ripples through every derived signal in one batched update.
 
-For `keepPreviousData: true`, captures the old entry's `data` into `previousData$` before the swap so the consumer keeps seeing the previous value until the new entry has data of its own.
+For `keepPreviousData: true`, captures the old entry's `data` into `previousData$` before the swap so the consumer keeps seeing the previous value until the new entry has data of its own. The fallback applies only while attached. A detached (disabled) subscription reads `previousData$` only under `keepDataWhileDisabled`, so `keepPreviousData` alone no longer shows another key's data while disabled. Pinned by `use-edges.test.ts`, "keepPreviousData does not leak into a disabled subscription".
 
 ### 6. The fetch resolves
 
@@ -122,18 +125,18 @@ Subscribers downstream see one notification pass.
 
 ## On suspend / resume (§4.1)
 
-`suspend()` releases the current entry and sets a closure `suspended = true`; `resume()` clears it and imperatively rebinds to the current key. The binding effect must read the tracked signals (`enabled`, then `key` when enabled) **before** its `if (suspended) return`, so its dependency set survives a key change that fires during suspension. Reordering these was the T2.1 fix — see `../pitfalls/suspended-effects-lose-deps.md` for the empty-dependency-set trap.
+`suspend()` releases the current entry and sets a closure `suspended = true`; `resume()` clears it and imperatively rebinds to the current key. The binding effect must read the tracked signals (`enabled`, then `key` when enabled) **before** its `if (suspended) return`, so its dependency set survives a key change that fires during suspension. Reordering these was the T2.1 fix — see `../pitfalls/suspended-effects-lose-deps.md` for the empty-dependency-set trap. `resume()` skips the stale-refetch when a fetch is already in flight, as the effect does (`use.ts:335-368`); a suspend and resume during a first fetch used to abort it and fetch again.
 
 ## On disposal
 
-The `LifecycleEntry` recorded by `ctx.use` (kind `cleanup`, dispose = the `dispose` returned by `createUse`) fires:
+The `LifecycleEntry` recorded by `createQuery` (kind `subscription-cache`, `bind.ts:83-88`, holding the `dispose`, `suspend` and `resume` that `createUse` returns) fires `dispose`:
 
 ```ts
 const dispose = () => {
-  effectDispose()                # stop tracking keys
-  currentEntry?.release()        # subscriber count down; may start gcTimer
+  effectDispose()                        # stop tracking keys
+  currentEntry?.release(subscriberPath)  # subscriber count down; may start gcTimer
   currentEntry = null
-  sub.detach()
+  sub.close()                            # detach, and reject pending firstValue waiters
 }
 ```
 
