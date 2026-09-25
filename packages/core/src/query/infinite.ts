@@ -212,6 +212,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private staleEpoch = 0
   /** `Date.now()` of the latest `markStale()`. See `Entry.staleSince`. */
   private staleSince = 0
+  /** When the server truth the pages hold was written. See `Entry.serverUpdatedAt`. */
+  private serverUpdatedAt: number | undefined
+  /** See `EntryOptions.hasSubscribers`. */
+  private readonly hasSubscribers: () => boolean
   private snapshots: Array<{
     id: number
     prev: TPage[]
@@ -241,7 +245,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private reconnectUnsub: (() => void) | null = null
   private deferredResolvers: Array<{
     direction: 'initial' | 'next' | 'prev'
-    resolve: () => void
+    /** An `'initial'` waiter gets the first page, as `startFetch` resolves. */
+    resolve: (value?: unknown) => void
     reject: (err: unknown) => void
   }> = []
   private readonly itemsOf?: (page: TPage) => TItem[]
@@ -273,6 +278,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     structuralShare?: boolean
     onSuccessData?: (pages: TPage[]) => void
     events?: EntryEvents
+    /** See `EntryOptions.hasSubscribers`. */
+    hasSubscribers?: () => boolean
     /**
      * Seeds the entry from a hydrated payload: pages with their params, aligned.
      */
@@ -292,6 +299,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.structuralShareEnabled = opts.structuralShare ?? true
     this.onSuccessData = opts.onSuccessData
     this.events = opts.events ?? {}
+    this.hasSubscribers = opts.hasSubscribers ?? (() => false)
     this.pageParams = signal<PageParam[]>([])
     const seeded = opts.initialPages
     if (seeded !== undefined && seeded.length > 0) {
@@ -300,6 +308,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.pageParams.set(opts.initialPageParams ?? [])
       this.status.set('success')
       this.lastUpdatedAt.set(seededAt)
+      this.serverUpdatedAt = seededAt
       this.settleStaleness(seededAt)
     }
     this.data = computed(() => {
@@ -484,8 +493,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         s.prevParams = newParams
       }
       // Pages requested after the latest `markStale()` reconcile it; an older
-      // refetch leaves it in force (§5.7, as `Entry.applySuccess`).
+      // refetch leaves it in force, and a held entry catches up (§5.7, as
+      // `Entry.applySuccess`).
       if (staleEpoch === this.staleEpoch) this.forcedStale = false
+      const landed = this.currentRequest
       batch(() => {
         this.pages.set(finalPages)
         this.pageParams.set(newParams)
@@ -493,11 +504,13 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         this.status.set('success')
         this.isLoading.set(false)
         this.isFetching.set(false)
-        this.lastUpdatedAt.set(Date.now())
+        this.markServerWrite(Date.now())
         this.isStale.set(this.forcedStale || this.staleTime === 0)
+        // Before any catch-up starts, while `fetchCauseId` is still this one's.
+        this.announceFetchSuccess()
+        this.catchUpIfStillStale(landed)
       })
       if (this.staleTime > 0 && !this.forcedStale) this.scheduleStaleness()
-      this.announceFetchSuccess()
       this.onSuccessData?.(this.pages.peek())
       return finalPages[0] as TPage
     } finally {
@@ -566,9 +579,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             this.status.set('success')
             this.isFetchingNextPage.set(false)
             this.isFetching.set(false)
-            this.lastUpdatedAt.set(Date.now())
+            this.markServerWrite(Date.now())
           })
-          this.onSuccessData?.(this.pages.peek())
         },
         'next',
       ).then(() => {}),
@@ -623,9 +635,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             this.status.set('success')
             this.isFetchingPreviousPage.set(false)
             this.isFetching.set(false)
-            this.lastUpdatedAt.set(Date.now())
+            this.markServerWrite(Date.now())
           })
-          this.onSuccessData?.(this.pages.peek())
         },
         'prev',
       ).then(() => {}),
@@ -652,9 +663,15 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           if (myId !== this.currentFetchId || this.disposed) {
             throw new DOMException('Superseded', 'AbortError')
           }
-          onSuccess(page, pageParam)
-          succeeded = true
-          this.announceFetchSuccess()
+          batch(() => {
+            onSuccess(page, pageParam)
+            succeeded = true
+            this.announceFetchSuccess()
+            // A page never reconciles an invalidation, so a held entry that is
+            // still force-stale re-fetches every page, the new one included.
+            this.catchUpIfStillStale(null)
+          })
+          this.onSuccessData?.(this.pages.peek())
           return page
         } catch (err) {
           if (myId !== this.currentFetchId || this.disposed) {
@@ -752,19 +769,29 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
    * re-fetch once when an invalidation's response was the one discarded.
    * Mirrors `Entry.supersedeByWrite`; the catch-up re-fetches every loaded page.
    */
-  supersedeByWrite(hasSubscribers: boolean): void {
+  supersedeByWrite(): void {
     if (this.disposed || !this.isFetching.peek()) return
     if (this.currentFetchId === this.catchUpFetchId) return
     const discarded = this.currentRequest
-    const catchUp = this.forcedStale && hasSubscribers
     batch(() => {
       this.cancel()
-      if (!catchUp) return
-      const request = this.startFetch()
-      this.catchUpFetchId = this.currentFetchId
-      request.catch(() => {})
-      if (discarded !== null) this.redirects.get(discarded)?.(request)
+      this.catchUpIfStillStale(discarded)
     })
+  }
+
+  /** See `Entry.catchUpIfStillStale`. The catch-up re-fetches every loaded page. */
+  private catchUpIfStillStale(landed: Promise<unknown> | null): void {
+    if (!this.forcedStale || !this.hasSubscribers()) return
+    const request = this.startFetch()
+    this.catchUpFetchId = this.currentFetchId
+    request.catch(() => {})
+    if (landed !== null) this.redirects.get(landed)?.(request)
+  }
+
+  /** Stamp a write of server truth: a fetch, a hydrated row or a canonical write. */
+  private markServerWrite(at: number): void {
+    this.lastUpdatedAt.set(at)
+    this.serverUpdatedAt = at
   }
 
   reset(): void {
@@ -859,7 +886,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       if (this.status.peek() === 'idle' || this.status.peek() === 'pending') {
         this.status.set('success')
       }
-      this.lastUpdatedAt.set(Date.now())
+      // A canonical write is server truth; an optimistic one is a guess.
+      if (record) this.lastUpdatedAt.set(Date.now())
+      else this.markServerWrite(Date.now())
       if (record) this.hasPendingMutations.set(true)
     })
 
@@ -1042,9 +1071,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     if (this.reconnectUnsub === null) {
       this.reconnectUnsub = subscribeReconnect(() => this.drainDeferred())
     }
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       this.deferredResolvers.push({ direction, resolve, reject })
     })
+  }
+
+  /** Run a parked request now, if the network is back. See `Entry.resumeParked`. */
+  resumeParked(): void {
+    if (!this.isOffline()) this.drainDeferred()
   }
 
   private drainDeferred(): void {
@@ -1064,24 +1098,29 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     for (const d of pending) {
       seen.add(d.direction)
     }
-    const run = async () => {
+    // Resolves with the first page when an `'initial'` request ran: a parked
+    // `startFetch` (and the `prefetch` behind it) resolves with it, as one
+    // made online does (§5.7).
+    const run = async (): Promise<TPage | undefined> => {
+      let firstPage: TPage | undefined
       for (const dir of order) {
         if (!seen.has(dir)) continue
-        if (dir === 'initial') await this.startFetch()
+        if (dir === 'initial') firstPage = await this.startFetch()
         else if (dir === 'next') await this.fetchNextPage()
         else await this.fetchPreviousPage()
       }
+      return firstPage
     }
     // `run` starts its first request synchronously. Clearing `isPaused` in the
     // same batch means no observer sees the entry idle and unpaused before it.
-    let running: Promise<void> | undefined
+    let running: Promise<TPage | undefined> | undefined
     batch(() => {
       this.isPaused.set(false)
       running = run()
     })
-    ;(running as Promise<void>).then(
-      () => {
-        for (const p of pending) p.resolve()
+    ;(running as Promise<TPage | undefined>).then(
+      (firstPage) => {
+        for (const p of pending) p.resolve(p.direction === 'initial' ? firstPage : undefined)
       },
       (err) => {
         for (const p of pending) p.reject(err)
@@ -1092,14 +1131,16 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   /**
    * Write hydrated pages as the entry's canonical state: supersede any fetch
    * in flight, honor the server's timestamp for staleness. A row older than
-   * the entry's pages is skipped. Mirrors `Entry.applyHydration`, and returns
-   * whether the row was written; the client reports the write.
+   * the server truth the pages hold is skipped, and one older than the latest
+   * invalidation makes a held entry catch up. Mirrors `Entry.applyHydration`,
+   * and returns whether the row was written; the client reports the write.
    */
   applyHydration(pages: TPage[], pageParams: PageParam[], serverUpdatedAt: number): boolean {
     if (this.disposed) return false
     const lastUpdatedAt = notInFuture(serverUpdatedAt)
-    const current = this.lastUpdatedAt.peek()
+    const current = this.serverUpdatedAt
     if (current !== undefined && lastUpdatedAt < current) return false
+    const discarded = this.currentRequest
     this.currentFetchId += 1
     this.currentAbort?.abort()
     this.currentAbort = null
@@ -1107,6 +1148,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       sn.prev = pages
       sn.prevParams = pageParams
     }
+    // A row stamped at or after the latest `markStale()` reconciles it; an
+    // older one leaves it in force (§5.7, as `Entry.applyHydration`).
+    if (lastUpdatedAt >= this.staleSince) this.forcedStale = false
     batch(() => {
       this.pages.set(pages)
       this.pageParams.set(pageParams)
@@ -1116,12 +1160,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.isFetching.set(false)
       this.isFetchingNextPage.set(false)
       this.isFetchingPreviousPage.set(false)
-      this.lastUpdatedAt.set(lastUpdatedAt)
+      this.markServerWrite(lastUpdatedAt)
+      this.settleStaleness(lastUpdatedAt)
+      this.catchUpIfStillStale(discarded)
     })
-    // A row stamped at or after the latest `markStale()` reconciles it; an
-    // older one leaves it in force (§5.7, as `Entry.applyHydration`).
-    if (lastUpdatedAt >= this.staleSince) this.forcedStale = false
-    this.settleStaleness(lastUpdatedAt)
     return true
   }
 

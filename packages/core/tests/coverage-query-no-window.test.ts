@@ -70,4 +70,41 @@ describe('focus and reconnect triggers without a browser', () => {
     expect(calls).toBe(2)
     root.dispose()
   })
+
+  // A worker has `navigator.onLine` but no `window`, so no `online` event ever
+  // reaches the entry's reconnect listener. The interval used to skip a parked
+  // entry and wait for that event, and the entry stayed parked for good (§5.9).
+  test('without window, a parked fetch runs on the next interval tick once online', async () => {
+    vi.useFakeTimers()
+    let onLine = false
+    vi.stubGlobal('navigator', {
+      get onLine() {
+        return onLine
+      },
+    })
+    try {
+      let calls = 0
+      const q = defineQuery({
+        id: 'cov-no-window/park-interval',
+        key: () => ['k'],
+        fetcher: async () => ++calls,
+        refetchInterval: 1000,
+      })
+      const root = createRoot(
+        defineController((ctx) => ({ s: createQuery(ctx, q) })),
+        { queries: queryEngine(), deps: {} },
+      )
+      expect(root.api.s.isPaused.value).toBe(true)
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(calls).toBe(0)
+      onLine = true
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(calls).toBe(1)
+      expect(root.api.s.isPaused.value).toBe(false)
+      expect(root.api.s.data.value).toBe(1)
+      root.dispose()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

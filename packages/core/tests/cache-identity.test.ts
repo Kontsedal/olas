@@ -260,4 +260,84 @@ describe('the diverging-callArgs warning (dev)', () => {
       warn.mockRestore()
     }
   })
+
+  // Keys hash as JSON round-trips them (§5.4), so `Infinity` and `-Infinity`
+  // name one entry, as intended. The warning compared call args by the same
+  // hash, and so never fired for such a collision: the second bind's fetcher
+  // args were dropped in silence. Call args now compare structurally.
+  test('call args that only JSON makes equal warn', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const q = defineQuery({
+        id: 'cache-identity/normalized-args',
+        key: (name: string, range: { max: number }) => [name, range],
+        fetcher: async () => 'data',
+      })
+      keep(
+        createRoot(
+          defineController((ctx) => ({
+            a: createQuery(ctx, q, () => ['items', { max: Number.POSITIVE_INFINITY }]),
+            b: createQuery(ctx, q, () => ['items', { max: Number.NEGATIVE_INFINITY }]),
+          })),
+          { queries: queryEngine(), deps: {} },
+        ),
+      )
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('a Date and its ISO string warn; equal Dates built afresh do not', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const q = defineQuery({
+        id: 'cache-identity/date-args',
+        key: (at: Date | string) => [at],
+        fetcher: async () => 'data',
+      })
+      keep(
+        createRoot(
+          defineController((ctx) => ({
+            a: createQuery(ctx, q, (): [Date | string] => [new Date(0)]),
+            b: createQuery(ctx, q, (): [Date | string] => [new Date(0)]),
+            c: createQuery(ctx, q, (): [Date | string] => [new Date(0).toISOString()]),
+          })),
+          { queries: queryEngine(), deps: {} },
+        ),
+      )
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('NaN matches NaN, and a cyclic arg compares without overflowing', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      type Node = { id: string; self?: Node }
+      const q = defineQuery({
+        id: 'cache-identity/nan-cycle-args',
+        key: (n: number, node: Node) => [n, node.id],
+        fetcher: async () => 'data',
+      })
+      const cyclic = (): Node => {
+        const node: Node = { id: 'x' }
+        node.self = node
+        return node
+      }
+      keep(
+        createRoot(
+          defineController((ctx) => ({
+            a: createQuery(ctx, q, () => [Number.NaN, cyclic()]),
+            b: createQuery(ctx, q, () => [Number.NaN, cyclic()]),
+          })),
+          { queries: queryEngine(), deps: {} },
+        ),
+      )
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

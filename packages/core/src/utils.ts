@@ -35,7 +35,9 @@ export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
       reject(abortReason(signal))
       return
     }
-    const cancel = scheduleExpiry(ms, () => {
+    // `scheduleExpiry` reads `NaN` as "never", as it reads `Infinity`. A retry
+    // delay that computed `NaN` means "retry now", not "hang until aborted".
+    const cancel = scheduleExpiry(Number.isNaN(ms) ? 0 : ms, () => {
       signal.removeEventListener('abort', onAbort)
       resolve()
     })

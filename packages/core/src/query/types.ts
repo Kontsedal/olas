@@ -22,10 +22,11 @@ export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
  * - `refetch()` — force a fetch; resolves with the result.
  * - `reset()` — clear `error` + `status` without re-fetching.
  * - `cancel()` — abort the in-flight fetch, if any.
- * - `firstValue()` — resolves at once when data is already there, even while
- *   a background refetch runs or after one failed. Otherwise it resolves on
- *   the first success and rejects on the first failure. It is the promise to
- *   hand to Suspense or React 19's `use(...)`.
+ * - `firstValue()` — resolves at once when data for the current key is already
+ *   there, even while a background refetch runs or after one failed. Otherwise
+ *   it resolves on the first success and rejects on the first failure. The
+ *   previous key's data that `keepPreviousData` keeps on screen does not
+ *   count. It is the promise to hand to Suspense or React 19's `use(...)`.
  *
  * `status` reads `'pending'` during every fetch, a background refetch
  * included, while `data` stays. Test `data !== undefined` for "something to

@@ -2,7 +2,7 @@ import { scheduleExpiry } from '../expiry-timer'
 import { effect, signal } from '../signals'
 import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
-import type { TimingOptions, TimingSignal } from './debounced'
+import { type TimingOptions, type TimingSignal, timingWindow } from './debounced'
 
 /**
  * Time source — `Date.now()`. Stays in lockstep with `vi.setSystemTime()`
@@ -27,13 +27,15 @@ function now(): number {
  *
  * The returned handle exposes `cancel()` / `flush()` — see `TimingSignal`.
  * `ms` goes through the shared expiry scheduler, as in `debounced`: with
- * `Infinity`, only the leading edge and `flush()` emit.
+ * `Infinity`, only the leading edge and `flush()` emit. `NaN` runs as `0`,
+ * with a warning in development.
  */
 export function throttled<T>(
   source: ReadSignal<T>,
-  ms: number,
+  windowMs: number,
   options?: TimingOptions,
 ): TimingSignal<T> {
+  const ms = timingWindow(windowMs, 'throttled')
   const leading = options?.leading ?? true
   const trailing = options?.trailing ?? true
   if (!leading && !trailing) {

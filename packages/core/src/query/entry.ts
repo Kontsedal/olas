@@ -68,6 +68,13 @@ export type EntryOptions<T> = {
    * SHOULD surface.
    */
   onSuccessData?: (data: T) => void
+  /**
+   * Whether anyone holds the entry: a subscription, or a prefetch in flight.
+   * Data that lands while an invalidation still stands makes a held entry
+   * fetch once more to reconcile it (§5.7), and so does a `replace` that
+   * discards an invalidation's fetch (`supersedeByWrite`). Defaults to nobody.
+   */
+  hasSubscribers?: () => boolean
 }
 
 type SnapshotRecord<T> = {
@@ -197,6 +204,14 @@ export class Entry<T> {
   /** `Date.now()` of the latest `markStale()`. A hydrated row clears
    *  `forcedStale` only when it is stamped at or after this. */
   private staleSince = 0
+  /**
+   * When the server truth the entry holds was written: by a fetch, a hydrated
+   * row or a canonical write. Unlike `lastUpdatedAt`, an optimistic `setData`
+   * leaves it alone, so a hydrated row is compared against what the server
+   * last said, not against a guess (§15).
+   */
+  private serverUpdatedAt: number | undefined
+  private readonly hasSubscribers: () => boolean
   private snapshots: Array<SnapshotRecord<T>> = []
   private nextSnapshotId = 0
   private disposed = false
@@ -237,8 +252,10 @@ export class Entry<T> {
     this.structuralShareEnabled = options.structuralShare ?? true
     this.events = options.events ?? {}
     this.onSuccessData = options.onSuccessData as ((data: unknown) => void) | undefined
+    this.hasSubscribers = options.hasSubscribers ?? (() => false)
     this.data = signal<T | undefined>(options.initialData)
     const initialUpdatedAt = notInFuture(options.initialUpdatedAt)
+    this.serverUpdatedAt = initialUpdatedAt
     if (options.initialData !== undefined) {
       this.status = signal<AsyncStatus>('success')
       // For hydrated data, derive `isStale` from the *actual* age of the
@@ -350,6 +367,18 @@ export class Entry<T> {
         reject,
       })
     })
+  }
+
+  /**
+   * Run a parked fetch now, if the network is back. The reconnect drain runs
+   * only on an `online` event, and that event never comes without a `window`
+   * (a worker), or can come while `navigator.onLine` still reads false. The
+   * interval, focus and reconnect triggers call this instead of starting a
+   * fetch of their own, so one request still settles every parked waiter
+   * (§5.9). A no-op while offline or with nothing parked.
+   */
+  resumeParked(): void {
+    if (!this.isOffline()) this.drainDeferred()
   }
 
   private drainDeferred(): void {
@@ -482,29 +511,60 @@ export class Entry<T> {
     }
     // Data requested after the latest `markStale()` reconciles it (T3.9). A
     // response requested before it does not: the invalidation asked for data
-    // newer than this, so the next subscriber still refetches (§5.7).
+    // newer than this, so the entry stays stale, and a held entry catches up
+    // below (§5.7).
     if (staleEpoch === this.staleEpoch) this.forcedStale = false
+    const landed = this.currentRequest
     batch(() => {
+      const now = Date.now()
       this.data.set(shared)
       this.error.set(undefined)
       this.status.set('success')
       this.isLoading.set(false)
       this.isFetching.set(false)
-      this.lastUpdatedAt.set(Date.now())
+      this.lastUpdatedAt.set(now)
+      this.serverUpdatedAt = now
       this.isStale.set(this.forcedStale || this.staleTime === 0)
+      // Announced before any catch-up starts, while `currentFetchCauseId` is
+      // still this fetch's.
+      try {
+        this.events.onFetchSuccess?.(now - this.fetchStartTime, shared, this.currentFetchCauseId)
+      } catch {
+        // devtools handlers must not break the program.
+      }
+      this.catchUpIfStillStale(landed)
     })
     if (this.staleTime > 0 && !this.forcedStale) this.scheduleStaleness()
-    try {
-      this.events.onFetchSuccess?.(
-        Date.now() - this.fetchStartTime,
-        shared,
-        this.currentFetchCauseId,
-      )
-    } catch {
-      // devtools handlers must not break the program.
-    }
     this.onSuccessData?.(shared)
     return shared
+  }
+
+  /**
+   * Data just landed that leaves an invalidation standing: a response
+   * requested before it, or a hydrated row stamped before it. A subscriber
+   * that joined the older fetch, or a prefetch holding the entry, is already
+   * here and will not trigger the refetch the invalidation asks for (§5.7). So
+   * a held entry fetches once more. Called inside the batch that wrote the
+   * data, so `isFetching` never reads `false` in between.
+   *
+   * `landed` is the request that delivered or was discarded by the data; an
+   * `invalidate()` waiting on it follows the catch-up.
+   */
+  private catchUpIfStillStale(landed: Promise<unknown> | null): void {
+    if (this.forcedStale && this.hasSubscribers()) this.startCatchUp(landed)
+  }
+
+  /**
+   * Start the fetch an invalidation is still waiting for. A `replace` does not
+   * supersede it (`supersedeByWrite`), and an `invalidate()` waiting on
+   * `replaced` settles with it instead.
+   */
+  private startCatchUp(replaced: Promise<unknown> | null): void {
+    const request = this.startFetch()
+    this.catchUpFetchId = this.currentFetchId
+    // The outcome settles on the entry.
+    request.catch(() => {})
+    if (replaced !== null) this.redirects.get(replaced)?.(request)
   }
 
   /**
@@ -557,15 +617,22 @@ export class Entry<T> {
    * so any in-flight fetch supersedes itself rather than overwriting the
    * fresher hydrated value.
    *
-   * A row stamped before the entry's `lastUpdatedAt` is older than what the
-   * entry holds, so it is skipped and nothing changes. Returns whether the row
-   * was written; the client reports a `'hydrate'` write only then.
+   * A row stamped before the server truth the entry holds is older than it,
+   * so it is skipped and nothing changes. An optimistic write does not count:
+   * it is a guess, and the row is folded under it as a fetch would be (§6.4).
+   * Returns whether the row was written; the client reports a `'hydrate'`
+   * write only then.
+   *
+   * A row stamped before the latest invalidation leaves it standing, and a
+   * held entry then fetches once more (`catchUpIfStillStale`): the row also
+   * discarded the fetch that invalidation started.
    */
   applyHydration(data: T, serverUpdatedAt: number): boolean {
     if (this.disposed) return false
     const lastUpdatedAt = notInFuture(serverUpdatedAt)
-    const current = this.lastUpdatedAt.peek()
+    const current = this.serverUpdatedAt
     if (current !== undefined && lastUpdatedAt < current) return false
+    const discarded = this.currentRequest
     // Bump fetch id: an inflight fetcher will now lose the supersede check
     // in `runWithRetry` and won't write its (likely-stale) result.
     this.currentFetchId += 1
@@ -591,7 +658,9 @@ export class Entry<T> {
       this.isLoading.set(false)
       this.isFetching.set(false)
       this.lastUpdatedAt.set(lastUpdatedAt)
+      this.serverUpdatedAt = lastUpdatedAt
       this.isStale.set(alreadyStale)
+      this.catchUpIfStillStale(discarded)
     })
     if (!alreadyStale && this.staleTime > 0) {
       const remaining = this.staleTime - (Date.now() - lastUpdatedAt)
@@ -676,9 +745,10 @@ export class Entry<T> {
    *
    * When the entry is force-stale, the discarded response was the
    * reconciliation an invalidation asked for, and the write carries only its
-   * own record. The entry therefore re-fetches once, if `hasSubscribers` says
-   * someone still watches it. A reconnect's `invalidateAll()` followed by a
-   * pushed `replace` is the case: without this, nothing re-runs the catch-up.
+   * own record. The entry therefore re-fetches once, if the `hasSubscribers`
+   * option says someone still holds it. A reconnect's `invalidateAll()`
+   * followed by a pushed `replace` is the case: without this, nothing re-runs
+   * the catch-up.
    *
    * That catch-up is not superseded by a later write. A burst of pushes then
    * coalesces into the one request instead of cancelling and restarting it on
@@ -686,22 +756,15 @@ export class Entry<T> {
    * treated as a patch: the catch-up's response is the server truth the
    * invalidation is waiting for, and it lands over the write.
    */
-  supersedeByWrite(hasSubscribers: boolean): void {
+  supersedeByWrite(): void {
     if (this.disposed || !this.isFetching.peek()) return
     if (this.currentFetchId === this.catchUpFetchId) return
     const discarded = this.currentRequest
-    const catchUp = this.forcedStale && hasSubscribers
     // One batch: `isFetching` never reads false between the cancel and the
     // catch-up, so an awaiter such as `waitForIdle()` cannot resolve early.
     batch(() => {
       this.cancel()
-      if (!catchUp) return
-      const request = this.startFetch()
-      this.catchUpFetchId = this.currentFetchId
-      // The outcome settles on the entry; an `invalidate()` waiting on the
-      // discarded request follows the catch-up instead.
-      request.catch(() => {})
-      if (discarded !== null) this.redirects.get(discarded)?.(request)
+      this.catchUpIfStillStale(discarded)
     })
   }
 
@@ -744,11 +807,14 @@ export class Entry<T> {
     }
 
     batch(() => {
+      const now = Date.now()
       this.data.set(next)
       if (this.status.peek() === 'idle' || this.status.peek() === 'pending') {
         this.status.set('success')
       }
-      this.lastUpdatedAt.set(Date.now())
+      this.lastUpdatedAt.set(now)
+      // A canonical write is server truth; an optimistic one is a guess.
+      if (!track) this.serverUpdatedAt = now
       if (record) this.hasPendingMutations.set(true)
     })
 

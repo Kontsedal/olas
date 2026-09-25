@@ -2,7 +2,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { createCache, createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
-import { defineQuery } from '../src/query/define'
+import { defineInfiniteQuery, defineQuery } from '../src/query/define'
 import { queryEngine } from '../src/query/engine'
 import { Entry } from '../src/query/entry'
 import { signal } from '../src/signals'
@@ -645,6 +645,138 @@ describe('offline and reconnect scheduling', () => {
     await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
     expect(calls).toBe(1)
     expect(aborts).toBe(0)
+    root.dispose()
+  })
+
+  // The interval, focus and reconnect triggers skipped a parked entry and left
+  // it to the entry's own `online` listener. When that event came while
+  // `navigator.onLine` still read false, or never came at all, the entry stayed
+  // parked for good. A parked entry that is online again now runs its fetch.
+  test('an online event that arrives early does not strand the park: the next tick runs it', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const q = defineQuery({
+      id: 'query-focus-online/park-early-online',
+      key: () => [],
+      fetcher: async () => ++calls,
+      refetchInterval: 1000,
+    })
+    setOnline(false)
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    expect(root.api.x.isPaused.value).toBe(true)
+    // The event fires before `navigator.onLine` flips.
+    window.dispatchEvent(new Event('online'))
+    setOnline(true)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls).toBe(1)
+    expect(root.api.x.isPaused.value).toBe(false)
+    expect(root.api.x.data.value).toBe(1)
+    root.dispose()
+  })
+
+  test('a focus event runs a parked fetch once the network is back', async () => {
+    let calls = 0
+    const q = defineQuery({
+      id: 'query-focus-online/park-focus',
+      key: () => [],
+      fetcher: async () => ++calls,
+      staleTime: 60_000,
+      refetchOnWindowFocus: true,
+    })
+    setOnline(false)
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const refetched = root.api.x.refetch()
+    expect(root.api.x.isPaused.value).toBe(true)
+    setOnline(true)
+    window.dispatchEvent(new Event('focus'))
+    await expect(refetched).resolves.toBe(1)
+    expect(calls).toBe(1)
+    expect(root.api.x.isPaused.value).toBe(false)
+    root.dispose()
+  })
+
+  // A parked infinite fetch is settled by the reconnect drain, which resolved
+  // its waiters with no value. `prefetch` then resolved `undefined` instead of
+  // the first page (§5.7).
+  test('an infinite prefetch requested offline resolves with the first page', async () => {
+    const q = defineInfiniteQuery({
+      id: 'query-focus-online/prefetch-infinite-offline',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => `page ${pageParam}`,
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+    })
+    setOnline(false)
+    const root = createRoot(
+      defineController(() => ({})),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const prefetched = root.bindQuery(q).prefetch()
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await expect(prefetched).resolves.toBe('page 0')
+    root.dispose()
+  })
+
+  test('an offlineFirst infinite prefetch parked by a network error resolves with the first page', async () => {
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'query-focus-online/prefetch-infinite-offline-first',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => {
+        calls += 1
+        if (calls === 1) {
+          setOnline(false)
+          throw new TypeError('Failed to fetch')
+        }
+        return `page ${pageParam}`
+      },
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      networkMode: 'offlineFirst',
+    })
+    const root = createRoot(
+      defineController(() => ({})),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const prefetched = root.bindQuery(q).prefetch()
+    await vi.waitFor(() => expect(calls).toBe(1))
+    await Promise.resolve()
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await expect(prefetched).resolves.toBe('page 0')
+    root.dispose()
+  })
+
+  test('an infinite query: the next tick runs a parked fetch', async () => {
+    vi.useFakeTimers()
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'query-focus-online/park-early-online-infinite',
+      key: () => [],
+      fetcher: async () => ++calls,
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      refetchInterval: 1000,
+    })
+    setOnline(false)
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    expect(root.api.x.isPaused.value).toBe(true)
+    window.dispatchEvent(new Event('online'))
+    setOnline(true)
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(calls).toBe(1)
+    expect(root.api.x.isPaused.value).toBe(false)
+    expect(root.api.x.pages.value).toEqual([1])
     root.dispose()
   })
 })

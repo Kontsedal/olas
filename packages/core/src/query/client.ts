@@ -7,7 +7,7 @@ import type { FetchContext, MutationHost, QueryHost, QueryRef, WriteSource } fro
 import { type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
 import { createInfiniteQueryActions, createQueryActions } from './actions'
-import { Entry, type EntryEvents } from './entry'
+import { Entry, type EntryEvents, notInFuture } from './entry'
 import { subscribeReconnect, subscribeWindowFocus } from './focus-online'
 import {
   InfiniteEntry,
@@ -115,17 +115,55 @@ const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, h
 
 /**
  * Whether two binds passed the same call arg, for the dev warning in
- * `bindEntry`. Values compare by `stableHash`, so equal args built afresh on
- * every re-key match. An arg that cannot be hashed, such as a function or a
- * class instance, compares by identity.
+ * `bindEntry`. Plain objects and arrays compare structurally, so equal args
+ * built afresh on every re-key match, and a `Date` compares by its time. There
+ * is no JSON normalization, unlike the key hash (§5.4): `Infinity` and
+ * `-Infinity`, or a `Date` and its ISO string, share an entry and differ here,
+ * so the fetcher dropping one of them warns. `NaN` matches `NaN`, and `-0`
+ * matches `0`. Anything else, such as a function or a class instance, compares
+ * by identity. A cycle compares without recursing forever, and a structure too
+ * deep to walk counts as different.
  */
 function sameCallArg(a: unknown, b: unknown): boolean {
-  if (Object.is(a, b)) return true
   try {
-    return stableHash([a]) === stableHash([b])
+    return equalCallArgs(a, b, new Map())
   } catch {
     return false
   }
+}
+
+function equalCallArgs(a: unknown, b: unknown, seen: Map<object, object>): boolean {
+  // SameValueZero: `NaN` equals itself, and `-0` equals `0`.
+  if (a === b || (Number.isNaN(a) && Number.isNaN(b))) return true
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false
+  if (a instanceof Date || b instanceof Date) {
+    return a instanceof Date && b instanceof Date && equalCallArgs(a.getTime(), b.getTime(), seen)
+  }
+  const proto: unknown = Object.getPrototypeOf(a)
+  if (proto !== Object.getPrototypeOf(b)) return false
+  const isArray = Array.isArray(a)
+  if (!isArray && proto !== Object.prototype && proto !== null) return false
+  // A pair already under comparison counts as equal, so a cycle ends here.
+  if (seen.get(a) === b) return true
+  seen.set(a, b)
+  if (isArray) {
+    const as = a as unknown[]
+    const bs = b as unknown[]
+    if (as.length !== bs.length) return false
+    for (let i = 0; i < as.length; i++) {
+      if (!equalCallArgs(as[i], bs[i], seen)) return false
+    }
+    return true
+  }
+  const ra = a as Record<string, unknown>
+  const rb = b as Record<string, unknown>
+  const keys = Object.keys(ra)
+  if (keys.length !== Object.keys(rb).length) return false
+  for (const k of keys) {
+    if (!Object.hasOwn(rb, k)) return false
+    if (!equalCallArgs(ra[k], rb[k], seen)) return false
+  }
+  return true
 }
 
 /**
@@ -346,6 +384,7 @@ export class ClientEntry<T> {
       initialUpdatedAt: hydrated?.lastUpdatedAt,
       events: __DEV__ ? devtoolsEntryEvents(devtools, queryId, queryKey) : undefined,
       onSuccessData: onFetched,
+      hasSubscribers: () => this.hasSubscribers(),
     })
   }
 
@@ -455,10 +494,15 @@ export class ClientEntry<T> {
       // the current request, so a fetch slower than the interval would
       // livelock — abort→restart every tick, never completing, hammering one
       // aborted request per interval (T3.2). Skip the tick; the running fetch
-      // will finish and the next tick re-arms once it's idle. A fetch parked
-      // for the network is skipped too: the reconnect drain runs it, and each
-      // tick would only park one more waiter.
-      if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
+      // will finish and the next tick re-arms once it's idle.
+      if (this.entry.isFetching.peek()) return
+      // A fetch parked for the network runs once the network is back, and the
+      // tick starts nothing else: offline, each tick would park one more
+      // waiter. Without this, a park the `online` event missed stayed for good.
+      if (this.entry.isPaused.peek()) {
+        this.entry.resumeParked()
+        return
+      }
       this.entry.startFetch().catch(() => {
         /* error already captured on entry */
       })
@@ -511,12 +555,17 @@ export class ClientEntry<T> {
 
   /** Refetch on focus / reconnect, but only if the data is actually stale. */
   private triggerEventRefetch(): void {
-    if (!this.entry.isStaleNow()) return
     // Join an in-flight fetch instead of aborting + restarting it — a focus /
     // reconnect landing mid-fetch shouldn't cancel it (T3.9, cf. T3.2 interval).
-    // A parked fetch is left to the entry's reconnect drain: on one `online`
-    // event, both firing started a request and then aborted it for another.
-    if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
+    if (this.entry.isFetching.peek()) return
+    // A parked fetch runs through the entry's drain, and only once online: on
+    // one `online` event, starting a fetch here as well as the drain made a
+    // request and then aborted it for another.
+    if (this.entry.isPaused.peek()) {
+      this.entry.resumeParked()
+      return
+    }
+    if (!this.entry.isStaleNow()) return
     this.entry.startFetch().catch(() => {
       /* error already captured on entry */
     })
@@ -605,6 +654,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       initialUpdatedAt: hydrated?.lastUpdatedAt,
       events: __DEV__ ? devtoolsEntryEvents(client.devtools, query.__id, keyArgs) : undefined,
       onSuccessData: onFetched,
+      hasSubscribers: () => this.hasSubscribers(),
     })
   }
 
@@ -639,8 +689,12 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
 
   /** See `ClientEntry.triggerEventRefetch`. A refetch re-fetches every loaded page. */
   private triggerEventRefetch(): void {
+    if (this.entry.isFetching.peek()) return
+    if (this.entry.isPaused.peek()) {
+      this.entry.resumeParked()
+      return
+    }
     if (!this.entry.isStaleNow()) return
-    if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
     this.entry.startFetch().catch(() => {
       /* error captured on entry */
     })
@@ -711,9 +765,13 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
       }
-      // Join an in-flight fetch instead of aborting it (T3.2), and leave a
-      // parked one to the reconnect drain — see `ClientEntry.armIntervalTick`.
-      if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
+      // Join an in-flight fetch instead of aborting it (T3.2), and run a parked
+      // one only once online — see `ClientEntry.armIntervalTick`.
+      if (this.entry.isFetching.peek()) return
+      if (this.entry.isPaused.peek()) {
+        this.entry.resumeParked()
+        return
+      }
       this.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
@@ -1075,7 +1133,7 @@ export class QueryClient implements PluginEngine {
       entry.entry.setData(updater as (prev: unknown) => never, { track: false })
       const data = entry.entry.data.peek()
       if (source === 'replace' && data !== undefined) {
-        entry.entry.supersedeByWrite(entry.hasSubscribers())
+        entry.entry.supersedeByWrite()
       }
       this.emitWrite(
         entry.query,
@@ -1094,7 +1152,7 @@ export class QueryClient implements PluginEngine {
       pageParams,
     })
     if (source === 'replace' && entry.entry.data.peek() !== undefined) {
-      entry.entry.supersedeByWrite(entry.hasSubscribers())
+      entry.entry.supersedeByWrite()
     }
     this.emitInfiniteWrite(entry, source, origin)
   }
@@ -1182,7 +1240,23 @@ export class QueryClient implements PluginEngine {
     // The next bindEntry for this query + key will adopt the buffered payload
     // and clear the slot. Namespaced by queryId so a colliding-key query can't
     // steal it (spec §15, T1.2).
-    this.hydratedData.set(hydrationKey(queryId, hash), { data, lastUpdatedAt, origin, pageParams })
+    this.bufferRow(hydrationKey(queryId, hash), { data, lastUpdatedAt, origin, pageParams })
+  }
+
+  /**
+   * Buffer a row for a key no entry has bound yet. A row stamped before the
+   * one already waiting for the key is dropped, as a bound entry drops a row
+   * older than its data (§15).
+   */
+  private bufferRow(hkey: string, slot: HydratedSlot): void {
+    const waiting = this.hydratedData.get(hkey)
+    if (
+      waiting !== undefined &&
+      notInFuture(slot.lastUpdatedAt) < notInFuture(waiting.lastUpdatedAt)
+    ) {
+      return
+    }
+    this.hydratedData.set(hkey, slot)
   }
 
   /**
@@ -1200,7 +1274,7 @@ export class QueryClient implements PluginEngine {
     if (!this.acceptsState(state)) return
     this.eachHydrationEntry(state, (entry) => {
       const hash = stableHash(entry.key)
-      this.hydratedData.set(hydrationKey(entry.id, hash), {
+      this.bufferRow(hydrationKey(entry.id, hash), {
         data: entry.data,
         lastUpdatedAt: entry.lastUpdatedAt,
         origin: undefined,
@@ -1273,23 +1347,28 @@ export class QueryClient implements PluginEngine {
     return out
   }
 
+  /**
+   * Every entry that holds data, with the time that data was written. `status`
+   * alone is not the test: it reads `'pending'` over the data during a
+   * background refetch, and `'error'` over it after a failed one (§5.3, §15).
+   */
   dehydrate(): DehydratedState {
     const entries: DehydratedState['entries'] = []
     for (const [query, map] of this.maps) {
       for (const ce of map.values()) {
-        if (ce.entry.status.peek() === 'success') {
-          entries.push({
-            id: query.__id,
-            key: ce.keyArgs,
-            data: ce.entry.data.peek(),
-            lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
-          })
-        }
+        const data = ce.entry.data.peek()
+        if (data === undefined && ce.entry.status.peek() !== 'success') continue
+        entries.push({
+          id: query.__id,
+          key: ce.keyArgs,
+          data,
+          lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
+        })
       }
     }
     for (const [query, map] of this.infiniteMaps) {
       for (const ce of map.values()) {
-        if (ce.entry.status.peek() !== 'success') continue
+        if (ce.entry.pages.peek().length === 0 && ce.entry.status.peek() !== 'success') continue
         entries.push({
           id: query.__id,
           key: ce.keyArgs,
@@ -1694,7 +1773,7 @@ export class QueryClient implements PluginEngine {
   ): void {
     const entry = this.bindEntry(query, args)
     entry.entry.setData(() => value, { track: false })
-    if (value !== undefined) entry.entry.supersedeByWrite(entry.hasSubscribers())
+    if (value !== undefined) entry.entry.supersedeByWrite()
     const data = entry.entry.data.peek()
     this.emitWrite(
       entry.query,
@@ -1924,7 +2003,7 @@ export class QueryClient implements PluginEngine {
   ): void {
     const entry = this.bindInfiniteEntry(query, args)
     entry.entry.setData(() => value, { track: false })
-    if (entry.entry.data.peek() !== undefined) entry.entry.supersedeByWrite(entry.hasSubscribers())
+    if (entry.entry.data.peek() !== undefined) entry.entry.supersedeByWrite()
     this.emitInfiniteWrite(
       entry as InfiniteClientEntry<unknown, unknown, unknown>,
       'replace',

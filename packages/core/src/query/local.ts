@@ -28,6 +28,14 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   private disposed = false
   private readonly keepPreviousData: boolean
   private lastSucceededFor: unknown[] | null = null
+  /** The key of the key effect's latest run. */
+  private currentKey: unknown[] | null = null
+  /**
+   * True from a key change until a fetch lands for the new key, while the data
+   * on hand is the previous key's (`keepPreviousData`). `firstValue()` then
+   * waits for the new key, as a shared query's subscription does.
+   */
+  private previousKeyData = false
 
   constructor(
     fetcher: (ctx: FetchCtx) => Promise<T>,
@@ -39,6 +47,14 @@ class LocalCacheImpl<T> implements LocalCache<T> {
       fetcher: () => (signal) => fetcher({ signal, deps }),
       staleTime: options.staleTime ?? 0,
       initialData: options.initialData,
+      // A key change supersedes the fetch in flight, so any fetch that lands
+      // was requested for the current key.
+      onSuccessData: () => {
+        this.previousKeyData = false
+      },
+      // The owning controller is the cache's one subscriber, for as long as the
+      // cache exists: a discarded invalidation fetch is re-run (§6.4).
+      hasSubscribers: () => true,
     })
 
     if (options.key) {
@@ -47,12 +63,21 @@ class LocalCacheImpl<T> implements LocalCache<T> {
         // Track keys.
         const keyArgs = keyFn() as unknown[]
         untracked(() => {
+          const previousKey = this.currentKey
+          this.currentKey = keyArgs
           if (!this.keepPreviousData) {
             // Reset data on key change so consumers see "loading" rather than
             // the previous key's stale value.
             if (this.lastSucceededFor != null && !arraysEqual(this.lastSucceededFor, keyArgs)) {
               this.entry.data.set(undefined)
             }
+          }
+          if (
+            previousKey !== null &&
+            !arraysEqual(previousKey, keyArgs) &&
+            this.entry.data.peek() !== undefined
+          ) {
+            this.previousKeyData = true
           }
           this.entry.startFetch().then(
             () => {
@@ -104,7 +129,10 @@ class LocalCacheImpl<T> implements LocalCache<T> {
 
   refetch = (): Promise<T> => this.entry.refetch()
   reset = (): void => this.entry.reset()
-  firstValue = (): Promise<T> => this.entry.firstValue()
+  // After a key change the data on hand can be the previous key's: then settle
+  // with the fetch for the new key instead of resolving with it (§5.3).
+  firstValue = (): Promise<T> =>
+    this.previousKeyData ? this.entry.settled() : this.entry.firstValue()
   cancel = (): void => this.entry.cancel()
   invalidate = (): Promise<void> =>
     // Resolves when the refetch settles; errors surface on the cache's `error`
@@ -121,9 +149,7 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   }
   replace = (value: T): void => {
     this.entry.setData(() => value, { track: false })
-    // The owning controller is the cache's one subscriber, for as long as the
-    // cache exists: a discarded invalidation fetch is re-run (§6.4).
-    if (value !== undefined) this.entry.supersedeByWrite(true)
+    if (value !== undefined) this.entry.supersedeByWrite()
   }
 
   dispose(): void {

@@ -491,4 +491,56 @@ describe('firstValue resolves at once when data is present', () => {
     await expect(second).resolves.toBe('fetch 3')
     root.dispose()
   })
+
+  // With `keepPreviousData`, a local cache keeps the previous key's data on
+  // screen after a key change. `firstValue()` resolved with it at once, so a
+  // navigation guard read the old key's data. A shared query's subscription
+  // waits for the new key in the same case, and now so does the local cache.
+  test("a local cache with keepPreviousData: after a key change, not the old key's data", async () => {
+    const key = signal('a')
+    const pending: Array<(v: string) => void> = []
+    const def = defineController((ctx) => ({
+      c: createCache(
+        ctx,
+        () => {
+          const k = key.peek()
+          return new Promise<string>((r) => pending.push(() => r(`data for ${k}`)))
+        },
+        { key: () => [key.value], keepPreviousData: true },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    pending[0]?.('')
+    await flush()
+    expect(root.api.c.data.value).toBe('data for a')
+    key.set('b')
+    // The old key's data stays on screen.
+    expect(root.api.c.data.value).toBe('data for a')
+    const first = root.api.c.firstValue()
+    expect(await withinATurn(first)).toBe('waiting')
+    pending[1]?.('')
+    await expect(first).resolves.toBe('data for b')
+    // Once the new key's data is in, it resolves at once again.
+    expect(await withinATurn(root.api.c.firstValue())).toBe('data for b')
+    root.dispose()
+  })
+
+  test('a local cache with keepPreviousData: a failed fetch for the new key rejects', async () => {
+    const key = signal('a')
+    const def = defineController((ctx) => ({
+      c: createCache(
+        ctx,
+        async () => {
+          if (key.peek() === 'b') throw new Error('no b')
+          return 'data for a'
+        },
+        { key: () => [key.value], keepPreviousData: true },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    await flush()
+    key.set('b')
+    await expect(root.api.c.firstValue()).rejects.toThrow('no b')
+    root.dispose()
+  })
 })

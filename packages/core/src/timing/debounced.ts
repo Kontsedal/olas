@@ -45,6 +45,23 @@ export type TimingSignal<T> = ReadSignal<T> & {
 }
 
 /**
+ * The window a timing signal waits, with `NaN` read as `0` and a dev warning.
+ * The shared scheduler schedules nothing for a non-finite delay, the right
+ * reading of `Infinity` but not of `NaN`: a failed `Number(...)` parse left the
+ * signal never emitting, where a raw `setTimeout` fired at once. Internal;
+ * shared with `throttled`.
+ */
+export function timingWindow(ms: number, name: 'debounced' | 'throttled'): number {
+  if (!Number.isNaN(ms)) return ms
+  if (__DEV__) {
+    console.warn(
+      `[olas] ${name}: the window is NaN — expected a number of milliseconds. It runs as 0.`,
+    )
+  }
+  return 0
+}
+
+/**
  * Lag a signal by `ms`. The returned signal updates only after the source has
  * been unchanged for `ms`. Each new write resets the timer.
  *
@@ -60,13 +77,15 @@ export type TimingSignal<T> = ReadSignal<T> & {
  *
  * `ms` goes through the shared expiry scheduler (spec §21.5): `Infinity`
  * never fires on its own, so only `flush()` emits, and a window past the
- * 32-bit timer limit waits its full length.
+ * 32-bit timer limit waits its full length. `NaN` runs as `0`, with a warning
+ * in development.
  */
 export function debounced<T>(
   source: ReadSignal<T>,
-  ms: number,
+  windowMs: number,
   options?: TimingOptions,
 ): TimingSignal<T> {
+  const ms = timingWindow(windowMs, 'debounced')
   const leading = options?.leading ?? false
   const trailing = options?.trailing ?? true
   if (!leading && !trailing) {

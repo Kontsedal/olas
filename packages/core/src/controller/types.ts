@@ -405,15 +405,20 @@ export type Root<Api> = {
    */
   resume(): void
   /**
-   * Serialize the query cache for SSR. Spec §15.
+   * Serialize the query cache for SSR: every entry that holds data, one
+   * mid-refetch or after a failed refetch included. Spec §15.
    */
   dehydrate(): DehydratedState
   /**
    * Apply dehydrated entries to this root's cache. An entry whose key is
    * already bound is written through and supersedes any inflight fetch; the
-   * rest are buffered until a subscription binds that key. Used by streaming
-   * SSR, where each resolved `<Suspense>` boundary pushes its entries into
-   * the live client root, and by warm starts from storage. Idempotent.
+   * rest are buffered until a subscription binds that key, and a buffered key
+   * keeps its newest row. A row older than the entry's server data is
+   * skipped; an optimistic write does not count as server data. A row older
+   * than an invalidation leaves the entry stale, and a held entry refetches.
+   * Used by streaming SSR, where each resolved `<Suspense>` boundary pushes
+   * its entries into the live client root, and by warm starts from storage.
+   * Idempotent.
    */
   hydrate(state: DehydratedState): void
   /**
