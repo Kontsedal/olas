@@ -217,3 +217,178 @@ describe('mutationQueuePlugin — queued serial runs are durable', () => {
     root.dispose()
   })
 })
+
+describe('mutationQueuePlugin — serial + dedupeBy: a queued run is durable on its own', () => {
+  // A `dedupeBy` collapse makes a run ride on another run's entry. A queued
+  // `serial` run would ride on the run ahead of it, which settles before the
+  // queued run even starts: its success drops the entry, and the queued run
+  // then goes out with nothing on disk. So a queued run never collapses.
+  type Draft = { key: string; body: string }
+
+  function draftsRoot(id: string, keyPrefix: string, adapter: MemoryAdapter = memoryAdapter()) {
+    _unregisterMutationById(id)
+    const server = fakeServer()
+    const save = defineMutation({
+      id,
+      concurrency: 'serial',
+      meta: { persist: true },
+      mutate: (draft: Draft) => server.request(draft.body),
+    })
+    const panel = defineController((ctx) => ({
+      save: createMutation(ctx, save) as Mutation<Draft, string>,
+    }))
+    const root = createRoot(
+      defineController((ctx) => ({
+        panel: ctx.attach(panel, undefined),
+        other: ctx.attach(panel, undefined),
+      })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        onError: () => {},
+        plugins: [
+          mutationQueuePlugin({
+            storage: adapter,
+            keyPrefix,
+            dedupeBy: (_id, vars) => (vars as Draft).key,
+          }),
+        ],
+      },
+    )
+    return { adapter, server, root, panel: root.api.panel, other: root.api.other }
+  }
+
+  const bodies = (adapter: MemoryAdapter): string[] =>
+    storedItems(adapter).map((v) => (v as Draft).body)
+
+  /** A fresh root on the same storage, the way a reload finds it. */
+  function reload(id: string, keyPrefix: string, adapter: MemoryAdapter) {
+    const server = fakeServer()
+    server.hold = false
+    _unregisterMutationById(id)
+    defineMutation({
+      id,
+      concurrency: 'serial',
+      meta: { persist: true },
+      mutate: (draft: Draft) => server.request(draft.body),
+    })
+    const root = createRoot(
+      defineController(() => ({})),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [
+          mutationQueuePlugin({
+            storage: adapter,
+            keyPrefix,
+            dedupeBy: (_id, vars) => (vars as Draft).key,
+          }),
+        ],
+      },
+    )
+    return { server, root }
+  }
+
+  test('a queued run with the key of the run ahead has its own entry, which outlives that run', async () => {
+    const id = 'mq-serial-dedupe/own-entry'
+    const keyPrefix = 'test/mq/serial-dedupe-own'
+    const { adapter, server, root, panel } = draftsRoot(id, keyPrefix)
+    await settle()
+
+    const one = panel.api.save.run({ key: 'doc', body: 'a' })
+    void panel.api.save.run({ key: 'doc', body: 'ab' }).catch(() => {})
+    await settle()
+    // What a reload while 'a' hangs would find: both, in call order.
+    expect(bodies(adapter)).toEqual(['a', 'ab'])
+
+    server.accept('a')
+    await one
+    await settle()
+    // 'ab' is in flight now, and still on disk.
+    expect(server.calls).toEqual(['a', 'ab'])
+    expect(bodies(adapter)).toEqual(['ab'])
+
+    root.dispose() // the reload
+    const next = reload(id, keyPrefix, adapter)
+    await next.root.waitForIdle()
+    expect(next.server.calls).toEqual(['ab'])
+    expect(adapter.store.size).toBe(0)
+    next.root.dispose()
+  })
+
+  test('a reload while the run ahead hangs replays both runs, in order', async () => {
+    const id = 'mq-serial-dedupe/reload'
+    const keyPrefix = 'test/mq/serial-dedupe-reload'
+    const { adapter, root, panel } = draftsRoot(id, keyPrefix)
+    await settle()
+
+    void panel.api.save.run({ key: 'doc', body: 'a' }).catch(() => {})
+    void panel.api.save.run({ key: 'doc', body: 'ab' }).catch(() => {})
+    await settle()
+    root.dispose()
+
+    const next = reload(id, keyPrefix, adapter)
+    await next.root.waitForIdle()
+    expect(next.server.calls).toEqual(['a', 'ab'])
+    expect(adapter.store.size).toBe(0)
+    next.root.dispose()
+  })
+
+  test('the owner disposing keeps both entries, and a replay sends both in order', async () => {
+    const { adapter, server, root, panel } = draftsRoot(
+      'mq-serial-dedupe/dispose',
+      'test/mq/serial-dedupe-dispose',
+    )
+    await settle()
+
+    const runs = [
+      panel.api.save.run({ key: 'doc', body: 'a' }).catch(() => {}),
+      panel.api.save.run({ key: 'doc', body: 'ab' }).catch(() => {}),
+    ]
+    await settle()
+    panel.dispose()
+    await Promise.all(runs)
+    await settle()
+    expect(bodies(adapter)).toEqual(['a', 'ab'])
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.calls).toEqual(['a', 'a', 'ab'])
+    expect(adapter.store.size).toBe(0)
+    root.dispose()
+  })
+
+  test('after a dispose, a run under the same key that succeeds leaves no older draft to replay', async () => {
+    // Both drafts stay when the screen closes. The user reopens the document
+    // and saves 'abc', which lands. Replaying 'a' or 'ab' after it would put
+    // the server back on an older draft.
+    const { adapter, server, root, panel, other } = draftsRoot(
+      'mq-serial-dedupe/reopen',
+      'test/mq/serial-dedupe-reopen',
+    )
+    await settle()
+
+    const runs = [
+      panel.api.save.run({ key: 'doc', body: 'a' }).catch(() => {}),
+      panel.api.save.run({ key: 'doc', body: 'ab' }).catch(() => {}),
+    ]
+    await settle()
+    panel.dispose()
+    await Promise.all(runs)
+    await settle()
+
+    const reopened = other.api.save.run({ key: 'doc', body: 'abc' })
+    await settle()
+    server.accept('abc')
+    await reopened
+    await settle()
+    expect(adapter.store.size).toBe(0)
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.calls).toEqual(['a', 'abc'])
+    root.dispose()
+  })
+})

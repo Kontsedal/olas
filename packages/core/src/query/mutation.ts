@@ -395,6 +395,17 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     return this.lifecycle !== undefined || __DEV__ ? makeRunId() : ''
   }
 
+  /**
+   * Report a cancelled run: `'cancel'` to plugins and `mutation:cancel` to
+   * devtools, both carrying `reason`. The devtools event closes the run in a
+   * panel's timeline, so a later settle is not paired with its start. A
+   * queued run that never started sends it too.
+   */
+  private reportCancel(runId: string, variables: unknown, reason: CancelReason): void {
+    if (__DEV__) this.emit({ type: 'mutation:cancel', reason }, runId)
+    this.report(runId, variables, 'cancel', { reason })
+  }
+
   /** Abort a run, recording why for its `'cancel'` event. */
   private cancel(handle: RunHandle, reason: CancelReason): void {
     handle.cancelReason ??= reason
@@ -412,7 +423,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     this.inflightCounter?.update((n) => Math.max(0, n - queue.length))
     for (const queued of queue) {
       queued.reject(err)
-      this.report(queued.runId, queued.vars, 'cancel', { reason })
+      this.reportCancel(queued.runId, queued.vars, reason)
     }
   }
 
@@ -429,12 +440,14 @@ class MutationImpl<V, R> implements Mutation<V, R> {
   private emit(event: { type: 'mutation:success'; result: unknown }, causeId?: string): void
   private emit(event: { type: 'mutation:error'; error: unknown }, causeId?: string): void
   private emit(event: { type: 'mutation:rollback' }, causeId?: string): void
+  private emit(event: { type: 'mutation:cancel'; reason: CancelReason }, causeId?: string): void
   private emit(
     event:
       | { type: 'mutation:run'; vars: unknown }
       | { type: 'mutation:success'; result: unknown }
       | { type: 'mutation:error'; error: unknown }
-      | { type: 'mutation:rollback' },
+      | { type: 'mutation:rollback' }
+      | { type: 'mutation:cancel'; reason: CancelReason },
     causeId?: string,
   ): void {
     if (!__DEV__) return
@@ -572,9 +585,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
       // A queued one is owed the outcome of the `'queued'` it reported.
       snapshot?.rollback()
       this.leave(handle)
-      if (queued) {
-        this.report(runId, vars, 'cancel', { reason: handle.cancelReason ?? 'dispose' })
-      }
+      if (queued) this.reportCancel(runId, vars, handle.cancelReason ?? 'dispose')
       throw new DOMException('Aborted', 'AbortError')
     }
     handle.snapshot = snapshot
@@ -650,7 +661,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
           if (isAbortError(err)) {
             // `cancel()` records a reason before every abort. The fallback
             // covers `cancelledByDispose` alone, which is dispose's doing.
-            this.report(runId, vars, 'cancel', { reason: handle.cancelReason ?? 'dispose' })
+            this.reportCancel(runId, vars, handle.cancelReason ?? 'dispose')
           } else this.report(runId, vars, 'error', { error: err })
         }
         // The caller walked away, so its promise reports the abort, as on the

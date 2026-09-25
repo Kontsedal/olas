@@ -188,7 +188,7 @@ export type Ctx<TDeps = AmbientDeps> = {
 };
 
 // @public
-export function debounced<T>(source: ReadSignal<T>, ms: number, options?: TimingOptions): TimingSignal<T>;
+export function debounced<T>(source: ReadSignal<T>, windowMs: number, options?: TimingOptions): TimingSignal<T>;
 
 // @public
 export function debouncedValidator<T>(fn: (value: T, signal: AbortSignal) => Promise<string | null>, ms: number): (value: T, signal: AbortSignal) => Promise<string | null>;
@@ -311,7 +311,8 @@ export type DebugEventBody = {
 }
 /**
 * The mutation lifecycle. `id` is the mutation's `id`, absent for an inline
-* `createMutation` spec that has none.
+* `createMutation` spec that has none. Each event carries the run id as its
+* `causeId`.
 */
 | {
     type: 'mutation:run';
@@ -332,6 +333,20 @@ export type DebugEventBody = {
     type: 'mutation:rollback';
     path: readonly string[];
     id?: string;
+}
+/**
+* A run was cancelled, and it will send no `mutation:success` or
+* `mutation:error`. Sent for every run whose plugin event is `'cancel'`,
+* with the same `reason`: `'superseded'` (a newer `latest-wins` run),
+* `'reset'` (`mutation.reset()`) or `'dispose'` (the owning controller was
+* disposed). A queued `serial` run that never started sends one too, with
+* no `mutation:run` before it.
+*/
+| {
+    type: 'mutation:cancel';
+    path: readonly string[];
+    id?: string;
+    reason: 'superseded' | 'reset' | 'dispose';
 } | {
     type: 'field:validated';
     path: readonly string[];
@@ -1070,7 +1085,7 @@ export type SuspendOptions = {
 };
 
 // @public
-export function throttled<T>(source: ReadSignal<T>, ms: number, options?: TimingOptions): TimingSignal<T>;
+export function throttled<T>(source: ReadSignal<T>, windowMs: number, options?: TimingOptions): TimingSignal<T>;
 
 // @public
 export type TimingOptions = {

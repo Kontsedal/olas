@@ -9,7 +9,7 @@ import {
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { describe, expect, test } from 'vitest'
-import { MutationQueue, mutationQueuePlugin } from '../src'
+import { MutationQueue, mutationQueuePlugin, type QueueEntry } from '../src'
 
 // A `'cancel'` carries its reason. A `latest-wins` supersede and `reset()` are
 // the app dropping a run on purpose, so the queue drops its entry: replaying
@@ -47,11 +47,16 @@ const settle = async () => {
 function fakeServer() {
   const accepted: string[] = []
   const pending = new Map<string, () => void>()
+  const failing = new Map<string, () => void>()
   const server = {
     accepted,
     hold: true,
     accept(body: string) {
       pending.get(body)?.()
+    },
+    /** Fail a held request, as a 500 would: a failure worth a retry. */
+    fail(body: string) {
+      failing.get(body)?.()
     },
     request(body: string, signal: AbortSignal): Promise<string> {
       if (!server.hold) {
@@ -63,6 +68,7 @@ function fakeServer() {
           accepted.push(body)
           resolve(body)
         })
+        failing.set(body, () => reject(new Error('500')))
         signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
           once: true,
         })
@@ -91,7 +97,11 @@ function autosaveRoot(
     save: createMutation(ctx, autosave) as Mutation<{ key: string; body: string }, string>,
   }))
   const root = createRoot(
-    defineController((ctx) => ({ panel: ctx.attach(panel, undefined) })),
+    // Two screens that edit through the same definition, each with its own run queue.
+    defineController((ctx) => ({
+      panel: ctx.attach(panel, undefined),
+      other: ctx.attach(panel, undefined),
+    })),
     {
       queries: queryEngine(),
       deps: {},
@@ -99,8 +109,22 @@ function autosaveRoot(
       plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix, ...options })],
     },
   )
-  return { adapter, server, root, panel: root.api.panel, save: root.api.panel.api.save }
+  return {
+    adapter,
+    server,
+    root,
+    panel: root.api.panel,
+    save: root.api.panel.api.save,
+    other: root.api.other,
+  }
 }
+
+/** The drafts on disk, in replay (`seq`) order. */
+const storedBodies = (adapter: MemoryAdapter): string[] =>
+  [...adapter.store.values()]
+    .map((raw) => JSON.parse(raw) as QueueEntry)
+    .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
+    .map((e) => (e.variables as { body: string }).body)
 
 describe('mutationQueuePlugin — a deliberate cancel drops the entry', () => {
   test('a superseded latest-wins run is not replayed over the newer write', async () => {
@@ -187,6 +211,125 @@ describe('mutationQueuePlugin — a deliberate cancel drops the entry', () => {
     await second
     await settle()
     expect(adapter.store.size).toBe(0)
+    root.dispose()
+  })
+})
+
+describe('mutationQueuePlugin — latest-wins + dedupeBy: the entry holds the newest draft', () => {
+  // `dedupeBy` gives one durable entry per key. When the run that wrote it is
+  // superseded, the entry stays for the run riding on it, and it has to hold
+  // that run's draft: replaying the older one is the stale write the
+  // `'superseded'` reason exists to stop.
+  const byKey = { dedupeBy: (_id: string, vars: unknown) => (vars as { key: string }).key }
+
+  test('a superseded entry kept for a rider holds its draft, and a replay after the rider is disposed sends it', async () => {
+    const { adapter, server, root, panel, save } = autosaveRoot(
+      'mq-rider/dispose',
+      'test/mq/rider-dispose',
+      byKey,
+    )
+    await settle()
+
+    const first = save.run({ key: 'doc', body: 'a' }).catch(() => {})
+    await settle()
+    const second = save.run({ key: 'doc', body: 'ab' }).catch(() => {})
+    await first
+    await settle()
+    // What a reload would find now: the newer draft.
+    expect(storedBodies(adapter)).toEqual(['ab'])
+
+    panel.dispose()
+    await second
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['ab'])
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.accepted).toEqual(['ab'])
+    expect(adapter.store.size).toBe(0)
+    root.dispose()
+  })
+
+  test('a rider that fails with a retryable error leaves its own draft for the replay', async () => {
+    const { adapter, server, root, save } = autosaveRoot(
+      'mq-rider/error',
+      'test/mq/rider-error',
+      byKey,
+    )
+    await settle()
+
+    const first = save.run({ key: 'doc', body: 'a' }).catch(() => {})
+    await settle()
+    const second = save.run({ key: 'doc', body: 'ab' }).catch(() => {})
+    await first
+    await settle()
+    server.fail('ab')
+    await second
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['ab'])
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.accepted).toEqual(['ab'])
+    root.dispose()
+  })
+
+  test('a run that collapses onto an entry kept by dispose makes it hold its draft', async () => {
+    const { adapter, server, root, panel, save, other } = autosaveRoot(
+      'mq-rider/kept',
+      'test/mq/rider-kept',
+      byKey,
+    )
+    await settle()
+
+    const first = save.run({ key: 'doc', body: 'a' }).catch(() => {})
+    await settle()
+    panel.dispose() // 'a' stays for a replay, under the key
+    await first
+    await settle()
+
+    // The user reopens the document in another screen and types on.
+    const second = other.api.save.run({ key: 'doc', body: 'ad' }).catch(() => {})
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['ad'])
+    other.dispose()
+    await second
+    await settle()
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.accepted).toEqual(['ad'])
+    root.dispose()
+  })
+
+  test('a retry that collapses onto the entry of a failed run makes it hold the newer draft', async () => {
+    const { adapter, server, root, save } = autosaveRoot(
+      'mq-rider/retry',
+      'test/mq/rider-retry',
+      byKey,
+    )
+    await settle()
+
+    const first = save.run({ key: 'doc', body: 'a' }).catch(() => {})
+    await settle()
+    server.fail('a') // kept for a replay, with its key
+    await first
+    await settle()
+
+    const retry = save.run({ key: 'doc', body: 'ad' }).catch(() => {})
+    await settle()
+    server.fail('ad')
+    await retry
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['ad'])
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.accepted).toEqual(['ad'])
     root.dispose()
   })
 })

@@ -112,12 +112,27 @@ export type DebugEventBody =
   | { type: 'snapshot:finalize'; queryKey: readonly unknown[] }
   /**
    * The mutation lifecycle. `id` is the mutation's `id`, absent for an inline
-   * `createMutation` spec that has none.
+   * `createMutation` spec that has none. Each event carries the run id as its
+   * `causeId`.
    */
   | { type: 'mutation:run'; path: readonly string[]; id?: string; vars: unknown }
   | { type: 'mutation:success'; path: readonly string[]; id?: string; result: unknown }
   | { type: 'mutation:error'; path: readonly string[]; id?: string; error: unknown }
   | { type: 'mutation:rollback'; path: readonly string[]; id?: string }
+  /**
+   * A run was cancelled, and it will send no `mutation:success` or
+   * `mutation:error`. Sent for every run whose plugin event is `'cancel'`,
+   * with the same `reason`: `'superseded'` (a newer `latest-wins` run),
+   * `'reset'` (`mutation.reset()`) or `'dispose'` (the owning controller was
+   * disposed). A queued `serial` run that never started sends one too, with
+   * no `mutation:run` before it.
+   */
+  | {
+      type: 'mutation:cancel'
+      path: readonly string[]
+      id?: string
+      reason: 'superseded' | 'reset' | 'dispose'
+    }
   | {
       type: 'field:validated'
       path: readonly string[]

@@ -87,6 +87,13 @@ export type MutationQueueOptions = {
    * entry is written. Client-side dedupe only; server-side dedupe by the
    * same key is the authoritative gate. Defaults to `undefined` (no
    * dedupe).
+   *
+   * Once the run that wrote the entry has settled, the entry holds the
+   * variables of the newest run collapsed onto it, so a replay sends the
+   * latest write: a superseded autosave leaves its successor's draft, not its
+   * own. A `serial` run that has to wait behind another never collapses. It
+   * would ride on the run ahead of it, which settles before it starts, so it
+   * writes an entry of its own.
    */
   dedupeBy?: (mutationId: string, variables: unknown) => string | undefined
   /**
@@ -153,8 +160,9 @@ export type MutationQueueOptions = {
  *
  * Lifecycle per run (the plugin's `onMutation` hook):
  *  1. `'start'` → write a `QueueEntry` to storage, before the first attempt.
- *     A `serial` run waiting behind another reports `'queued'` first, and
- *     its entry is written then, so a reload does not lose the queue.
+ *     A run cancelled while that write is pending sends nothing. A `serial`
+ *     run waiting behind another reports `'queued'` first, and its entry is
+ *     written then, so a reload does not lose the queue.
  *  2. `'success'` → delete the entry. The server accepted; no replay needed.
  *  3. `'error'` → delete the entry IF `attempts >= maxAttempts` or
  *     `isRetryable` says the failure is final, else leave it and let the next
@@ -168,11 +176,15 @@ export type MutationQueueOptions = {
  *     for a replay. A reload emits nothing at all: plugins close before the
  *     root disposes, and the entry stays on disk.
  *
- * Two rules keep one logical operation to one durable entry:
+ * Three rules keep one logical operation to one durable entry:
  *  - A run that SUCCEEDS also drops the entries left by earlier runs of the
  *    same logical operation that settled in error — that run is the manual
  *    retry, and replaying what it superseded would write twice. Identity
  *    comes from `dedupeBy`, or from the variables when it isn't configured.
+ *    With `dedupeBy`, entries kept after a dispose go the same way.
+ *  - A `dedupeBy` entry holds the newest write. Once the run that wrote it
+ *    has settled, it holds the variables of the newest run collapsed onto
+ *    it, so a superseded run leaves its successor's variables for a replay.
  *  - A replay pass SKIPS entries whose run is executing in this tab right
  *    now, so an `online` event inside the enqueue→settle window can't fire
  *    a live request a second time.
@@ -248,6 +260,8 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
        * onto the first (no new write). Cleared whenever the entry is dropped:
        * on success, on an error the queue gives up on, on a deliberate cancel,
        * and when a replay drops it. Kept while the entry waits for a replay.
+       * A queued `serial` run never takes a key, so nothing collapses onto an
+       * entry whose run has not started.
        */
       const activeKeys = new Map<string, string>()
 
@@ -261,20 +275,37 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       const runAlias = new Map<string, string>()
 
       /**
-       * Durable entries left on disk by a run that settled in error below
-       * `maxAttempts` — `runId` → the logical operation it belongs to. A later
+       * Every collapsed run between its start and its settle: its variables,
+       * and the `seq` it took when it collapsed. When the owner of an entry
+       * has settled and the entry stays, the entry takes the variables of the
+       * newest run still riding on it (`passToRider`).
+       */
+      const riders = new Map<string, { variables: unknown; seq: number }>()
+
+      /**
+       * The entry each storage key was last asked to hold, by `runId`. Set
+       * when a write is issued, not when it lands, so a rewrite builds on the
+       * newest content.
+       */
+      const current = new Map<string, QueueEntry>()
+
+      /**
+       * Durable entries this session left on disk for a replay — `runId` →
+       * the logical operation it belongs to. A run that settled in error below
+       * `maxAttempts` joins. So does a run cancelled by dispose, when its
+       * identity comes from `dedupeBy`: the key names the operation. A later
        * run of the SAME logical operation that succeeds drops them: that run
        * is the manual retry, and the server has now accepted the write.
        * Without this the stale entry replays on the next load and writes twice.
        */
-      const retainedFailures = new Map<string, { mutationId: string; identity: string }>()
+      const retained = new Map<string, { mutationId: string; identity: string }>()
 
       /**
        * Identity of every run between its enqueue and its settle.
        * `MutationSettleEvent` carries no variables, so the identity has to be
        * computed at enqueue time and parked here.
        */
-      const runIdentity = new Map<string, string | undefined>()
+      const runIdentity = new Map<string, Identity>()
 
       /**
        * Runs executing in THIS tab right now — `runId` → the `runId` of the
@@ -304,10 +335,10 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         mutationId: string,
         variables: unknown,
         dedupeKey: string | undefined,
-      ): string | undefined => {
-        if (dedupeKey !== undefined) return `${mutationId}:key:${dedupeKey}`
+      ): Identity => {
+        if (dedupeKey !== undefined) return { name: `${mutationId}:key:${dedupeKey}`, keyed: true }
         try {
-          return `${mutationId}:vars:${JSON.stringify(variables ?? null)}`
+          return { name: `${mutationId}:vars:${JSON.stringify(variables ?? null)}`, keyed: false }
         } catch {
           return undefined
         }
@@ -368,7 +399,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         }
       }
 
-      const writeEntry = async (entry: QueueEntry): Promise<void> => {
+      const persist = async (entry: QueueEntry): Promise<void> => {
         try {
           const json = JSON.stringify(entry)
           if (maxEntryBytes !== Number.POSITIVE_INFINITY && json.length > maxEntryBytes) {
@@ -379,16 +410,8 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
                 ' moving the queue to indexedDbAdapter.',
             )
           }
-          const writeP = Promise.resolve(adapter.set(entryKey(entry.mutationId, entry.runId), json))
-          pendingWrites.set(entry.runId, writeP)
-          try {
-            await writeP
-            knownRuns.set(entry.runId, entry)
-          } finally {
-            if (pendingWrites.get(entry.runId) === writeP) {
-              pendingWrites.delete(entry.runId)
-            }
-          }
+          await adapter.set(entryKey(entry.mutationId, entry.runId), json)
+          knownRuns.set(entry.runId, entry)
         } catch (cause) {
           onWarn(
             `[olas/mutation-queue] failed to persist enqueue for ${entry.mutationId}/${entry.runId}: ` +
@@ -399,7 +422,27 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         }
       }
 
+      /**
+       * Write an entry. A second write to the same key waits for the first,
+       * so the newer content lands last on an async storage too. The write is
+       * registered in `pendingWrites` before the first `await`, so a delete
+       * issued at once still waits for it. Resolves when the write settles;
+       * a failure is reported through `onWarn`.
+       */
+      const writeEntry = (entry: QueueEntry): Promise<void> => {
+        const { runId } = entry
+        current.set(runId, entry)
+        const prior = pendingWrites.get(runId)
+        const written = prior === undefined ? persist(entry) : prior.then(() => persist(entry))
+        pendingWrites.set(runId, written)
+        void written.finally(() => {
+          if (pendingWrites.get(runId) === written) pendingWrites.delete(runId)
+        })
+        return written
+      }
+
       const deleteEntry = async (mutationId: string, runId: string): Promise<void> => {
+        current.delete(runId)
         const pending = pendingWrites.get(runId)
         if (pending !== undefined) {
           // Concurrent write+delete on the same runId — wait for the write to
@@ -426,36 +469,66 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
        */
       const dropEntry = (mutationId: string, runId: string): Promise<void> => {
         clearActiveKey(runId)
-        retainedFailures.delete(runId)
+        retained.delete(runId)
         return deleteEntry(mutationId, runId)
       }
 
       /**
-       * Drop an entry the app walked away from, unless a run executing in this
-       * tab still rides on it: a `dedupeBy` collapse that started before this
-       * run's cancel arrived writes no entry of its own.
+       * Rewrite the entry `ownerRunId` backs with a collapsed run's variables,
+       * under the `seq` that run took, unless it holds them already. The entry
+       * keeps its key, its attempt count and its age. Returns the write.
        */
-      const releaseEntry = (mutationId: string, runId: string): void => {
-        if (isEntryInFlight(runId)) return
-        void dropEntry(mutationId, runId)
+      const holdFor = (
+        mutationId: string,
+        ownerRunId: string,
+        rider: { variables: unknown; seq: number },
+      ): Promise<void> | undefined => {
+        const base = current.get(ownerRunId)
+        if (base?.seq === rider.seq) return undefined
+        return writeEntry({
+          v: PROTOCOL_VERSION,
+          mutationId,
+          runId: ownerRunId,
+          variables: rider.variables,
+          attempts: base?.attempts ?? 0,
+          enqueuedAt: base?.enqueuedAt ?? Date.now(),
+          seq: rider.seq,
+          idempotencyKey: base?.idempotencyKey,
+        })
       }
 
       /**
-       * Drop the entries that earlier failed runs of this logical operation left
-       * behind, now that `keepRunId` has succeeded. Only runs that already
-       * SETTLED in error are eligible — a run still executing in this tab keeps
-       * its own entry, so a second concurrent submit of identical variables stays
-       * durable.
+       * Once the owner of an entry is no longer executing, give the entry the
+       * variables of the newest run still riding on it. A `latest-wins`
+       * supersede is the common case: the superseded run owns the entry, and
+       * its successor collapsed onto it. The entry stays for the successor,
+       * and a replay must send the successor's write, not the stale one.
        */
-      const dropSupersededFailures = (
-        mutationId: string,
-        identity: string | undefined,
-        keepRunId: string,
-      ): void => {
+      const passToRider = (mutationId: string, ownerRunId: string): void => {
+        if (inFlightRuns.get(ownerRunId) === ownerRunId) return
+        let newest: { variables: unknown; seq: number } | undefined
+        for (const [runId, owner] of inFlightRuns) {
+          if (owner !== ownerRunId || runId === ownerRunId) continue
+          const rider = riders.get(runId)
+          if (rider !== undefined && (newest === undefined || rider.seq > newest.seq)) {
+            newest = rider
+          }
+        }
+        if (newest !== undefined) void holdFor(mutationId, ownerRunId, newest)
+      }
+
+      /**
+       * Drop the entries this session left for a replay of the same logical
+       * operation, now that `keepRunId` has succeeded. Only runs that already
+       * SETTLED are eligible (see `retained`) — a run still executing or queued
+       * in this tab keeps its own entry, so a second concurrent submit of
+       * identical variables stays durable.
+       */
+      const dropSuperseded = (mutationId: string, identity: Identity, keepRunId: string): void => {
         if (identity === undefined) return
-        for (const [runId, info] of [...retainedFailures]) {
+        for (const [runId, info] of [...retained]) {
           if (runId === keepRunId) continue
-          if (info.mutationId !== mutationId || info.identity !== identity) continue
+          if (info.mutationId !== mutationId || info.identity !== identity.name) continue
           if (isEntryInFlight(runId)) continue
           void dropEntry(mutationId, runId)
         }
@@ -947,21 +1020,34 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       const queuedRuns = new Set<string>()
 
       /**
-       * The write a queued run started when it was queued. `wrapMutate` awaits
-       * it before the run's first attempt, so on an async storage the entry is
-       * durable before the request goes out, as for a run that never waited.
+       * A write begun for a run before its first attempt: a queued run's
+       * entry, written when it was queued, or the rewrite of a settled run's
+       * entry that this run collapsed onto. `wrapMutate` awaits it before the
+       * first attempt, so on an async storage the entry holds the run's
+       * variables before its request goes out.
        */
-      const queuedWrites = new Map<string, Promise<void>>()
+      const earlyWrites = new Map<string, Promise<void>>()
 
       /**
        * Record a run's entry and identity, and mark it in flight in this tab.
        * Returns the entry to write, or `undefined` when the run collapsed onto
        * another run's entry through `dedupeBy`.
+       *
+       * A `queued` run neither collapses nor takes the key. Collapsed, it
+       * would ride on the run ahead of it, which settles before it starts: a
+       * success there drops the entry, and the queued run then goes out with
+       * nothing on disk. Holding the key, it would let a run in another
+       * screen collapse onto an entry whose run has not started, with the
+       * same result.
        */
-      const record = (event: MutationEvent, mutationId: string): QueueEntry | undefined => {
+      const record = (
+        event: MutationEvent,
+        mutationId: string,
+        queued: boolean,
+      ): QueueEntry | undefined => {
         const idempotencyKey = dedupeBy?.(mutationId, event.variables)
         runIdentity.set(event.runId, identityOf(mutationId, event.variables, idempotencyKey))
-        if (idempotencyKey !== undefined) {
+        if (idempotencyKey !== undefined && !queued) {
           const fullKey = `${mutationId}:${idempotencyKey}`
           const existingRunId = activeKeys.get(fullKey)
           if (existingRunId !== undefined && existingRunId !== event.runId) {
@@ -972,6 +1058,16 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             // The alias makes this run's settle act on the owner's entry.
             runAlias.set(event.runId, existingRunId)
             inFlightRuns.set(event.runId, existingRunId)
+            seqCounter += 1
+            const rider = { variables: event.variables, seq: seqCounter }
+            riders.set(event.runId, rider)
+            // The owner already settled and left its entry for a replay: a
+            // dispose, or a failure worth a retry. This run is the newest write
+            // of the operation, so the entry takes its variables.
+            if (inFlightRuns.get(existingRunId) !== existingRunId) {
+              const rewrite = holdFor(mutationId, existingRunId, rider)
+              if (rewrite !== undefined) earlyWrites.set(event.runId, rewrite)
+            }
             return undefined
           }
           activeKeys.set(fullKey, event.runId)
@@ -992,18 +1088,18 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
 
       const onQueued = (event: MutationEvent, mutationId: string): void => {
         queuedRuns.add(event.runId)
-        const entry = record(event, mutationId)
+        const entry = record(event, mutationId, true) as QueueEntry
         // Written now, not before the first attempt: the run may wait behind a
         // request that hangs or backs off, and a reload in that window would
         // lose it. Its place in the queue is `seq`, taken at this moment. Being
         // in `inFlightRuns` keeps a replay pass from sending it early.
-        if (entry !== undefined) queuedWrites.set(event.runId, writeEntry(entry))
+        earlyWrites.set(event.runId, writeEntry(entry))
       }
 
       const onStart = (event: MutationEvent, mutationId: string): void => {
         // Recorded when it was queued.
         if (queuedRuns.delete(event.runId)) return
-        const entry = record(event, mutationId)
+        const entry = record(event, mutationId, false)
         // Written by `wrapMutate`, before the first `mutate` call, so the run is
         // durable before its request goes out. `onMutation` is synchronous and
         // cannot await the write itself.
@@ -1021,14 +1117,17 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         // disk. For a `dedupeBy` collapse that is the run this one collapsed
         // onto, not `event.runId`.
         unwritten.delete(event.runId)
-        queuedWrites.delete(event.runId)
+        earlyWrites.delete(event.runId)
         const neverStarted = queuedRuns.delete(event.runId)
         const ownerRunId = runAlias.get(event.runId) ?? event.runId
         const identity = runIdentity.get(event.runId)
+        // Set when this run collapsed onto another run's entry.
+        const rider = riders.get(event.runId)
         // One settle per run, so the per-run bookkeeping goes here whatever the
         // outcome.
         runAlias.delete(event.runId)
         runIdentity.delete(event.runId)
+        riders.delete(event.runId)
         inFlightRuns.delete(event.runId)
         switch (event.phase) {
           case 'success':
@@ -1037,14 +1136,15 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             // server has accepted the write, so the entries those earlier runs
             // left for replay describe a write that already happened. Drop them,
             // or the next page load submits the operation twice.
-            dropSupersededFailures(mutationId, identity, ownerRunId)
+            dropSuperseded(mutationId, identity, ownerRunId)
             return
           case 'error': {
             if (neverStarted) {
               // A queued run whose `onMutate` threw: `mutate` never ran, and the
               // same failure on a run that did not wait persists nothing. Undo
-              // the queue-time write; a collapsed run wrote none.
-              if (ownerRunId === event.runId) releaseEntry(mutationId, ownerRunId)
+              // the queue-time write. A queued run never collapses, so the entry
+              // is its own.
+              void dropEntry(mutationId, ownerRunId)
               return
             }
             // In-process retries are exhausted by the time the runner reports
@@ -1069,12 +1169,16 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
                   new Error(`[olas/mutation-queue] gave up on "${mutationId}/${ownerRunId}"`),
                 entry,
               )
-            } else if (identity !== undefined) {
-              // The entry survives for a cross-load replay. Remember which
-              // logical operation it belongs to so a later successful retry of
-              // that operation can supersede it.
-              retainedFailures.set(ownerRunId, { mutationId, identity })
+              return
             }
+            // The entry survives for a cross-load replay. Remember which
+            // logical operation it belongs to so a later successful retry of
+            // that operation can supersede it.
+            if (identity !== undefined) {
+              retained.set(ownerRunId, { mutationId, identity: identity.name })
+            }
+            // A newer run of the operation may ride on the entry.
+            if (rider === undefined) passToRider(mutationId, ownerRunId)
             return
           }
           case 'cancel':
@@ -1083,13 +1187,30 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             // withdrew, over the newer one: an autosave's stale draft landing
             // after the draft that superseded it.
             if (event.reason === 'superseded' || event.reason === 'reset') {
-              releaseEntry(mutationId, ownerRunId)
+              if (!isEntryInFlight(ownerRunId)) {
+                void dropEntry(mutationId, ownerRunId)
+                return
+              }
+              // A run executing in this tab still rides on the entry: a
+              // `dedupeBy` collapse that started before this cancel arrived,
+              // with no entry of its own. The entry stays for it. When the
+              // variables it holds are the ones just withdrawn, the owner's or
+              // this run's, it takes the newest rider's instead.
+              if (rider === undefined || current.get(ownerRunId)?.seq === rider.seq) {
+                passToRider(mutationId, ownerRunId)
+              }
               return
             }
             // The owning controller disposing means the screen is gone, not the
             // write. Entry AND key stay: a replay sends it, and a re-enqueue
             // collapses onto it instead of writing a second entry. A reload is
             // not a cancel at all; plugins close before the root disposes.
+            // With a `dedupeBy` key the entry is the operation's, so a later
+            // success under that key drops it.
+            if (identity?.keyed === true) {
+              retained.set(ownerRunId, { mutationId, identity: identity.name })
+            }
+            if (rider === undefined) passToRider(mutationId, ownerRunId)
             return
         }
       }
@@ -1105,13 +1226,18 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
               // durability is lost.
               await writeEntry(entry)
             }
-            // A queued run's write began when it was queued. It has almost
-            // always landed by now; on an async storage it may not have.
-            const queuedWrite = queuedWrites.get(context.runId)
-            if (queuedWrite !== undefined) {
-              queuedWrites.delete(context.runId)
-              await queuedWrite
+            // A queued run's write began when it was queued, and a collapse's
+            // rewrite when the run started. It has almost always landed by
+            // now; on an async storage it may not have.
+            const earlyWrite = earlyWrites.get(context.runId)
+            if (earlyWrite !== undefined) {
+              earlyWrites.delete(context.runId)
+              await earlyWrite
             }
+            // A supersede, `reset()` or dispose can land while the write is
+            // pending. The run is cancelled already, so its request must not go
+            // out: a `mutate` that ignores its signal would send it anyway.
+            if (context.signal.aborted) throw new DOMException('Aborted', 'AbortError')
           }
           return next()
         },
@@ -1131,11 +1257,13 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           knownRuns.clear()
           runAlias.clear()
           runIdentity.clear()
+          riders.clear()
+          current.clear()
           inFlightRuns.clear()
-          retainedFailures.clear()
+          retained.clear()
           unwritten.clear()
           queuedRuns.clear()
-          queuedWrites.clear()
+          earlyWrites.clear()
           // Release every pass parked in `waitForOnline` so the cross-tab replay
           // lock is handed back. `replayAll` re-checks `disposed` the moment the
           // wait returns. In-flight replays are cancelled by the engine when the
@@ -1192,6 +1320,13 @@ type LaneEvent =
       runId: string
       reason: 'in-flight' | 'not-registered' | 'not-persisted' | 'max-attempts' | 'ttl-expired'
     }
+
+/**
+ * The logical operation a run belongs to: its `dedupeBy` key when `keyed`,
+ * otherwise its variables. `undefined` when neither is available, for
+ * variables JSON cannot encode.
+ */
+type Identity = { name: string; keyed: boolean } | undefined
 
 function defaultWarn(message: string, cause?: unknown): void {
   if (cause !== undefined) {

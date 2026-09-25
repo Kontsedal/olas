@@ -3,6 +3,7 @@ import {
   createRoot,
   defineController,
   defineMutation,
+  isAbortError,
   type MutationEvent,
   type OlasPlugin,
   type PluginHost,
@@ -215,6 +216,121 @@ describe('mutation queue on an async storage — a delete never overtakes its wr
     expect(calls).toBe(2)
     expect(storage.pending).toEqual([])
     expect(storage.store.size).toBe(0)
+    root.dispose()
+  })
+})
+
+describe('mutation queue on an async storage — a run superseded during its write sends nothing', () => {
+  test('a latest-wins run superseded while its entry is being written never calls mutate', async () => {
+    // The queue holds a run's first attempt until its entry is written. A
+    // supersede during that write aborts the run, and `mutate` must not be
+    // called once the write lands: a `mutate` that ignores its signal would
+    // send the stale draft after all.
+    const id = 'async/supersede-during-write'
+    _unregisterMutationById(id)
+    const sent: string[] = []
+    const autosave = defineMutation({
+      id,
+      concurrency: 'latest-wins',
+      meta: { persist: true },
+      // Ignores its signal, as plenty of real `mutate` functions do.
+      mutate: (draft: string) => {
+        sent.push(draft)
+        return Promise.resolve(draft)
+      },
+    })
+    const storage = asyncStorage()
+    const app = defineController((ctx) => ({ save: createMutation(ctx, autosave) }))
+    const root = createRoot(app, {
+      queries: queryEngine(),
+      deps: {},
+      onError: () => {},
+      plugins: [mutationQueuePlugin({ storage, keyPrefix: 'async/supersede' })],
+    })
+    await settle()
+
+    const first = root.api.save.run('a').catch((err: unknown) => err)
+    await settle()
+    const second = root.api.save.run('ab')
+    await settle()
+    // Both entries are still being written; neither request went out.
+    expect(storage.pending.map((op) => op.kind)).toEqual(['set', 'set'])
+    expect(sent).toEqual([])
+
+    // The superseded run's write lands first.
+    storage.pending[0]?.land()
+    await settle()
+    expect(sent).toEqual([])
+
+    await storage.landNewestFirst()
+    await expect(second).resolves.toBe('ab')
+    expect(isAbortError(await first)).toBe(true)
+    expect(sent).toEqual(['ab'])
+    await storage.landNewestFirst()
+    expect(storage.store.size).toBe(0)
+    root.dispose()
+  })
+})
+
+describe('mutation queue on an async storage — a collapse waits for its rewrite', () => {
+  test('a run that collapses onto the entry of a settled run goes out once the entry holds its variables', async () => {
+    // The first screen closed with 'a' in flight, so its entry stays. A run
+    // in a second screen collapses onto it and rewrites it with 'ad'. Its
+    // request waits for that rewrite: sent first, a crash before the rewrite
+    // lands would replay 'a' over the 'ad' the server may already have.
+    const id = 'async/collapse-rewrite'
+    _unregisterMutationById(id)
+    type Draft = { key: string; body: string }
+    const sent: string[] = []
+    const autosave = defineMutation({
+      id,
+      concurrency: 'latest-wins',
+      meta: { persist: true },
+      mutate: (draft: Draft, { signal }) => {
+        sent.push(draft.body)
+        return new Promise<string>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+        })
+      },
+    })
+    const storage = asyncStorage()
+    const screen = defineController((ctx) => ({ save: createMutation(ctx, autosave) }))
+    const root = createRoot(
+      defineController((ctx) => ({
+        first: ctx.attach(screen, undefined),
+        second: ctx.attach(screen, undefined),
+      })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        onError: () => {},
+        plugins: [
+          mutationQueuePlugin({
+            storage,
+            keyPrefix: 'async/collapse-rewrite',
+            dedupeBy: (_id, vars) => (vars as Draft).key,
+          }),
+        ],
+      },
+    )
+    await settle()
+
+    const first = root.api.first.api.save.run({ key: 'doc', body: 'a' }).catch(() => {})
+    await storage.landNewestFirst()
+    expect(sent).toEqual(['a'])
+    root.api.first.dispose()
+    await first
+    await settle()
+
+    void root.api.second.api.save.run({ key: 'doc', body: 'ad' }).catch(() => {})
+    await settle()
+    expect(storage.pending.map((op) => op.kind)).toEqual(['set'])
+    expect(sent).toEqual(['a'])
+
+    await storage.landNewestFirst()
+    expect(sent).toEqual(['a', 'ad'])
+    const stored = [...storage.store.values()].map((raw) => JSON.parse(raw).variables.body)
+    expect(stored).toEqual(['ad'])
     root.dispose()
   })
 })
