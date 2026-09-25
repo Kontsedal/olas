@@ -1,5 +1,25 @@
 # @kontsedal/olas-react
 
+## 1.0.1
+
+### Patch Changes
+
+- e5f9834: **An `<Activity>` above `HydrationBoundary` no longer throws its root away on hide.**
+  
+  React 19.2 runs a hidden `<Activity>` subtree's effect cleanups, and runs the effects again when it shows. The boundary disposed its root in that cleanup, so showing the subtree built a second root and lost what the user had typed. React cleans up an unmount the same way, and gives no signal that tells the two apart. The cleanup now suspends the root and disposes it a minute later, unless the boundary's effects run again first. A hide shorter than that keeps the root and its state. After a longer one, the boundary builds a fresh root from `options` when it shows.
+  
+  An unmount now disposes the root after that minute instead of at once, and the root stays suspended meanwhile. StrictMode's simulated unmount and remount keep one root, suspended and resumed, instead of disposing it and building another.
+- e5f9834: **Streaming SSR hydrates without a mismatch: batches land where React never hydrates, and the boundary reads the ones already on the page.**
+  
+  `createStreamingTransform` wrote a batch at the end of any chunk that ended in text. React writes 2,048- or 4,096-byte chunks. A large shell put the `<script>` inside a list item's text, and a large `<Suspense>` segment put it inside `<div hidden id="S:0">`, which React's reveal moves into the boundary. Both broke hydration. The transform now writes a batch only directly inside `<body>` for a whole document, or at the top level for a fragment. The point must be outside every boundary's comments and right after a tag or a comment. The batch goes at the first such point in a chunk, so data goes out before the markup that reads it. A chunk with no such point holds the batch. A stream that ends inside markup gets no final batch.
+  
+  `HydrationBoundary` applied the streamed batches only in an effect after its first commit. So the hydrating render showed loading states where the server had rendered data, and each controller started the fetch the server had already made. The batches already on the page now go into the root's `hydrate` as the boundary builds it. A retry that reuses the root first applies the batches that arrived since, and later ones arrive through the intake as before.
+  
+  A root the boundary builds for a new `def` no longer receives the stream. Its intake used to replay every batch seen so far, which put the first tree's server rows over the new root's own fetch.
+- e5f9834: **`useSuspenseQuery` no longer loops forever on a query that settled on `undefined`.**
+  
+  The hook suspended whenever `data` was `undefined`. A load can succeed with `undefined`: a `select` that reads an optional field, a fetcher that resolves nothing, an infinite query replaced with no pages. `firstValue()` resolved at once then, React retried, and the hook suspended again, thousands of times, starving the event loop. `useQuery(sub, { suspense: true })`, `useSuspenseQuery` and `useInfiniteQuery(sub, { suspense: true })` now suspend only until the first load settles, and return `undefined` as the value when it settled on that. A refetch over an `undefined` result does not suspend either.
+
 ## 1.0.0
 
 ### Major Changes

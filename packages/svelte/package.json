@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-svelte",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Olas Svelte adapter — setRoot/getRoot context and store views over queries, fields and mutations. Olas signals are Svelte stores as they are.",
   "keywords": [
     "olas",
