@@ -1,5 +1,204 @@
 # @kontsedal/olas-persist
 
+## 1.0.0
+
+### Major Changes
+
+- 6e154ef: **The satellite packages follow the `create*` rule, and the router installs as a plugin.**
+  
+  A function that takes `ctx` and builds something is named `create*`. The `use*` names read as React hooks to people and to `eslint-plugin-react-hooks`, which reports them inside a controller factory.
+  
+  | Package | 0.8 | 1.0 |
+  |---|---|---|
+  | persist | `usePersisted(ctx, key, source, opts)` | `createPersisted(ctx, key, source, opts)` |
+  | persist | `localStorageAdapter` (an object) | `localStorageAdapter()` (a factory, like `indexedDbAdapter()`) |
+  | persist | `clearPersisted(storage, prefix, onError)` | `clearPersisted(storage, { prefix, onError })` |
+  | realtime | `useRealtimePatcher` | `createRealtimePatcher` |
+  | realtime | `useLiveStream` | `createLiveStream` |
+  | realtime | `useRealtimeConnection` | `createConnectionState` |
+  | zod | `formFromZod(ctx, schema, { initials })` | `createZodForm(ctx, schema, { initial })` |
+  | router | `createRoot(def, { scopes: adapter.scopes })` | `createRoot(def, { plugins: [adapter.plugin] })` |
+  
+  **router.** `createRouterAdapter()` returns `{ plugin, Bridge }`. The plugin provides `RouteParamsScope`, `RouteSearchScope` and `RoutePathnameScope` to the root it is installed on. `ROUTER_PLUGIN_NAME` is exported.
+  
+  **persist.** `throttleMs` is documented as what it always was: a trailing throttle, at most one write per window, carrying the latest value.
+  
+  **zod.** `createZodForm`'s `initial` also accepts a function. The form tracks it the way `createForm` tracks a function `initial`, so a form seeded from a query re-seats when the data arrives. `resetOnInitialChange` passes through.
+  
+  **mutation-queue.** The queue writes a run's entry before the run's first `mutate` call, from `wrapMutate`. A reload during the request no longer loses the run. The write adds one storage round trip before the first request. A write that fails is reported through `onWarn`, and the run proceeds without durability, as before.
+  
+  **core.** `MutateContext.origin` names the plugin that started a run through `host.mutations.run`, or is `undefined` for an app run. A run whose `mutate` resolved and whose abort landed in the same tick reported both `success` and `cancel` to plugins. It now reports `success` only.
+  
+  **react.** Streamed hydration reached only the first `HydrationBoundary`: a second boundary, or a StrictMode remount's new root, took the intake away from it. Every installed root now receives the batches that already arrived and each one that follows.
+- af217d0: **ESM only, Node >= 20.19.** Every package ships one format: `dist/*.js` with `dist/*.d.ts`. The CommonJS build (`.cjs` and `.d.cts`) is gone. A CommonJS consumer can still `require()` the packages on Node 20.19 or later, which loads ES modules through `require()`. `engines.node` is `>=20.19`.
+  
+  **Types.**
+  - Internal members no longer ship in the `.d.ts` files. That includes `Ctx`'s internals and the whole `QueryClient` class, which reached the declarations through them.
+  - Every type that appears in a public signature is exported. New core exports: `DebugEventBody`, `DefineControllerOptions`, `StandardSchemaV1Issue`, `StandardSchemaV1Result`, `QuerySelectOptions` and `TimingOptions`.
+  - New exports elsewhere:
+    - react: `OlasProviderProps`, `HydrationBoundaryProps`, `SuspendOnUnmountProps`, `OlasContext`, `UseValueOptions`, `UseValueSelectOptions` and `UseFieldInputOptions`;
+    - entities: `EntityOptions`;
+    - zod: `UnwrapZod`.
+  - `isStandardSchema` and `ErrorContextInput` are no longer exported from core.
+  - `createQuery`'s `select` form accepts `keepDataWhileDisabled`, like the other forms.
+  
+  **Bundle size.** A bundle built from the published files that imports only controllers and signals carries no forms code. The forms classes had set their brands as class fields, which kept them in every bundle.
+
+### Minor Changes
+
+- 360120c: **A development build behind a `development` export condition.** Devtools now work against the published packages.
+  
+  Until now, the release build inlined `__DEV__ = false`, so the core on npm emitted no devtools events at all. `@kontsedal/olas-devtools` showed an empty controller tree and timeline against it, and the dev-only warnings in core, entities, persist, react and zod never fired in an app.
+  
+  Each of these packages now ships two builds:
+  - `dist/` is the default, a production build with every dev-only branch stripped;
+  - `dist/dev/` sits behind the `development` condition, with the devtools events and the dev warnings kept.
+  
+  Vite's dev server, webpack and Rspack in development mode, and Next.js in dev resolve `development` without configuration, and their production builds resolve the default. With esbuild or Rollup, add `conditions: ['development']` to the dev config; in Node, `--conditions=development`. A browser with no bundler, or a CDN, gets the default build, as before.
+  
+  The production build is unchanged, and so are the bundle sizes. SPEC §23 has the details.
+- 6a561d9: `clearPersisted` now refuses to guess its scope.
+  
+  Called with no prefix it deleted every key the adapter could enumerate. The default adapter is `localStorage`, which the whole origin shares, so a "log out" also took the analytics ids, the consent record and whatever a third-party script had stored. The call now throws unless it is given a non-empty `prefix` or an explicit `{ all: true }`.
+  
+  The signature is `clearPersisted(storage, { prefix, all, onError })`. An adapter with no `keys()` used to return silently; it now reports through `onError` under the key `'<keys>'`, so a caller can tell "nothing to delete" from "cannot enumerate". The function had no tests at all and now has six.
+  
+  **Migration.** `clearPersisted()` and `clearPersisted(adapter)` throw. Pass `{ prefix: 'my-app/' }` for the scope you meant, or `{ all: true }` to keep the old behavior.
+- 0ce21f3: **New first-party plugins, and helpers for testing plugins.**
+  
+  **persist: `persistQueryCachePlugin`.** It keeps the query cache across reloads. Queries opt in with `meta: { persist: true }`, or an `include` function decides.
+  - Canonical writes are written to storage, throttled. Optimistic writes and rollbacks are skipped, and a garbage-collected entry leaves storage.
+  - The stored cache is restored when the root starts. A different `buster`, or an entry older than `maxAgeMs`, is dropped.
+  - With asynchronous storage (IndexedDB), the restore fills only entries no one has subscribed to yet, and `root.waitForIdle()` waits for it.
+  - `restoreQueryCache(options)` reads the cache ahead of `createRoot` for `hydrate`, when the first render must see it.
+  - Infinite queries persist with their page params.
+  
+  **core `/testing`.**
+  - `mockFetchPlugin(handlers, options?)` answers query fetches by id: canned data, a function of the attempt, or an error, with latency that honors cancellation. An unmocked query fails its fetch unless `passthrough: true`.
+  - `createPluginRecorder()` records every plugin observation event, for assertions.
+  
+  A plugin authoring guide is in `PLUGINS.md`.
+
+### Patch Changes
+
+- d0b11ef: **Member docs on object types now show in editor hover.** The declaration bundler moved every one-line member doc (`/** … */` on one line) onto the end of the previous member's line, where TypeScript attaches it to nothing. About 135 member docs were missing from the published `.d.ts` files, such as `ScopeOptions.name`, `PersistOptions.serialize` and most of the devtools and query option types. The sources now write member docs as multi-line blocks, which keep their own line, and the dist smoke check fails if a stranded doc comment comes back.
+- 9ed7356: Two fixes in `createPersisted`.
+  
+  - **A reader without `version` no longer takes a versioned envelope for the value.** A tab left open across a deploy runs the old build next to the new one. When the new build set `version` and the old one did not, the old tab handed the whole `{"v":2,"d":"…"}` envelope to `deserialize` and put that object in the signal. A reader without `version` now unwraps the envelope. To keep that from misreading a value of yours with the same shape, the envelope now carries a marker, `{"$olas":1,"v":2,"d":"…"}`. Without `version`, a value is still written raw, and only a value a reader could take for an envelope is wrapped, as `{"$olas":1,"d":"…"}`. Stored data keeps reading as before: the unmarked envelope is still an envelope to a reader with `version`, and a build before 1.0 with `version` set reads the marked one.
+  - **A source that does not call back on subscribe keeps its first change.** `createPersisted` skipped the first call of the source's `subscribe` handler. That assumed every source calls it at once with the current value, as a signal does. A source that calls it only on a change, like an event emitter, lost its first change. Only a call made while `subscribe()` runs is skipped now.
+- 4aa2542: **persist: the query cache keeps what a session never visited, and cross-tab sync no longer diverges or skips `migrate`.**
+  
+  - **`persistQueryCachePlugin` with `restore: false` no longer deletes stored entries this session did not bind.** On the documented path, `restoreQueryCache` into `hydrate`, the plugin knew only the entries a query bound, and its first write replaced storage with those. A session that visited only page B dropped page A's entry. The plugin now reads storage at startup whether or not it restores, and with async storage its first write waits for that read.
+  - **`createPersisted` drops a pending throttled write when another tab's change arrives.** With `throttleMs`, the older local value used to land after the other tab's newer one, and the tabs disagreed from then on.
+  - **`createPersisted` runs `migrate` on a cross-tab change, as it does on load.** A tab still running an old build could put an old-shaped, unversioned value straight into a versioned signal. The migrated value is not written back, because the old build still reads that key.
+- 5d58d4d: **`createPersisted` and `persistQueryCachePlugin` no longer overwrite storage they should keep.**
+  
+  - `createPersisted` skips writing a migrated value back when another tab's change arrived during the load. The rewrite used to land over the change it had just applied, and the IndexedDB adapter broadcast the stale value to the other tabs.
+  - A payload from a newer `version` no longer reaches `migrate`, on load or from another tab. A step migrator passed it through unchanged, so an older build held the newer shape, and on load wrote it back under its own version. The source keeps its default, and storage keeps the payload.
+  - `persistQueryCachePlugin` holds its writes after a failed storage read, and the next flush reads storage again first. A transient read error used to make the next flush delete every stored entry this session had not bound.
+  - `persistQueryCachePlugin` drops a stored entry whose query the root has used and `include` now rejects, instead of writing it back until `maxAgeMs`.
+  - `indexedDbAdapter` uses the global `BroadcastChannel` only in a browser tab or web worker. On a server, a channel reaches every request in the process. Pass `broadcastChannel` to opt in anywhere.
+- 38cf416: **Security pass: streamed SSR, stored state, and prototype keys.** SPEC §22 now states what Olas trusts and what it checks.
+  
+  **react.**
+  - **XSS fix: `createStreamingTransform` writes a hydration batch only between elements.** React writes its stream in fixed-size chunks, so a chunk can end inside a tag or an attribute value. The transform used to write a `<script>` after every chunk. The payload's quotes could then close the attribute and turn query data into new attributes, such as an event handler. The transform now tracks the markup it passes through, and holds a batch until a chunk ends between elements.
+  - **The streamed payload is `JSON.parse("…")` over a fully escaped string.** An own `__proto__` key in query data stays a property on the client. Before, it became the object's prototype. No quote, angle bracket, `=`, U+2028 or U+2029 reaches the script raw.
+  - **New: `createStreamingHydrator({ nonce })`** puts a CSP nonce on every tag it emits.
+  - **A page element with the id `__OLAS_HYDRATION__` no longer breaks streamed hydration.** The bootstrap and each batch check that the global is the intake.
+  
+  **core.**
+  - **New: `serializeForScript(value)`**, the escaping the streaming hydrator uses, for any state an app inlines into a page: `<script>window.__OLAS_STATE__ = ${serializeForScript(root.dehydrate())}</script>`.
+  - **New: `host.mutations.get(id)`** returns a registered definition's `id` and `meta`.
+  - **Hydration skips an entry it cannot read**, such as `null` or a key nested too deep to hash, and hydrates the rest. Before, one bad entry made `createRoot({ hydrate })` throw.
+  - **`Form.set` and `setAsInitial` ignore keys the form does not own.** A partial parsed from JSON with a `__proto__`, `constructor` or `toString` key used to throw.
+  
+  **mutation-queue.**
+  - **Replay runs only mutations whose definition has `meta.persist: true`.** An entry in storage could name any registered mutation and have it run on the next load.
+  - **An entry stored under a key its contents do not name is dropped.** Every later write and delete used the contents' key. So such an entry stayed in storage and replayed on every load. A `migrate` that renames the mutation hit the same loop; the migrated entry is now rewritten under its new key and the old one deleted.
+  - **Entries are checked in full.** The attempt count must be a whole, non-negative number, `seq` finite, and `enqueuedAt` no later than a few minutes from now, so a future timestamp cannot escape `ttlMs`.
+  
+  **persist.**
+  - **`persistQueryCachePlugin` drops a stored entry dated in the future.** It passed `maxAgeMs` and stayed fresh for any `staleTime`, so planted data never refetched.
+  - **An async restore that fails now reaches `onError`**, as a sync one does.
+  - **`createPersisted` reports a stored value its source refuses as `'deserialize'`**, and still settles `ready`. It used to leave `ready` false and stop persisting.
+  
+  **cross-tab.**
+  - **A peer message the engine cannot apply is reported through `onWarn`**, not thrown out of the channel's handler.
+  - **A `msgId` that is not a safe non-negative integer is ignored.** `Number.MAX_VALUE` posted under a peer's id used to silence that peer.
+  - **New: `validate(queryId, data)` option** to reject a payload shape this tab does not expect.
+  
+  **entities.** **`entities.update(…, { merge: 'deep' })` keeps a `__proto__` key in the patch as data.** It used to replace the merged entity's prototype.
+- Updated dependencies [beab02a]
+- Updated dependencies [f9b34a7]
+- Updated dependencies [d5642d5]
+- Updated dependencies [ae18408]
+- Updated dependencies [008d8ef]
+- Updated dependencies [008d8ef]
+- Updated dependencies [1c6964e]
+- Updated dependencies [360120c]
+- Updated dependencies [a2b8b14]
+- Updated dependencies [008d8ef]
+- Updated dependencies [325ecf3]
+- Updated dependencies [6e154ef]
+- Updated dependencies [153261f]
+- Updated dependencies [518f5d9]
+- Updated dependencies [af217d0]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [008d8ef]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [3d95f3c]
+- Updated dependencies [fea5505]
+- Updated dependencies [cb08097]
+- Updated dependencies [b0f1c41]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a328f3a]
+- Updated dependencies [a328f3a]
+- Updated dependencies [8aaf0e7]
+- Updated dependencies [d0b11ef]
+- Updated dependencies [023eaf3]
+- Updated dependencies [0ce21f3]
+- Updated dependencies [2174dce]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a29b4ea]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [20473ba]
+- Updated dependencies [1299818]
+- Updated dependencies [38cf416]
+- Updated dependencies [4c47f81]
+- Updated dependencies [38cf416]
+- Updated dependencies [02b45f2]
+  - @kontsedal/olas-core@1.0.0
+
 ## 0.8.0
 
 ## 0.7.2

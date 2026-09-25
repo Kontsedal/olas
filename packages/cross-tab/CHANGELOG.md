@@ -1,5 +1,252 @@
 # @kontsedal/olas-cross-tab
 
+## 1.0.0
+
+### Major Changes
+
+- af217d0: **ESM only, Node >= 20.19.** Every package ships one format: `dist/*.js` with `dist/*.d.ts`. The CommonJS build (`.cjs` and `.d.cts`) is gone. A CommonJS consumer can still `require()` the packages on Node 20.19 or later, which loads ES modules through `require()`. `engines.node` is `>=20.19`.
+  
+  **Types.**
+  - Internal members no longer ship in the `.d.ts` files. That includes `Ctx`'s internals and the whole `QueryClient` class, which reached the declarations through them.
+  - Every type that appears in a public signature is exported. New core exports: `DebugEventBody`, `DefineControllerOptions`, `StandardSchemaV1Issue`, `StandardSchemaV1Result`, `QuerySelectOptions` and `TimingOptions`.
+  - New exports elsewhere:
+    - react: `OlasProviderProps`, `HydrationBoundaryProps`, `SuspendOnUnmountProps`, `OlasContext`, `UseValueOptions`, `UseValueSelectOptions` and `UseFieldInputOptions`;
+    - entities: `EntityOptions`;
+    - zod: `UnwrapZod`.
+  - `isStandardSchema` and `ErrorContextInput` are no longer exported from core.
+  - `createQuery`'s `select` form accepts `keepDataWhileDisabled`, like the other forms.
+  
+  **Bundle size.** A bundle built from the published files that imports only controllers and signals carries no forms code. The forms classes had set their brands as class fields, which kept them in every bundle.
+- cb08097: **Every shared query and every defined mutation is named by a required `id`. Plugin settings move to a typed `meta`. `mutate` and `createCache` fetchers receive `{ signal, deps }`.**
+  
+  ```ts
+  const userQuery = defineQuery({
+    id: 'users/detail', // was the optional `queryId`
+    key: (id: string) => [id],
+    fetcher: ({ signal, deps }, id) => deps.api.getUser(id, { signal }),
+    meta: { crossTab: true }, // was `crossTab: true`
+  })
+  
+  const createOrder = defineMutation({
+    id: 'order/create', // was `mutationId`
+    mutate: (vars: OrderInput, { signal, deps }) => deps.api.createOrder(vars, { signal }),
+    meta: { persist: true }, // was the implicit default
+  })
+  
+  const place = createMutation(ctx, createOrder, { onSuccess: () => toast('Placed') })
+  ```
+  
+  - **`id` is required** on `defineQuery` and `defineInfiniteQuery`. An anonymous query was silently skipped by `dehydrate()`, by every plugin and by the devtools labels. Now every query is hydratable, pluggable and nameable. `defineMutation` requires `id` too. On an inline `createMutation` spec, `id` is optional and doubles as the devtools label, so `name` is gone.
+  - **`meta` carries plugin settings.** `QueryMeta` and `MutationMeta` are empty interfaces that each plugin package augments. Installing `@kontsedal/olas-cross-tab` adds `meta.crossTab`, and `@kontsedal/olas-mutation-queue` adds `meta.persist`. Core no longer knows either name. `crossTab: 'data'` is gone; use `true`.
+  - **`defineMutation` no longer persists by default.** Pass `meta: { persist: true }`. A definition describes only the write (`id`, `mutate`, `concurrency`, `retry`, `retryDelay`, `meta`). The owning controller adds lifecycle hooks with the new `createMutation(ctx, def, hooks)` overload, instead of spreading `{ ...def, onSuccess }`.
+  - **`mutate(vars, { signal, deps })`** replaces `mutate(vars, signal)`, and `createCache(ctx, ({ signal, deps }) => …)` replaces `(signal) => …`. Query fetchers already received this context. A replayed mutation reaches its services through `deps` rather than a module-level import.
+  - `ErrorContext.queryKey` becomes `queryId` + `key`. `MutationDisposedError.mutationName` becomes `mutationId`.
+  - New exported types: `QueryMeta`, `MutationMeta`, `MutateCtx`, `MutationDefinition`, `MutationHooks`, `MutationRun`, `FetchCtx`, `InfiniteFetchCtx`, `LocalCacheOptions`.
+- 2174dce: **Plugin host v2.** A plugin is a definition with a per-root `setup`, and it gets a host, typed events, middleware and a way to expose services.
+  
+  ```ts
+  const logger = definePlugin({
+    name: 'logger',
+    setup(host) {
+      return {
+        onWrite: (e) => console.log(e.query.id, e.source, e.origin),
+        wrapFetch: async (ctx, next) => {
+          const t = performance.now()
+          try {
+            return await next()
+          } finally {
+            console.log(ctx.query.id, 'took', performance.now() - t)
+          }
+        },
+      }
+    },
+  })
+  
+  createRoot(app, { deps, queries: queryEngine(), plugins: [logger] })
+  ```
+  
+  **Core (`@kontsedal/olas-core`)**
+  
+  - **Definitions, not instances.** `setup(host)` runs once per root, in `plugins` order, before the root controller's factory. One plugin value can serve any number of roots. `QueryClientPlugin`, `QueryClientPluginApi` and their events are removed.
+  - **The host** offers several things:
+    - `deps`;
+    - `provide(scope, value)`, a service a controller reads with `ctx.inject(scope)` and outside code reads with `root.inject(scope)`;
+    - `reportError`, `onDispose`, and `track(promise)`, which makes `root.waitForIdle()` wait;
+    - `network`, for online state and focus;
+    - `queries` (`get`, `keys`, `peek`, `write`, `replace`, `invalidate`, `hydrate`, `dehydrate`, `hashKey`), addressed by query `id` and entry key;
+    - `mutations` (`has`, `get`, and `run(id, vars)`, which runs a `defineMutation` through the engine's runner with its retry and the root's `deps`).
+  - **Hooks:**
+    - `onWrite` takes `source`: `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'` or `'replace'`. It also carries `origin` and `updatedAt`.
+    - The other observation hooks are `onInvalidate`, `onRemove`, `onActivate`/`onDeactivate` (an entry's first and last subscriber), and `onMutation` (every run of every mutation: `start`, then `success`, `error` or `cancel`).
+    - Middleware: `wrapFetch` and `wrapMutate` wrap every attempt, with the first plugin outermost.
+  - **Origins.** A write made through a plugin's host carries the plugin's name as `origin`. `bindQuery(ctx, query, { origin })` tags a handle's writes the same way. The client-wide `isRemote` flag is gone.
+  - **Lifecycle:**
+    - A `setup` throw aborts `createRoot`, after disposing the plugins already set up, in reverse.
+    - No hook runs once the root starts disposing.
+    - Plugins dispose in reverse order.
+    - A hook throw reaches `onError` as `{ kind: 'plugin', pluginName }`, and the next plugin still runs.
+    - Plugins work without a query engine; `host.queries` is then `null`.
+  - **Fixed:**
+    - Hydrating a bound entry reported two writes. It now reports one `'hydrate'` write.
+    - A peer's invalidation refetched entries nobody subscribed to.
+    - Hooks fired after `dispose()`.
+    - The query registry was process-global. It is per root now, and a duplicate `id` warns when one root binds both queries.
+  - **Other changes:**
+    - `stableHash`, `lookupRegisteredQuery` and `lookupRegisteredMutation` leave the public surface.
+    - Devtools `cache:*` events carry `queryId`, and `cache:set-data` uses the `WriteSource` vocabulary.
+    - New `plugin:event` debug events come from `host.debug`.
+  
+  **`@kontsedal/olas-cross-tab`** mirrors only the app's own writes (origin `undefined`) by default. Other origins opt in through `origins`. New options: `optimistic: false` mirrors only canonical writes. The reuse guard is gone.
+  
+  **`@kontsedal/olas-entities`:** `entitiesPlugin({ entities: [Post, User] })` returns a plugin. The store is a per-root service: `ctx.inject(Entities)` / `root.inject(Entities)`. `entities.invalidate` is renamed `remove`, because it never refetched. Backprop writes carry the plugin's origin, so cross-tab no longer rebroadcasts N payloads per patch.
+  
+  **`@kontsedal/olas-mutation-queue`:**
+  - `mutationQueuePlugin({ storage, keyPrefix })`; `adapter` is renamed `storage`.
+  - Runs persist when `meta: { persist: true }`.
+  - Replays go through the engine's runner: the definition's retry applies, `mutate` gets `deps`, and `waitForIdle()` sees them.
+  - `replayNow()` is `ctx.inject(MutationQueue).replayNow()`.
+  - `onReplaySettle(entry, result, queries)` receives the root's `QueryHost`.
+  - The startup replay is tracked, so `root.waitForIdle()` waits for it.
+  
+  **`@kontsedal/olas-react`:** `createStreamingHydrator().plugin` is a v2 plugin. It captures committed writes only (fetch, write, replace) and uses each write's real `updatedAt`.
+
+### Minor Changes
+
+- b0f1c41: **Infinite queries reach parity with regular queries.**
+  
+  - **SSR.** `root.dehydrate()` includes infinite queries. A dehydrated entry for one carries its pages in `data` and one param per page in the new `pageParams` field. The client seeds the pages without refetching them and pages on from there. The streaming hydrator captures and delivers infinite queries too.
+  - **Focus and reconnect.** `refetchOnWindowFocus` and `refetchOnReconnect` apply to infinite queries, on the query or as engine defaults. A refetch re-fetches every loaded page.
+  - **Offline.** In `networkMode: 'offlineFirst'`, a network failure while offline parks an infinite query's fetch, including `fetchNextPage` and `fetchPreviousPage`, and retries it on reconnect, instead of surfacing an error. `isPaused` reports it.
+  - **Cross-tab.** An infinite query with `meta: { crossTab: true }` syncs across tabs, its pages together with their params.
+  - **Devtools.** Infinite queries show on the devtools timeline: fetch start and settle for each direction, and optimistic snapshot layers. The `cache:fetch-*` events carry `queryId` for every query.
+  - **Plugins.** `WriteEvent` carries `pageParams` for an infinite query. `host.queries.write` and `replace` accept `{ pageParams }` (the new `WriteOptions` type).
+- 439b8c2: **Cross-tab and entities report on their devtools lanes.** `@kontsedal/olas-devtools` shows one lane per plugin, and these two sent nothing on theirs.
+  
+  - **cross-tab** reports each message it posts and each message a peer sent. An event names the direction, the message type, the query and key, the sender's `sourceId` and `msgId`, and what became of it. A send is `posted` or `not-cloneable`. A receive is `applied`, `duplicate`, `malformed`, `ignored`, `rejected` or `failed`. The sender's id and `msgId` name one message in both tabs' lanes.
+  - **entities** reports each `update`: the entity and id, how many query entries the patch reached and their query ids, and how many listed entries no longer held the entity.
+  
+  The events are development-only. cross-tab now ships a development build behind the `development` export condition, like core and entities, and its default build strips the calls. That build grew by 10 B, from 1.31 kB to 1.32 kB brotlied.
+- 38cf416: **Security pass: streamed SSR, stored state, and prototype keys.** SPEC §22 now states what Olas trusts and what it checks.
+  
+  **react.**
+  - **XSS fix: `createStreamingTransform` writes a hydration batch only between elements.** React writes its stream in fixed-size chunks, so a chunk can end inside a tag or an attribute value. The transform used to write a `<script>` after every chunk. The payload's quotes could then close the attribute and turn query data into new attributes, such as an event handler. The transform now tracks the markup it passes through, and holds a batch until a chunk ends between elements.
+  - **The streamed payload is `JSON.parse("…")` over a fully escaped string.** An own `__proto__` key in query data stays a property on the client. Before, it became the object's prototype. No quote, angle bracket, `=`, U+2028 or U+2029 reaches the script raw.
+  - **New: `createStreamingHydrator({ nonce })`** puts a CSP nonce on every tag it emits.
+  - **A page element with the id `__OLAS_HYDRATION__` no longer breaks streamed hydration.** The bootstrap and each batch check that the global is the intake.
+  
+  **core.**
+  - **New: `serializeForScript(value)`**, the escaping the streaming hydrator uses, for any state an app inlines into a page: `<script>window.__OLAS_STATE__ = ${serializeForScript(root.dehydrate())}</script>`.
+  - **New: `host.mutations.get(id)`** returns a registered definition's `id` and `meta`.
+  - **Hydration skips an entry it cannot read**, such as `null` or a key nested too deep to hash, and hydrates the rest. Before, one bad entry made `createRoot({ hydrate })` throw.
+  - **`Form.set` and `setAsInitial` ignore keys the form does not own.** A partial parsed from JSON with a `__proto__`, `constructor` or `toString` key used to throw.
+  
+  **mutation-queue.**
+  - **Replay runs only mutations whose definition has `meta.persist: true`.** An entry in storage could name any registered mutation and have it run on the next load.
+  - **An entry stored under a key its contents do not name is dropped.** Every later write and delete used the contents' key. So such an entry stayed in storage and replayed on every load. A `migrate` that renames the mutation hit the same loop; the migrated entry is now rewritten under its new key and the old one deleted.
+  - **Entries are checked in full.** The attempt count must be a whole, non-negative number, `seq` finite, and `enqueuedAt` no later than a few minutes from now, so a future timestamp cannot escape `ttlMs`.
+  
+  **persist.**
+  - **`persistQueryCachePlugin` drops a stored entry dated in the future.** It passed `maxAgeMs` and stayed fresh for any `staleTime`, so planted data never refetched.
+  - **An async restore that fails now reaches `onError`**, as a sync one does.
+  - **`createPersisted` reports a stored value its source refuses as `'deserialize'`**, and still settles `ready`. It used to leave `ready` false and stop persisting.
+  
+  **cross-tab.**
+  - **A peer message the engine cannot apply is reported through `onWarn`**, not thrown out of the channel's handler.
+  - **A `msgId` that is not a safe non-negative integer is ignored.** `Number.MAX_VALUE` posted under a peer's id used to silence that peer.
+  - **New: `validate(queryId, data)` option** to reject a payload shape this tab does not expect.
+  
+  **entities.** **`entities.update(…, { merge: 'deep' })` keeps a `__proto__` key in the patch as data.** It used to replace the merged entity's prototype.
+
+### Patch Changes
+
+- fea5505: **Hover docs that described 0.8, or claimed what the code does not do, are corrected.** No behaviour changes.
+  
+  - **cross-tab:** `meta.crossTab` said infinite queries do not sync. They do, with their page params. The `origins` doc now says an `entities.update(...)` patch stays in its tab unless `origins` names the entities plugin. The clone note no longer says a class instance throws at `postMessage`: it arrives as a plain object.
+  - **react:** the streaming examples rendered a `HydrationBoundary` on the server without a query engine. A server render runs no effects, so nothing disposes the boundary's root, and without an engine there is no cache to capture. They now build one root per request and render it through `OlasProvider`.
+  - **mutation-queue:** the serialization notes said functions and symbols throw at enqueue. JSON drops them silently. A `BigInt` or a cycle is what throws.
+  - **realtime:** a connection state with no reporter is `'unknown'`, not `'connected'`, and the composables are named `create*`.
+  - **core:** `AsyncState` lists its ten signals, including `isEnabled`. `DehydratedEntry.id` no longer mentions anonymous queries. The subscription docs name `createQuery`, not `ctx.use`. `createSelection` cites SPEC §16.5.
+  - **devtools:** the store's doc names `useValue`.
+  - **core:** `DebugEventMeta.seq` no longer links a type that is not exported. `Form.submitError` no longer says a validation failure leaves it as it was: every `submit(...)` clears it first.
+- d0b11ef: **Member docs on object types now show in editor hover.** The declaration bundler moved every one-line member doc (`/** … */` on one line) onto the end of the previous member's line, where TypeScript attaches it to nothing. About 135 member docs were missing from the published `.d.ts` files, such as `ScopeOptions.name`, `PersistOptions.serialize` and most of the devtools and query option types. The sources now write member docs as multi-line blocks, which keep their own line, and the dist smoke check fails if a stranded doc comment comes back.
+- 4aa2542: **Security fix: cross-tab opens no channel on a server, and a forged message can no longer silence a peer.**
+  
+  - **The default channel factory opens a `BroadcastChannel` only in a browser tab or a web worker.** Node, Bun and Deno define `BroadcastChannel` too, and there it reaches every root in the process, and other worker threads or isolates. A server that built a root per request with `crossTabPlugin` opened a real channel per request, so one user's cache writes rendered in another user's response. On a server the plugin now installs no hooks. A `channelFactory` still opens a channel wherever it returns one: `channelFactory: (name) => new BroadcastChannel(name)`.
+  - **A receiver moves a peer's `msgId` cursor only for a message it applied.** One malformed message carrying a real peer's `sourceId` and `msgId: Number.MAX_SAFE_INTEGER` used to silence that peer for good. A `msgId` 64 or more below the cursor now restarts it, so even a well-formed forged message stops mattering once the real peer speaks again.
+- 5d58d4d: **A page element with the id `Bun` or `Deno` no longer turns cross-tab off.**
+  
+  HTML named access makes such an element a global of that name, and the default channel factory checked those names before the `document`. It now checks the `document` first.
+- Updated dependencies [beab02a]
+- Updated dependencies [f9b34a7]
+- Updated dependencies [d5642d5]
+- Updated dependencies [ae18408]
+- Updated dependencies [008d8ef]
+- Updated dependencies [008d8ef]
+- Updated dependencies [1c6964e]
+- Updated dependencies [360120c]
+- Updated dependencies [a2b8b14]
+- Updated dependencies [008d8ef]
+- Updated dependencies [325ecf3]
+- Updated dependencies [6e154ef]
+- Updated dependencies [153261f]
+- Updated dependencies [518f5d9]
+- Updated dependencies [af217d0]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [008d8ef]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [3d95f3c]
+- Updated dependencies [fea5505]
+- Updated dependencies [cb08097]
+- Updated dependencies [b0f1c41]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a328f3a]
+- Updated dependencies [a328f3a]
+- Updated dependencies [8aaf0e7]
+- Updated dependencies [d0b11ef]
+- Updated dependencies [023eaf3]
+- Updated dependencies [0ce21f3]
+- Updated dependencies [2174dce]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a29b4ea]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [20473ba]
+- Updated dependencies [1299818]
+- Updated dependencies [38cf416]
+- Updated dependencies [4c47f81]
+- Updated dependencies [38cf416]
+- Updated dependencies [02b45f2]
+  - @kontsedal/olas-core@1.0.0
+
 ## 0.8.0
 
 ## 0.7.2

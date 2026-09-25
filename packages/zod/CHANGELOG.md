@@ -1,5 +1,218 @@
 # @kontsedal/olas-zod
 
+## 1.0.0
+
+### Major Changes
+
+- 6e154ef: **The satellite packages follow the `create*` rule, and the router installs as a plugin.**
+  
+  A function that takes `ctx` and builds something is named `create*`. The `use*` names read as React hooks to people and to `eslint-plugin-react-hooks`, which reports them inside a controller factory.
+  
+  | Package | 0.8 | 1.0 |
+  |---|---|---|
+  | persist | `usePersisted(ctx, key, source, opts)` | `createPersisted(ctx, key, source, opts)` |
+  | persist | `localStorageAdapter` (an object) | `localStorageAdapter()` (a factory, like `indexedDbAdapter()`) |
+  | persist | `clearPersisted(storage, prefix, onError)` | `clearPersisted(storage, { prefix, onError })` |
+  | realtime | `useRealtimePatcher` | `createRealtimePatcher` |
+  | realtime | `useLiveStream` | `createLiveStream` |
+  | realtime | `useRealtimeConnection` | `createConnectionState` |
+  | zod | `formFromZod(ctx, schema, { initials })` | `createZodForm(ctx, schema, { initial })` |
+  | router | `createRoot(def, { scopes: adapter.scopes })` | `createRoot(def, { plugins: [adapter.plugin] })` |
+  
+  **router.** `createRouterAdapter()` returns `{ plugin, Bridge }`. The plugin provides `RouteParamsScope`, `RouteSearchScope` and `RoutePathnameScope` to the root it is installed on. `ROUTER_PLUGIN_NAME` is exported.
+  
+  **persist.** `throttleMs` is documented as what it always was: a trailing throttle, at most one write per window, carrying the latest value.
+  
+  **zod.** `createZodForm`'s `initial` also accepts a function. The form tracks it the way `createForm` tracks a function `initial`, so a form seeded from a query re-seats when the data arrives. `resetOnInitialChange` passes through.
+  
+  **mutation-queue.** The queue writes a run's entry before the run's first `mutate` call, from `wrapMutate`. A reload during the request no longer loses the run. The write adds one storage round trip before the first request. A write that fails is reported through `onWarn`, and the run proceeds without durability, as before.
+  
+  **core.** `MutateContext.origin` names the plugin that started a run through `host.mutations.run`, or is `undefined` for an app run. A run whose `mutate` resolved and whose abort landed in the same tick reported both `success` and `cancel` to plugins. It now reports `success` only.
+  
+  **react.** Streamed hydration reached only the first `HydrationBoundary`: a second boundary, or a StrictMode remount's new root, took the intake away from it. Every installed root now receives the batches that already arrived and each one that follows.
+- af217d0: **ESM only, Node >= 20.19.** Every package ships one format: `dist/*.js` with `dist/*.d.ts`. The CommonJS build (`.cjs` and `.d.cts`) is gone. A CommonJS consumer can still `require()` the packages on Node 20.19 or later, which loads ES modules through `require()`. `engines.node` is `>=20.19`.
+  
+  **Types.**
+  - Internal members no longer ship in the `.d.ts` files. That includes `Ctx`'s internals and the whole `QueryClient` class, which reached the declarations through them.
+  - Every type that appears in a public signature is exported. New core exports: `DebugEventBody`, `DefineControllerOptions`, `StandardSchemaV1Issue`, `StandardSchemaV1Result`, `QuerySelectOptions` and `TimingOptions`.
+  - New exports elsewhere:
+    - react: `OlasProviderProps`, `HydrationBoundaryProps`, `SuspendOnUnmountProps`, `OlasContext`, `UseValueOptions`, `UseValueSelectOptions` and `UseFieldInputOptions`;
+    - entities: `EntityOptions`;
+    - zod: `UnwrapZod`.
+  - `isStandardSchema` and `ErrorContextInput` are no longer exported from core.
+  - `createQuery`'s `select` form accepts `keepDataWhileDisabled`, like the other forms.
+  
+  **Bundle size.** A bundle built from the published files that imports only controllers and signals carries no forms code. The forms classes had set their brands as class fields, which kept them in every bundle.
+
+### Minor Changes
+
+- 360120c: **A development build behind a `development` export condition.** Devtools now work against the published packages.
+  
+  Until now, the release build inlined `__DEV__ = false`, so the core on npm emitted no devtools events at all. `@kontsedal/olas-devtools` showed an empty controller tree and timeline against it, and the dev-only warnings in core, entities, persist, react and zod never fired in an app.
+  
+  Each of these packages now ships two builds:
+  - `dist/` is the default, a production build with every dev-only branch stripped;
+  - `dist/dev/` sits behind the `development` condition, with the devtools events and the dev warnings kept.
+  
+  Vite's dev server, webpack and Rspack in development mode, and Next.js in dev resolve `development` without configuration, and their production builds resolve the default. With esbuild or Rollup, add `conditions: ['development']` to the dev config; in Node, `--conditions=development`. A browser with no bundler, or a CDN, gets the default build, as before.
+  
+  The production build is unchanged, and so are the bundle sizes. SPEC §23 has the details.
+
+### Patch Changes
+
+- f9b34a7: **The last API consistency pass before 1.0.**
+  
+  **core.**
+  - `createField(ctx, initial, options?)` takes an options bag, `{ validators, validateOn }`, like `createForm` and `createFieldArray`. `FieldOptions` is exported. `npx @kontsedal/olas-codemod 1.0` rewrites the positional form.
+  - `ctx.session` is removed. Use `ctx.attach(def, props)`, which returns `{ api, dispose, suspend, resume }`.
+  - `root.suspend({ maxIdle })` is renamed `suspend({ maxIdleTime })`, and `SuspendOptions` is exported. Every duration is in milliseconds. Core's lifetime policies end in `Time` (`staleTime`, `gcTime`, `maxIdleTime`), and every other duration option ends in `Ms`.
+  - `AsyncState` gains `isEnabled`, `false` while a subscription's `enabled` returns `false`, and always `true` for a local cache.
+  - `refetch()` on a disabled subscription rejects with the new exported `QueryDisabledError`, which carries `queryId`. Before, it was an anonymous error you had to blanket-catch.
+  - `firstValue()` on a disabled subscription waits until the subscription is enabled and loaded, instead of rejecting at once. It rejects on dispose. While pending it returns the same promise.
+  
+  **react.**
+  - `useRoot()` is typed through a `Register` interface the app augments once, so call sites drop the type argument:
+  
+    ```ts
+    declare module '@kontsedal/olas-react' {
+      interface Register { root: typeof root }
+    }
+    ```
+  - `useQuery` returns `isEnabled`.
+  - `useQuery(sub, { suspense: true })` on a disabled query suspends until the query is enabled and loads, which is what a dependent query needs. Development builds warn once when it starts. Before, it re-threw an already-rejected promise and never resolved.
+  - A `HydrationBoundary` whose `def` changes no longer re-hydrates the new root from the first root's server payload.
+- 153261f: **Fixes found by the 1.0 coverage pass and mutation testing.**
+  
+  - **zod: initial values now match what Zod parses.**
+    - A `.default()` under `.optional()` or `.nullable()` seeds its field. Before, the field started empty.
+    - A function-valued default seeds the function. Before, it seeded the function's result, because Zod 4 had already run the default factory once.
+    - A numeric enum seeds its first option, where it seeded `''`.
+  - **realtime:** `createLiveStream({ rafFlush: true })` without `requestAnimationFrame` (Node, SSR) started a timer per event and cancelled only the last on dispose, so events flushed after the stream was disposed. Events in one tick now share one timer.
+  - **entities:** `entities.update(Post, id, { author: newUser })` now normalizes the nested entity the patch brings in, and the query's bindings follow the patch. Before, the new author never reached the store, and a later update of the replaced author overwrote the new one inside the query.
+  - **mutation-queue:** `dispose()` now wakes a replay that is waiting out a backoff, so the tab releases the cross-tab replay lock at once instead of up to `maxBackoffMs` later.
+  - **core: a form's `isValid` no longer flickers during async validation.** While anything in a form or field array validates, its `isValid` holds the last settled answer, as a field's already did (spec §8.2). Before, a form read invalid for the whole of any child's async check, so a bound submit button flickered.
+  - **core: hydration and canonical writes rebase pending optimistic snapshots everywhere.**
+    - `root.hydrate` over an entry with a pending optimistic update now re-points the update's rollback at the hydrated data, as a fetch success does. Before, the rollback restored the pre-hydration value.
+    - An infinite query's `write` / `replace` (and the plugin and cross-tab writes that share them) now survive a pending optimistic update's rollback. Before, the rollback undid them.
+  - **core: infinite paging flags follow the request that owns the entry.**
+    - A superseded page request no longer clears `isFetchingNextPage` / `isFetchingPreviousPage` for a newer request of the same direction, which also broke the de-duplication of a third call.
+    - A refetch clears both flags, so a fetcher that ignores its abort signal no longer leaves one stuck and `fetchPreviousPage()` silently doing nothing.
+  - **core: a mutation that fails just as it is aborted reports `'error'` to plugins, and its caller gets an `AbortError`.**
+    - This is the twin of the specified late-success case. Before, plugins heard `'cancel'`, so the mutation queue kept the entry without counting the attempt, while the run promise rejected with the real error.
+    - A mutation disposed mid-run now goes to `status: 'idle'`, where it stayed `'pending'`.
+  - **core: `dispose()` or `reset()` called from inside `onMutate` cancels the run.** The optimistic write rolls back and `mutate` never runs. Before, `mutate` ran anyway with a signal that never fired, plugins heard `'success'`, and `status` stayed `'pending'`.
+  - **core: an `AbortError` that `mutate` throws itself is a failure.** When the run's own signal is still live, the abort came from the work (a request it cancelled on its own). The run now goes to `status: 'error'`, calls `onError`, rolls back, and reports `'error'` to plugins. Before, it counted as a cancellation: `status` stayed `'pending'`, and the mutation queue kept the entry to replay.
+  - **core: a lifecycle handler that changes the controller's state ends the pass that called it.** An `onResume` handler that disposed or re-suspended the controller left its effects running. An `onSuspend` handler that disposed it let the remaining `onSuspend` handlers fire.
+  - **core: an `online` event that arrives while `navigator.onLine` still reads false no longer spins.** A parked query checks once, parks again, and waits for the next event. Focus and reconnect subscribers follow the DOM's dispatch rules: one added during a dispatch waits for the next event, and one removed before its turn is skipped.
+  - **core: an outdated fetch's error is dropped for its caller too (spec §5.6).** A fetch that a newer one superseded already wrote nothing. It now also rejects with an `AbortError`, as an outdated fetch that succeeds does. Before, the stale error reached `onError` through `invalidate()`, and a `prefetch()` rejected with it instead of resolving with the value that won.
+  - **core: an infinite query's `isLoading` clears when a page request takes over.** A write that landed during the first load, followed by `fetchNextPage()`, left `isLoading` true for good: the page request superseded the first load, and its success never cleared the flag.
+  - **core: a `prefetch()` in flight when the root is disposed no longer arms a gc timer afterwards.** The timer held a Node process open for `gcTime`.
+  - **core: `serial` mode: `root.waitForIdle()` waits for queued runs.** It could resolve while a queued run was about to start, so SSR's `waitForIdle → dehydrate` missed that run's writes.
+  - **core: `resume()` honours an `enabled` that turned false while suspended.** The subscription goes disabled: `isEnabled` false, `status: 'idle'`, and `refetch()` rejects with `QueryDisabledError`.
+  - **core:** an infinite query without `itemsOf` keeps `flat` equal to `pages` while retained pages show (spec §5.11). It returned `[]`.
+  - **core:** `root.hydrate` drops a payload of another `version` with a warning, as `createRoot({ hydrate })` and `host.queries.hydrate` already did.
+  - **core: `FieldArray.remove` / `move` with an out-of-range index, or `move` to the same index, no longer mark the array dirty.** They changed nothing, and the dirty flag stopped a reactive `initial` from re-applying.
+  - **core: a rejected async form-level or array-level validator is an error.** A field already reported a rejection's message; a form or array ignored it and read valid.
+  - **devtools:**
+    - The Tree tab's controller count now shows; it always computed 0.
+    - A mutation's settle no longer clears another mutation's pending badge.
+    - Switching tabs no longer applies the previous tab's filter for the length of the debounce.
+    - The floating launcher renders when reading `localStorage` throws, in a sandboxed iframe or with site data blocked.
+- d0b11ef: **Member docs on object types now show in editor hover.** The declaration bundler moved every one-line member doc (`/** … */` on one line) onto the end of the previous member's line, where TypeScript attaches it to nothing. About 135 member docs were missing from the published `.d.ts` files, such as `ScopeOptions.name`, `PersistOptions.serialize` and most of the devtools and query option types. The sources now write member docs as multi-line blocks, which keep their own line, and the dist smoke check fails if a stranded doc comment comes back.
+- 4aa2542: **zod: `createZodForm` honours `.default(...)` on arrays and objects.**
+  
+  `tags: z.array(z.string()).default(['inbox'])` used to start as `[]`, and `address: z.object({ city }).default({ city: 'Kyiv' })` as `{ city: '' }`, while `schema.parse({})` gave the defaults. The field array and the nested form now start from them, and `reset()` returns to them. An `initial` value for the key still wins.
+- 6a561d9: Correct what an `extraValidators` path means at an array.
+  
+  The doc said a path of `'tags'` matched the `FieldArray` and applied to the array as a whole. It never did: a path names a position in the schema, an array contributes no segment to it, and the walker hands the same path to every element. So `'tags'` validates each tag, and `'tags.name'` validates each item's `name`. The doc now says that, and a test pins it. No behavior changed.
+  
+  There is no path that addresses the `FieldArray` itself, which the doc now also says. An array-level rule takes a `FieldArrayValidator` over the whole item list, a different signature that `createZodForm` does not wire. Express those in the Zod schema (`z.array(...).min(3)`) instead.
+- 6dd6e1c: **`createZodForm` enforces the schema's rules on objects and arrays, and a form no longer reads valid while its schema rejects the value.**
+  
+  The root form used to parse the whole schema and keep only the issues with an empty path. Three kinds of rule were dropped with no warning:
+  
+  - a root `.refine(fn, { path: ['confirm'] })`;
+  - an array-level rule, such as `z.array(...).min(3)` or a `.refine` on the array;
+  - a `.refine` on a nested object.
+  
+  Each issue now lands on the node its path names: the `confirm` field's `errors`, the `FieldArray`'s `topLevelErrors`, or the nested form's `topLevelErrors`. A root refine with no `path` still lands in `form.topLevelErrors`. A message the leaf's own schema reports is not repeated, so a field that fails its own `.min(1)` and a refine at the same path shows each message once. An async rule on an object is awaited. The old parse threw on one, and the form showed Zod's error in place of the rule's message.
+  
+  The whole-schema parse runs on every change to the form, so `createZodForm` now installs it only when an object or an array in the schema carries a rule. A schema with rules on its leaves alone no longer parses the whole schema on each change.
+  
+  A duplicate copy of `zod` now warns once per process, not once for every leaf in every form.
+  
+  `rootOnlyZodValidator` is unchanged. `createZodForm` no longer uses it.
+- Updated dependencies [beab02a]
+- Updated dependencies [f9b34a7]
+- Updated dependencies [d5642d5]
+- Updated dependencies [ae18408]
+- Updated dependencies [008d8ef]
+- Updated dependencies [008d8ef]
+- Updated dependencies [1c6964e]
+- Updated dependencies [360120c]
+- Updated dependencies [a2b8b14]
+- Updated dependencies [008d8ef]
+- Updated dependencies [325ecf3]
+- Updated dependencies [6e154ef]
+- Updated dependencies [153261f]
+- Updated dependencies [518f5d9]
+- Updated dependencies [af217d0]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [372b013]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [008d8ef]
+- Updated dependencies [cdb6b77]
+- Updated dependencies [3d95f3c]
+- Updated dependencies [fea5505]
+- Updated dependencies [cb08097]
+- Updated dependencies [b0f1c41]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a328f3a]
+- Updated dependencies [a328f3a]
+- Updated dependencies [8aaf0e7]
+- Updated dependencies [d0b11ef]
+- Updated dependencies [023eaf3]
+- Updated dependencies [0ce21f3]
+- Updated dependencies [2174dce]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [6caffb5]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [325ecf3]
+- Updated dependencies [a29b4ea]
+- Updated dependencies [3f9b98d]
+- Updated dependencies [20473ba]
+- Updated dependencies [1299818]
+- Updated dependencies [38cf416]
+- Updated dependencies [4c47f81]
+- Updated dependencies [38cf416]
+- Updated dependencies [02b45f2]
+  - @kontsedal/olas-core@1.0.0
+
 ## 0.8.0
 
 ## 0.7.2

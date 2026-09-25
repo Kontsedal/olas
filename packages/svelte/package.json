@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-svelte",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Olas Svelte adapter — setRoot/getRoot context and store views over queries, fields and mutations. Olas signals are Svelte stores as they are.",
   "keywords": [
     "olas",
@@ -43,7 +43,7 @@
     "typecheck": "tsc --noEmit && svelte-check --tsconfig ./tsconfig.svelte-check.json --fail-on-warnings"
   },
   "peerDependencies": {
-    "@kontsedal/olas-core": ">=0.3.0 <1.0.0",
+    "@kontsedal/olas-core": ">=1.0.0 <2.0.0",
     "svelte": ">=4"
   },
   "devDependencies": {

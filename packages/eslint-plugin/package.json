@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-eslint-plugin",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "ESLint rules for Olas apps: no React hooks in controllers, definitions at module scope, synchronous factories, the optimistic-write recipe, test helpers kept in tests, and abort signals passed on.",
   "keywords": [
     "olas",

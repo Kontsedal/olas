@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-codemod",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Codemod for upgrading an Olas app from 0.8 to 1.0: the renames, the root handle, required ids, plugin meta and the new async contexts, with a TODO list for what needs a human.",
   "keywords": [
     "olas",
