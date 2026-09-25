@@ -155,7 +155,7 @@ describe('a throwing reactive initial()', () => {
     expect(() => profile.set({ title: 'changed shape' })).not.toThrow()
     expect(onError).toHaveBeenCalledTimes(1)
     expect(onError.mock.calls[0]?.[0]).toBeInstanceOf(TypeError)
-    expect((onError.mock.calls[0]?.[1] as ErrorContext).kind).toBe('effect')
+    expect((onError.mock.calls[0]?.[1] as ErrorContext | undefined)?.kind).toBe('effect')
     expect(root.api.form.fields.name.value).toBe('ADA')
 
     // The thunk's dependencies survived the throw, so a good value re-seats.
@@ -382,7 +382,7 @@ describe('reset() reads initial() the way the reactive seat does', () => {
     fail = true
     expect(() => form.reset()).not.toThrow()
     expect(onError.mock.calls.map(([err]) => (err as Error).message)).toEqual(['reset boom'])
-    expect((onError.mock.calls[0]?.[1] as ErrorContext).kind).toBe('effect')
+    expect((onError.mock.calls[0]?.[1] as ErrorContext | undefined)?.kind).toBe('effect')
     expect(form.fields.name.value).toBe('seed')
     root.dispose()
   })

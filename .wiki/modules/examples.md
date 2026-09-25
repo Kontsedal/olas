@@ -50,7 +50,10 @@ Each example's `vite.config.ts` and `vitest.config.ts` imports from
 `@kontsedal/olas-*` package names (including `@kontsedal/olas-entities`) to
 source paths. Without this, examples would require running `pnpm build` first
 to populate `packages/*/dist/`. Vite resolves the aliases at module-graph
-build time, so dev, test and SSR all see source.
+build time, so dev, test and SSR all see source. The configs import
+`../_shared/aliases.ts` with its extension, because Vite 8.3 warns about an
+extensionless relative import that its future native config loader cannot load
+(`../decisions/toolchain.md`).
 
 Every example uses the same scripts:
 

@@ -281,7 +281,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     // either import the missing module or drop the entry.
     expect(adapter.store.size).toBe(1)
     expect(errors).toHaveLength(1)
-    expect((errors[0]?.err as Error).message).toMatch(/no registered mutation/)
+    expect((errors[0]?.err as Error | undefined)?.message).toMatch(/no registered mutation/)
 
     root.dispose()
   })
@@ -326,7 +326,7 @@ describe('mutationQueuePlugin — replay on init', () => {
     // Entry dropped, error surfaced.
     expect(adapter.store.size).toBe(0)
     expect(errors).toHaveLength(1)
-    expect((errors[0]?.err as Error).message).toMatch(/giving up/)
+    expect((errors[0]?.err as Error | undefined)?.message).toMatch(/giving up/)
 
     root.dispose()
   })

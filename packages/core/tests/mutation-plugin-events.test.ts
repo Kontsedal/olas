@@ -238,7 +238,7 @@ describe("a serial run that waits reports 'queued'", () => {
     // It never started, and it still reports one outcome.
     expect(stepsOf('two')).toEqual([['queued'], ['error']])
     const outcome = events.find((e) => e.variables === 'two' && e.phase === 'error')
-    expect((outcome?.error as Error).message).toBe('optimistic setup failed')
+    expect((outcome?.error as Error | undefined)?.message).toBe('optimistic setup failed')
   })
 
   test("a queued run cancelled from its own onMutate reports 'cancel'", async () => {

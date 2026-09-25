@@ -446,66 +446,68 @@ describe('the first load and refetches', () => {
 })
 
 describe('paging', () => {
-  test.each(
-    directions,
-  )('a failed %s page surfaces its error; the next success clears it and restamps lastUpdatedAt', async (direction) => {
-    vi.useFakeTimers()
-    vi.setSystemTime(1_000)
-    const down = new Error('page down')
-    let failOnce = true
-    const inf = defineInfiniteQuery({
-      id: `mut-inf/page-error-${direction}`,
-      key: () => ['feed'],
-      fetcher: async ({ pageParam }: { pageParam: number }) => {
-        if (pageParam === paramFor(direction) && failOnce) {
-          failOnce = false
-          throw down
-        }
-        return page(pageParam)
-      },
-      ...bidirectional,
-    })
-    const { feed } = mount(inf).api
-    await vi.advanceTimersByTimeAsync(0)
-    expect(feed.lastUpdatedAt.value).toBe(1_000)
-    const { run } = pager(feed, direction)
+  test.each(directions)(
+    'a failed %s page surfaces its error; the next success clears it and restamps lastUpdatedAt',
+    async (direction) => {
+      vi.useFakeTimers()
+      vi.setSystemTime(1_000)
+      const down = new Error('page down')
+      let failOnce = true
+      const inf = defineInfiniteQuery({
+        id: `mut-inf/page-error-${direction}`,
+        key: () => ['feed'],
+        fetcher: async ({ pageParam }: { pageParam: number }) => {
+          if (pageParam === paramFor(direction) && failOnce) {
+            failOnce = false
+            throw down
+          }
+          return page(pageParam)
+        },
+        ...bidirectional,
+      })
+      const { feed } = mount(inf).api
+      await vi.advanceTimersByTimeAsync(0)
+      expect(feed.lastUpdatedAt.value).toBe(1_000)
+      const { run } = pager(feed, direction)
 
-    await expect(run()).rejects.toBe(down)
-    expect(feed.error.value).toBe(down)
-    expect(feed.status.value).toBe('error')
+      await expect(run()).rejects.toBe(down)
+      expect(feed.error.value).toBe(down)
+      expect(feed.status.value).toBe('error')
 
-    vi.setSystemTime(5_000)
-    await run()
-    expect(feed.pages.value).toHaveLength(2)
-    expect(feed.error.value).toBeUndefined()
-    expect(feed.status.value).toBe('success')
-    expect(feed.lastUpdatedAt.value).toBe(5_000)
-  })
+      vi.setSystemTime(5_000)
+      await run()
+      expect(feed.pages.value).toHaveLength(2)
+      expect(feed.error.value).toBeUndefined()
+      expect(feed.status.value).toBe('success')
+      expect(feed.lastUpdatedAt.value).toBe(5_000)
+    },
+  )
 
-  test.each(
-    directions,
-  )('a failed %s page reports its error with the page flag already down', async (direction) => {
-    const inf = defineInfiniteQuery({
-      id: `mut-inf/page-error-flag-${direction}`,
-      key: () => ['feed'],
-      fetcher: async ({ pageParam }: { pageParam: number }) => {
-        if (pageParam === paramFor(direction)) throw new Error('page down')
-        return page(pageParam)
-      },
-      ...bidirectional,
-    })
-    const root = mount(inf)
-    await root.waitForIdle()
-    const { feed } = root.api
-    const { run, flag } = pager(feed, direction)
-    const flagWhileErrored: boolean[] = []
-    const stop = effect(() => {
-      if (feed.status.value === 'error') flagWhileErrored.push(flag.value)
-    })
-    await expect(run()).rejects.toThrow('page down')
-    stop()
-    expect(flagWhileErrored).toEqual([false])
-  })
+  test.each(directions)(
+    'a failed %s page reports its error with the page flag already down',
+    async (direction) => {
+      const inf = defineInfiniteQuery({
+        id: `mut-inf/page-error-flag-${direction}`,
+        key: () => ['feed'],
+        fetcher: async ({ pageParam }: { pageParam: number }) => {
+          if (pageParam === paramFor(direction)) throw new Error('page down')
+          return page(pageParam)
+        },
+        ...bidirectional,
+      })
+      const root = mount(inf)
+      await root.waitForIdle()
+      const { feed } = root.api
+      const { run, flag } = pager(feed, direction)
+      const flagWhileErrored: boolean[] = []
+      const stop = effect(() => {
+        if (feed.status.value === 'error') flagWhileErrored.push(flag.value)
+      })
+      await expect(run()).rejects.toThrow('page down')
+      stop()
+      expect(flagWhileErrored).toEqual([false])
+    },
+  )
 
   test('page retries count attempts up from zero until the policy gives up', async () => {
     vi.useFakeTimers()
@@ -538,28 +540,29 @@ describe('paging', () => {
     expect(await paging).toBeInstanceOf(Error)
   })
 
-  test.each(
-    directions,
-  )('a retry policy that throws still takes the %s-page flag down', async (direction) => {
-    const broke = new Error('policy broke')
-    const inf = defineInfiniteQuery({
-      id: `mut-inf/throwing-policy-${direction}`,
-      key: () => ['feed'],
-      fetcher: async ({ pageParam }: { pageParam: number }) => {
-        if (pageParam === paramFor(direction)) throw new Error('page down')
-        return page(pageParam)
-      },
-      ...bidirectional,
-      retry: () => {
-        throw broke
-      },
-    })
-    const root = mount(inf)
-    await root.waitForIdle()
-    const { run, flag } = pager(root.api.feed, direction)
-    await expect(run()).rejects.toBe(broke)
-    expect(flag.value).toBe(false)
-  })
+  test.each(directions)(
+    'a retry policy that throws still takes the %s-page flag down',
+    async (direction) => {
+      const broke = new Error('policy broke')
+      const inf = defineInfiniteQuery({
+        id: `mut-inf/throwing-policy-${direction}`,
+        key: () => ['feed'],
+        fetcher: async ({ pageParam }: { pageParam: number }) => {
+          if (pageParam === paramFor(direction)) throw new Error('page down')
+          return page(pageParam)
+        },
+        ...bidirectional,
+        retry: () => {
+          throw broke
+        },
+      })
+      const root = mount(inf)
+      await root.waitForIdle()
+      const { run, flag } = pager(root.api.feed, direction)
+      await expect(run()).rejects.toBe(broke)
+      expect(flag.value).toBe(false)
+    },
+  )
 
   test('a write during the first load settles it, and a page that then fails leaves it not loading', async () => {
     const { calls, fetcher } = gatedFetcher()

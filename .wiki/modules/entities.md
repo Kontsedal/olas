@@ -5,6 +5,7 @@ type: module
 covers:
   - packages/entities/src/index.ts
   - packages/entities/tsdown.config.ts
+  - packages/entities/scripts/dts-export-marker.ts
 edges:
   - { type: related, target: ../decisions/trust-model.md }
   - { type: related, target: ../decisions/plugin-host-v2.md }
@@ -21,6 +22,7 @@ edges:
   - { type: uses, target: signals.md }
   - { type: related, target: cross-tab.md }
   - { type: related, target: devtools-panel.md }
+  - { type: related, target: ../pitfalls/dts-export-context.md }
 last_verified: 2026-09-25
 confidence: medium
 ---
@@ -147,7 +149,7 @@ After each `update`, a development build calls `host.debug` with the fan-out (`i
 
 `entries` counts the entries the patch was written into, and `queries` names their query ids, one per entry. `stale` counts the entries the reverse index listed that no longer held the entity. An update with no binding reports `entries: 0`. A walk reports nothing, and neither does an update of a missing entity, which warns instead. The call sits in `if (__DEV__)`, so the default build strips it. `host.debug` is a no-op in core's default build too (`packages/core/src/plugin/host.ts:166-169`). Pinned by `tests/devtools-lane.test.ts`.
 
-The package ships a `development` build for this (`packages/entities/tsdown.config.ts`, `../decisions/esm-only-build.md`).
+The package ships a `development` build for this (`packages/entities/tsdown.config.ts`, `../decisions/esm-only-build.md`). Its declaration build runs `scripts/dts-export-marker.ts`, which keeps the private `BRAND` and `PHANTOM` symbols out of the published types (`../pitfalls/dts-export-context.md`).
 
 ## What the plugin uses from the host
 

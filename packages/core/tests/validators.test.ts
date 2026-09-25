@@ -97,14 +97,12 @@ describe('email', () => {
     expect(await v(value, sig)).toBeNull()
   })
 
-  test.each([
-    'no-at-sign',
-    '@nodomain',
-    'no@tld',
-    'spaces in@email.com',
-  ])('rejects %s', async (value) => {
-    expect(await v(value, sig)).toMatch(/invalid/i)
-  })
+  test.each(['no-at-sign', '@nodomain', 'no@tld', 'spaces in@email.com'])(
+    'rejects %s',
+    async (value) => {
+      expect(await v(value, sig)).toMatch(/invalid/i)
+    },
+  )
 
   test('accepts an empty string (use required() for emptiness checks)', async () => {
     expect(await v('', sig)).toBeNull()

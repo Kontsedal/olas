@@ -284,28 +284,31 @@ describe('replay lock — localStorage lease fallback', () => {
     ],
     // The write did not stick at all.
     ['the write is dropped', 'dropped', () => null],
-  ])('the pass skips when the re-read shows it does not own the lease (%s)', async (_label, slug, reread) => {
-    const storage = memoryStorage()
-    let written: string | null = null
-    const racing: Storage = {
-      ...storage,
-      getItem: (key) => (written === null ? storage.getItem(key) : reread(written)),
-      setItem: (_key, value) => {
-        written = value
-      },
-    }
-    withoutWebLocks(racing)
-    const prefix = `cov/lease/race-${slug}`
-    const { adapter, calls } = pendingReplay(`cov/lease-race-${slug}`, prefix)
+  ])(
+    'the pass skips when the re-read shows it does not own the lease (%s)',
+    async (_label, slug, reread) => {
+      const storage = memoryStorage()
+      let written: string | null = null
+      const racing: Storage = {
+        ...storage,
+        getItem: (key) => (written === null ? storage.getItem(key) : reread(written)),
+        setItem: (_key, value) => {
+          written = value
+        },
+      }
+      withoutWebLocks(racing)
+      const prefix = `cov/lease/race-${slug}`
+      const { adapter, calls } = pendingReplay(`cov/lease-race-${slug}`, prefix)
 
-    const root = queueRoot(adapter, prefix)
-    await root.waitForIdle()
+      const root = queueRoot(adapter, prefix)
+      await root.waitForIdle()
 
-    expect(written).not.toBeNull()
-    expect(calls).toEqual([])
-    expect(adapter.store.size).toBe(1)
-    root.dispose()
-  })
+      expect(written).not.toBeNull()
+      expect(calls).toEqual([])
+      expect(adapter.store.size).toBe(1)
+      root.dispose()
+    },
+  )
 
   test('a lease storage that throws degrades to an uncoordinated replay, with a warning', async () => {
     const quota = new DOMException('denied', 'SecurityError')

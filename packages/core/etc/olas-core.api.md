@@ -214,7 +214,7 @@ export type DebugCacheEntry = {
 };
 
 // @public
-export type DebugEvent = DebugEventBody extends infer B ? B extends DebugEventBody ? B & DebugEventMeta : never : never;
+export type DebugEvent = DebugEventBody extends (infer B) ? B extends DebugEventBody ? B & DebugEventMeta : never : never;
 
 // @public
 export type DebugEventBody = {
@@ -231,33 +231,33 @@ export type DebugEventBody = {
 } | {
     type: 'controller:disposed';
     path: readonly string[];
-}
+} |
 /**
 * A `ctx.debug({...})` call AFTER construction (e.g. from an effect) —
 * carries the controller's full merged debug record (live references).
 */
-| {
+    {
     type: 'controller:debug';
     path: readonly string[];
     values: Record<string, unknown>;
-}
+} |
 /**
 * A `createQuery` subscription bound an entry: on subscribe, on a key change
 * and on resume. `subscriberPath` is the subscribing controller's path. One
 * event per subscription, so the entry's subscriber count is the number of
 * these minus the matching `cache:unsubscribed` events.
 */
-| {
+    {
     type: 'cache:subscribed';
     queryId?: string;
     queryKey: readonly unknown[];
     subscriberPath: readonly string[];
-}
+} |
 /**
 * A subscription let go of an entry: on dispose, a key change, a disable and
 * suspend. The counterpart of `cache:subscribed`, with the same path.
 */
-| {
+    {
     type: 'cache:unsubscribed';
     queryId?: string;
     queryKey: readonly unknown[];
@@ -277,7 +277,7 @@ export type DebugEventBody = {
     queryKey: readonly unknown[];
     error: unknown;
     durationMs: number;
-}
+} |
 /**
 * A value was written to a cache entry. `data` is the post-write value —
 * carried so the devtools cache inspector and timeline diff show *current*
@@ -285,7 +285,7 @@ export type DebugEventBody = {
 * `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'`,
 * `'replace'`.
 */
-| {
+    {
     type: 'cache:set-data';
     queryId?: string;
     queryKey: readonly unknown[];
@@ -299,22 +299,28 @@ export type DebugEventBody = {
     type: 'cache:gc';
     queryId?: string;
     queryKey: readonly unknown[];
-} /** An optimistic snapshot layer was pushed onto an entry (`setData` with tracking). */ | {
+} |
+/** An optimistic snapshot layer was pushed onto an entry (`setData` with tracking). */
+    {
     type: 'snapshot:push';
     queryKey: readonly unknown[];
-} /** An optimistic snapshot layer was rolled back (mutation error / supersede). */ | {
+} |
+/** An optimistic snapshot layer was rolled back (mutation error / supersede). */
+    {
     type: 'snapshot:rollback';
     queryKey: readonly unknown[];
-} /** An optimistic snapshot layer was committed (mutation success). */ | {
+} |
+/** An optimistic snapshot layer was committed (mutation success). */
+    {
     type: 'snapshot:finalize';
     queryKey: readonly unknown[];
-}
+} |
 /**
 * The mutation lifecycle. `id` is the mutation's `id`, absent for an inline
 * `createMutation` spec that has none. Each event carries the run id as its
 * `causeId`.
 */
-| {
+    {
     type: 'mutation:run';
     path: readonly string[];
     id?: string;
@@ -333,7 +339,7 @@ export type DebugEventBody = {
     type: 'mutation:rollback';
     path: readonly string[];
     id?: string;
-}
+} |
 /**
 * A run was cancelled, and it will send no `mutation:success` or
 * `mutation:error`. Sent for every run whose plugin event is `'cancel'`,
@@ -342,7 +348,7 @@ export type DebugEventBody = {
 * disposed). A queued `serial` run that never started sends one too, with
 * no `mutation:run` before it.
 */
-| {
+    {
     type: 'mutation:cancel';
     path: readonly string[];
     id?: string;
@@ -353,7 +359,9 @@ export type DebugEventBody = {
     field: string;
     valid: boolean;
     errors: string[];
-} /** A plugin published `payload` on its lane through `host.debug(...)`. */ | {
+} |
+/** A plugin published `payload` on its lane through `host.debug(...)`. */
+    {
     type: 'plugin:event';
     plugin: string;
     payload: unknown;
@@ -367,7 +375,7 @@ export type DebugEventMeta = {
 };
 
 // @public
-export type DeepPartial<T> = T extends object ? T extends ReadonlyArray<infer U> ? ReadonlyArray<DeepPartial<U>> : { [K in keyof T]?: DeepPartial<T[K]> } : T;
+export type DeepPartial<T> = T extends object ? T extends ReadonlyArray<infer U> ? ReadonlyArray<DeepPartial<U>> : { [K in keyof T]?: DeepPartial<T[K]>; } : T;
 
 // @public
 export function defineController<Props = void, Api = unknown>(factory: (ctx: Ctx, props: Props) => Api, options?: DefineControllerOptions): ControllerDef<Props, Api>;
@@ -525,7 +533,7 @@ export type FieldTransform<T> = {
 
 // @public
 export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
-    readonly fields: { [K in keyof S]: S[K] };
+    readonly fields: { [K in keyof S]: S[K]; };
     readonly errors: ReadSignal<FormErrors<S>>;
     readonly topLevelErrors: ReadSignal<string[]>;
     readonly flatErrors: ReadSignal<Array<{
@@ -552,7 +560,7 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
 };
 
 // @public
-export type FormErrors<S extends FormSchema> = { [K in keyof S]?: S[K] extends Field<any> ? string[] | undefined : S[K] extends Form<infer SS> ? FormErrors<SS> : S[K] extends FieldArray<infer I> ? Array<FieldArrayItemErrors<I> | undefined> : never };
+export type FormErrors<S extends FormSchema> = { [K in keyof S]?: S[K] extends Field<any> ? string[] | undefined : S[K] extends Form<infer SS> ? FormErrors<SS> : S[K] extends FieldArray<infer I> ? Array<FieldArrayItemErrors<I> | undefined> : never; };
 
 // @public
 export type FormIssue = {
@@ -576,7 +584,7 @@ export type FormSchema = {
 export type FormValidator<S extends FormSchema> = Validator<FormValue<S>>;
 
 // @public
-export type FormValue<S extends FormSchema> = { [K in keyof S]: S[K] extends Field<infer T> ? T : S[K] extends Form<infer SS> ? FormValue<SS> : S[K] extends FieldArray<infer I> ? FieldArrayValue<I> : never };
+export type FormValue<S extends FormSchema> = { [K in keyof S]: S[K] extends Field<infer T> ? T : S[K] extends Form<infer SS> ? FormValue<SS> : S[K] extends FieldArray<infer I> ? FieldArrayValue<I> : never; };
 
 // @public
 export type InfiniteFetchCtx<PageParam> = {

@@ -1,3 +1,9 @@
 packages:
   - "packages/*"
   - "examples/*"
+
+# esbuild's postinstall only re-checks the platform binary that its optional
+# dependency already installed. pnpm 11+ fails an install on an unreviewed
+# build script, so the decision is written down here.
+allowBuilds:
+  esbuild: false

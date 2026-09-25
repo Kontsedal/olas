@@ -8,6 +8,7 @@ covers:
   - vitest.config.ts
 edges:
   - { type: related, target: engine-assurance.md }
+  - { type: related, target: toolchain.md }
   - { type: related, target: ../entities/entry.md }
   - { type: related, target: ../entities/query-client.md }
 last_verified: 2026-09-25
@@ -18,15 +19,17 @@ confidence: medium
 
 ## How they run
 
-`pnpm bench` runs `vitest bench --run` over `packages/core/bench/`. No CI job runs it, because wall-clock timing is noisy; `size-limit` guards bundle size instead (`esm-only-build.md`).
+`pnpm bench` runs `vitest bench --run` over `packages/core/bench/`. No CI job runs it, because wall-clock timing is noisy; `size-limit` guards bundle size instead (`esm-only-build.md`). Since vitest 5, `bench` is a test-context fixture: each group is a `test` that builds its fixture, calls `bench(...).run()` or `bench.compare(...)`, and tears the fixture down. A non-TTY run prints only the pass count; `--reporter=verbose` prints the tables.
 
 - `engine.bench.ts` times Olas alone: signal fan-out, a write to an entry with 10,000 observed subscribers, a 1,000-query fetch cycle, structural sharing over a 1 MB payload, and a 500-field form.
-- `baselines.bench.ts` runs the same operations through the libraries Olas is compared with. Each `describe` is one group, and vitest prints how many times faster the fastest entry is.
+- `baselines.bench.ts` runs the same operations through the libraries Olas is compared with. Each `test` is one group, and vitest prints how many times faster the fastest entry is.
 
 Three choices keep the comparison fair:
 - **Raw `@preact/signals-core` is an entry.** It is the runtime Olas wraps, so the gap is the wrapper's cost.
 - **TanStack Query's notifications are made synchronous** with `notifyManager.setScheduler((cb) => cb())`. Its default batches them onto a timer, which would move its work outside the measured function.
 - **Benchmarks run in one vitest project.** The `svelte` project sets `benchmark: { include: [] }`. With both projects benchmarking at once, the first run reported raw preact as 1.02× faster than Olas; alone, it is 1.30×.
+
+One cost is not controlled. The bench files import `../src`, so every call into core goes through the module runner's export getters, while preact, MobX and TanStack Query load as plain Node modules. vitest 5 warns about it ("accessed module export getters too many times"), and the results below carry that cost. BACKLOG holds re-running against the built entry.
 
 ## Results, 2026-09-24
 

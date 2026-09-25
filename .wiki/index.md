@@ -81,6 +81,8 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/docs-site.md](decisions/docs-site.md) — the VitePress site: guides written in `docs/`, the repo docs synced in with their links rewritten, the api-documenter reference, the checked-in API reports, and why deploying is manual
 - [decisions/zod-schema-rules.md](decisions/zod-schema-rules.md) — why createZodForm enforces object and array rules with one whole-schema validator that drops what a leaf already shows, installed only when the schema has such a rule
 - [decisions/typechecked-doc-snippets.md](decisions/typechecked-doc-snippets.md) — why every ts/tsx block in the user-facing docs compiles in CI, one program per doc, and the `snippet-prelude` / `file=` / `nocheck` annotations
+- [decisions/toolchain.md](decisions/toolchain.md) — the dev toolchain: TypeScript 7 beside the 6.0 API, Node 22.22 to build and 20.19 to consume, pnpm 12's install policies, the vitest 5 migration
+- [decisions/peer-bump-guard.md](decisions/peer-bump-guard.md) — why `check:peer-bumps` exists: changesets 3 releases a package whose peer range a release leaves behind as a patch
 - [decisions/ui-rules.md](decisions/ui-rules.md) — the ten rules every interface follows, the scales they are picked from, what makes a screen read as generated, and which of the ten anything checks
 
 ## Pitfalls
@@ -100,6 +102,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/stream-chunks-split-tags.md](pitfalls/stream-chunks-split-tags.md) — a server-rendered stream's chunks can end inside a tag or attribute; anything written between two chunks has to check where it lands
 - [pitfalls/node-localstorage-shadows-jsdom.md](pitfalls/node-localstorage-shadows-jsdom.md) — on Node 25+, Node's own `localStorage` global (undefined without a flag) hides jsdom's, so jsdom tests silently skip storage
 - [pitfalls/persisted-state-breaks-hydration.md](pitfalls/persisted-state-breaks-hydration.md) — `createPersisted` reads localStorage during construction, so a returning visitor's first client render disagrees with the server HTML
+- [pitfalls/dts-export-context.md](pitfalls/dts-export-context.md) — a bundled `.d.ts` with no export list exports every top-level declaration; rolldown-plugin-dts 0.28.2+ drops the list, so entities appends `export {}`
 - [pitfalls/render-phase-root-leak.md](pitfalls/render-phase-root-leak.md) — a root built in render and disposed in an effect leaks when React discards the render (a child suspends before the first commit); `HydrationBoundary` reuses it on retry and sweeps it once idle
 
 ## Candidates (not authoritative)

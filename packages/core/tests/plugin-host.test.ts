@@ -467,7 +467,7 @@ describe('onMutation', () => {
       ['named', 'success', undefined],
     ])
     expect(log.mutations[1]?.result).toBe(4)
-    expect((log.mutations[3]?.error as Error).message).toBe('nope')
+    expect((log.mutations[3]?.error as Error | undefined)?.message).toBe('nope')
     const runIds = new Set(log.mutations.map((e) => e.runId))
     expect(runIds.size).toBe(3)
   })

@@ -2,6 +2,8 @@ import { resolve } from 'node:path'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { defineConfig } from 'vitest/config'
 
+const repoRoot = import.meta.dirname
+
 const satellite = { statements: 94, branches: 90, functions: 94, lines: 96 }
 
 // Svelte component tests need two things no other suite should get: the
@@ -25,20 +27,20 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@kontsedal/olas-core/testing': resolve(__dirname, 'packages/core/src/testing.ts'),
-      '@kontsedal/olas-core': resolve(__dirname, 'packages/core/src/index.ts'),
-      '@kontsedal/olas-react': resolve(__dirname, 'packages/react/src/index.ts'),
-      '@kontsedal/olas-vue': resolve(__dirname, 'packages/vue/src/index.ts'),
-      '@kontsedal/olas-svelte': resolve(__dirname, 'packages/svelte/src/index.ts'),
-      '@kontsedal/olas-persist': resolve(__dirname, 'packages/persist/src/index.ts'),
-      '@kontsedal/olas-realtime': resolve(__dirname, 'packages/realtime/src/index.ts'),
-      '@kontsedal/olas-cross-tab': resolve(__dirname, 'packages/cross-tab/src/index.ts'),
-      '@kontsedal/olas-entities': resolve(__dirname, 'packages/entities/src/index.ts'),
-      '@kontsedal/olas-zod': resolve(__dirname, 'packages/zod/src/index.ts'),
-      '@kontsedal/olas-devtools': resolve(__dirname, 'packages/devtools/src/index.ts'),
-      '@kontsedal/olas-mutation-queue': resolve(__dirname, 'packages/mutation-queue/src/index.ts'),
-      '@kontsedal/olas-router': resolve(__dirname, 'packages/router/src/index.ts'),
-      '@kontsedal/olas-eslint-plugin': resolve(__dirname, 'packages/eslint-plugin/src/index.ts'),
+      '@kontsedal/olas-core/testing': resolve(repoRoot, 'packages/core/src/testing.ts'),
+      '@kontsedal/olas-core': resolve(repoRoot, 'packages/core/src/index.ts'),
+      '@kontsedal/olas-react': resolve(repoRoot, 'packages/react/src/index.ts'),
+      '@kontsedal/olas-vue': resolve(repoRoot, 'packages/vue/src/index.ts'),
+      '@kontsedal/olas-svelte': resolve(repoRoot, 'packages/svelte/src/index.ts'),
+      '@kontsedal/olas-persist': resolve(repoRoot, 'packages/persist/src/index.ts'),
+      '@kontsedal/olas-realtime': resolve(repoRoot, 'packages/realtime/src/index.ts'),
+      '@kontsedal/olas-cross-tab': resolve(repoRoot, 'packages/cross-tab/src/index.ts'),
+      '@kontsedal/olas-entities': resolve(repoRoot, 'packages/entities/src/index.ts'),
+      '@kontsedal/olas-zod': resolve(repoRoot, 'packages/zod/src/index.ts'),
+      '@kontsedal/olas-devtools': resolve(repoRoot, 'packages/devtools/src/index.ts'),
+      '@kontsedal/olas-mutation-queue': resolve(repoRoot, 'packages/mutation-queue/src/index.ts'),
+      '@kontsedal/olas-router': resolve(repoRoot, 'packages/router/src/index.ts'),
+      '@kontsedal/olas-eslint-plugin': resolve(repoRoot, 'packages/eslint-plugin/src/index.ts'),
     },
   },
   test: {

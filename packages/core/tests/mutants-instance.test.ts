@@ -182,7 +182,9 @@ describe('effects and suspension', () => {
     root.suspend()
     expect(suspended).toHaveBeenCalledTimes(1)
     expect(summarize(onError)).toEqual([['suspend hook boom', 'effect']])
-    expect((onError.mock.calls[0]?.[1] as ErrorContext).controllerPath).toEqual(['root'])
+    expect((onError.mock.calls[0]?.[1] as ErrorContext | undefined)?.controllerPath).toEqual([
+      'root',
+    ])
   })
 })
 

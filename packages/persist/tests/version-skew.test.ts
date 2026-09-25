@@ -109,15 +109,16 @@ describe('a value that looks like an envelope', () => {
     reader.dispose()
   })
 
-  test.each(
-    lookalikes,
-  )('%s, written without version, is a raw value to a reader with one', (_label, value) => {
-    const storage = memoryStorage()
-    writeWith<unknown>(storage, value)
-    const reader = mount<unknown>(storage, 'default', { version: 2 })
-    expect(reader.api.s.value).toEqual(value)
-    reader.dispose()
-  })
+  test.each(lookalikes)(
+    '%s, written without version, is a raw value to a reader with one',
+    (_label, value) => {
+      const storage = memoryStorage()
+      writeWith<unknown>(storage, value)
+      const reader = mount<unknown>(storage, 'default', { version: 2 })
+      expect(reader.api.s.value).toEqual(value)
+      reader.dispose()
+    },
+  )
 
   test('a migrator sees it as a raw payload from before versioning, not as an older envelope', async () => {
     const storage = memoryStorage()

@@ -46,7 +46,7 @@ export type PatcherHandlers<TEvent extends {
     type: string;
 }> = { [K in TEvent['type']]?: (event: Extract<TEvent, {
         type: K;
-    }>) => void } & {
+    }>) => void; } & {
     '*'?: (event: TEvent) => void;
 };
 

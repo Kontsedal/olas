@@ -19,6 +19,7 @@ pnpm install                                       # link workspace + install de
 pnpm typecheck                                     # tsc --noEmit per package
 pnpm lint                                          # biome check .
 pnpm check:doc-snippets [file.md]                  # typecheck the ts/tsx blocks in the docs against src
+pnpm check:peer-bumps                              # a pending release that leaves a peer range behind has a major changeset for that package
 pnpm exec biome check --write .                    # auto-fix lint + format
 pnpm test                                          # vitest run (all packages)
 pnpm test:watch                                    # vitest watch
@@ -39,20 +40,20 @@ pnpm wiki:lint                                     # check .wiki/ for broken cit
 pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
-CI = `install → build → typecheck → lint → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `program=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
+CI = `install → build → typecheck → lint → check:peer-ranges → check:peer-bumps → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `program=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
 
 ## Releasing
 
-Packages version **independently** — `.changeset/config.json` has no `fixed` group, so a release bumps only the packages a changeset names, plus any whose peer range a bumped dependency fell out of. Version numbers across the suite are not expected to match. Don't "fix" a mismatch by adding bumps.
+Packages version **independently** — `.changeset/config.json` has no `fixed` group, so a release bumps only the packages a changeset names, plus any whose peer range a bumped dependency fell out of. Changesets 3 releases that second kind as a patch, but a narrower peer range is breaking, so `pnpm check:peer-bumps` fails until a changeset names each one as major (`.wiki/decisions/peer-bump-guard.md`). Version numbers across the suite are not expected to match. Don't "fix" a mismatch by adding bumps.
 
 Every user-visible change needs a changeset (`pnpm changeset`) naming the packages it touches. A docs-only change to a package README needs none.
 
-Internal peer ranges carry an upper bound at the next major (`>=1.0.0 <2.0.0`). `changeset version` writes only a floor when it rewrites one, so `pnpm version-packages` runs it and then `scripts/pin-peer-ranges.mjs`, which puts the bound back. CI and the publish workflow run `pnpm check:peer-ranges`, which fails on a range without one.
+Internal peer ranges carry an upper bound at the next major (`>=1.0.0 <2.0.0`). Changesets 3.0.3 keeps the bound when it rewrites a range. `pnpm version-packages` runs `check:peer-bumps`, then `changeset version`, then `scripts/pin-peer-ranges.mjs`, which restores a bound if one is missing. CI and the publish workflow run `pnpm check:peer-ranges`, which fails on a range without one, and `pnpm check:peer-bumps`.
 
 The pipeline is two workflows, deliberately split:
 
-1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`pnpm version-packages`). **Never publishes.**
-2. `.github/workflows/publish.yml` — `workflow_dispatch` only, from `main`, with a typed confirmation. Re-runs the full verify chain, then `pnpm release`.
+1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`pnpm version-packages`) through `changesets/action/version`. **Never publishes.**
+2. `.github/workflows/publish.yml` — `workflow_dispatch` only, from `main`, with a typed confirmation. Re-runs the full verify chain, writes the npm token to `~/.npmrc`, then runs `pnpm release` through `changesets/action/publish`.
 
 Merging the version PR does **not** release. Someone has to run the publish workflow. That split is the point: merging is routine and reversible, pushing to npm is neither — a version number can never be reused. `changeset publish` skips packages already on npm, so re-running after a partial failure resumes safely.
 
@@ -262,6 +263,8 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 
 - **Don't commit `dist/`.** `tsdown` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
 - **`@preact/signals-core` is a peer dep on `@kontsedal/olas-core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
+- **Two TypeScripts.** `tsc` is TypeScript 7 (`@typescript/native`). The `typescript` package is the 6.0 API (`npm:@typescript/typescript6`), because typescript-eslint, svelte-check, vue-tsc, rolldown-plugin-dts and `check-doc-snippets.ts` need an API that TypeScript 7.0 does not ship. Don't collapse them into one `typescript@7`. See `.wiki/decisions/toolchain.md`.
+- **Node 22.22+ to work on the repo, Node 20.19+ to use the packages.** The root `engines` is the toolchain's floor (jsdom 30); every published package keeps `>=20.19`. pnpm 12 refuses a version published less than a day ago (`minimumReleaseAge`), so a fresh `--latest` can land one release back.
 - **biome config in `biome.json`**, currently v2.x per `package.json`. Two rules are intentionally off everywhere. `noExplicitAny` is off because the wrapper types need it. `noConfusingVoidType` is off because it matches the spec's effect signature `() => void | (() => void)`. Don't re-enable them. Three more, `useHookAtTopLevel`, `useExhaustiveDependencies` and `noArrayIndexKey`, are errors in `examples/**` only, where the code is meant to be exemplary; `.wiki/modules/examples.md` lists the package-level exceptions that keep them off elsewhere.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".
 - **Every interface follows one set of rules**, covering the four example apps and the devtools panel. Values are picked by role from a named scale, colour marks state, and the corner tiers name a layer. The scales live in [`examples/_shared/ui/tokens.css`](examples/_shared/ui/tokens.css); the rules and the reasoning are in [`.wiki/decisions/ui-rules.md`](.wiki/decisions/ui-rules.md). Nothing enforces them, which that page says plainly — read it before touching a stylesheet.

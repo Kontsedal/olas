@@ -38,7 +38,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, posix, relative, resolve } from 'node:path'
 import { parse as parseYaml } from 'yaml'
 
-const REPO_ROOT = resolve(__dirname, '..')
+const REPO_ROOT = resolve(import.meta.dirname, '..')
 const WIKI_DIR = join(REPO_ROOT, '.wiki')
 const STALENESS_DAYS = 60
 

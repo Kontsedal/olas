@@ -210,6 +210,7 @@ describe('structuralShare — own `__proto__` and exotic prototypes', () => {
     expect(result.a).toBe(1)
   })
 
+  // biome-ignore-start lint/suspicious/noProto: on a null-prototype object `__proto__` is a plain own key, which is the case this pins
   test('a null-prototype object takes a plain own `__proto__` too', () => {
     const prev = Object.create(null) as Record<string, unknown>
     prev.__proto__ = { inherited: true }
@@ -222,4 +223,5 @@ describe('structuralShare — own `__proto__` and exotic prototypes', () => {
     expect(result.value).toBe(2)
     expect(Object.getOwnPropertyDescriptor(result, '__proto__')?.value).toBe(prev.__proto__)
   })
+  // biome-ignore-end lint/suspicious/noProto: see above
 })

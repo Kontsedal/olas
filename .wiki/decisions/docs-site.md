@@ -11,6 +11,7 @@ covers:
 edges:
   - { type: related, target: typechecked-doc-snippets.md }
   - { type: related, target: esm-only-build.md }
+  - { type: related, target: toolchain.md }
 last_verified: 2026-09-25
 confidence: medium
 ---
@@ -40,7 +41,7 @@ API.md stays. The plan named the generated reference as a replacement for its re
 ## The API reports
 
 - **One script, no per-package config.** `scripts/api-report.mjs` builds each api-extractor config in code from `package.json` `exports`, one per entry with `types`. Core's `/testing` sub-path gets its own report.
-- **What it reads.** It analyses the built declarations only, with a minimal `overrideTsconfig`. api-extractor bundles TypeScript 5.9, and the workspace uses 6.0, so the script silences the version notice.
+- **What it reads.** It analyses the built declarations only, with a minimal `overrideTsconfig`. api-extractor bundles TypeScript 5.9, and the declarations it reads come from the 6.0 API (`toolchain.md`), so the script silences the version notice.
 - **Messages turned off:**
   - `ae-missing-release-tag`: Olas has no release stages.
   - `ae-undocumented`: TSDoc coverage is a BACKLOG item. Overloaded hooks carry their docs on the overloads, and this rule misses them.

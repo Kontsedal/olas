@@ -910,7 +910,7 @@ describe('mutationQueuePlugin — live runs', () => {
     await settle()
 
     expect(finalErrors).toHaveLength(1)
-    expect((finalErrors[0]?.err as Error).message).toBe(
+    expect((finalErrors[0]?.err as Error | undefined)?.message).toBe(
       '[olas/mutation-queue] gave up on "m/run-1"',
     )
     expect(finalErrors[0]?.entry).toMatchObject({
@@ -1009,7 +1009,9 @@ describe('mutationQueuePlugin — default handlers', () => {
     expect(error.mock.calls[0]?.[0]).toBe(
       '[olas/mutation-queue] replay failed for cov/never-defined/r9',
     )
-    expect((error.mock.calls[0]?.[1] as Error).message).toMatch(/no registered mutation/)
+    expect((error.mock.calls[0]?.[1] as Error | undefined)?.message).toMatch(
+      /no registered mutation/,
+    )
     root.dispose()
   })
 })

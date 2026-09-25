@@ -180,16 +180,17 @@ describe('Timeline cause groups', () => {
     ['rollback', [{ type: 'snapshot:rollback', queryKey: ['k'], causeId: 'c' }]],
     ['active', [{ type: 'snapshot:push', queryKey: ['k'], causeId: 'c' }]],
     ['error', [{ type: 'mutation:error', path: ['root'], error: 'x', causeId: 'c' }]],
-  ] as Array<
-    [string, DebugEvent[]]
-  >)('a group whose worst outcome is %s gets that accent', (status, events) => {
-    const bus = fakeRoot()
-    render(<DevtoolsPanel root={bus.root} />)
-    bus.emit(...events)
-    expect(body().querySelector('.olas-devtools-tl-group')?.className).toContain(
-      `olas-devtools-tl-group-${status}`,
-    )
-  })
+  ] as Array<[string, DebugEvent[]]>)(
+    'a group whose worst outcome is %s gets that accent',
+    (status, events) => {
+      const bus = fakeRoot()
+      render(<DevtoolsPanel root={bus.root} />)
+      bus.emit(...events)
+      expect(body().querySelector('.olas-devtools-tl-group')?.className).toContain(
+        `olas-devtools-tl-group-${status}`,
+      )
+    },
+  )
 })
 
 describe('Timeline cache:set-data detail', () => {

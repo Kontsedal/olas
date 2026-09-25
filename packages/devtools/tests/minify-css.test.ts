@@ -46,9 +46,10 @@ describe('the minify-inline-css plugin', () => {
 
   test('rewrites the DEVTOOLS_CSS literal in src/styles.ts only', () => {
     const code = 'export const DEVTOOLS_CSS = `\n.a {\n  b: 1; /* why */\n}\n`\n'
-    expect(plugin.transform(code, 'C:\\repo\\packages\\devtools\\src\\styles.ts')).toEqual({
-      code: 'export const DEVTOOLS_CSS = `.a{b:1}`\n',
-    })
+    const out = plugin.transform(code, 'C:\\repo\\packages\\devtools\\src\\styles.ts')
+    expect(out?.code).toBe('export const DEVTOOLS_CSS = `.a{b:1}`\n')
+    // The map covers the rewrite, so the published sourcemap stays accurate.
+    expect(out?.map.mappings).not.toBe('')
     expect(plugin.transform(code, '/repo/packages/devtools/src/other.ts')).toBeNull()
     expect(plugin.transform('export const X = 1\n', '/repo/src/styles.ts')).toBeNull()
   })

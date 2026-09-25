@@ -73,7 +73,9 @@ describe('a backprop into query data with an own __proto__ key', () => {
     const data = root.api.q.data.peek() as Record<string, unknown>
     expect(Object.getPrototypeOf(data)).toBe(Object.prototype)
     expect(Object.hasOwn(data, '__proto__')).toBe(true)
-    expect((Object.getOwnPropertyDescriptor(data, '__proto__')?.value as User).name).toBe('Ada L')
+    expect(
+      (Object.getOwnPropertyDescriptor(data, '__proto__')?.value as User | undefined)?.name,
+    ).toBe('Ada L')
     root.dispose()
   })
 })

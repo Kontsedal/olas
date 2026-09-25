@@ -3,8 +3,11 @@
 // Every package declares its peers on sibling packages with a ceiling at the
 // next major (`>=0.3.0 <1.0.0`), so an app cannot pair a 1.x satellite with a
 // 2.x core. `changeset version` rewrites a peer range whenever the sibling's
-// new version falls outside it, and it writes only a floor (`>=1.0.0`). The
-// ceiling is gone exactly when a major lands. This script puts it back.
+// new version falls outside it. Changesets 2 wrote only a floor (`>=1.0.0`), so
+// the ceiling was gone exactly when a major landed. Changesets 3.0.3 keeps it
+// (`>=2.0.0 <3.0.0`); this script stays as the backstop, and `--check` catches
+// a hand-edited range. Which packages need a major for a moved range is
+// `check-peer-bumps.mjs`'s job.
 //
 //   node scripts/pin-peer-ranges.mjs          rewrite `>=X.Y.Z` to `>=X.Y.Z <(X+1).0.0`
 //   node scripts/pin-peer-ranges.mjs --check  exit 1 if any internal peer range lacks a ceiling

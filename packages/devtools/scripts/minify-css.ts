@@ -6,6 +6,8 @@
 // would carry those comments and the indentation. The source keeps both;
 // only the published string is minified.
 
+import MagicString, { type SourceMap } from 'magic-string'
+
 /**
  * Drop comments and collapse whitespace. Conservative on purpose: it never
  * removes the space BEFORE a `:`, because `.a :hover` and `.a:hover` are
@@ -21,20 +23,27 @@ export function minifyCss(css: string): string {
     .trim()
 }
 
-/** A rolldown plugin that minifies the `DEVTOOLS_CSS` literal in `src/styles.ts`. */
+/**
+ * A rolldown plugin that minifies the `DEVTOOLS_CSS` literal in `src/styles.ts`.
+ * It returns a sourcemap for the rewrite; rolldown warns on a transform
+ * without one, since the published `index.js.map` would be off after it.
+ */
 export function minifyInlineCss(): {
   name: string
-  transform(code: string, id: string): { code: string } | null
+  transform(code: string, id: string): { code: string; map: SourceMap } | null
 } {
   return {
     name: 'olas-devtools:minify-inline-css',
     transform(code, id) {
       if (!id.replace(/\\/g, '/').endsWith('/src/styles.ts')) return null
-      const next = code.replace(
-        /(DEVTOOLS_CSS = `)([^`]*)(`)/,
-        (_m, open: string, css: string, close: string) => open + minifyCss(css) + close,
-      )
-      return next === code ? null : { code: next }
+      const match = /(DEVTOOLS_CSS = `)([^`]*)`/.exec(code)
+      if (!match) return null
+      const [, open = '', css = ''] = match
+      const min = minifyCss(css)
+      if (min === css) return null
+      const start = match.index + open.length
+      const s = new MagicString(code).overwrite(start, start + css.length, min)
+      return { code: s.toString(), map: s.generateMap({ hires: true, source: id }) }
     },
   }
 }

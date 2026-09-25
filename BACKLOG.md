@@ -30,6 +30,28 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 [from W14] The site is live at https://kontsedal.github.io/olas/, served from the `gh-pages` branch ("Deploy from a branch"). `docs.yml` could not deploy it: GitHub dispatches only workflows that exist on the default branch, and the `github-pages` environment allows only `main`. Once `docs.yml` is on `main`, switch Pages to GitHub Actions (`gh api -X PUT repos/Kontsedal/olas/pages -f build_type=workflow`), run the Docs workflow with `deploy` ticked, and delete the `gh-pages` branch. Until then, a docs change goes live only by rebuilding the site and pushing it to `gh-pages` by hand.
 
+## Toolchain
+
+### [planned] Take vitest 5.0.2 and size-limit 14.0.1 once pnpm's release-age window passes
+
+pnpm 12 refuses a version published less than a day ago (`.wiki/decisions/toolchain.md`). On 2026-09-25 that held `vitest` and `@vitest/coverage-v8` at 5.0.1, and `size-limit` and `@size-limit/preset-small-lib` at 14.0.0. From 2026-09-26, `pnpm update -r --latest` takes them. `@vitest/coverage-v8` is pinned exactly, so it must match `vitest`.
+
+### [idea] Drop the `@typescript/typescript6` alias once TypeScript 7 has an API
+
+`typescript` points at the 6.0 API because typescript-eslint, svelte-check, vue-tsc, rolldown-plugin-dts and `scripts/check-doc-snippets.ts` call it, and TypeScript 7.0 ships none. TypeScript 7.1 is to ship a new API. Once those five run on it, depend on `typescript@7` alone, in the root and in `examples/vue-tasks`, and try `dts: { generator: 'tsgo' }` in tsdown, comparing the `.d.ts` output through `pnpm api:check`.
+
+### [idea] Remove entities' `dts-export-marker` plugin once rolldown-plugin-dts keeps `export {}`
+
+rolldown-plugin-dts 0.28.2+ drops the export list from a chunk whose exports are all inline, which leaks private declarations (`.wiki/pitfalls/dts-export-context.md`). `packages/entities/scripts/dts-export-marker.ts` puts `export {}` back. No upstream issue has been filed yet. When a release fixes it, delete the plugin and confirm `pnpm api:check` still passes.
+
+### [idea] Benchmark Olas through its built entry, not its source
+
+vitest 5 warns that the benchmarks read core's exports through module-runner getters, and the libraries they are compared with load as plain Node modules (`.wiki/decisions/benchmarks.md`). Importing `@kontsedal/olas-core` from its built `dist/` in the bench project, or disabling the module runner there, would remove the cost. The 2026-09-24 ratios would need re-measuring.
+
+### [idea] Publish with npm trusted publishing instead of `NPM_TOKEN`
+
+`publish.yml` writes a long-lived token to `~/.npmrc` for pnpm (`.wiki/decisions/toolchain.md`). npm's trusted publishing authenticates the workflow through OIDC with `id-token: write`, so no token exists to leak, and pnpm 11+ supports it. It needs each package configured on npmjs.com first.
+
 ## Packages
 
 ### [idea] `gcTime: NaN` and `maxIdleTime: NaN` never expire

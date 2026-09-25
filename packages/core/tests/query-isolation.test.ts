@@ -149,28 +149,28 @@ describe('query operations are scoped to one root', () => {
     expect(calls).toEqual(['Bob:2'])
   })
 
-  test.each([
-    'cancel',
-    'cancelAll',
-  ] as const)('%s only aborts the selected root', async (method) => {
-    const signals: AbortSignal[] = []
-    const q = defineQuery({
-      id: 'query-isolation/129',
-      key: () => [],
-      fetcher: async ({ signal }) => {
-        signals.push(signal)
-        return new Promise<string>(() => {})
-      },
-    })
-    const def = defineController((ctx) => ({ sub: createQuery(ctx, q) }))
-    const a = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
-    const b = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
-    expect(signals).toHaveLength(2)
-    a.bindQuery(q)[method]()
-    expect(signals[0]?.aborted).toBe(true)
-    expect(signals[1]?.aborted).toBe(false)
-    expect(b.api.sub.isFetching.peek()).toBe(true)
-  })
+  test.each(['cancel', 'cancelAll'] as const)(
+    '%s only aborts the selected root',
+    async (method) => {
+      const signals: AbortSignal[] = []
+      const q = defineQuery({
+        id: 'query-isolation/129',
+        key: () => [],
+        fetcher: async ({ signal }) => {
+          signals.push(signal)
+          return new Promise<string>(() => {})
+        },
+      })
+      const def = defineController((ctx) => ({ sub: createQuery(ctx, q) }))
+      const a = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
+      const b = keep(createRoot(def, { queries: queryEngine(), deps: {} }))
+      expect(signals).toHaveLength(2)
+      a.bindQuery(q)[method]()
+      expect(signals[0]?.aborted).toBe(true)
+      expect(signals[1]?.aborted).toBe(false)
+      expect(b.api.sub.isFetching.peek()).toBe(true)
+    },
+  )
 
   test('infinite query operations use the selected root, including ambiguity guards', async () => {
     const calls: string[] = []

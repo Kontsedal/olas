@@ -11,11 +11,11 @@ jobs:
     name: typecheck + lint + test + build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6.1.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: pnpm
@@ -35,6 +35,10 @@ jobs:
 
       # Every internal peer range keeps an upper bound (scripts/pin-peer-ranges.mjs).
       - run: pnpm check:peer-ranges
+
+      # A pending release that leaves a package's peer range behind needs a
+      # major changeset for that package; changesets 3 would bump it by a patch.
+      - run: pnpm check:peer-bumps
 
       # Every TypeScript block in the README, API, RECIPES, PLUGINS, MIGRATING
       # and package READMEs compiles against the current sources, so a copied
@@ -71,7 +75,9 @@ jobs:
 
   # The packages are ESM-only and promise that a CommonJS consumer can still
   # require() them on Node >= 20.19. Check that on the oldest supported Node and
-  # the current LTS lines, against the built dist.
+  # the current LTS lines, against the built dist. The toolchain (tsdown, vitest,
+  # jsdom) needs Node 22.22 or later, so the dist is built on 22 and only the
+  # smoke check runs on the matrix Node.
   dist-on-node:
     name: dist loads on Node ${{ matrix.node }}
     runs-on: ubuntu-latest
@@ -79,17 +85,23 @@ jobs:
       matrix:
         node: ['20.19', '22', '24']
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6.1.0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm build
 
-      - run: pnpm smoke:dist
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+
+      # `node` itself, not `pnpm smoke:dist`, so nothing but the check runs on
+      # the matrix Node.
+      - run: node scripts/verify-dist.mjs

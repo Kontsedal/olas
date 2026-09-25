@@ -24,7 +24,7 @@ export function olasPlugin(root: Root<unknown>): {
 };
 
 // @public
-export type Refs<T> = { readonly [K in keyof T]: Readonly<Ref<T[K]>> };
+export type Refs<T> = { readonly [K in keyof T]: Readonly<Ref<T[K]>>; };
 
 // @public
 export interface Register {}

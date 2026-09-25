@@ -113,30 +113,30 @@ describe('a subscriber past staleTime refetches whatever optimistic writes did',
     root.dispose()
   })
 
-  test.each([
-    'rollback',
-    'finalize',
-  ] as const)('a live optimistic write: the arriving subscriber waits for it, then one fetch runs after %s', async (settle) => {
-    const { q, signals } = counted(`optimistic-staleness/live-${settle}`)
-    const { root, handle } = mount(q)
-    await flush()
-    await vi.advanceTimersByTimeAsync(2_000)
-    const snapshot = handle.setData(() => 'guess')
-    const child = root.api.open()
-    await flush()
-    // A fetch now would land over the guess on screen.
-    expect(signals).toHaveLength(1)
-    expect(child.api.s.data.value).toBe('guess')
-    expect(child.api.s.isStale.value).toBe(true)
-    snapshot[settle]()
-    await flush()
-    expect(signals).toHaveLength(2)
-    expect(child.api.s.data.value).toBe('server-2')
-    expect(child.api.s.isStale.value).toBe(false)
-    await flush()
-    expect(signals).toHaveLength(2)
-    root.dispose()
-  })
+  test.each(['rollback', 'finalize'] as const)(
+    'a live optimistic write: the arriving subscriber waits for it, then one fetch runs after %s',
+    async (settle) => {
+      const { q, signals } = counted(`optimistic-staleness/live-${settle}`)
+      const { root, handle } = mount(q)
+      await flush()
+      await vi.advanceTimersByTimeAsync(2_000)
+      const snapshot = handle.setData(() => 'guess')
+      const child = root.api.open()
+      await flush()
+      // A fetch now would land over the guess on screen.
+      expect(signals).toHaveLength(1)
+      expect(child.api.s.data.value).toBe('guess')
+      expect(child.api.s.isStale.value).toBe(true)
+      snapshot[settle]()
+      await flush()
+      expect(signals).toHaveLength(2)
+      expect(child.api.s.data.value).toBe('server-2')
+      expect(child.api.s.isStale.value).toBe(false)
+      await flush()
+      expect(signals).toHaveLength(2)
+      root.dispose()
+    },
+  )
 
   test('the fetch held back by a live write needs a holder when the write settles', async () => {
     const { q, signals } = counted('optimistic-staleness/unheld')
@@ -401,43 +401,43 @@ function mountFeed(feed: InfiniteQuery<[], Page, Page>) {
 const guess = (): Page[] => [{ n: 0, v: 'guess' }]
 
 describe('infinite queries: a subscriber past staleTime refetches whatever optimistic writes did', () => {
-  test.each([
-    'rollback',
-    'finalize',
-  ] as const)('a settled (%s) optimistic write: the arriving subscriber refetches', async (settle) => {
-    const { feed, signals } = countedFeed(`optimistic-staleness/infinite-settled-${settle}`)
-    const { root, handle } = mountFeed(feed)
-    await flush()
-    await vi.advanceTimersByTimeAsync(2_000)
-    handle.setData(guess)[settle]()
-    expect(root.api.f.isStale.value).toBe(true)
-    const child = root.api.open()
-    await flush()
-    expect(signals).toHaveLength(2)
-    expect(child.api.f.pages.value[0]?.v).toBe('server-2')
-    root.dispose()
-  })
+  test.each(['rollback', 'finalize'] as const)(
+    'a settled (%s) optimistic write: the arriving subscriber refetches',
+    async (settle) => {
+      const { feed, signals } = countedFeed(`optimistic-staleness/infinite-settled-${settle}`)
+      const { root, handle } = mountFeed(feed)
+      await flush()
+      await vi.advanceTimersByTimeAsync(2_000)
+      handle.setData(guess)[settle]()
+      expect(root.api.f.isStale.value).toBe(true)
+      const child = root.api.open()
+      await flush()
+      expect(signals).toHaveLength(2)
+      expect(child.api.f.pages.value[0]?.v).toBe('server-2')
+      root.dispose()
+    },
+  )
 
-  test.each([
-    'rollback',
-    'finalize',
-  ] as const)('a live optimistic write: the arriving subscriber waits, then one refetch runs after %s', async (settle) => {
-    const { feed, signals } = countedFeed(`optimistic-staleness/infinite-live-${settle}`)
-    const { root, handle } = mountFeed(feed)
-    await flush()
-    await vi.advanceTimersByTimeAsync(2_000)
-    const snapshot = handle.setData(guess)
-    const child = root.api.open()
-    await flush()
-    expect(signals).toHaveLength(1)
-    expect(child.api.f.pages.value[0]?.v).toBe('guess')
-    expect(child.api.f.isStale.value).toBe(true)
-    snapshot[settle]()
-    await flush()
-    expect(signals).toHaveLength(2)
-    expect(child.api.f.pages.value[0]?.v).toBe('server-2')
-    root.dispose()
-  })
+  test.each(['rollback', 'finalize'] as const)(
+    'a live optimistic write: the arriving subscriber waits, then one refetch runs after %s',
+    async (settle) => {
+      const { feed, signals } = countedFeed(`optimistic-staleness/infinite-live-${settle}`)
+      const { root, handle } = mountFeed(feed)
+      await flush()
+      await vi.advanceTimersByTimeAsync(2_000)
+      const snapshot = handle.setData(guess)
+      const child = root.api.open()
+      await flush()
+      expect(signals).toHaveLength(1)
+      expect(child.api.f.pages.value[0]?.v).toBe('guess')
+      expect(child.api.f.isStale.value).toBe(true)
+      snapshot[settle]()
+      await flush()
+      expect(signals).toHaveLength(2)
+      expect(child.api.f.pages.value[0]?.v).toBe('server-2')
+      root.dispose()
+    },
+  )
 
   test('an optimistic write leaves the clock alone; a page fetch and a canonical write restart it', async () => {
     const { feed } = countedFeed('optimistic-staleness/infinite-clock')

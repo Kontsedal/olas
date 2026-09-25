@@ -1,6 +1,6 @@
 import tailwindcss from '@tailwindcss/vite'
 import { defineConfig } from 'vite'
-import { olasAliases, olasDefine } from '../_shared/aliases'
+import { olasAliases, olasDefine } from '../_shared/aliases.ts'
 
 export default defineConfig(({ mode }) => ({
   plugins: [tailwindcss()],

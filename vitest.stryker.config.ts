@@ -4,7 +4,7 @@
 // after the merge, because `mergeConfig` concatenates arrays: merged in, it
 // would add core's glob to the root's every-package glob instead of replacing it.
 import { defineConfig, mergeConfig } from 'vitest/config'
-import base from './vitest.config'
+import base from './vitest.config.ts'
 
 const config = mergeConfig(base, defineConfig({ test: { coverage: { enabled: false } } }))
 delete config.test.projects

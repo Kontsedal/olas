@@ -1,6 +1,6 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
-import { olasAliases } from '../_shared/aliases'
+import { olasAliases } from '../_shared/aliases.ts'
 
 export default defineConfig({
   plugins: [react()],

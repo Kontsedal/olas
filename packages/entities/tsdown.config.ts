@@ -1,4 +1,5 @@
 import { defineConfig, type UserConfig } from 'tsdown'
+import { dtsExportMarker } from './scripts/dts-export-marker.ts'
 
 const shared: UserConfig = {
   entry: { index: 'src/index.ts' },
@@ -16,6 +17,13 @@ const shared: UserConfig = {
 // Vite, webpack, Next and Rspack resolve in dev, so the devtools see events
 // against the published package. tsdown cleans once, before both builds.
 export default defineConfig([
-  { ...shared, dts: true, clean: true, define: { __DEV__: 'false' } },
+  {
+    ...shared,
+    dts: true,
+    clean: true,
+    define: { __DEV__: 'false' },
+    // Keeps the private brand symbols out of the published types.
+    plugins: [dtsExportMarker()],
+  },
   { ...shared, outDir: 'dist/dev', dts: false, clean: false, define: { __DEV__: 'true' } },
 ])

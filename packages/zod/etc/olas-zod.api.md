@@ -13,7 +13,7 @@ import { Validator } from '@kontsedal/olas-core';
 import { z } from 'zod';
 
 // @public
-export function createZodForm<T extends z.ZodObject<z.ZodRawShape>>(ctx: Ctx, schema: T, options?: ZodFormOptions<T>): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]> }>;
+export function createZodForm<T extends z.ZodObject<z.ZodRawShape>>(ctx: Ctx, schema: T, options?: ZodFormOptions<T>): Form<{ [K in keyof T['shape']]: ZodToLeaf<T['shape'][K]>; }>;
 
 // @public
 export type ExtraValidators = Record<string, Validator<any>>;
@@ -32,7 +32,7 @@ export type ZodFormOptions<T extends z.ZodObject<z.ZodRawShape>> = {
 };
 
 // @public
-export type ZodToLeaf<S> = UnwrapZod<S> extends z.ZodObject<infer RawShape> ? Form<{ [K in keyof RawShape]: ZodToLeaf<RawShape[K]> }> : UnwrapZod<S> extends z.ZodArray<infer Element> ? FieldArray<ZodToLeaf<Element> extends Form<any> | Field<any> ? ZodToLeaf<Element> : never> : Field<z.infer<UnwrapZod<S> & z.ZodType>>;
+export type ZodToLeaf<S> = UnwrapZod<S> extends z.ZodObject<infer RawShape> ? Form<{ [K in keyof RawShape]: ZodToLeaf<RawShape[K]>; }> : UnwrapZod<S> extends z.ZodArray<infer Element> ? FieldArray<ZodToLeaf<Element> extends Form<any> | Field<any> ? ZodToLeaf<Element> : never> : Field<z.infer<UnwrapZod<S> & z.ZodType>>;
 
 // @public
 export function zodValidator<T>(schema: z.ZodType<T>): Validator<T>;

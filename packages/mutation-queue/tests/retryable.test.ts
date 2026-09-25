@@ -116,7 +116,7 @@ describe('isRetryable — a replay', () => {
     expect(adapter.store.size).toBe(0)
     expect(attempts).toEqual([])
     expect(errors).toHaveLength(1)
-    expect((errors[0]?.err as HttpError).status).toBe(422)
+    expect((errors[0]?.err as HttpError | undefined)?.status).toBe(422)
     // The entry as it stood when the attempt failed: its first attempt.
     expect(errors[0]?.entry).toMatchObject({ mutationId: id, runId: 'r1', attempts: 1 })
     expect(asked).toHaveLength(1)
@@ -240,7 +240,7 @@ describe('isRetryable — a live run', () => {
     expect(calls).toEqual([{ sku: 'A-1' }])
     expect(adapter.store.size).toBe(0)
     expect(errors).toHaveLength(1)
-    expect((errors[0]?.err as HttpError).status).toBe(422)
+    expect((errors[0]?.err as HttpError | undefined)?.status).toBe(422)
     expect(errors[0]?.entry).toMatchObject({ mutationId: id, variables: { sku: 'A-1' } })
     root.dispose()
 

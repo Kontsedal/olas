@@ -2273,3 +2273,23 @@ Two core budgets were raised to 17.5 KB and 23.5 KB.
 **`HydrationBoundary` below an outer `<Suspense>`** (`context.ts`, `findReusable`). A parent that re-creates the boundary on every retry made each retry build a new root, refetch and suspend again (22 roots in 200 ms). A retry now also reuses an unclaimed root built from the same `def`, the same `hydrate` object and `deps` with the same members. Two boundaries that share a `def` can both find one root; the commit that fails to claim it rebuilds, as before. When the options changed between attempts, a development build warns once. `pitfalls/render-phase-root-leak.md` has the rule.
 
 **Release closure.** A dry run of `changeset version` in a throwaway worktree takes all 14 packages to 1.0.0, and rewrites 13 internal peer ranges to a bare floor. `scripts/pin-peer-ranges.mjs` puts the upper bound back; `pnpm version-packages` runs both, `version.yml` calls it, and CI and the publish workflow run `pnpm check:peer-ranges`. The repo now lets Actions open pull requests, and an `NPM_TOKEN` secret exists, so both BACKLOG release blockers are gone. mutation-queue's `>=0.9.0` floor on core is deliberate: it needs core APIs a 0.9.0 was to ship, and `changeset version` rewrites it at 1.0.
+
+## [2026-09-25 19:30] ingest | every dependency on its latest version
+
+**What moved.** TypeScript 6.0 → 7.0, vitest 4 → 5 (with coverage-v8), jsdom 29 → 30, tsdown 0.22 → 0.23 (rolldown-plugin-dts 0.28), biome 2.4 → 2.5, changesets 2 → 3, pnpm 10 → 12, `@types/node` 25 → 26, Vite 8.0 → 8.3, React 19.2 → 19.3, zod 4.4 → 4.6, lucide-react 1.16 → 1.48, and the GitHub Actions: checkout v7, setup-node v7, pnpm/action-setup v6.1.0, changesets/action v2.1.2, upload-pages-artifact v5, deploy-pages v5. `decisions/toolchain.md` records why each forced change is the way it is.
+
+**The decisions worth knowing:**
+- **Two TypeScripts.** `tsc` is 7.0 (`@typescript/native`), and `typescript` is the 6.0 API (`@typescript/typescript6`), because five tools call an API 7.0 does not ship.
+- **Node 22 to build.** The toolchain's floor is jsdom's `^22.22.2 || ^24.15.0 || >=26`. The dist smoke on Node 20.19 now builds on 22 and runs `verify-dist.mjs` alone on the matrix Node.
+- **Changesets 3 plus a guard.** It releases a package whose peer range a release leaves behind as a patch; `check:peer-bumps` fails until a changeset names it as major (`decisions/peer-bump-guard.md`). A dry run on two worktrees showed core 2.0.0 taking react to 2.0.0 under changesets 2.31 and to 1.0.1 under 3.0.3.
+- **pnpm 12's release-age window** held vitest at 5.0.1 and size-limit at 14.0.0; BACKLOG takes them tomorrow.
+
+**What broke and how it was fixed:**
+- rolldown-plugin-dts 0.28.2's inline exports leaked entities' private `BRAND` and `PHANTOM` symbols into its public types. `api:check` caught it, and an entities build plugin appends `export {}` (`pitfalls/dts-export-context.md`). Four other API reports changed only in formatting.
+- vitest 5 removed the `bench` export; both bench files now run `bench` from the test context.
+- biome 2.5 added `noUnsafeOptionalChaining`, `noProto` and `noSvgWithoutTitle` to its recommended rules, and its formatter wraps `test.each` differently.
+- rolldown 1.2 warned on devtools' CSS transform, which now returns a `magic-string` sourcemap.
+- The VitePress build lost `vue/server-renderer` under the pnpm 12 install, so the root declares `vue`.
+- Vite 8.3 warned on config files its future native loader cannot read, so the root package is `"type": "module"` and the example configs import `aliases.ts` with its extension.
+
+**Verified locally** on Node 26.8.1 and pnpm 12.6.0: build, typecheck, lint, `check:peer-ranges`, `check:peer-bumps`, `check:doc-snippets`, `test:coverage` (2,558 tests in 188 files, every gate met), the examples' tests and builds, publint, attw, `smoke:dist`, `check:public-types`, `api:check`, size, `docs:build`, `pnpm bench` and a Stryker dry run. The workflows themselves have not run yet; the publish path's `~/.npmrc` auth was checked with a fake token against `pnpm whoami`.
