@@ -3,7 +3,7 @@ name: use-root
 description: The root is built once outside React as a handle, provided through context, resolved by useRoot() to root.api (typed by the augmented Register), and read through useSyncExternalStore-backed hooks.
 type: flow
 covers:
-  - packages/react/src/context.ts:14-127
+  - packages/react/src/context.ts:25-138
   - packages/react/src/hooks.ts:24-154
   - packages/core/src/controller/root.ts:114-253
 edges:
@@ -41,9 +41,9 @@ inside any component
 
 1. **`createRoot(def, options)`** runs the controller factory exactly once and returns a frozen `Root<Api>` handle (`packages/core/src/controller/root.ts:191-229`). The app's api is on `root.api`, and the controls sit beside it: `dispose`, `suspend`, `resume`, `dehydrate`, `hydrate`, `waitForIdle`, `bindQuery`, `inject` and `debug`. See `../entities/controller-instance.md` and `../decisions/root-handle-separate.md`.
 
-2. **`<OlasProvider root={root}>`** is a one-line React Context provider (`packages/react/src/context.ts:36-38`). The context's default value is `null`. No setup work happens inside React, because the root already exists.
+2. **`<OlasProvider root={root}>`** is a one-line React Context provider (`packages/react/src/context.ts:47-49`). The context's default value is `null`. No setup work happens inside React, because the root already exists.
 
-3. **`useRoot()`** reads `useContext(OlasContext)` and returns `root.api` (`context.ts:70-76`). With the context `null`, meaning no provider, it throws `[olas] useRoot() called outside <OlasProvider>`, which catches the common "forgot to wrap" mistake. The return type is `RegisteredApi` (`context.ts:55-58`): the api of the root the app registered through `interface Register { root: typeof root }`, else `unknown`. An app that does not register names the type per call, `useRoot<AppApi>()`, as an unchecked cast. The reasoning is in `../decisions/typed-use-root.md`, and `register.test-d.tsx` pins the augmentation. The kanban example registers its root, which proves the merge against the built `.d.ts`.
+3. **`useRoot()`** reads `useContext(OlasContext)` and returns `root.api` (`context.ts:81-87`). With the context `null`, meaning no provider, it throws `[olas] useRoot() called outside <OlasProvider>`, which catches the common "forgot to wrap" mistake. The return type is `RegisteredApi` (`context.ts:66-69`): the api of the root the app registered through `interface Register { root: typeof root }`, else `unknown`. An app that does not register names the type per call, `useRoot<AppApi>()`, as an unchecked cast. The reasoning is in `../decisions/typed-use-root.md`, and `register.test-d.tsx` pins the augmentation. The kanban example registers its root, which proves the merge against the built `.d.ts`.
 
 4. **`useValue(signal, options?)`** wraps `useSyncExternalStore(subscribe, getSnapshot, getSnapshot)` (`packages/react/src/hooks.ts:102-154`):
    - `subscribe(onChange)` goes through the signal's `subscribeChanges`, which skips the synchronous initial fire (`hooks.ts:37-39`; see `../modules/react.md`'s subscription section).
@@ -62,7 +62,7 @@ The controller tree is unaffected by StrictMode because it lives outside React: 
 
 ## Several roots
 
-`useRoot()` reads one context. An app with several unrelated roots gets a typed pair per root from `createOlasContext<Api>(displayName)`, which returns `{ Provider, useRoot, Context }` (`context.ts:108-127`). Pinned by `field-input-and-context.test.tsx`. A component outside a provider reads `root.api` directly, since the root is a plain object. `useController(root)` was the identity function for that case, and 1.0 removed it.
+`useRoot()` reads one context. An app with several unrelated roots gets a typed pair per root from `createOlasContext<Api>(displayName)`, which returns `{ Provider, useRoot, Context }` (`context.ts:119-138`). Pinned by `field-input-and-context.test.tsx`. A component outside a provider reads `root.api` directly, since the root is a plain object. `useController(root)` was the identity function for that case, and 1.0 removed it.
 
 ## Failure modes
 

@@ -100,6 +100,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/stream-chunks-split-tags.md](pitfalls/stream-chunks-split-tags.md) — a server-rendered stream's chunks can end inside a tag or attribute; anything written between two chunks has to check where it lands
 - [pitfalls/node-localstorage-shadows-jsdom.md](pitfalls/node-localstorage-shadows-jsdom.md) — on Node 25+, Node's own `localStorage` global (undefined without a flag) hides jsdom's, so jsdom tests silently skip storage
 - [pitfalls/persisted-state-breaks-hydration.md](pitfalls/persisted-state-breaks-hydration.md) — `createPersisted` reads localStorage during construction, so a returning visitor's first client render disagrees with the server HTML
+- [pitfalls/render-phase-root-leak.md](pitfalls/render-phase-root-leak.md) — a root built in render and disposed in an effect leaks when React discards the render (a child suspends before the first commit); `HydrationBoundary` reuses it on retry and sweeps it once idle
 
 ## Candidates (not authoritative)
 

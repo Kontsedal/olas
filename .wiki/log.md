@@ -2203,3 +2203,21 @@ Two core budgets were raised to 17.5 KB and 23.5 KB.
 - the tsdown upstream report, which is the maintainer's call;
 - the wrapper fan-out cost, which turned out not to be the wrappers;
 - `wiki-lint`'s automated candidate promotion, contradiction detection and confidence decay, which need judgment and stay manual lint passes.
+
+## [2026-09-25 09:52] ingest | `HydrationBoundary` leaked the root of a render that never committed
+
+**Reported:** a child that suspends before the boundary's first commit leaves the boundary's roots alive. The report's reproduction built two roots, disposed none, and saw their effects run after unmount.
+
+**Confirmed, and wider than reported.** Measured against the old boundary under React 19.2:
+- unmount while suspended: 2 roots, 0 disposed;
+- suspend, resolve, unmount: 3 roots, 1 disposed;
+- `useSuspenseQuery` under a `<Suspense>` above the boundary: 22 roots and 22 fetches in 200 ms, on the fallback forever;
+- a `def` change in a suspended transition disposed the committed root during render.
+
+**Fix** (`packages/react/src/context.ts`): a render acquires a root, and only the commit claims one. A retry of the same element reuses its root through the props object. The sweep disposes a root still unclaimed ten seconds after it goes idle. A failed claim rebuilds before paint, which StrictMode's remount already needed. The old root of a `def` change is disposed at the new root's commit.
+
+**Tests:** six cases, (f) to (k), in `hydration-boundary.test.tsx`. (f) to (j) fail against the old boundary. Mutations confirmed that (k) and (b) pin the rebuild on a failed claim, and (i) pins the wait for idle.
+
+**Pages:** `modules/react.md` (the `HydrationBoundary` section, rewritten), the new `pitfalls/render-phase-root-leak.md`, and moved citations in `flows/ssr.md` and `flows/use-root.md`. SPEC §16's SSR paragraph gained the contract. BACKLOG gained an `[idea]` for a dev warning on the retry loop that remains when the parent re-creates the element.
+
+**Size:** react's bundle went from 3,538 to 3,798 bytes brotli, against a 3,800-byte budget.

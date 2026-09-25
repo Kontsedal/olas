@@ -20,7 +20,7 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 - Cite `SPEC.md §X.Y` when an item amends the spec; that signals "spec change required, not only an implementation."
 - If a backlog item is implied by an existing spec line, quote the line.
 
-**At 1.0, the backlog is empty of open work.** The 1.0 BACKLOG pass (2026-09-25, `.wiki/log.md`) implemented every item worth doing and dropped the rest, with the reasons below. What remains planned is the release itself, which needs the maintainer: repo settings, the npm token and the Version Packages PR.
+**The 1.0 BACKLOG pass emptied the backlog of open work.** That pass (2026-09-25, `.wiki/log.md`) implemented every item worth doing and dropped the rest, with the reasons below. What remains planned is the release itself, which needs the maintainer: repo settings, the npm token and the Version Packages PR.
 
 ---
 
@@ -50,6 +50,12 @@ The 0.4.0 release had to be finished by hand twice, for reasons the workflow can
 Neither blocks releasing — the local path works — but the CI pipeline is decorative until both are done.
 
 Note the split since. `version.yml` opens the Version Packages PR and needs fix 1. `publish.yml` is `workflow_dispatch`-only, pushes to npm, and needs fix 2. Fix 1 is the more annoying of the two, because without it there is no automated PR to review and the whole version step has to be run by hand.
+
+## Packages
+
+### [idea] Warn when a `HydrationBoundary` rebuilds its root on every retry
+
+A retry reuses the root of a discarded render only when it renders the same element, found by the props object (`.wiki/pitfalls/render-phase-root-leak.md`). With the `<Suspense>` above the component that renders the boundary, each attempt is a new element. Each retry then builds a new root, which refetches what the child suspended on, and a child on `useSuspenseQuery` can suspend forever. The sweep disposes the old roots, so it no longer leaks, but the loop is silent. A development warning could fire when a boundary builds a root for a `def` while an unclaimed root for that `def` is still waiting for its sweep. Sibling boundaries that share a `def` would trigger it too, so the check needs a second signal, such as the same `def` rebuilt three times with no commit between.
 
 ## Dropped
 

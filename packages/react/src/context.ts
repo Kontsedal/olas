@@ -1,4 +1,10 @@
-import { type AmbientDeps, createRoot, type Root, type RootOptions } from '@kontsedal/olas-core'
+import {
+  type AmbientDeps,
+  type ControllerDef,
+  createRoot,
+  type Root,
+  type RootOptions,
+} from '@kontsedal/olas-core'
 import {
   type Context,
   createContext,
@@ -6,10 +12,15 @@ import {
   type ReactNode,
   useContext,
   useEffect,
+  useLayoutEffect,
   useReducer,
   useRef,
 } from 'react'
 import { installStreamingIntake } from './streaming'
+
+// Claim a root in the commit, before the browser paints; plain effect on the
+// server, where useLayoutEffect warns (and no effect runs anyway).
+const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 const OlasContext = createContext<Root<unknown> | null>(null)
 OlasContext.displayName = 'OlasContext'
@@ -164,6 +175,113 @@ function warnServerBoundary(): void {
 }
 
 /**
+ * How long a root built during a render may sit uncommitted, once its work is
+ * idle, before it is disposed as an orphan.
+ */
+const ORPHAN_GRACE_MS = 10_000
+
+/**
+ * A root `HydrationBoundary` built during a render that has not committed.
+ * React can throw that render away: a child suspends or throws before the
+ * boundary's first commit, a higher-priority update interrupts it, or the tree
+ * unmounts while suspended. No effect of the boundary runs then, so nothing
+ * but the sweep below disposes the root.
+ */
+type Uncommitted = {
+  root: Root<unknown>
+  /** The props object of the render that built it. */
+  key: object
+  /** Bumped on each touch and on claim, so a stale sweep stands down. */
+  generation: number
+  timer: ReturnType<typeof setTimeout> | undefined
+}
+
+/** Client only: the roots no commit has claimed yet. */
+const uncommitted = new Map<Root<unknown>, Uncommitted>()
+/**
+ * The same roots by props object. A retry of a thrown-away render reuses the
+ * element, and with it the props object, so it finds its root here instead of
+ * building another. Rebuilding on every retry refetched whatever the child
+ * suspended on, and it suspended again, forever.
+ */
+const uncommittedByProps = new WeakMap<object, Uncommitted>()
+
+/**
+ * The root for a render with no committed root to use: the uncommitted one
+ * this element built on an earlier attempt, or a new one.
+ */
+function acquireRoot<Api>(
+  key: object,
+  def: ControllerDef<void, Api>,
+  options: RootOptions<AmbientDeps>,
+): Root<Api> {
+  const server = typeof window === 'undefined'
+  const earlier = uncommittedByProps.get(key)
+  // On the client, a root is reusable only while unclaimed: once a boundary
+  // commits it, a second fiber rendering the same element builds its own.
+  if (earlier !== undefined && (server || uncommitted.get(earlier.root) === earlier)) {
+    if (!server) armSweep(earlier)
+    return earlier.root as Root<Api>
+  }
+  const root = createRoot(def, options) as Root<Api>
+  const entry: Uncommitted = { root, key, generation: 0, timer: undefined }
+  uncommittedByProps.set(key, entry)
+  // The server never commits, so it keeps no strong reference and arms no
+  // timer: the WeakMap entry goes when the element does.
+  if (!server) {
+    uncommitted.set(root, entry)
+    armSweep(entry)
+  }
+  return root
+}
+
+/**
+ * (Re)start the countdown to disposing an unclaimed root. The grace period
+ * starts once the root is idle: a child suspended on the root's own fetch is
+ * retried when that fetch settles, and the retry must still find the root.
+ */
+function armSweep(entry: Uncommitted): void {
+  const generation = ++entry.generation
+  clearTimeout(entry.timer)
+  entry.timer = undefined
+  const stillUnclaimed = (): boolean =>
+    entry.generation === generation && uncommitted.get(entry.root) === entry
+  const countDown = (): void => {
+    if (!stillUnclaimed()) return
+    entry.timer = setTimeout(() => {
+      if (!stillUnclaimed()) return
+      uncommitted.delete(entry.root)
+      uncommittedByProps.delete(entry.key)
+      entry.root.dispose()
+    }, ORPHAN_GRACE_MS)
+  }
+  entry.root.waitForIdle().then(countDown, countDown)
+}
+
+/**
+ * Take ownership of `root` in the commit. `false` when it is no longer
+ * unclaimed: the sweep disposed it, another fiber rendering the same element
+ * claimed it first, or StrictMode's simulated unmount disposed it after this
+ * boundary claimed it.
+ */
+function claimRoot(root: Root<unknown>): boolean {
+  const entry = uncommitted.get(root)
+  if (entry === undefined) return false
+  uncommitted.delete(root)
+  uncommittedByProps.delete(entry.key)
+  entry.generation++
+  clearTimeout(entry.timer)
+  return true
+}
+
+/** The root a boundary has committed, with what it was built from. */
+type Owned<Api> = {
+  root: Root<Api>
+  def: ControllerDef<void, Api>
+  options: RootOptions<AmbientDeps>
+}
+
+/**
  * Hydration boundary for SSR: constructs a `Root<Api>` once on the client
  * with the supplied `DehydratedState` (typically serialized into the HTML
  * by `root.dehydrate()` on the server), then provides it to descendants.
@@ -186,13 +304,22 @@ function warnServerBoundary(): void {
  * </HydrationBoundary>
  * ```
  *
- * The boundary **owns** the root: it is created lazily during the first render
- * (in a ref, so `createRoot`'s side effects don't run twice under StrictMode)
- * and **disposed on unmount**. `options` is read **once** on mount — a new
- * inline `options={{...}}` on a parent re-render is intentionally ignored (so
- * the example above doesn't discard cache state every render). The root is
- * recreated only when the `def` identity changes; to swap it on navigation,
- * pass a different `def` (or re-key the component).
+ * The boundary **owns** the root: it is built during the first render, so the
+ * children can read hydrated data in that render, and **disposed on unmount**.
+ * `options` is read **once** on mount — a new inline `options={{...}}` on a
+ * parent re-render is intentionally ignored (so the example above doesn't
+ * discard cache state every render). The root is recreated only when the `def`
+ * identity changes; to swap it on navigation, pass a different `def` (or
+ * re-key the component).
+ *
+ * **A render that never commits.** A child that suspends or throws before the
+ * boundary's first commit makes React discard the render, and the root with
+ * it. A retry of the same element reuses that root. A root no commit claims is
+ * disposed about ten seconds after its work goes idle. A retry of an element
+ * the parent re-created cannot find the old root and builds a new one, which
+ * refetches what the child suspended on. Put a `<Suspense>` boundary inside
+ * `HydrationBoundary`, around the part that suspends, so the boundary commits
+ * first.
  *
  * **SSR contract.** During server rendering, callers construct a per-request
  * root and pass it to `<OlasProvider root={...} />`, then dispose it after the
@@ -206,58 +333,64 @@ export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): Reac
   const { def, options, children, streaming = true } = props
   if (__DEV__ && typeof window === 'undefined') warnServerBoundary()
 
-  const rootRef = useRef<Root<Api> | null>(null)
+  // Written only in the commit, so a render reads the last committed root.
+  const ownedRef = useRef<Owned<Api> | null>(null)
   // `options` is captured ONCE (first mount) so a new inline literal on a
   // parent re-render can't recreate the root and discard its cache.
   const optionsRef = useRef(options)
-  const defRef = useRef(def)
   const [, forceRender] = useReducer((n: number) => n + 1, 0)
 
-  // `def` identity change → dispose the old root; a fresh one is created below.
-  // The server payload in `options.hydrate` described the FIRST root's tree:
-  // the replacement starts from its own fetches rather than re-applying stale
-  // server state. (A StrictMode remount of the same `def` still hydrates.)
-  if (rootRef.current !== null && defRef.current !== def) {
-    rootRef.current.dispose()
-    rootRef.current = null
-    if (optionsRef.current.hydrate !== undefined) {
-      optionsRef.current = { ...optionsRef.current, hydrate: undefined }
-    }
+  // A render neither disposes a root nor takes ownership of one: React can
+  // discard it. `createRoot` is side-effectful (fetches, timers, focus/online
+  // listeners), so an unclaimed root is tracked until a commit claims it or
+  // the sweep disposes it (`acquireRoot`).
+  const owned = ownedRef.current
+  let root: Root<Api>
+  let rootOptions: RootOptions<AmbientDeps>
+  if (owned !== null && owned.def === def) {
+    root = owned.root
+    rootOptions = owned.options
+  } else {
+    // For a new `def`, the server payload in `options.hydrate` described the
+    // FIRST root's tree: the replacement starts from its own fetches rather
+    // than re-applying stale server state. (A StrictMode remount of the same
+    // `def` still hydrates.)
+    rootOptions = owned === null ? optionsRef.current : { ...owned.options, hydrate: undefined }
+    root = acquireRoot(props, def, rootOptions)
   }
-  // Create lazily during render. `createRoot` is side-effectful (fetches,
-  // timers, focus/online listeners), so it must NOT run in `useMemo` /
-  // `useState`-initializer — StrictMode re-invokes those and orphans a live
-  // root. A ref mutated in render creates exactly one root across StrictMode's
-  // double render.
-  if (rootRef.current === null) {
-    rootRef.current = createRoot(def, optionsRef.current) as Root<Api>
-    defRef.current = def
-  }
-  const root = rootRef.current
 
-  // Dispose on unmount. StrictMode simulates mount→unmount→remount but does NOT
-  // re-run render between the two — so when its cleanup disposes + nulls the ref
-  // below, the remount setup must recreate a fresh root and force a render, or
-  // the Provider would hand descendants a disposed root. A dev-only
-  // double-construct is acceptable (matches TanStack).
-  useEffect(() => {
-    if (rootRef.current === null) {
-      rootRef.current = createRoot(defRef.current, optionsRef.current) as Root<Api>
-      forceRender()
-    }
-    return () => {
-      rootRef.current?.dispose()
-      rootRef.current = null
-    }
-  }, [])
+  // The commit claims this render's root and disposes the one it replaces.
+  // When the root is no longer claimable, the boundary builds another and
+  // renders again before paint, or the Provider would hand descendants a
+  // disposed root. StrictMode takes that path: it simulates unmount→remount
+  // without re-rendering between them, and the unmount disposed the root. A
+  // dev-only double-construct is acceptable (matches TanStack).
+  useIsomorphicLayoutEffect(() => {
+    const current = ownedRef.current
+    if (current !== null && current.root === root) return
+    const next = claimRoot(root) ? root : (createRoot(def, rootOptions) as Root<Api>)
+    current?.root.dispose()
+    ownedRef.current = { root: next, def, options: rootOptions }
+    if (next !== root) forceRender()
+  }, [root])
 
-  // Drain the streaming intake queue + install a live forwarder on the current
-  // root. Read `rootRef.current` (not the closed-over `root`) so a StrictMode
-  // remount installs on the fresh root, never a disposed one.
+  // Dispose on unmount. Kept apart from the claim, whose cleanup would also
+  // run when `root` changes.
+  useIsomorphicLayoutEffect(
+    () => () => {
+      ownedRef.current?.root.dispose()
+      ownedRef.current = null
+    },
+    [],
+  )
+
+  // Drain the streaming intake queue + install a live forwarder on the owned
+  // root. Read `ownedRef.current` (not the rendered `root`) so a rebuilt root
+  // gets the intake, never a disposed one.
   useEffect(() => {
     if (!streaming) return undefined
-    const active = rootRef.current
-    if (active === null) return undefined
+    const active = ownedRef.current?.root
+    if (active === undefined) return undefined
     return installStreamingIntake(active)
   }, [root, streaming])
 

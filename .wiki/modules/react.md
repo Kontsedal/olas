@@ -24,6 +24,7 @@ edges:
   - { type: uses, target: ../entities/ctx.md }
   - { type: uses, target: ../flows/use-root.md }
   - { type: uses, target: ../flows/ssr.md }
+  - { type: related, target: ../pitfalls/render-phase-root-leak.md }
   - { type: supersedes, target: ../decisions/no-react-adapter-yet.md }
   - { type: related, target: ../decisions/typed-use-root.md }
   - { type: related, target: ../decisions/root-handle-separate.md }
@@ -77,7 +78,7 @@ const OLAS_BOOTSTRAP_SCRIPT: string                       // drop into bootstrap
 const STREAMING_GLOBAL: '__OLAS_HYDRATION__'              // intake queue's window key
 ```
 
-The listing matches `packages/react/src/index.ts:1-47`. `useRoot` is at `context.ts:70-76` and `HydrationBoundary` at `context.ts:205-265`.
+The listing matches `packages/react/src/index.ts:1-47`. `useRoot` is at `context.ts:81-87` and `HydrationBoundary` at `context.ts:332-398`.
 
 ## How subscription works
 
@@ -149,14 +150,19 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 
 ## `HydrationBoundary` — root ownership (T4.1)
 
-`<OlasProvider>` takes a root created outside React. `HydrationBoundary` instead **creates and owns** the root for client-side SSR hydration. `createRoot` is side-effectful, starting fetches, timers and focus and online listeners, so it must NOT run in a `useMemo` or a `useState` initializer. StrictMode re-invokes those and orphans a live root, which was the original bug. `context.ts` does this instead:
+`<OlasProvider>` takes a root created outside React. `HydrationBoundary` instead **creates and owns** the root for client-side SSR hydration. The children read hydrated data in the boundary's first render, so the root must exist during that render. `createRoot` is side-effectful, starting fetches, timers, focus and online listeners and controller effects. A render may never commit, so building the root there needs the bookkeeping below. `../pitfalls/render-phase-root-leak.md` has the bug this replaced.
 
-- The root is created **lazily during render** in a `useRef` (`if (rootRef.current === null) …`) — a ref mutated in render creates exactly one root across StrictMode's double render.
-- `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render). The root is recreated only when the **`def` identity** changes (dispose old + create new, in render).
-- A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount, unmount and remount **without re-rendering between them**. The effect's remount-setup therefore recreates the disposed root and calls `forceRender()`, so the Provider hands descendants a live root. This is a dev-only double-construct, as TanStack does. The rebuilt root reuses the same options, and so the same `queryEngine()` value, which works because an engine is a definition. Pinned by `packages/react/tests/hydration-boundary.test.tsx`, "(b2) StrictMode with a query engine and a hydrate payload".
-- A `def` change drops `hydrate` from the options it reuses (`context.ts:216-226`). The server payload described the first root's tree, so the replacement starts from its own fetches. A StrictMode remount of the same `def` still hydrates. Pinned by "(e) the root rebuilt for a new def does not re-apply the first hydrate payload".
-- A second effect calls `installStreamingIntake` on the current root, unless `streaming={false}` (`context.ts:254-262`). It reads `rootRef.current`, so a StrictMode remount installs on the fresh root. See `../flows/ssr.md`.
-- **Rendered on the server, the boundary leaks its root.** A server render runs no effects, so the cleanup that disposes the root never runs. In a development build the boundary warns once per process, through `warnServerBoundary`, when it renders with no `window` (`context.ts:155-164`, `context.ts:207`). The message names the fix: a per-request root through `OlasProvider`, disposed after the response. The once-gate is a module flag, because the mistake sits in the app's server entry and one message names it. Pinned by `coverage-server-env.test.tsx`, "warns once that its root is never disposed", and the jsdom lifecycle test asserts the browser path stays quiet.
+- **Render acquires, commit claims.** A render with no committed root for its `def` calls `acquireRoot` (`context.ts:213-235`). It returns the unclaimed root an earlier attempt of the same element built, found in `uncommittedByProps` by the props object, or builds one and records it in `uncommitted`. The first layout effect calls `claimRoot`, which takes the root out of both maps, and stores it in `ownedRef` (`context.ts:368-375`). A render reads `ownedRef`, and only the commit writes it.
+- **Why the props object.** A retry of a discarded render reuses the element, and so the props object. A retry that built a new root refetched whatever the child suspended on, and the child suspended again, forever. An element the parent re-created is a new props object, so its retry builds a new root. The TSDoc tells apps to put a `<Suspense>` inside the boundary.
+- **The sweep.** `armSweep` disposes a root that stays unclaimed for `ORPHAN_GRACE_MS` (ten seconds) after `root.waitForIdle()` resolves (`context.ts:243-259`). The countdown starts at idle because a child suspended on the root's own fetch is retried when that fetch settles, and the retry must still find the root. Each reuse restarts the countdown. The server keeps no strong reference and arms no timer, since nothing commits there.
+- **A failed claim rebuilds.** `claimRoot` returns `false` when the root is gone: the sweep disposed it, another fiber rendering the same element claimed it first, or StrictMode's simulated unmount disposed it. The effect then builds a fresh root from the same `def` and options and calls `forceRender()`, before paint. StrictMode always takes this path, because it runs unmount and remount without a render between them. The rebuilt root reuses the same options, and so the same `queryEngine()` value, which works because an engine is a definition. Pinned by "(b2) StrictMode with a query engine and a hydrate payload" and "(k) one element rendered twice gets two independent roots".
+- **Unmount disposes, in its own effect.** A second layout effect with `[]` deps disposes the owned root on unmount. The claim effect has no cleanup, because a cleanup there would also run when `root` changes.
+- `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render).
+- **A new `def` never disposes in render.** The render acquires a root for the new `def` with `hydrate` dropped from the owned root's options (`context.ts:358`). The server payload described the first root's tree, so the replacement starts from its own fetches. A StrictMode remount of the same `def` still hydrates. The claim effect disposes the old root when the new one commits. A transition that suspends therefore keeps the committed tree on a live root. Pinned by "(e) the root rebuilt for a new def does not re-apply the first hydrate payload" and "(j) a new def whose render is thrown away leaves the committed root alive".
+- A passive effect calls `installStreamingIntake` on the owned root, unless `streaming={false}` (`context.ts:389-395`). It reads `ownedRef`, so a rebuilt root gets the intake. See `../flows/ssr.md`.
+- **Rendered on the server, the boundary leaks its root.** A server render runs no effects, so the cleanup that disposes the root never runs. In a development build the boundary warns once per process, through `warnServerBoundary`, when it renders with no `window` (`context.ts:166-175`, `context.ts:334`). The message names the fix: a per-request root through `OlasProvider`, disposed after the response. The once-gate is a module flag, because the mistake sits in the app's server entry and one message names it. Pinned by `coverage-server-env.test.tsx`, "warns once that its root is never disposed", and the jsdom lifecycle test asserts the browser path stays quiet.
+
+The tests for renders that never commit are the "HydrationBoundary renders that never commit" block of `packages/react/tests/hydration-boundary.test.tsx`. Cases (f) to (j) fail against the pre-fix boundary. (k) passes there, and guards the props-keyed reuse against two fibers sharing a root.
 
 ## SSR round trip, end to end (0.9 review)
 
