@@ -1124,8 +1124,9 @@ describe('q.write — canonical (non-optimistic) cache write (§6.4)', () => {
     await flush()
     expect(root.api.r.data.value).toBe('v1')
 
-    // Something invalidates, so a second fetch is outstanding...
-    void q.invalidate()
+    // A refetch is outstanding... (Not an `invalidate`: a replace that discards an
+    // invalidation's response fetches once more to reconcile, which the catch-up tests pin.)
+    void root.api.r.refetch()
     await flush()
     expect(root.api.r.isFetching.value).toBe(true)
 

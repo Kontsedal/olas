@@ -346,7 +346,7 @@ type Root<Api> = {
 - `suspend()` and `resume()` — pause the tree without disposing it. Effects stop and subscriptions release their entries. With `maxIdleTime` (ms), the root disposes itself if it is not resumed in time.
 - `dehydrate()` — serialize the cache into a `DehydratedState`. A root without an engine returns an empty state.
 - `hydrate(state)` — apply dehydrated entries to the live cache. See [SSR](#ssr--dehydrate-and-hydrate).
-- `waitForIdle()` — Promise that resolves when no fetch, no mutation and no work a plugin `track`ed is in flight. A `createCache` local cache is not a query-client entry, so its fetch is not counted; await `cache.firstValue()` for it.
+- `waitForIdle()` — Promise that resolves when no fetch, no mutation and no work a plugin `track`ed is in flight. A `createCache` local cache's fetch counts too, on a root with or without a query engine.
 - `debug` — devtools event bus; see [Devtools event bus](#devtools-event-bus).
 
 ### Type: `ControllerDef<Props, Api>`
@@ -618,11 +618,11 @@ type Query<Args extends unknown[], T> = {
 }
 ```
 
-- `invalidate(...args)` — mark a specific keyed entry stale and refetch it if it has subscribers. Awaitable: resolves when the refetch it triggered settles or is discarded. Ambiguity and disposed-root errors reject (spec §5.7).
+- `invalidate(...args)` — mark a specific keyed entry stale and refetch it if it has subscribers. Awaitable: resolves when the refetch it triggered settles. When a `replace` discards that refetch, the entry fetches once more to reconcile, and the promise resolves when that catch-up settles. Another supersede, such as a newer refetch, resolves it. Ambiguity and disposed-root errors reject (spec §5.7).
 - `invalidateAll()` — same, every entry of this query.
 - `setData(...args, updater)` — **optimistic** patch of one key's cached data. Returns a `Snapshot` the caller must settle, normally by returning it from a mutation's `onMutate`, which finalizes on success and rolls back on error. Until it is settled the entry reports `hasPendingMutations: true` (spec §6.4).
 - `write(...args, updater)` — **canonical** patch of one key's cached data: no snapshot, no rollback handle, `hasPendingMutations` untouched. This is the write for data that is already true (a server push folded into the cache, a realtime event, a cross-view sync). Reach for it whenever there is no mutation to settle a snapshot: a fire-and-forget `setData` leaks one live snapshot per call (spec §6.4). It leaves a fetch already in flight alone.
-- `replace(...args, value)` — **canonical** replacement with a value that *is* the whole record, such as a server read-back. It supersedes a fetch already in flight for the key, because that request has nothing left to contribute. Like `write`, it pushes no snapshot.
+- `replace(...args, value)` — **canonical** replacement with a value that *is* the whole record, such as a server read-back. It supersedes a fetch already in flight for the key, because that request has nothing left to contribute. Like `write`, it pushes no snapshot. When the superseded fetch was an invalidation's and the entry has subscribers, the entry fetches once more, because the discarded response was the reconciliation the invalidation asked for. A `replace` during that catch-up leaves it in flight, so a burst of pushes cannot keep it from landing (spec §6.4).
 - `peek(...args)` — read one key's cached data **synchronously**; `undefined` when there is nothing to read (no entry, or an entry that has not settled). Never creates an entry, never fetches, and registers **no reactive dependency**, so a `peek` inside a `computed` will not re-run it. For imperative moments: an event handler that needs the current value, or a guard before a `write` (spec §5.5).
 - `cancel(...args)` — abort the in-flight fetch for one key (if any). Supersedes the request, restores a settled status, leaves `data` untouched. Call it before an optimistic `setData`, so a stale in-flight response can't clobber it. Do this **even when nothing invalidates the query**, because a stale entry refetches by itself whenever a subscription acquires or resumes (spec §5.5, §6.4).
 - `cancelAll()` — cancel in-flight fetches for every keyed entry of this query.
@@ -791,7 +791,7 @@ Controller-scoped cache — no sharing, dies with the controller.
 
 ### `createCache<T>(ctx, fetcher, options?): LocalCache<T>`
 
-Use when one controller wants async data that no other controller will share. The cache disposes with the controller and never lives in the root's query client. It needs no query engine, and it still reads the engine's `staleTime` and `keepPreviousData` defaults when the root has one.
+Use when one controller wants async data that no other controller will share. The cache disposes with the controller and never lives in the root's query client. It needs no query engine, and it still reads the engine's `staleTime` and `keepPreviousData` defaults when the root has one. Its fetches count toward `root.waitForIdle()`.
 
 ```ts
 import { createCache, defineController } from '@kontsedal/olas-core'
@@ -816,7 +816,9 @@ const profile = defineController((ctx, props: { id: string }) => {
 ```ts nocheck
 type LocalCache<T> = AsyncState<T> & {
   invalidate(): Promise<void>        // mark stale and refetch; resolves when the refetch settles
-  setData(updater: (prev: T | undefined) => T): Snapshot
+  setData(updater: (prev: T | undefined) => T): Snapshot // optimistic: settle the snapshot
+  write(updater: (prev: T | undefined) => T): void       // canonical patch; a fetch in flight lands
+  replace(value: T): void            // canonical whole record; supersedes a fetch in flight
   dispose(): void
 }
 
@@ -1558,7 +1560,7 @@ JSON-serializable snapshot of the root's query cache. Call on the server *after*
 
 ### `root.waitForIdle(): Promise<void>`
 
-Resolves when no query fetches, no mutations and no plugin-tracked work are in flight. Used on the server to wait for the data dependencies before serializing.
+Resolves when no query fetches, no `createCache` fetches, no mutations and no plugin-tracked work are in flight. Used on the server to wait for the data dependencies before serializing.
 
 ### `createRoot(def, { queries, hydrate })`
 
@@ -1681,13 +1683,13 @@ type ErrorContext = {
   key?: readonly unknown[]            // cache kinds: the entry's key
   eventId: string                     // unique per dispatch
   timestamp: number                   // wall-clock ms
-  attempt?: number                    // 0-based retry attempt, for cache and mutation kinds
-  cause?: unknown                     // the underlying error, when the surfaced one wraps it
+  attempt?: number                    // cache kinds: the 0-based attempt that failed last
+  cause?: unknown                     // cache kinds: the fetch error a throwing retry callback replaced
   pluginName?: string                 // kind 'plugin' only
 }
 ```
 
-`eventId`, `timestamp`, `attempt` and `cause` are correlation fields for telemetry adapters, such as Sentry breadcrumbs or OpenTelemetry. SPEC §12, §20.9.
+`eventId` and `timestamp` are correlation fields for telemetry adapters, such as Sentry breadcrumbs or OpenTelemetry. A failed fetch reported as `kind: 'cache'` carries `attempt`, where `2` means two retries ran before the last failure. When the query's `retry` or `retryDelay` callback threw, the surfaced error is that throw, and `cause` is the fetch error the callback was deciding on. SPEC §12, §20.9.
 
 ### `isAbortError(err): boolean`
 
@@ -1721,7 +1723,7 @@ type DebugEventBody =
   | { type: 'controller:constructed'; path: readonly string[]; props: unknown; debug?: Record<string, unknown> }
   | { type: 'controller:suspended' | 'controller:resumed' | 'controller:disposed'; path: readonly string[] }
   | { type: 'controller:debug'; path: readonly string[]; values: Record<string, unknown> }
-  | { type: 'cache:subscribed'; queryKey: readonly unknown[]; subscriberPath: readonly string[] }
+  | { type: 'cache:subscribed' | 'cache:unsubscribed'; queryId?: string; queryKey: readonly unknown[]; subscriberPath: readonly string[] }
   | { type: 'cache:fetch-start' | 'cache:invalidated' | 'cache:gc'; queryId?: string; queryKey: readonly unknown[] }
   | { type: 'cache:fetch-success'; queryId?: string; queryKey: readonly unknown[]; durationMs: number }
   | { type: 'cache:fetch-error'; queryId?: string; queryKey: readonly unknown[]; error: unknown; durationMs: number }
@@ -1735,7 +1737,7 @@ type DebugEventBody =
   | { type: 'plugin:event'; plugin: string; payload: unknown }
 ```
 
-`seq` is a per-root sequence number and the sort key for a timeline. `causeId` groups every event one cause produced, such as a mutation run with its optimistic write and rollback. Internal events may be added — the schema is stable enough to build tooling on, but not a public API guarantee. SPEC §14.
+`seq` is a per-root sequence number and the sort key for a timeline. `causeId` groups every event one cause produced, such as a mutation run with its optimistic write and rollback. A `createQuery` subscription sends `cache:subscribed` when it binds an entry and `cache:unsubscribed` when it lets go, with its controller's path as `subscriberPath`. A plugin's `host.queries.invalidate` sends `cache:invalidated`, as an app's `invalidate` does. Internal events may be added — the schema is stable enough to build tooling on, but not a public API guarantee. SPEC §14.
 
 ### Type: `DebugCacheEntry`
 
@@ -1750,10 +1752,11 @@ type DebugCacheEntry = {
   isStale: boolean
   isFetching: boolean
   hasPendingMutations: boolean
+  subscribers?: number   // controller subscriptions holding the entry; a prefetch is not counted
 }
 ```
 
-Returned by `root.debug.queryEntries()` for the cache inspector. Two queries can hold entries under one key, so a view keys entries by `queryId` and `key` together. SPEC §20.9.
+Returned by `root.debug.queryEntries()` for the cache inspector. Two queries can hold entries under one key, so a view keys entries by `queryId` and `key` together. `queryEntries()` sets `subscribers` on every entry; the field is optional so a hand-built snapshot may leave it out. SPEC §20.9.
 
 ---
 

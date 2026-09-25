@@ -5,7 +5,7 @@ type: flow
 covers:
   - packages/react/src/context.ts:14-116
   - packages/react/src/hooks.ts:24-135
-  - packages/core/src/controller/root.ts:100-224
+  - packages/core/src/controller/root.ts:114-246
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/react/tests/adapter.test.tsx }
@@ -39,7 +39,7 @@ inside any component
 
 ## Step by step
 
-1. **`createRoot(def, options)`** runs the controller factory exactly once and returns a frozen `Root<Api>` handle (`packages/core/src/controller/root.ts:176-207`). The app's api is on `root.api`, and the controls sit beside it: `dispose`, `suspend`, `resume`, `dehydrate`, `hydrate`, `waitForIdle`, `bindQuery`, `inject` and `debug`. See `../entities/controller-instance.md` and `../decisions/root-handle-separate.md`.
+1. **`createRoot(def, options)`** runs the controller factory exactly once and returns a frozen `Root<Api>` handle (`packages/core/src/controller/root.ts:191-229`). The app's api is on `root.api`, and the controls sit beside it: `dispose`, `suspend`, `resume`, `dehydrate`, `hydrate`, `waitForIdle`, `bindQuery`, `inject` and `debug`. See `../entities/controller-instance.md` and `../decisions/root-handle-separate.md`.
 
 2. **`<OlasProvider root={root}>`** is a one-line React Context provider (`packages/react/src/context.ts:23-27`). The context's default value is `null`. No setup work happens inside React, because the root already exists.
 

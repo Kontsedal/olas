@@ -14,7 +14,7 @@ edges:
   - { type: uses, target: ../modules/devtools-panel.md }
   - { type: related, target: mutation-concurrency.md }
   - { type: documented-in, target: ../../SPEC.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 

@@ -12,7 +12,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
   - { type: related, target: canonical-vs-optimistic-writes.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 

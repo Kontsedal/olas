@@ -28,6 +28,7 @@ edges:
   - { type: tested-by, target: ../../packages/devtools/tests/virtual.test.tsx }
   - { type: tested-by, target: ../../packages/devtools/tests/url-hash-hostile.test.tsx }
   - { type: tested-by, target: ../../packages/devtools/tests/diff.test.ts }
+  - { type: tested-by, target: ../../packages/devtools/tests/store-subscribers.test.tsx }
   - { type: uses, target: devtools.md }
   - { type: uses, target: react.md }
   - { type: related, target: ../decisions/devtools-overhaul.md }
@@ -74,6 +75,7 @@ class DevtoolsStore {
   readonly events$: ReadSignal<TimelineEvent[]>       // unified timeline (ring, maxTimelineEntries)
   readonly droppedEvents$: ReadSignal<number>         // timeline events the ring overwrote
   readonly cacheState$: Signal<DebugCacheEntry[]>     // live cache state (event-driven)
+  readonly subscribers$: ReadSignal<ReadonlyMap<string, number>> // subscriptions per entry
   readonly maxTimelineEntries: number
 
   attach(root): () => void
@@ -176,7 +178,7 @@ The bus replays the live-controller snapshot to a new subscriber, so the Tree is
 | **Timeline** (default) | `store.events$` | Cause-chains: events grouped by `causeId` into collapsible `<CauseGroup>`s, accent-coloured by worst outcome; un-caused events standalone. Newest-first; within a group chronological with `+Δms`. Lane chips and the dropped count in a toolbar. |
 | **Tree** | `store.tree$` | Flat, windowed tree rows with collapse chevrons. `suspended` in warn, `disposed` greyed with frozen variables. Each node shows its `ctx.debug` Variables (live) and props. |
 | **Cache** | `store.cache$` | Event log: time · kind · `formatPath(queryKey)` and details. Red for `fetch-error`. |
-| **Inspector** | `store.cacheState$` | Live cache state with stale, fetching and optimistic tags, refreshed from `queryEntries()` on cache events — no polling. |
+| **Inspector** | `store.cacheState$`, `store.subscribers$` | Live cache state with stale, fetching and optimistic tags and a subscriber count, refreshed from `queryEntries()` on cache events — no polling. |
 | **Mutations** | `store.mutations$` | time · kind · `formatPath(path)` and payload. Red for `error`, warn for `rollback`. |
 | **Fields** | `store.fields$` | Time · `valid` or `invalid` · path · field · errors. |
 
@@ -190,11 +192,13 @@ A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.
 
 A tree row whose `ControllerNode.debug` record is non-empty renders a **Variables** section, open by default, listing each `name: value` a controller registered via `ctx.debug({...})`. The store sets the record from `controller:constructed`'s `debug` field and updates it on `controller:debug`. `controller:debug` is kept off the timeline, because it is a state re-registration rather than a causal event.
 
-Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:600-601`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
+Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:605-606`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
 
 ## Event-driven inspector (the poll is gone)
 
 The store seeds `cacheState$` from `queryEntries()` once on `attach()` and refreshes it, coalesced through the same flush as the logs, whenever a cache or snapshot event arrives. `attach()` also seeds the per-entry diff baseline from that snapshot. **An entry is identified by its query id and its key** (`entryKey` in `util.ts`), in the diff baseline, the search index and the inspector list. Two queries can hold entries under one key, as kanban's board and archive queries do at `["b1"]`, and a key-only identity merged them. `DebugCacheEntry.queryId` comes from core. 1.0 removed the ignored `inspectorPollMs` prop. A pure timer-driven `isStale` transition, with no accompanying event, won't refresh the inspector until the next event.
+
+**Subscriber counts (1.0).** Core emits `cache:subscribed` and `cache:unsubscribed` with the subscriber's path, and the store keeps `subscribers$`, a count per `entryKey`. `handle()` moves the count *before* `pushTimeline`, because a synchronous flush inside it re-reads `queryEntries()`, whose snapshot already includes the event. A delta applied after that refresh counted the event twice. Each refresh then sets the count from `DebugCacheEntry.subscribers`, so a store attached after the controllers subscribed still counts them. The count moves while the store is paused, like the tree, and a `cache:gc` drops it. The inspector adds `N subscribers` to a row's tags when the count is above zero. The Cache log renders an `unsubscribed` row like a `subscribed` one, with its path. Pinned by `store-subscribers.test.tsx`.
 
 ## What's tested
 
@@ -210,7 +214,5 @@ The older suites still pin the rest: `store.test.ts`, `panel.test.tsx`, `diff.te
 
 ## What's NOT included / follow-ups
 
-- **`cache:subscribed`** wiring, for subscriber counts. It needs subscriber-path threading through `use → acquire`, which is overhaul T8.5. Declared in the union, not emitted.
-- **A lane payload from mutation-queue.** Cross-tab and entities call `host.debug` since 1.0 (`cross-tab.md`, `entities.md`). The mutation queue does not yet.
 - The rest of the overhaul: T8.5 tracing, T8.6 live actions, T8.7 environment simulation and the forms inspector, T8.9 session export and import, and the T8.10 UX pass. See [../decisions/devtools-overhaul.md](../decisions/devtools-overhaul.md).
 - Signal dependency graph view.

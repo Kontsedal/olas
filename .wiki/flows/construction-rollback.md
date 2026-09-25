@@ -3,12 +3,12 @@ name: construction-rollback
 description: When a controller factory throws, the partially-built state tears itself down — siblings stay alive.
 type: flow
 covers:
-  - packages/core/src/controller/instance.ts:91-124
+  - packages/core/src/controller/instance.ts:96-129
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/controller.test.ts }
   - { type: uses, target: ../entities/controller-instance.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-25
 confidence: high
 ---
 

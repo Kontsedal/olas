@@ -50,8 +50,25 @@ export type DebugEventBody =
    * carries the controller's full merged debug record (live references).
    */
   | { type: 'controller:debug'; path: readonly string[]; values: Record<string, unknown> }
+  /**
+   * A `createQuery` subscription bound an entry: on subscribe, on a key change
+   * and on resume. `subscriberPath` is the subscribing controller's path. One
+   * event per subscription, so the entry's subscriber count is the number of
+   * these minus the matching `cache:unsubscribed` events.
+   */
   | {
       type: 'cache:subscribed'
+      queryId?: string
+      queryKey: readonly unknown[]
+      subscriberPath: readonly string[]
+    }
+  /**
+   * A subscription let go of an entry: on dispose, a key change, a disable and
+   * suspend. The counterpart of `cache:subscribed`, with the same path.
+   */
+  | {
+      type: 'cache:unsubscribed'
+      queryId?: string
       queryKey: readonly unknown[]
       subscriberPath: readonly string[]
     }
@@ -136,6 +153,12 @@ export type DebugCacheEntry = {
   isStale: boolean
   isFetching: boolean
   hasPendingMutations: boolean
+  /**
+   * Controller subscriptions holding the entry. A prefetch in flight holds it
+   * too and is not counted. `queryEntries()` always sets it; it is optional so
+   * a snapshot built by hand may leave it out.
+   */
+  subscribers?: number
 }
 
 /**

@@ -13,7 +13,7 @@ edges:
   - { type: related, target: required-id-and-meta.md }
   - { type: related, target: root-handle-separate.md }
   - { type: related, target: per-root-query-client.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 

@@ -88,6 +88,7 @@ class DevtoolsStore {
   readonly events$: ReadSignal<TimelineEvent[]>   // the timeline's ring buffer
   readonly droppedEvents$: ReadSignal<number>     // events the ring overwrote
   readonly cacheState$: Signal<DebugCacheEntry[]> // live cache entries, for the inspector
+  readonly subscribers$: ReadSignal<ReadonlyMap<string, number>> // subscriptions per entry
 
   attach(root: Pick<Root<unknown>, 'debug'>): () => void // subscribes; returns unsubscribe
   handle(event: DebugEvent): void                        // for tests or programmatic feed
@@ -117,13 +118,13 @@ If you need historical state, build a parallel `DevtoolsStore` early (next to `c
 Spec §20.9 lists the full `DebugEvent` union. In development builds the runtime emits:
 
 - **controller:** `constructed`, `suspended`, `resumed`, `disposed` and `debug`
-- **cache:** `fetch-start`, `fetch-success`, `fetch-error`, `set-data`, `invalidated` and `gc`
+- **cache:** `subscribed`, `unsubscribed`, `fetch-start`, `fetch-success`, `fetch-error`, `set-data`, `invalidated` and `gc`
 - **snapshot:** `push`, `rollback` and `finalize`, for optimistic writes
 - **mutation:** `run`, `success`, `error` and `rollback`
 - **field:** `validated`
 - **plugin:** `event`, for each `host.debug(payload)` a plugin makes
 
-`cache:subscribed` is declared in the type, and the runtime does not emit it. The panel renders it when it arrives, and you can feed it through `store.handle(event)` from your own instrumentation.
+A `createQuery` subscription sends `cache:subscribed` when it binds an entry and `cache:unsubscribed` when it lets go, with its controller's path. The store counts them per entry in `subscribers$`, and re-seeds the counts from each `queryEntries()` snapshot, so a panel attached late still counts the subscriptions made before it. The inspector shows the count beside each entry.
 
 ## Further reading
 

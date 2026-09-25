@@ -5,7 +5,7 @@ type: flow
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/controller/instance.ts:308-336
+  - packages/core/src/controller/instance.ts:313-341
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
@@ -13,7 +13,7 @@ edges:
   - { type: uses, target: ../entities/entry.md }
   - { type: related, target: ../pitfalls/callargs-vs-keyargs.md }
   - { type: related, target: ../pitfalls/suspended-effects-lose-deps.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -32,7 +32,7 @@ const userController = defineController((ctx, props: { id: string }) => {
 
 ## Step by step
 
-### 1. Dispatch on brand — `instance.ts:309`
+### 1. Dispatch on brand — `instance.ts:314`
 
 `createQuery(ctx, query, keyOrOptions)`:
 
@@ -63,8 +63,8 @@ const effectDispose = effect(() => {
   untracked(() => {                     # everything that mutates entries is outside the tracking scope
     const entry = client.bindEntry(query, args)
     if (currentEntry === entry) return  # same key, nothing to do
-    currentEntry?.release()
-    entry.acquire()
+    currentEntry?.release(subscriberPath)
+    entry.acquire(subscriberPath)       # the controller's path, from createQuery
     currentEntry = entry
     sub.attach(entry)
 
@@ -82,7 +82,7 @@ Key tricks:
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
 - We refetch on subscribe only if status is `idle`, stale or errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
 
-### 3. `client.bindEntry(query, args)` — `client.ts:771`
+### 3. `client.bindEntry(query, args)` — `client.ts:1349`
 
 Looks up the entry in `client.maps`. If absent:
 
@@ -95,11 +95,11 @@ Looks up the entry in `client.maps`. If absent:
 
 `ClientEntry`'s constructor builds an `Entry<T>` with a fetcher closure that captures the original `args` (the user's call args, not the hash key — these are distinct, see `../pitfalls/callargs-vs-keyargs.md`).
 
-### 4. `entry.acquire()` — `client.ts:104`
+### 4. `entry.acquire(subscriberPath)` — `client.ts:325`
 
-Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer.
+Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer. The subscribing controller's path, which `createQuery` reads from `ctxInternals.path`, moves the entry's `subscriptions` count and sends the devtools `cache:subscribed`. Every `release` passes the same path and sends `cache:unsubscribed`: a key change, a disable, a suspend and dispose each release (1.0).
 
-### 5. `SubscriptionImpl.attach(entry)` — `use.ts:48`
+### 5. `SubscriptionImpl.attach(entry)` — `use.ts:139`
 
 Sets the subscription's `current$` signal to the new entry. The subscription's `data`/`error`/`status`/... are all computeds over `current$.value?.entry.<sig>.value` — flipping `current$` ripples through every derived signal in one batched update.
 

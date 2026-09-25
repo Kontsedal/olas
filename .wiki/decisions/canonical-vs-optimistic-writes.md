@@ -3,18 +3,22 @@ name: canonical-vs-optimistic-writes
 description: Why the Query handle has separate write methods — setData (optimistic, returns a Snapshot), write (canonical patch) and replace (canonical whole record) — instead of one with an options bag.
 type: decision
 covers:
-  - packages/core/src/query/types.ts:336-413
-  - packages/core/src/query/client.ts:954-987
-  - packages/core/src/query/client.ts:1489-1623
-  - packages/core/src/query/client.ts:1757-1827
+  - packages/core/src/query/types.ts:356-439
+  - packages/core/src/query/client.ts:1024-1061
+  - packages/core/src/query/client.ts:1574-1711
+  - packages/core/src/query/client.ts:1845-1916
   - packages/core/src/query/actions.ts:42-59
-  - packages/core/src/query/entry.ts:507-560
-  - packages/core/src/query/infinite.ts:81-114
-  - packages/core/src/query/infinite.ts:696-765
+  - packages/core/src/query/local.ts
+  - packages/core/src/query/entry.ts:638-691
+  - packages/core/src/query/infinite.ts:87-120
+  - packages/core/src/query/infinite.ts:750-819
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/infinite.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/plugin-host.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/catch-up-refetch.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/local-cache-writes.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/infinite-rebase.test.ts }
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: ../flows/plugin-lifecycle.md }
@@ -26,7 +30,7 @@ confidence: high
 
 # Two write methods, not one
 
-`Query` exposes both (`packages/core/src/query/types.ts:336-383`):
+`Query` exposes both (`packages/core/src/query/types.ts:356-403`):
 
 ```ts nocheck
 setData(...keyArgs, updater): Snapshot   // optimistic
@@ -35,7 +39,7 @@ write(...keyArgs, updater): void         // canonical
 
 A third, `replace(...keyArgs, value)`, came later; see "Three write methods" below.
 
-The core difference is whether a snapshot record is pushed (`Entry.setData`'s `{ track }`, `packages/core/src/query/entry.ts:522-532`), and that difference is load-bearing. A second follows from it. A canonical write rebases live optimistic snapshots onto its value, so a mutation that rolls back later restores the canonical data rather than an older baseline (`entry.ts:533-543`).
+The core difference is whether a snapshot record is pushed (`Entry.setData`'s `{ track }`, `packages/core/src/query/entry.ts:653-663`), and that difference is load-bearing. A second follows from it. A canonical write rebases live optimistic snapshots onto its value, so a mutation that rolls back later restores the canonical data rather than an older baseline (`entry.ts:664-674`).
 
 ## Why `setData` alone was not enough
 
@@ -45,7 +49,7 @@ With only `setData`, such a caller had three options, all bad:
 
 1. Discard the `Snapshot`. Then the record stays **live** forever: `hasPendingMutations` wedged at `true` for the rest of the entry's life, plus one retained baseline per call. On a long-lived entry patched on every server event that array grows without bound — a real leak, not a cosmetic flag.
 2. Call `snapshot.finalize()` at every call site. Correct, invisible in review when forgotten, and a strange thing to require of a write that was never optimistic.
-3. Reach for the plugin API's canonical write, which already existed: `QueryClientPluginApi.setEntryData` then, `host.queries.write` in 1.0 (`packages/core/src/query/client.ts:954-987`). It is **plugin-facing**, addressed by query id and key rather than by the typed handle, and not part of the application surface.
+3. Reach for the plugin API's canonical write, which already existed: `QueryClientPluginApi.setEntryData` then, `host.queries.write` in 1.0 (`packages/core/src/query/client.ts:1024-1061`). It is **plugin-facing**, addressed by query id and key rather than by the typed handle, and not part of the application surface.
 
 Downstream evidence: one app accumulated eight such sites, being server-push folds and execute-result patches, before the leak was noticed. It filed the issue as "mint a `writeTab` helper with `{ track: false }`", independently re-deriving this method as userland glue it could not implement, because `track` was internal.
 
@@ -89,15 +93,25 @@ question — "is this write the whole record", which nothing inside the entry ca
 
 ## Why `write` still creates a missing entry
 
-`host.queries.write`, the plugin path, drops silently when no entry exists (`client.ts:962-963`); `write` binds one, exactly as `setData` does. The reason is symmetry: `write` is `setData` minus the snapshot, and diverging on entry creation would make it a second, subtly different write. Callers that must not patch an absent key have `peek(...)` as the guard — and a merge over `undefined` is usually the shape that needs it.
+`host.queries.write`, the plugin path, drops silently when no entry exists (`client.ts:1032-1033`); `write` binds one, exactly as `setData` does. The reason is symmetry: `write` is `setData` minus the snapshot, and diverging on entry creation would make it a second, subtly different write. Callers that must not patch an absent key have `peek(...)` as the guard — and a merge over `undefined` is usually the shape that needs it.
 
 ## Infinite queries have the same three doors
 
-`InfiniteQuery` gained `peek`, `write` and `replace` in 1.0 (`packages/core/src/query/infinite.ts:81-114`, `client.ts:1757-1803`). The rules carry over unchanged: `write` patches the pages and leaves an in-flight fetch alone, and `replace` takes whole pages and cancels it. `peek` returns `undefined` for a missing entry or no loaded page. Both writes go through `InfiniteEntry.setData(..., { track: false })` (`infinite.ts:700-765`), which keeps `pageParams` length-aligned with the pages by trimming or padding with the last param. Pinned by `packages/core/tests/infinite.test.ts`, "InfiniteQuery peek / write / replace — parity with Query".
+`InfiniteQuery` gained `peek`, `write` and `replace` in 1.0 (`packages/core/src/query/infinite.ts:87-120`, `client.ts:1845-1892`). The rules carry over unchanged: `write` patches the pages and leaves an in-flight fetch alone, and `replace` takes whole pages and supersedes it. An empty pages array is how an infinite entry says "nothing here", so a `replace` with `[]` leaves the fetch alone, as `replace(undefined)` does on a regular query. `peek` returns `undefined` for a missing entry or no loaded page. Both writes go through `InfiniteEntry.setData(..., { track: false })` (`infinite.ts:754-819`), which keeps `pageParams` length-aligned with the pages by trimming or padding with the last param. Pinned by `packages/core/tests/infinite.test.ts`, "InfiniteQuery peek / write / replace — parity with Query".
 
 ## Consequences to preserve
 
-- Each method reports its own `WriteEvent.source` to plugins: `'optimistic'` for `setData`, `'rollback'` when its snapshot rolls back, `'write'` for `write` and `'replace'` for `replace` (`client.ts:1509-1623`). The app's own writes carry `origin: undefined`, so cross-tab mirrors all four by default and entities walks every one. `crossTabPlugin({ optimistic: false })` keeps the first two in their tab. Pinned by `plugin-host.test.ts`, "fetch, optimistic, rollback, write and replace each report their source"; the vocabulary is in `../flows/plugin-lifecycle.md`.
+- Each method reports its own `WriteEvent.source` to plugins: `'optimistic'` for `setData`, `'rollback'` when its snapshot rolls back, `'write'` for `write` and `'replace'` for `replace` (`client.ts:1594-1711`). The app's own writes carry `origin: undefined`, so cross-tab mirrors all four by default and entities walks every one. `crossTabPlugin({ optimistic: false })` keeps the first two in their tab. Pinned by `plugin-host.test.ts`, "fetch, optimistic, rollback, write and replace each report their source"; the vocabulary is in `../flows/plugin-lifecycle.md`.
 - The devtools `cache:set-data` event uses the same `source` values. A `write` inside a mutation's `onMutate` reports `'write'` and inherits the ambient `causeId`; its *kind* stays a plain canonical write.
-- The supersede rule belongs to the replace paths alone: `replaceData` (`client.ts:1560-1579`), `replaceInfiniteData` (`client.ts:1789-1803`) and the host's `replace` through `writeByKey` (`client.ts:968`, `client.ts:985`). Those are the only `entry.cancel()` calls among the write methods. `writeData` does not supersede. Its comment said both for a month: `e8933dd` (0.7.2) rolled the behaviour back and added the patch paragraph, but left `314aa28`'s "a canonical write SUPERSEDES" above it. The code was never ambiguous — the reconciled comment now says what it does. `host.queries.write`, the plugin path, is a patch too and leaves a fetch in flight alone. Cross-tab applies a peer's message through it, so a relayed write never supersedes this tab's own fetch: it carries another tab's write, not this tab's server truth.
+- The supersede rule belongs to the replace paths alone: `replaceData` (`client.ts:1648-1667`), `replaceInfiniteData` (`client.ts:1878-1892`), the host's `replace` through `writeByKey` (`client.ts:1039`, `client.ts:1058`) and `LocalCache.replace` (`local.ts`). Each calls `entry.supersedeByWrite(...)`, and only when the write left the entry holding data, one rule for both kinds since 1.0. Those are the only supersedes among the write methods. `writeData` does not supersede. Its comment said both for a month: `e8933dd` (0.7.2) rolled the behaviour back and added the patch paragraph, but left `314aa28`'s "a canonical write SUPERSEDES" above it. The code was never ambiguous — the reconciled comment now says what it does. `host.queries.write`, the plugin path, is a patch too and leaves a fetch in flight alone. Cross-tab applies a peer's message through it, so a relayed write never supersedes this tab's own fetch: it carries another tab's write, not this tab's server truth.
 - `hasPendingMutations` is purely observational (nothing in core gates on it), so this was never a correctness bug in the engine — it was a wrong-state report plus unbounded retention. Both are gone for callers who use the right method.
+
+## A superseding `replace` can discard a reconciliation
+
+A `replace` discards the fetch in flight on the claim that the fetch has nothing left to add. That claim fails for one kind of fetch: an invalidation's. A reconnect's `invalidateAll()` asks for everything the app missed, and a push folded in with `replace` mid-fetch threw that away while carrying only its own record. The BACKLOG item "A superseded catch-up refetch is discarded, not re-run" recorded it, and a code reviewer reproduced it: the missed data never arrived, and the entry stayed stale with no fetch coming.
+
+"Supersede without aborting" was not an answer, because the result would still be discarded. So since 1.0 `supersedeByWrite` re-fetches once when the entry is force-stale and still has subscribers. A `replace` during that catch-up leaves it in flight, because otherwise a burst of pushes would cancel and restart it forever. Its response is server truth and lands over those writes. `await invalidate()` settles with the catch-up. The mechanics are in `../entities/entry.md`; pinned by `catch-up-refetch.test.ts`.
+
+## `LocalCache` has the canonical writes too
+
+`LocalCache` had only `setData`, so a canonical patch to a local cache was `setData(...).finalize()`. reader-ssr's composer forgot the `.finalize()`, and every post left `hasPendingMutations` true. `write` and `replace` on `LocalCache` (1.0) mirror `Query`'s, so the right call is the obvious one. Pinned by `local-cache-writes.test.ts`.

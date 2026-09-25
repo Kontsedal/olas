@@ -7,7 +7,7 @@ covers:
 edges:
   - { type: tested-by, target: ../../packages/devtools/tests/store.test.ts }
   - { type: related, target: ../modules/devtools-panel.md }
-last_verified: 2026-07-28
+last_verified: 2026-09-25
 confidence: high
 ---
 

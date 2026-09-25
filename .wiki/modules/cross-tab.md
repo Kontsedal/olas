@@ -125,9 +125,9 @@ Pinned by "10. out-of-order / duplicate messages are deduped", "13. receive-side
 
 ## Apply semantics: the entry must already exist
 
-`host.queries.write` and `invalidate` address an entry by id and key, and do nothing when this root holds no entry for that key (`packages/core/src/query/client.ts:954-963`, `client.ts:878-884`). A message for a key no subscriber here has bound is therefore dropped. The receiver has no call args it could refetch that key with, and seeding rows the user never asked for leaks. A subscriber that mounts later fetches on its own.
+`host.queries.write` and `invalidate` address an entry by id and key, and do nothing when this root holds no entry for that key (`packages/core/src/query/client.ts:1024-1033`, `client.ts:937-949`). A message for a key no subscriber here has bound is therefore dropped. The receiver has no call args it could refetch that key with, and seeding rows the user never asked for leaks. A subscriber that mounts later fetches on its own.
 
-A peer's write lands here as a canonical `'write'`, whatever its source was on the sender. A peer's optimistic value therefore holds no snapshot in this tab, and the peer's rollback arrives as one more write. A remote invalidate refetches a subscribed entry and marks an unsubscribed one stale (`client.ts:1383-1410`). Pinned by "1. setData in tab A is reflected in tab B" and "5. invalidation propagates → receiving tab refetches".
+A peer's write lands here as a canonical `'write'`, whatever its source was on the sender. A peer's optimistic value therefore holds no snapshot in this tab, and the peer's rollback arrives as one more write. A remote invalidate refetches a subscribed entry and marks an unsubscribed one stale (`client.ts:1459-1495`). Pinned by "1. setData in tab A is reflected in tab B" and "5. invalidation propagates → receiving tab refetches".
 
 ## Non-cloneable and oversized payloads
 

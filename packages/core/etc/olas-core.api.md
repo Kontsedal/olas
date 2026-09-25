@@ -211,6 +211,7 @@ export type DebugCacheEntry = {
     isStale: boolean;
     isFetching: boolean;
     hasPendingMutations: boolean;
+    subscribers?: number;
 };
 
 // @public
@@ -240,8 +241,26 @@ export type DebugEventBody = {
     type: 'controller:debug';
     path: readonly string[];
     values: Record<string, unknown>;
-} | {
+}
+/**
+* A `createQuery` subscription bound an entry: on subscribe, on a key change
+* and on resume. `subscriberPath` is the subscribing controller's path. One
+* event per subscription, so the entry's subscriber count is the number of
+* these minus the matching `cache:unsubscribed` events.
+*/
+| {
     type: 'cache:subscribed';
+    queryId?: string;
+    queryKey: readonly unknown[];
+    subscriberPath: readonly string[];
+}
+/**
+* A subscription let go of an entry: on dispose, a key change, a disable and
+* suspend. The counterpart of `cache:subscribed`, with the same path.
+*/
+| {
+    type: 'cache:unsubscribed';
+    queryId?: string;
     queryKey: readonly unknown[];
     subscriberPath: readonly string[];
 } | {
@@ -627,8 +646,10 @@ export type LazyChild<Api> = {
 
 // @public
 export type LocalCache<T> = AsyncState<T> & {
-    invalidate(): Promise<void>; /** Patch the current data. Returns a `Snapshot` for rollback. */
-    setData(updater: (prev: T | undefined) => T): Snapshot; /** Idempotent — also called when the owning controller disposes. */
+    invalidate(): Promise<void>;
+    setData(updater: (prev: T | undefined) => T): Snapshot;
+    write(updater: (prev: T | undefined) => T): void;
+    replace(value: T): void; /** Idempotent — also called when the owning controller disposes. */
     dispose(): void;
 };
 

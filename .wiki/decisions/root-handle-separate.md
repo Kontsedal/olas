@@ -10,7 +10,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/controller.test.ts }
   - { type: related, target: ../flows/use-root.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 

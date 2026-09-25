@@ -29,7 +29,7 @@ export type CacheEntry =
   | {
       id: number
       t: number
-      kind: 'subscribed'
+      kind: 'subscribed' | 'unsubscribed'
       queryKey: readonly unknown[]
       subscriberPath: readonly string[]
     }
@@ -323,6 +323,13 @@ export class DevtoolsStore {
    * every cache / snapshot event — NO polling. Empty until attached.
    */
   readonly cacheState$: Signal<DebugCacheEntry[]> = signal([])
+  /**
+   * Subscriptions per cache entry, keyed like the inspector (`entryKey`, query
+   * id and key). Kept from `cache:subscribed` / `cache:unsubscribed`, and
+   * re-seeded from each `queryEntries()` snapshot, so a panel attached after
+   * the controllers subscribed still counts them. An entry with none is absent.
+   */
+  readonly subscribers$: ReadSignal<ReadonlyMap<string, number>>
   /** Capacity of the timeline ring buffer. */
   readonly maxTimelineEntries: number
 
@@ -349,6 +356,9 @@ export class DevtoolsStore {
    * `cacheState$` refresh in `flushPending` (replaces the old 800ms poll).
    */
   private cacheStateDirty = false
+  /** Backs `subscribers$`; `subscribersRev` moves on every change. */
+  private readonly subscriberCounts = new Map<string, number>()
+  private readonly subscribersRev = signal(0)
 
   /** The virtual root (path `[]`); the first real controller is its child. */
   private readonly rootCell: Cell = makeCell([], null)
@@ -402,6 +412,10 @@ export class DevtoolsStore {
     this.tree$ = computed(() => {
       this.treeRev.value
       return snapshot(this.rootCell)
+    })
+    this.subscribers$ = computed(() => {
+      this.subscribersRev.value
+      return new Map(this.subscriberCounts)
     })
     this.maxDisposedNodes = options?.maxDisposedNodes ?? DEFAULT_MAX_DISPOSED_NODES
     this.now = options?.now ?? (() => Date.now())
@@ -480,6 +494,16 @@ export class DevtoolsStore {
 
   /** Apply one event. Exposed for tests. */
   handle(event: DebugEvent): void {
+    // The subscriber count moves first: a synchronous flush inside
+    // `pushTimeline` re-seeds it from the snapshot, which already includes
+    // this event, and a delta applied after that would count it twice.
+    if (event.type === 'cache:subscribed' || event.type === 'cache:unsubscribed') {
+      // The count is the current world, like the tree: it moves while paused.
+      this.countSubscriber(
+        entryKey(event.queryId, event.queryKey),
+        event.type === 'cache:subscribed' ? 1 : -1,
+      )
+    }
     // Every event lands on the unified timeline (ordered by seq), regardless of
     // which specialized view (tree / cache / mutations / fields) it also feeds.
     this.pushTimeline(event)
@@ -542,8 +566,10 @@ export class DevtoolsStore {
         return
       }
       case 'cache:subscribed':
+      case 'cache:unsubscribed':
+        // `handle` already moved the subscriber count.
         this.pushCache({
-          kind: 'subscribed',
+          kind: event.type === 'cache:subscribed' ? 'subscribed' : 'unsubscribed',
           queryKey: event.queryKey,
           subscriberPath: event.subscriberPath,
         })
@@ -574,7 +600,9 @@ export class DevtoolsStore {
         // same key renders as an initial write (not a diff against a ghost
         // value), and so `lastDataByKey` stays bounded to live keys instead of
         // growing one entry per distinct key ever seen.
-        this.lastDataByKey.delete(entryKey(event.queryId, event.queryKey))
+        const key = entryKey(event.queryId, event.queryKey)
+        this.lastDataByKey.delete(key)
+        if (this.subscriberCounts.delete(key)) this.bumpSubscribers()
         this.pushCache({ kind: 'gc', queryKey: event.queryKey })
         return
       }
@@ -730,9 +758,34 @@ export class DevtoolsStore {
    */
   private refreshCacheState(): void {
     if (this.queryEntries === undefined) return
-    this.cacheState$.set(this.queryEntries())
+    const entries = this.queryEntries()
+    this.cacheState$.set(entries)
     this.cacheStateDirty = false
     this.rev++
+    // The snapshot's counts are exact, so they correct what the events built,
+    // including subscriptions made before `attach()`.
+    let changed = false
+    for (const e of entries) {
+      if (e.subscribers === undefined) continue
+      const key = entryKey(e.queryId, e.key)
+      if ((this.subscriberCounts.get(key) ?? 0) === e.subscribers) continue
+      if (e.subscribers > 0) this.subscriberCounts.set(key, e.subscribers)
+      else this.subscriberCounts.delete(key)
+      changed = true
+    }
+    if (changed) this.bumpSubscribers()
+  }
+
+  /** Move one entry's subscription count by `delta`. It never goes below zero. */
+  private countSubscriber(key: string, delta: number): void {
+    const next = (this.subscriberCounts.get(key) ?? 0) + delta
+    if (next > 0) this.subscriberCounts.set(key, next)
+    else if (!this.subscriberCounts.delete(key)) return
+    this.bumpSubscribers()
+  }
+
+  private bumpSubscribers(): void {
+    this.subscribersRev.set(this.subscribersRev.peek() + 1)
   }
 
   private pushCache(entry: DistributiveOmit<CacheEntry, 'id' | 't'>): void {

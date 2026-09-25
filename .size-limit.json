@@ -18,14 +18,14 @@
     "path": "packages/core/dist/index.js",
     "import": "{ createRoot, defineController, queryEngine, defineQuery, createQuery, createMutation }",
     "ignore": ["@preact/signals-core"],
-    "limit": "16.6 KB"
+    "limit": "17.5 KB"
   },
   {
     "name": "core: everything",
     "path": "packages/core/dist/index.js",
     "import": "*",
     "ignore": ["@preact/signals-core"],
-    "limit": "22.3 KB"
+    "limit": "23.5 KB"
   },
   {
     "name": "react",

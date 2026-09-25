@@ -15,7 +15,7 @@ import { Signal } from '@kontsedal/olas-core';
 export type CacheEntry = {
     id: number;
     t: number;
-    kind: 'subscribed';
+    kind: 'subscribed' | 'unsubscribed';
     queryKey: readonly unknown[];
     subscriberPath: readonly string[];
 } | {
@@ -114,6 +114,7 @@ export class DevtoolsStore {
     resume(): void;
     search(query: string, limitPerKind?: number): SearchGroup[];
     searchStats(): SearchStats;
+    readonly subscribers$: ReadSignal<ReadonlyMap<string, number>>;
     readonly tree$: ReadSignal<ControllerNode>;
 }
 

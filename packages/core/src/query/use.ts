@@ -216,11 +216,15 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
  * underlying `T` to a view `U`; the returned subscription's data shape
  * widens accordingly. Without `select`, `U = T` and the projection
  * computed is skipped.
+ *
+ * `subscriberPath` is the subscribing controller's path. Every acquire and
+ * release carries it, so the devtools see who holds each entry.
  */
 export function createUse<Args extends unknown[], T, U = T>(
   client: QueryClient,
   query: Query<Args, T>,
-  keyOrOptions?: (() => Args) | SubscriptionInternalOptions<Args, T, U>,
+  keyOrOptions: (() => Args) | SubscriptionInternalOptions<Args, T, U> | undefined,
+  subscriberPath: readonly string[],
 ): {
   subscription: QuerySubscription<U>
   dispose: () => void
@@ -266,7 +270,7 @@ export function createUse<Args extends unknown[], T, U = T>(
       untracked(() => {
         sub.setEnabled(false)
         if (currentEntry) {
-          currentEntry.release()
+          currentEntry.release(subscriberPath)
           currentEntry = null
         }
         // `keepDataWhileDisabled` snapshots the last data so `data` keeps
@@ -280,8 +284,8 @@ export function createUse<Args extends unknown[], T, U = T>(
       sub.setEnabled(true)
       const entry = client.bindEntry<Args, T>(query, args as Args)
       if (currentEntry === entry) return
-      if (currentEntry) currentEntry.release()
-      entry.acquire()
+      if (currentEntry) currentEntry.release(subscriberPath)
+      entry.acquire(subscriberPath)
       currentEntry = entry
       sub.attach(entry)
 
@@ -298,7 +302,7 @@ export function createUse<Args extends unknown[], T, U = T>(
   const dispose = () => {
     effectDispose()
     if (currentEntry) {
-      currentEntry.release()
+      currentEntry.release(subscriberPath)
       currentEntry = null
     }
     sub.close()
@@ -308,7 +312,7 @@ export function createUse<Args extends unknown[], T, U = T>(
     if (suspended) return
     suspended = true
     if (currentEntry) {
-      currentEntry.release()
+      currentEntry.release(subscriberPath)
       currentEntry = null
     }
     // Keep subscription detached so reads return the last committed values
@@ -335,7 +339,7 @@ export function createUse<Args extends unknown[], T, U = T>(
     sub.setEnabled(true)
     const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
     const entry = client.bindEntry<Args, T>(query, args)
-    entry.acquire()
+    entry.acquire(subscriberPath)
     currentEntry = entry
     sub.attach(entry)
     // On resume, refetch if stale (matches the spec §4.1 "stale-on-resume"
@@ -520,10 +524,12 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
   }
 }
 
+/** The infinite counterpart of `createUse`, with the same `subscriberPath`. */
 export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
   client: QueryClient,
   query: InfiniteQuery<Args, TPage, TItem>,
-  keyOrOptions?: (() => Args) | QuerySubscriptionOptions<Args>,
+  keyOrOptions: (() => Args) | QuerySubscriptionOptions<Args> | undefined,
+  subscriberPath: readonly string[],
 ): {
   subscription: InfiniteQuerySubscription<TPage, TItem>
   dispose: () => void
@@ -563,7 +569,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
       untracked(() => {
         sub.setEnabled(false)
         if (currentEntry) {
-          currentEntry.release()
+          currentEntry.release(subscriberPath)
           currentEntry = null
         }
         sub.detach(keepDataWhileDisabled)
@@ -575,8 +581,8 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
       sub.setEnabled(true)
       const entry = client.bindInfiniteEntry<Args, TPage, TItem>(query, args as Args)
       if (currentEntry === entry) return
-      if (currentEntry) currentEntry.release()
-      entry.acquire()
+      if (currentEntry) currentEntry.release(subscriberPath)
+      entry.acquire(subscriberPath)
       currentEntry = entry
       sub.attach(entry)
 
@@ -593,7 +599,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
   const dispose = () => {
     effectDispose()
     if (currentEntry) {
-      currentEntry.release()
+      currentEntry.release(subscriberPath)
       currentEntry = null
     }
     sub.close()
@@ -603,7 +609,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
     if (suspended) return
     suspended = true
     if (currentEntry) {
-      currentEntry.release()
+      currentEntry.release(subscriberPath)
       currentEntry = null
     }
   }
@@ -621,7 +627,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
     sub.setEnabled(true)
     const args = (keyFn ? keyFn() : ([] as unknown as Args)) as Args
     const entry = client.bindInfiniteEntry<Args, TPage, TItem>(query, args)
-    entry.acquire()
+    entry.acquire(subscriberPath)
     currentEntry = entry
     sub.attach(entry)
     const status = entry.entry.status.peek()

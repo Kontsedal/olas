@@ -4,8 +4,8 @@ description: "\"Nothing invalidates this query\" does not mean \"no fetch is in 
 type: pitfall
 covers:
   - packages/core/src/query/use.ts
-  - packages/core/src/query/client.ts:1108-1200
-  - packages/core/src/query/types.ts:297-380
+  - packages/core/src/query/client.ts:1182-1276
+  - packages/core/src/query/types.ts:315-400
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/entry.md }
@@ -70,7 +70,7 @@ The same reasoning error has a sibling: assuming a *canonical* write is safe fro
 | `write` | only for the fields it touched | a response may overwrite it; cancel first when that matters |
 | `setData` | no — it is a guess | a response may overrule it; cancel first |
 
-**The one thing `replace` will not do is cancel when the new value is `undefined`** (`packages/core/src/query/client.ts:1555-1568`). A write flips an idle or pending entry to `status: 'success'` whatever it is handed. Replacing with `undefined` and cancelling as well would strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. So that fetch is left to produce the first value.
+**The one thing `replace` will not do is cancel when the new value is `undefined`** (`packages/core/src/query/client.ts:1640-1656`). A write flips an idle or pending entry to `status: 'success'` whatever it is handed. Replacing with `undefined` and cancelling as well would strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. So that fetch is left to produce the first value.
 
 ## Where it's documented
 

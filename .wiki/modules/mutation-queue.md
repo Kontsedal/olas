@@ -100,7 +100,7 @@ Three triggers funnel into `runReplay` (`plugin.ts:881-891`), which a `replaying
 1. reads the definition through `host.mutations.get(id)`. A missing one reports `onReplayError` and leaves the entry for a later load;
 2. drops an entry whose definition lacks `meta.persist: true`, or one already at `maxAttempts`;
 3. writes the entry back with `attempts + 1` before running, so a crash mid-run cannot loop on it;
-4. runs it with `host.mutations.run(id, variables)`, the core runner. The definition's `retry` applies, `mutate` receives the root's `deps`, the run counts toward `waitForIdle`, and devtools reports it under the path `['plugin', 'olas-mutation-queue']` (`packages/core/src/query/client.ts:921-929`). Its events carry the plugin's name, so `onMutation` does not persist the replay a second time.
+4. runs it with `host.mutations.run(id, variables)`, the core runner. The definition's `retry` applies, `mutate` receives the root's `deps`, the run counts toward `waitForIdle`, and devtools reports it under the path `['plugin', 'olas-mutation-queue']` (`packages/core/src/query/client.ts:986-994`). Its events carry the plugin's name, so `onMutation` does not persist the replay a second time.
 5. on success, deletes the entry and calls `onReplaySettle(entry, result, queries)`. A throw from that handler goes to `onWarn`.
 6. on failure (`plugin.ts:685-706`), drops and reports when the attempt was the last one allowed or `isRetryable` rejects the failure. Otherwise it calls `onReplayAttempt`. An abort, or the plugin disposing mid-run, counts as no attempt.
 

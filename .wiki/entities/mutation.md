@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../flows/mutation-concurrency.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -94,7 +94,7 @@ Aborts every inflight handle. Drains the serial queue with `AbortError`. Sets `d
 
 **`detached: true` (§6.5) turns all of that off.** `dispose()` marks the mutation disposed and returns without aborting. In-flight runs finish, the serial queue drains, `run()` keeps working, and the lifecycle callbacks still fire. That is how the invalidation hanging off `onSuccess` lands instead of being skipped. `reset()` and a `latest-wins` supersede still cancel, because both are the app explicitly dropping a run, where dispose only means the screen is gone. `reset()` deliberately keeps working after dispose, because it is then the only stop button left. Internally the whole distinction is the `cancelledByDispose` getter, defined as `disposed && !detached`. `run()`, `reset()` and the post-await branch consult that instead of `disposed`.
 
-Callbacks on a detached run execute after the controller is torn down, so they must stay at client level (`query.invalidate()`, a toast). If the root is gone the run still completes but its cache writes no-op, since `QueryClient.dispose()` deregisters the client from every query (`client.ts:1054-1061`).
+Callbacks on a detached run execute after the controller is torn down, so they must stay at client level (`query.invalidate()`, a toast). If the root is gone the run still completes but its cache writes no-op, since `QueryClient.dispose()` deregisters the client from every query (`client.ts:1128-1135`).
 
 `reset()` is similar but doesn't mark disposed — it aborts inflight, drains the queue, and clears `data`/`error`/`lastVariables`/`isPending` and sets `status` back to `'idle'`. The mutation remains usable. `mutation.ts:607-629`; spec §6.2 lists it among the abort triggers; pinned by `mutation.test.ts:54` and regression B2.
 

@@ -1,5 +1,6 @@
 import type { ErrorHandler } from '../errors'
 import type { QueryClient } from '../query/client'
+import type { ReadSignal } from '../signals/types'
 import type { Ctx } from './types'
 
 /**
@@ -18,6 +19,9 @@ import type { Ctx } from './types'
  * package in one dependency graph must agree.
  */
 export const CTX_INTERNALS: unique symbol = Symbol.for('olas.ctx.internals') as never
+
+/** What `root.waitForIdle()` reads of a local cache: whether it is fetching. */
+export type LocalWork = { readonly isFetching: ReadSignal<boolean> }
 
 /** Lifecycle entry shapes a primitive can register. Mirrors `instance.ts`. */
 export type CtxEntry =
@@ -40,6 +44,12 @@ export type CtxInternals = {
   register(entry: CtxEntry): void
   /** The root's `QueryClient`, or a thrown error naming the missing engine. */
   requireClient(operation: string): QueryClient
+  /**
+   * Count a `createCache` local cache's fetches toward `root.waitForIdle()`
+   * until the returned function is called. A local cache is not a query-client
+   * entry, so the root tracks it here.
+   */
+  trackLocalCache(cache: LocalWork): () => void
   /** Root-wide query defaults (§5.9), readable without a query engine. */
   readonly queryDefaults: {
     staleTime?: number

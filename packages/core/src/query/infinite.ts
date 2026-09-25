@@ -3,7 +3,13 @@ import { scheduleExpiry } from '../expiry-timer'
 import { batch, computed, type Signal, signal } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
-import { type EntryEvents, nextFetchCauseId } from './entry'
+import {
+  type EntryEvents,
+  type FetchFailure,
+  failureContext,
+  followRedirects,
+  nextFetchCauseId,
+} from './entry'
 import { subscribeReconnect } from './focus-online'
 import { structuralShare } from './structural-share'
 import type {
@@ -168,6 +174,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
 
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
+  /** The request in flight (refetch or page), while one is. See `Entry.currentRequest`. */
+  private currentRequest: Promise<unknown> | null = null
+  /** `currentFetchId` of the catch-up refetch; `0` when none has run. */
+  private catchUpFetchId = 0
+  /** `invalidate()` promises waiting on a refetch, by it. See `Entry.redirects`. */
+  private readonly redirects = new WeakMap<Promise<unknown>, (catchUp: Promise<unknown>) => void>()
+  /** The latest failed fetch, for the client's error report. */
+  private lastFailure: FetchFailure | null = null
   private staleTimer: (() => void) | null = null
   /** Set by `markStale()` (invalidate without fetch). See `Entry.forcedStale`. */
   private forcedStale = false
@@ -325,14 +339,16 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }
 
   /**
-   * Forget `abort` once the request it belongs to settles. A finished request
-   * has nothing to cancel, and `abort()` on its controller still builds a
-   * `DOMException`: kept as `currentAbort`, it made every refetch, hydration
-   * and dispose pay for one.
+   * Record `work` as the request in flight, and forget it and `abort` once it
+   * settles. A finished request has nothing to cancel, and `abort()` on its
+   * controller still builds a `DOMException`: kept as `currentAbort`, it made
+   * every refetch, hydration and dispose pay for one.
    */
   private releaseOnSettle<R>(work: Promise<R>, abort: AbortController): Promise<R> {
+    this.currentRequest = work
     const release = (): void => {
       if (this.currentAbort === abort) this.currentAbort = null
+      if (this.currentRequest === work) this.currentRequest = null
     }
     work.then(release, release)
     return work
@@ -388,20 +404,18 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             // engine-side abort bumps `currentFetchId` or sets `disposed` first.
             // Nothing newer is coming to settle the entry, so it settles as a
             // failure; aborts never go through the retry policy.
-            const shouldRetry =
-              !isAbortError(err) &&
-              (typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err))
-            if (!shouldRetry) {
-              batch(() => {
-                this.error.set(err)
-                this.status.set('error')
-                this.isLoading.set(false)
-                this.isFetching.set(false)
-              })
-              this.announceFetchError(err)
+            let delay: number | null
+            try {
+              delay = this.nextRetryDelay(attempt, err)
+            } catch (policyErr) {
+              // A throwing `retry` / `retryDelay` fails the attempt — see `Entry`.
+              this.settleFailure(policyErr, attempt, 'initial', err)
+              throw policyErr
+            }
+            if (delay === null) {
+              this.settleFailure(err, attempt, 'initial')
               throw err
             }
-            const delay = this.computeRetryDelay(attempt)
             await abortableSleep(delay, signal)
             attempt += 1
           }
@@ -419,6 +433,13 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         previousPages.length > 0 && this.structuralShareEnabled && newPages.length > 0
           ? [structuralShare(previousPages[0] as TPage, newPages[0] as TPage), ...newPages.slice(1)]
           : newPages
+      // Rebase live optimistic snapshots onto the fresh pages, as
+      // `Entry.applySuccess` does: a later rollback restores this server truth,
+      // not the pre-fetch baseline the snapshot captured (spec §6.4).
+      for (const s of this.snapshots) {
+        s.prev = finalPages
+        s.prevParams = newParams
+      }
       batch(() => {
         this.pages.set(finalPages)
         this.pageParams.set(newParams)
@@ -484,6 +505,12 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         nextParam,
         (page, param) => {
           if (myId !== this.currentFetchId || this.disposed) return
+          // The appended page is server truth each baseline lacks: add it, so
+          // a rollback keeps it and drops only the optimistic delta (§6.4).
+          for (const s of this.snapshots) {
+            s.prev = [...s.prev, page]
+            s.prevParams = [...s.prevParams, param]
+          }
           batch(() => {
             this.pages.set([...this.pages.peek(), page])
             this.pageParams.set([...this.pageParams.peek(), param])
@@ -537,6 +564,11 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         prevParam,
         (page, param) => {
           if (myId !== this.currentFetchId || this.disposed) return
+          // Prepend the page to every baseline — see `fetchNextPage`.
+          for (const s of this.snapshots) {
+            s.prev = [page, ...s.prev]
+            s.prevParams = [param, ...s.prevParams]
+          }
           batch(() => {
             this.pages.set([page, ...this.pages.peek()])
             this.pageParams.set([param, ...this.pageParams.peek()])
@@ -593,30 +625,26 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             ] as TPage
           }
           // A self-inflicted abort settles as a failure — see `runRefetchAll`.
-          const shouldRetry =
-            !isAbortError(err) &&
-            (typeof this.retry === 'number' ? attempt < this.retry : this.retry(attempt, err))
-          if (!shouldRetry) {
-            batch(() => {
-              this.error.set(err)
-              this.status.set('error')
-              this.isLoading.set(false)
-              this.isFetching.set(false)
-              if (direction === 'next') this.isFetchingNextPage.set(false)
-              if (direction === 'prev') this.isFetchingPreviousPage.set(false)
-            })
-            this.announceFetchError(err)
+          let delay: number | null
+          try {
+            delay = this.nextRetryDelay(attempt, err)
+          } catch (policyErr) {
+            // A throwing `retry` / `retryDelay` fails the attempt — see `Entry`.
+            this.settleFailure(policyErr, attempt, direction, err)
+            throw policyErr
+          }
+          if (delay === null) {
+            this.settleFailure(err, attempt, direction)
             throw err
           }
-          const delay = this.computeRetryDelay(attempt)
           await abortableSleep(delay, signal)
           attempt += 1
         }
       }
     } finally {
       // Catch-all reset for the supersede/abort path. The success and explicit
-      // failure paths already reset these via `onSuccess` and the
-      // `applyFailure`-equivalent branch above; this guarantees that an
+      // failure paths already reset these via `onSuccess` and
+      // `settleFailure`; this guarantees that an
       // aborted-mid-flight `fetchNextPage` (e.g., user calls `invalidate()`
       // while paging) doesn't wedge the spinner.
       // A superseded request leaves the flags alone: its superseder set them.
@@ -662,9 +690,35 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.isStale.set(true)
   }
 
+  /** Mark stale and refetch; follows a catch-up as `Entry.invalidate` does. */
   invalidate(): Promise<TPage> {
     this.markStale()
-    return this.startFetch()
+    return followRedirects<unknown>(this.startFetch(), this.redirects) as Promise<TPage>
+  }
+
+  /** The latest failure's `attempt` and `cause`, when `err` is that failure. */
+  failureOf(err: unknown): { attempt: number; cause?: unknown } | undefined {
+    return failureContext(this.lastFailure, err)
+  }
+
+  /**
+   * Supersede the request in flight for a canonical whole-record write, and
+   * re-fetch once when an invalidation's response was the one discarded.
+   * Mirrors `Entry.supersedeByWrite`; the catch-up re-fetches every loaded page.
+   */
+  supersedeByWrite(hasSubscribers: boolean): void {
+    if (this.disposed || !this.isFetching.peek()) return
+    if (this.currentFetchId === this.catchUpFetchId) return
+    const discarded = this.currentRequest
+    const catchUp = this.forcedStale && hasSubscribers
+    batch(() => {
+      this.cancel()
+      if (!catchUp) return
+      const request = this.startFetch()
+      this.catchUpFetchId = this.currentFetchId
+      request.catch(() => {})
+      if (discarded !== null) this.redirects.get(discarded)?.(request)
+    })
   }
 
   reset(): void {
@@ -841,6 +895,42 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     const last = this.lastUpdatedAt.peek()
     if (last === undefined) return true
     return Date.now() - last >= this.staleTime
+  }
+
+  /**
+   * The backoff before the next attempt, or `null` when the policy says stop.
+   * An abort never retries. Throws when the query's `retry` or `retryDelay`
+   * callback throws; both loops settle that as the attempt's failure.
+   */
+  private nextRetryDelay(attempt: number, err: unknown): number | null {
+    if (isAbortError(err)) return null
+    const retry = this.retry
+    const again = typeof retry === 'number' ? attempt < retry : retry(attempt, err)
+    return again ? this.computeRetryDelay(attempt) : null
+  }
+
+  /**
+   * Settle a failed request: `error` set, `status: 'error'`, the in-flight
+   * flags cleared, and the loaded pages kept. `cause` is passed only when
+   * `err` replaced the fetch's own error (a throwing retry callback).
+   */
+  private settleFailure(
+    err: unknown,
+    attempt: number,
+    direction: 'initial' | 'next' | 'prev',
+    ...cause: [] | [unknown]
+  ): void {
+    batch(() => {
+      this.error.set(err)
+      this.status.set('error')
+      this.isLoading.set(false)
+      this.isFetching.set(false)
+      if (direction === 'next') this.isFetchingNextPage.set(false)
+      if (direction === 'prev') this.isFetchingPreviousPage.set(false)
+    })
+    this.lastFailure =
+      cause.length === 0 ? { error: err, attempt } : { error: err, attempt, cause: cause[0] }
+    this.announceFetchError(err)
   }
 
   private computeRetryDelay(attempt: number): number {

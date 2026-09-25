@@ -3,12 +3,12 @@ name: callargs-vs-keyargs
 description: Two arg arrays inside ClientEntry. One goes to the fetcher; one goes to the hash. They are not the same.
 type: pitfall
 covers:
-  - packages/core/src/query/client.ts:31-222
-  - packages/core/src/query/client.ts:881-960
+  - packages/core/src/query/client.ts:31-242
+  - packages/core/src/query/client.ts:946-1030
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -68,7 +68,7 @@ constructor(
 }
 ```
 
-`dropEntry`, `invalidate`, `invalidateAll`, and `bindEntry`'s hash-collision dedupe path (`client.ts:881-960`) all hash with `stableHash(...)` over `keyArgs`.
+`dropEntry`, `invalidate`, `invalidateAll`, and `bindEntry`'s hash-collision dedupe path (`client.ts:946-1030`) all hash with `stableHash(...)` over `keyArgs`.
 
 ## Why have both?
 

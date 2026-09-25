@@ -9,7 +9,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/query-isolation.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: ../entities/query-client.md }
-last_verified: 2026-09-19
+last_verified: 2026-09-25
 confidence: high
 ---
 

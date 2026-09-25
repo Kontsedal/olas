@@ -23,6 +23,7 @@ covers:
   - packages/core/src/expiry-timer.ts
   - packages/core/src/plugin/types.ts
   - packages/core/src/plugin/host.ts
+  - packages/core/src/controller/root.ts:114-241
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query-isolation.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
@@ -38,6 +39,10 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/infinite-parity.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/ssr.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/plugin-host.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/catch-up-refetch.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/local-cache-writes.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/retry-policy-throws.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/infinite-rebase.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
@@ -62,17 +67,17 @@ A root has a query engine only when `createRoot` gets `queries: queryEngine()`. 
 | File | Owns |
 |------|------|
 | `types.ts` | `AsyncState`, `AsyncStatus`, `LocalCache`, `Snapshot`, `Query`, `QueryActions`, `QuerySpec`, `QueryMeta`, `QueryDefaults`, `QuerySubscription`, `QuerySubscriptionOptions`, `QuerySelectOptions`, `DehydratedEntry`, `DehydratedState`, `RetryPolicy`, `RetryDelay`, `RefetchInterval`, `NetworkMode`, `FetchCtx` |
-| `bind.ts` | The ctx-taking entry points: `createQuery`, `createCache`, `createMutation`, `bindQuery` (`bind.ts:36-176`). Each reaches the controller through `ctxInternals`. |
+| `bind.ts` | The ctx-taking entry points: `createQuery`, `createCache`, `createMutation`, `bindQuery` (`bind.ts:36-190`). Each reaches the controller through `ctxInternals`. |
 | `engine.ts` | `queryEngine({ defaults })`, `QueryEngine`, `QueryEngineOptions`, and the internal `QueryEngineHost` that `createRoot` hands it. |
 | `missing-engine.ts` | The "no query engine" error, kept apart so nothing reachable from `createRoot` imports `engine.ts`. |
 | `entry.ts` | `Entry<T>`, the race-protected state machine for one cache key. Retry loop, snapshot stack, staleness timer. `EntryEvents`, the devtools callback bundle. |
-| `local.ts` | `LocalCacheImpl` and `createLocalCache(fetcher, options, deps)`. Backs `createCache`. |
+| `local.ts` | `LocalCacheImpl` and `createLocalCache(fetcher, options, deps)`. Backs `createCache`. It carries the three writes a `Query` has: `setData` (optimistic), and `write` and `replace` (canonical, 1.0). `replace` calls `Entry.supersedeByWrite(true)`, because the owning controller is the cache's one subscriber for as long as it exists. `createCache` in `bind.ts` registers the cache with `ctxInternals.trackLocalCache`, so `root.waitForIdle()` counts its fetches. |
 | `keys.ts` | `stableHash(args)`: a type-tagged JSON encoding, so user data cannot impersonate an internal tag. Object keys are sorted, `-0` is `0`, and a `Date` encodes as its ISO string. It throws on functions, symbols, `Map`, `Set`, class instances and cycles (`keys.ts:7-60`). Plugins reach it as `host.queries.hashKey`. |
 | `structural-share.ts` | `structuralShare(prev, next)`, which keeps `prev`'s references wherever a refetch returned equal content. `Entry.applySuccess` runs it unless `structuralShare: false`. |
-| `client.ts` | `QueryClient`, `ClientEntry<T>`, `InfiniteClientEntry`. The per-root entry registry, `gcTime`, the refetch-interval chain (`resolveRefetchInterval` at `client.ts:62-93`, `armIntervalTick` at `client.ts:354-390`), `mutationsInflight$`, dehydrate, hydrate and `waitForIdle`. The query half of the plugin host (below). |
+| `client.ts` | `QueryClient`, `ClientEntry<T>`, `InfiniteClientEntry`. The per-root entry registry, `gcTime`, the refetch-interval chain (`resolveRefetchInterval` at `client.ts:62-93`, `armIntervalTick` at `client.ts:395-431`), `mutationsInflight$`, dehydrate, hydrate and `waitForIdle`. The query half of the plugin host (below). |
 | `define.ts` | `defineQuery`, `defineInfiniteQuery`. Both assert a non-empty `id` (`define.ts:12-19`) and brand the value under core's `BRAND` symbol. Each carries a `__clients: Set<QueryClient>` for multi-root operation, and the unbound actions from `actions.ts`. |
 | `actions.ts` | `createQueryActions` and `createInfiniteQueryActions`: the `invalidate`, `setData`, `write`, `replace`, `peek`, `cancel` and `prefetch` surface, over a client resolver and an optional `origin` (`actions.ts:24-120`). `singleClient` throws on an ambiguous unbound call. |
-| `use.ts` | `createUse` and `createInfiniteUse`. Build a `SubscriptionImpl` that swaps entries reactively on a key change. `AttachWaiters` and `FirstValueCache` back `firstValue()` on a detached subscription. |
+| `use.ts` | `createUse` and `createInfiniteUse`. Build a `SubscriptionImpl` that swaps entries reactively on a key change. `AttachWaiters` and `FirstValueCache` back `firstValue()` on a detached subscription. Both take the subscribing controller's path from `createQuery` and pass it to every `acquire` and `release`, which is what the devtools `cache:subscribed` and `cache:unsubscribed` events carry. |
 | `errors.ts` | `QueryDisabledError`, which `refetch()` rejects with on a disabled subscription. See `../decisions/disabled-subscriptions.md`. |
 | `mutation.ts` | `MutationImpl` with three concurrency modes, the abort race and snapshot rollback. `defineMutation`, `MutationDisposedError`, `MutationLifecycleHooks`. |
 | `mutation-registry.ts` | The module-level `defineMutation` registry by `id`. `host.mutations.run` looks definitions up here. Internal. |
@@ -101,18 +106,18 @@ See `flows/query-subscription.md`.
 
 ## Root-scoped invalidation
 
-A `Query` is module-scoped. Binding a handle or entry registers its client in `query.__clients`, and indexes the query in the client's `byId` map (`client.ts:749-761`). Bound actions select that client; unbound calls fail when more than one client is registered. Disposal unregisters the client. See `../decisions/per-root-query-client.md` and `query-isolation.test.ts`.
+A `Query` is module-scoped. Binding a handle or entry registers its client in `query.__clients`, and indexes the query in the client's `byId` map (`client.ts:808-820`). Bound actions select that client; unbound calls fail when more than one client is registered. Disposal unregisters the client. See `../decisions/per-root-query-client.md` and `query-isolation.test.ts`.
 
-`invalidate` and `invalidateAll` return a `Promise<void>` for the selected root. Fetch errors route to that root's `onError` as `kind: 'cache'` with `queryId` and `key` (`client.ts:1383-1410`). Ambiguity and root disposal reject. A subscriber-less entry is marked stale without refetching. See spec §5.7 and §21.5.
+`invalidate` and `invalidateAll` return a `Promise<void>` for the selected root. Fetch errors route to that root's `onError` as `kind: 'cache'` with `queryId`, `key`, and the `attempt` and `cause` the entry recorded (`client.ts:1459-1495`). Ambiguity and root disposal reject. A subscriber-less entry is marked stale without refetching. When a `replace` discards the refetch, the entry fetches once more and the promise follows that catch-up (`entities/entry.md`). See spec §5.7, §6.4 and §21.5.
 
 ## The imperative surface: a read, and three kinds of write
 
-Beyond `createQuery`, the handle carries the operations that reach a keyed entry from outside a subscription: `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `prefetch`, `peek`, `setData`, `write` and `replace` (`types.ts:321-427`, `actions.ts:24-69`). `InfiniteQuery` has the same set over pages.
+Beyond `createQuery`, the handle carries the operations that reach a keyed entry from outside a subscription: `invalidate`, `invalidateAll`, `cancel`, `cancelAll`, `prefetch`, `peek`, `setData`, `write` and `replace` (`types.ts:340-455`, `actions.ts:24-69`). `InfiniteQuery` has the same set over pages.
 
-- **`peek(...keyArgs): T | undefined`** (`client.peekData`, `client.ts:1481-1487`) is a synchronous read. It looks the entry up in `maps` **without** `bindEntry`, so a peek cannot mint the entry it asks about. It reads through `.peek()`, so it registers no reactive dependency. `undefined` conflates "no entry" with "not settled", deliberately: the caller that cares is guarding a write, and both answers mean *don't*. The bound handle reads only its selected root. An unbound peek returns undefined for zero clients and throws on multiple clients.
-- **`write(...keyArgs, updater): void`** (`client.writeData`, `client.ts:1509-1541`) is a canonical patch: `Entry.setData(updater, { track: false })`, so no snapshot record and no `hasPendingMutations` flip. It rebases live snapshots onto the written value and leaves a fetch in flight alone. It binds the entry when absent, as `setData` does. Plugins and devtools see `source: 'write'`.
-- **`replace(...keyArgs, value): void`** (`client.replaceData`, `client.ts:1560-1579`) is a canonical whole record. It writes like `write`, then cancels a fetch in flight when `value` is defined. The source is `'replace'`.
-- **`setData(...keyArgs, updater): Snapshot`** (`client.setData`, `client.ts:1581-1623`) is the **optimistic** write, reported as `'optimistic'`. Its snapshot is the caller's to settle, and a rollback that changes the data reports a `'rollback'` write. See `pitfalls/no-invalidator-still-refetches.md` for the `cancel()`-first rule that applies to it even when nothing invalidates the query.
+- **`peek(...keyArgs): T | undefined`** (`client.peekData`, `client.ts:1566-1572`) is a synchronous read. It looks the entry up in `maps` **without** `bindEntry`, so a peek cannot mint the entry it asks about. It reads through `.peek()`, so it registers no reactive dependency. `undefined` conflates "no entry" with "not settled", deliberately: the caller that cares is guarding a write, and both answers mean *don't*. The bound handle reads only its selected root. An unbound peek returns undefined for zero clients and throws on multiple clients.
+- **`write(...keyArgs, updater): void`** (`client.writeData`, `client.ts:1594-1626`) is a canonical patch: `Entry.setData(updater, { track: false })`, so no snapshot record and no `hasPendingMutations` flip. It rebases live snapshots onto the written value and leaves a fetch in flight alone. It binds the entry when absent, as `setData` does. Plugins and devtools see `source: 'write'`.
+- **`replace(...keyArgs, value): void`** (`client.replaceData`, `client.ts:1648-1667`) is a canonical whole record. It writes like `write`, then supersedes a fetch in flight through `Entry.supersedeByWrite` when `value` is defined. If the discarded fetch was an invalidation's, the entry fetches once more to reconcile (spec §6.4). The source is `'replace'`.
+- **`setData(...keyArgs, updater): Snapshot`** (`client.setData`, `client.ts:1669-1711`) is the **optimistic** write, reported as `'optimistic'`. Its snapshot is the caller's to settle, and a rollback that changes the data reports a `'rollback'` write. See `pitfalls/no-invalidator-still-refetches.md` for the `cancel()`-first rule that applies to it even when nothing invalidates the query.
 
 Why these are separate methods rather than options: `decisions/canonical-vs-optimistic-writes.md`.
 
@@ -121,19 +126,19 @@ Why these are separate methods rather than options: `decisions/canonical-vs-opti
 - `onMutate` typically calls `query.setData(...)`. That writes through `client.setData`, which calls `entry.setData(updater)`. The Entry records a snapshot (the pre-value) and returns `{ rollback, finalize }`.
 - `onError(err, vars, snapshot)` typically calls `snapshot?.rollback()`, and the runner rolls back after `onError` anyway. On success the runner calls `finalize()` (`mutation.ts:556-561`). Rolling back the top-of-stack snapshot restores its captured pre-value. A non-top rollback under concurrency chain-splices instead, so out-of-order rollbacks still converge on the original value (spec §6.4, `entities/entry.md`).
 - For `concurrency: 'latest-wins'`, the previous run's snapshot rolls back **synchronously before the new run's `onMutate` is called** (`mutation.ts:408-417`). See `pitfalls/latest-wins-rollback-order.md`.
-- Mutation inflight is tracked centrally on `queryClient.mutationsInflight$`. `root.waitForIdle()` waits on it, on per-entry `isFetching`, and on work plugins `track`.
+- Mutation inflight is tracked centrally on `queryClient.mutationsInflight$`. `root.waitForIdle()` waits on it, on per-entry `isFetching`, on every live `createCache`'s `isFetching`, and on work plugins `track`. The local caches live in `RootShared.localCaches`, so a root without a query engine waits for them too (`controller/root.ts`).
 
 ## Network mode & `isPaused`
 
-`QuerySpec.networkMode` (`'online'` default, `'always'` and `'offlineFirst'`) gates fetches on `navigator.onLine`. `online` defers a fetch requested while offline in `Entry.scheduleDeferredFetch` (`entry.ts:223-239`). The entry resumes on the `online` event: `subscribeReconnect` in `focus-online.ts` calls `Entry.drainDeferred` (`entry.ts:241-260`). `offlineFirst` runs the fetch, but a `fetch` `TypeError` raised while offline parks and retries on reconnect instead of surfacing the error; see the `runWithRetry` catch in `entry.ts:297-308` (T3.5). Both parked paths set the `isPaused` signal on `AsyncState`. It is `true` while waiting for the network and `false` whenever a fetch is in flight or settled. `always` never parks. Spec §5.5; pinned by `query-focus-online.test.ts` (R-Q3.5). Infinite entries park the same way in both fetch loops, `runRefetchAll` and `runFetch`, through `parksOnOffline` and `settleParked` (`infinite.ts:953-958`). The drain re-runs the parked direction, and a parked refetch re-runs the whole refetch.
+`QuerySpec.networkMode` (`'online'` default, `'always'` and `'offlineFirst'`) gates fetches on `navigator.onLine`. `online` defers a fetch requested while offline in `Entry.scheduleDeferredFetch` (`entry.ts:293-309`). The entry resumes on the `online` event: `subscribeReconnect` in `focus-online.ts` calls `Entry.drainDeferred` (`entry.ts:311-330`). `offlineFirst` runs the fetch, but a `fetch` `TypeError` raised while offline parks and retries on reconnect instead of surfacing the error; see the `runWithRetry` catch in `entry.ts:367-378` (T3.5). Both parked paths set the `isPaused` signal on `AsyncState`. It is `true` while waiting for the network and `false` whenever a fetch is in flight or settled. `always` never parks. Spec §5.5; pinned by `query-focus-online.test.ts` (R-Q3.5). Infinite entries park the same way in both fetch loops, `runRefetchAll` and `runFetch`, through `parksOnOffline` and `settleParked` (`infinite.ts:1043-1048`). The drain re-runs the parked direction, and a parked refetch re-runs the whole refetch.
 
 ## SSR
 
-`root.dehydrate()` calls `QueryClient.dehydrate` (`client.ts:1159-1186`). It walks `maps` and `infiniteMaps` and emits `{ id, key, data, lastUpdatedAt }` for each entry in `status: 'success'`, plus `pageParams` for an infinite entry. Error and idle entries are skipped.
+`root.dehydrate()` calls `QueryClient.dehydrate` (`client.ts:1235-1262`). It walks `maps` and `infiniteMaps` and emits `{ id, key, data, lastUpdatedAt }` for each entry in `status: 'success'`, plus `pageParams` for an infinite entry. Error and idle entries are skipped.
 
-`createRoot(def, { hydrate: state })` buffers the payload into the client's `hydratedData` map through `QueryClient.hydrate` (`client.ts:1084-1095`), keyed by query id and key hash. The first `bindEntry` matching both consumes the row and threads it into the new `Entry` as `initialData` (`client.ts:1286-1291`). That site also reports one `WriteEvent` with `source: 'hydrate'` (`client.ts:1322-1332`). Without it, a plugin observing every write, such as entities, would miss every hydrated row, because `Entry.applySuccess` never runs for an entry that starts with `initialData`. `bindInfiniteEntry` does the same for a payload with aligned `pageParams` (`client.ts:1642-1683`).
+`createRoot(def, { hydrate: state })` buffers the payload into the client's `hydratedData` map through `QueryClient.hydrate` (`client.ts:1158-1169`), keyed by query id and key hash. The first `bindEntry` matching both consumes the row and threads it into the new `Entry` as `initialData` (`client.ts:1362-1367`). That site also reports one `WriteEvent` with `source: 'hydrate'` (`client.ts:1398-1408`). Without it, a plugin observing every write, such as entities, would miss every hydrated row, because `Entry.applySuccess` never runs for an entry that starts with `initialData`. `bindInfiniteEntry` does the same for a payload with aligned `pageParams` (`client.ts:1730-1771`).
 
-`root.hydrate(state)` and `host.queries.hydrate(state)` apply a payload to a running root through `hydrateLive` (`client.ts:1078-1081`), which checks the version and calls `applyDehydratedEntry` per row (`client.ts:1043-1071`). A bound entry takes the row through `Entry.applyHydration`, which supersedes a fetch in flight, and reports one `'hydrate'` write. An unbound key buffers into `hydratedData`. The React streaming hydrator feeds `root.hydrate` batch by batch. See `flows/ssr.md`.
+`root.hydrate(state)` and `host.queries.hydrate(state)` apply a payload to a running root through `hydrateLive` (`client.ts:1152-1155`), which checks the version and calls `applyDehydratedEntry` per row (`client.ts:1117-1145`). A bound entry takes the row through `Entry.applyHydration`, which supersedes a fetch in flight, and reports one `'hydrate'` write. An unbound key buffers into `hydratedData`. The React streaming hydrator feeds `root.hydrate` batch by batch. See `flows/ssr.md`.
 
 ## The plugin host's query half
 
@@ -141,10 +146,10 @@ The plugin contract is `plugin/types.ts` (`OlasPlugin`, `PluginHost`, `PluginHoo
 
 `QueryClient` implements the host's engine side, `PluginEngine` (`plugin/host.ts:26-29`):
 
-- **`queryHost(origin)`** (`client.ts:852-889`) is `host.queries`. It addresses entries by query `id` and key through `byId`. `write` and `replace` go through `writeByKey` (`client.ts:954-987`), a canonical write that is a no-op when the root holds no entry for the key.
-- **`mutationHost(origin)`** (`client.ts:892-901`) is `host.mutations`: `has`, `get` and `run` over the mutation registry. `run` keeps one runner per plugin and id (`client.ts:903-933`).
-- **Emitters.** `emitWrite`, `emitInfiniteWrite`, `emitInvalidated`, `emitRemoved` and `emitActivity` (`client.ts:763-826`) build events only when a plugin listens for them.
-- **Middleware.** `runFetch` (`client.ts:829-833`) sends each fetch attempt through `wrapFetch`, and `mutationLifecycle` (`client.ts:839-849`) hands the runner `onMutation` and `wrapMutate`.
+- **`queryHost(origin)`** (`client.ts:911-954`) is `host.queries`. It addresses entries by query `id` and key through `byId`. `write` and `replace` go through `writeByKey` (`client.ts:1024-1061`), a canonical write that is a no-op when the root holds no entry for the key. A `replace` there supersedes a fetch in flight only when it left the entry holding data, for a regular and an infinite entry alike: the app-side rule (1.0). Before, an infinite `replace` with empty pages cancelled too. `invalidate` sends the devtools `cache:invalidated`, as the app-side `invalidate` does.
+- **`mutationHost(origin)`** (`client.ts:957-966`) is `host.mutations`: `has`, `get` and `run` over the mutation registry. `run` keeps one runner per plugin and id (`client.ts:968-998`).
+- **Emitters.** `emitWrite`, `emitInfiniteWrite`, `emitInvalidated`, `emitRemoved` and `emitActivity` (`client.ts:822-885`) build events only when a plugin listens for them.
+- **Middleware.** `runFetch` (`client.ts:888-892`) sends each fetch attempt through `wrapFetch`, and `mutationLifecycle` (`client.ts:898-908`) hands the runner `onMutation` and `wrapMutate`.
 
 Every write and invalidate carries an `origin`: the plugin's name for a host write, the `origin` given to `bindQuery(ctx, query, { origin })`, else `undefined` for the app. A hook throw reaches `onError` as `kind: 'plugin'` with `pluginName`. Canonical consumers: `modules/cross-tab.md`, `modules/entities.md`, `modules/mutation-queue.md` and `modules/persist.md`.
 

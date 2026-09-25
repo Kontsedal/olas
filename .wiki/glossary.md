@@ -69,7 +69,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Stale time and GC time.** `staleTime` — how long data is considered fresh; influences refetch-on-subscribe. `gcTime` — after the last subscriber leaves, how long the entry sticks around before being dropped.
 
-**Suspend and Resume vs Dispose.** Suspend stops effects, recurses into children, and releases each query subscription's entry, which `gcTime` then governs (`query/use.ts:307-317`). The controllers and their state survive. Resume re-instantiates effects and rebinds the subscriptions, and a stale entry refetches. Dispose tears down. Use suspend for "definitely coming back soon", such as tab UIs. Use dispose for "user navigated away", where gcTime carries cached data forward.
+**Suspend and Resume vs Dispose.** Suspend stops effects, recurses into children, and releases each query subscription's entry, which `gcTime` then governs (`query/use.ts:311-321`). The controllers and their state survive. Resume re-instantiates effects and rebinds the subscriptions, and a stale entry refetches. Dispose tears down. Use suspend for "definitely coming back soon", such as tab UIs. Use dispose for "user navigated away", where gcTime carries cached data forward.
 
 **Validators.** Functions `(value, signal) => ValidatorResult | Promise<ValidatorResult>`, where `ValidatorResult` is `string | null | FormIssue[]` (`forms/types.ts:22-27`). Run in a tracking scope so reading signals inside re-runs the validator when those signals change. Sync validators short-circuit; async only runs if sync passed.
 

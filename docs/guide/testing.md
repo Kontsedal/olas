@@ -185,7 +185,7 @@ Two other ways to wait, for narrower cases:
 - `state.firstValue()` resolves with a query's first success, or rejects on its first failure.
 - A mutation's `run(vars)` returns a promise that settles with that run.
 
-A `createCache` local cache does not count toward `waitForIdle()`. Its entry lives in its controller, not in the root's query cache, so await `cache.firstValue()` for it instead.
+A `createCache` local cache counts toward `waitForIdle()` too. Its entry lives in its controller rather than in the root's query cache, and the root tracks it all the same, with or without a query engine.
 
 Under fake timers, advance the clock before you await `waitForIdle()`, with `await vi.advanceTimersByTimeAsync(ms)`. A retry waiting out its `retryDelay` keeps its fetch in flight until the timer fires. A fetch behind a `debounced` key has not started, so `waitForIdle()` does not see it yet.
 
@@ -407,7 +407,6 @@ The React tests need a DOM, hence the `jsdom` environment comment. Testing Libra
 
 - **Dispose every root.** A root left alive keeps its subscriptions and its cache entries. The module-level query helpers, such as `todosQuery.invalidate()`, also throw as ambiguous while two live roots have used the query, and a disposed root drops out. An `afterEach` that disposes the test's roots enforces this.
 - **Two test controllers do not share a cache.** Test deduplication and `gcTime` inside one root, for example with two children, or with `ctx.attach` and its `dispose()`.
-- **`waitForIdle()` skips local caches.** Await `firstValue()` on a `createCache` instead.
 - **A mutation `id` is registered process-wide.** `defineMutation` registers its definition by `id`, and a later definition with the same `id` replaces it. A test file that redefines one `id` can drop the registration with `_unregisterMutationById(id)`, also exported from `/testing`.
 
 ## Where to go next

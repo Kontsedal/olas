@@ -8,6 +8,7 @@ import type { DehydratedState } from '../query/types'
 import type { Scope } from '../scope'
 import { getFactory } from './define'
 import { ControllerInstance, type RootShared } from './instance'
+import type { LocalWork } from './internals'
 import type { AmbientDeps, ControllerDef, Root, RootOptions, SuspendOptions } from './types'
 
 /**
@@ -53,6 +54,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     onError: options.onError,
     queryClient,
     queryDefaults: options.queries?.[INTERNAL].options.defaults ?? {},
+    localCaches: new Set(),
     scopesVersion: { value: 0 },
   }
 
@@ -94,7 +96,19 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
     throw err
   }
 
-  return buildRootHandle(api, instance, devtools, queryClient, plugins)
+  return buildRootHandle(api, instance, devtools, queryClient, plugins, rootShared.localCaches)
+}
+
+/** Resolves once `cache` is not fetching. */
+function untilIdle(cache: LocalWork): Promise<void> {
+  if (!cache.isFetching.peek()) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    const unsub = cache.isFetching.subscribe((fetching) => {
+      if (fetching) return
+      unsub()
+      resolve()
+    })
+  })
 }
 
 function buildRootHandle<Api>(
@@ -103,6 +117,7 @@ function buildRootHandle<Api>(
   devtools: DevtoolsEmitter,
   queryClient: QueryClient | null,
   plugins: PluginSet | null,
+  localCaches: ReadonlySet<LocalWork>,
 ): Root<Api> {
   /** Cancellation closure from `scheduleExpiry`; `null` = no auto-dispose armed. */
   let suspendTimer: (() => void) | null = null
@@ -191,13 +206,20 @@ function buildRootHandle<Api>(
     waitForIdle: async () => {
       // Plugin work (a replay, a restore) can start fetches, and a fetch
       // settling can start plugin work, so settle both until neither moves.
+      // A `createCache` fetch is not a query-client entry's, so it is waited
+      // on here, beside the plugin work.
       for (let round = 0; round < 100; round++) {
         await queryClient?.waitForIdle()
-        const work = plugins?.pendingWork() ?? []
+        const work: Promise<unknown>[] = plugins?.pendingWork() ?? []
+        for (const cache of localCaches) {
+          if (cache.isFetching.peek()) work.push(untilIdle(cache))
+        }
         if (work.length === 0) return
         await Promise.all(work)
       }
-      throw new Error('[olas] waitForIdle: plugin work kept restarting for 100 rounds')
+      throw new Error(
+        '[olas] waitForIdle: plugin work or local-cache fetches kept restarting for 100 rounds',
+      )
     },
     debug: {
       subscribe: (handler) => devtools.subscribe(handler),

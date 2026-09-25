@@ -180,7 +180,7 @@ The projection runs per subscriber, and the cache keeps the raw value. It re-run
 | `retry` | `0` | Retries after a failure: a count, or `(attempt, error) => boolean`. |
 | `retryDelay` | exponential | Backoff in ms. Without it, the delay doubles from 1 s and caps at 30 s. |
 
-The defaults are quieter than TanStack Query's, because surprise refetches are a common source of bugs (§5.9). `Infinity` is a valid `staleTime` or `gcTime`, and it means no expiry. A retried fetch counts as one fetch for `isFetching` and for race protection, and an abort cancels the whole retry chain.
+The defaults are quieter than TanStack Query's, because surprise refetches are a common source of bugs (§5.9). `Infinity` is a valid `staleTime` or `gcTime`, and it means no expiry. A retried fetch counts as one fetch for `isFetching` and for race protection, and an abort cancels the whole retry chain. A `retry` or `retryDelay` callback that throws fails the fetch with its own error. When an invalidation reports that failure to the root's `onError`, the fetch error travels as `cause`.
 
 `refetchInterval` as a thunk polls fast while there is work and slowly when idle:
 
@@ -216,6 +216,8 @@ Resolution is `spec.X ?? defaults.X ?? built-in`, so a field on the query wins o
 ## Invalidate after a change
 
 `userQuery.invalidate('u1')` marks one entry stale and refetches it if it has subscribers. `invalidateAll()` does the same for every entry of the query. An entry without subscribers is only marked stale, and its next subscriber fetches it. Both return a promise that resolves when the refetches they started settle. A failed refetch lands on the entry's `error` signal and the root's `onError`, and the promise still resolves (§5.7).
+
+An invalidation often catches up on what the app missed, such as a reconnect's `invalidateAll()`. When a `replace` lands while that refetch is in flight, it discards the response, and the entry fetches once more to reconcile. The promise resolves when that catch-up settles. Further `replace` calls during the catch-up leave it in flight, so a burst of pushes cannot keep it from landing (§6.4).
 
 Mutations are the usual caller. [Mutations](/guide/mutations) shows `invalidate` in an `onSuccess` hook.
 
@@ -289,7 +291,7 @@ export const statsPanel = defineController((ctx, props: { userId: string }) => {
 })
 ```
 
-A local cache is the same `AsyncState` plus `invalidate()` and `setData()`. It stays out of the root's query client, and it needs no query engine. It still reads the engine's `staleTime` and `keepPreviousData` defaults when the root has one. Its `key` option takes a tracked thunk that refetches on change. It has no `refetchInterval`, no id and no plugin integration. If sharing may come later, start with `defineQuery` and save the refactor (§5.10).
+A local cache is the same `AsyncState` plus `invalidate()` and the three writes a query has: `setData()`, `write()` and `replace()`, with the rules [below](#read-and-write-the-cache-directly). It stays out of the root's query client, and it needs no query engine. Its fetches still count toward `root.waitForIdle()`. It still reads the engine's `staleTime` and `keepPreviousData` defaults when the root has one. Its `key` option takes a tracked thunk that refetches on change. It has no `refetchInterval`, no id and no plugin integration. If sharing may come later, start with `defineQuery` and save the refactor (§5.10).
 
 ## Infinite queries
 

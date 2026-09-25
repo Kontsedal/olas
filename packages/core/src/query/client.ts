@@ -201,6 +201,26 @@ function devtoolsEntryEvents(
   }
 }
 
+/**
+ * Tell the devtools a subscription bound (`joined`) or left an entry, with the
+ * subscribing controller's path. A no-op without a bus. Call sites guard it
+ * with `if (__DEV__)`, so production builds drop the call.
+ */
+function reportSubscriber(
+  devtools: DevtoolsEmitter | undefined,
+  query: { readonly __id: string },
+  queryKey: readonly unknown[],
+  subscriberPath: readonly string[],
+  joined: boolean,
+): void {
+  devtools?.emit({
+    type: joined ? 'cache:subscribed' : 'cache:unsubscribed',
+    queryId: query.__id,
+    queryKey,
+    subscriberPath,
+  })
+}
+
 /** Options for `bindQuery(ctx, query, options?)` and `root.bindQuery(query, options?)`. */
 export type BindQueryOptions = {
   /**
@@ -220,7 +240,10 @@ export class ClientEntry<T> {
   readonly callArgs: readonly unknown[]
   readonly client: QueryClient
   readonly query: AnyQuery
+  /** Every hold on the entry: subscriptions and in-flight prefetches. Drives gc. */
   private subscriberCount = 0
+  /** The holds that are controller subscriptions — what the devtools count. */
+  private subscriptions = 0
   /** Set by `dispose`. A late `release()` (a prefetch settling after the root
    *  went away) must not arm a gc timer for a dead entry. */
   private disposed = false
@@ -295,7 +318,11 @@ export class ClientEntry<T> {
     })
   }
 
-  acquire(): void {
+  /**
+   * Hold the entry. `subscriberPath` is the subscribing controller's path; it
+   * is absent for a hold that is not a subscription, such as a prefetch.
+   */
+  acquire(subscriberPath?: readonly string[]): void {
     this.subscriberCount += 1
     if (this.gcTimer != null) {
       this.gcTimer()
@@ -311,11 +338,22 @@ export class ClientEntry<T> {
         this.unsubOnline = subscribeReconnect(() => this.triggerEventRefetch())
       }
     }
+    if (subscriberPath !== undefined) {
+      this.subscriptions += 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, true)
+    }
   }
 
-  release(): void {
+  /** Let go of a hold `acquire` took, with the same `subscriberPath`. */
+  release(subscriberPath?: readonly string[]): void {
     if (this.disposed) return
     this.subscriberCount -= 1
+    if (subscriberPath !== undefined) {
+      this.subscriptions -= 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, false)
+    }
     if (this.subscriberCount <= 0) {
       if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
@@ -336,6 +374,11 @@ export class ClientEntry<T> {
 
   hasSubscribers(): boolean {
     return this.subscriberCount > 0
+  }
+
+  /** Controller subscriptions holding the entry, for `root.debug.queryEntries()`. */
+  get subscriptionCount(): number {
+    return this.subscriptions
   }
 
   startIntervalTimer(): void {
@@ -462,7 +505,10 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   readonly callArgs: readonly unknown[]
   readonly client: QueryClient
   readonly query: AnyInfiniteQuery
+  /** See `ClientEntry.subscriberCount`. */
   private subscriberCount = 0
+  /** See `ClientEntry.subscriptions`. */
+  private subscriptions = 0
   /** Set by `dispose`. A late `release()` (a prefetch settling after the root
    *  went away) must not arm a gc timer for a dead entry. */
   private disposed = false
@@ -527,7 +573,8 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     })
   }
 
-  acquire(): void {
+  /** See `ClientEntry.acquire`. */
+  acquire(subscriberPath?: readonly string[]): void {
     this.subscriberCount += 1
     if (this.gcTimer != null) {
       this.gcTimer()
@@ -543,6 +590,16 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
         this.unsubOnline = subscribeReconnect(() => this.triggerEventRefetch())
       }
     }
+    if (subscriberPath !== undefined) {
+      this.subscriptions += 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, true)
+    }
+  }
+
+  /** See `ClientEntry.subscriptionCount`. */
+  get subscriptionCount(): number {
+    return this.subscriptions
   }
 
   /** See `ClientEntry.triggerEventRefetch`. A refetch re-fetches every loaded page. */
@@ -565,9 +622,15 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
     return this.subscriberCount > 0
   }
 
-  release(): void {
+  /** See `ClientEntry.release`. */
+  release(subscriberPath?: readonly string[]): void {
     if (this.disposed) return
     this.subscriberCount -= 1
+    if (subscriberPath !== undefined) {
+      this.subscriptions -= 1
+      if (__DEV__)
+        reportSubscriber(this.client.devtools, this.query, this.keyArgs, subscriberPath, false)
+    }
     if (this.subscriberCount <= 0) {
       if (this.subscriberCount === 0) this.client.emitActivity(this.query, this.keyArgs, false)
       this.stopIntervalTimer()
@@ -878,8 +941,14 @@ export class QueryClient implements PluginEngine {
       invalidate: (id, key) => {
         const found = this.entryByKey(id, key)
         if (found === undefined) return Promise.resolve()
+        const { query, keyArgs } = found.entry
+        // The same devtools event an app's `invalidate` sends, so a plugin's
+        // invalidation shows on the timeline too.
+        if (__DEV__) {
+          this.devtools?.emit({ type: 'cache:invalidated', queryId: query.__id, queryKey: keyArgs })
+        }
         const settled = this.invalidateEntry(found.entry)
-        this.emitInvalidated(found.entry.query, found.entry.keyArgs, origin)
+        this.emitInvalidated(query, keyArgs, origin)
         return settled
       },
       hydrate: (state) => this.hydrateLive(state, origin),
@@ -950,7 +1019,12 @@ export class QueryClient implements PluginEngine {
     return entry === undefined ? undefined : { kind: 'query', entry }
   }
 
-  /** A plugin's canonical write to an existing entry (`write` / `replace`). */
+  /**
+   * A plugin's canonical write to an existing entry (`write` / `replace`). A
+   * replace supersedes a fetch in flight only when it left the entry holding
+   * data, for a regular and an infinite query alike: the rule the app-side
+   * `replaceData` and `replaceInfiniteData` apply.
+   */
   private writeByKey(
     id: string,
     key: readonly unknown[],
@@ -965,7 +1039,9 @@ export class QueryClient implements PluginEngine {
       const { entry } = found
       entry.entry.setData(updater as (prev: unknown) => never, { track: false })
       const data = entry.entry.data.peek()
-      if (source === 'replace' && data !== undefined) entry.entry.cancel()
+      if (source === 'replace' && data !== undefined) {
+        entry.entry.supersedeByWrite(entry.hasSubscribers())
+      }
       this.emitWrite(
         entry.query,
         entry.keyArgs,
@@ -982,7 +1058,9 @@ export class QueryClient implements PluginEngine {
       track: false,
       pageParams,
     })
-    if (source === 'replace') entry.entry.cancel()
+    if (source === 'replace' && entry.entry.data.peek() !== undefined) {
+      entry.entry.supersedeByWrite(entry.hasSubscribers())
+    }
     this.emitInfiniteWrite(entry, source, origin)
   }
 
@@ -1134,6 +1212,7 @@ export class QueryClient implements PluginEngine {
           isStale: ce.entry.isStale.peek(),
           isFetching: ce.entry.isFetching.peek(),
           hasPendingMutations: ce.entry.hasPendingMutations.peek(),
+          subscribers: ce.subscriptionCount,
         })
       }
     }
@@ -1150,6 +1229,7 @@ export class QueryClient implements PluginEngine {
           isStale: ce.entry.isStale.peek(),
           isFetching: ce.entry.isFetching.peek(),
           hasPendingMutations: ce.entry.hasPendingMutations.peek(),
+          subscribers: ce.subscriptionCount,
         })
       }
     }
@@ -1384,13 +1464,19 @@ export class QueryClient implements PluginEngine {
     hasSubscribers(): boolean
     keyArgs: readonly unknown[]
     query: { readonly __id: string }
-    entry: { invalidate(): Promise<unknown>; markStale(): void }
+    entry: {
+      invalidate(): Promise<unknown>
+      markStale(): void
+      failureOf(err: unknown): { attempt: number; cause?: unknown } | undefined
+    }
   }): Promise<void> {
     if (entry.hasSubscribers()) {
       // Resolve when the triggered refetch settles. Errors are reported through
       // `onError` (as before) and swallowed for the awaiter, so `await invalidate()`
       // never throws — it means "the refetch this invalidate kicked off has finished",
-      // matching TanStack's `invalidateQueries`.
+      // matching TanStack's `invalidateQueries`. When a `replace` discarded that
+      // refetch and the entry caught up, the entry's promise follows the catch-up,
+      // so this settles with the fetch that reconciled (§6.4).
       return entry.entry.invalidate().then(
         () => {},
         (err) => {
@@ -1400,6 +1486,9 @@ export class QueryClient implements PluginEngine {
             controllerPath: [],
             queryId: entry.query.__id,
             key: entry.keyArgs,
+            // The retry attempt that failed last, and the fetch error a throwing
+            // retry callback replaced.
+            ...entry.entry.failureOf(err),
           })
         },
       )
@@ -1555,7 +1644,10 @@ export class QueryClient implements PluginEngine {
    * Supersedes only when `value` is defined, for the reason `Entry.setData` makes necessary: it
    * flips an idle/pending entry to `success` whatever it is handed, so replacing with `undefined`
    * AND cancelling would strand the entry at `success` over no data, with nothing to refetch it
-   * until `staleTime` lapses. `Entry.cancel` is a no-op when nothing is fetching.
+   * until `staleTime` lapses. Superseding is a no-op when nothing is fetching.
+   *
+   * When the discarded fetch was an invalidation's, the entry re-fetches once to reconcile
+   * (`Entry.supersedeByWrite`).
    */
   replaceData<Args extends unknown[], T>(
     query: Query<Args, T>,
@@ -1565,7 +1657,7 @@ export class QueryClient implements PluginEngine {
   ): void {
     const entry = this.bindEntry(query, args)
     entry.entry.setData(() => value, { track: false })
-    if (value !== undefined) entry.entry.cancel()
+    if (value !== undefined) entry.entry.supersedeByWrite(entry.hasSubscribers())
     const data = entry.entry.data.peek()
     this.emitWrite(
       entry.query,
@@ -1783,8 +1875,9 @@ export class QueryClient implements PluginEngine {
 
   /**
    * The infinite counterpart of `replaceData`: the pages are the record, so a
-   * fetch already in flight is cancelled — only for defined pages, for the
-   * reason `replaceData` gives.
+   * fetch already in flight is superseded — only when the entry then holds a
+   * page, for the reason `replaceData` gives. An empty pages array is how an
+   * infinite entry spells "nothing here" (`peek` reads it as `undefined`).
    */
   replaceInfiniteData<Args extends unknown[], TPage>(
     query: InfiniteQuery<Args, TPage, any>,
@@ -1794,7 +1887,7 @@ export class QueryClient implements PluginEngine {
   ): void {
     const entry = this.bindInfiniteEntry(query, args)
     entry.entry.setData(() => value, { track: false })
-    if (value !== undefined) entry.entry.cancel()
+    if (entry.entry.data.peek() !== undefined) entry.entry.supersedeByWrite(entry.hasSubscribers())
     this.emitInfiniteWrite(
       entry as InfiniteClientEntry<unknown, unknown, unknown>,
       'replace',

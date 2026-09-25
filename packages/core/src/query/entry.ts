@@ -67,6 +67,59 @@ type SnapshotRecord<T> = {
 }
 
 /**
+ * What the entry knew about its latest failed fetch, for the `ErrorContext` the
+ * client dispatches (`attempt`, `cause`). Shared by `Entry` and `InfiniteEntry`.
+ */
+export type FetchFailure = {
+  readonly error: unknown
+  /** The 0-based attempt that failed last: `0` when no retry ran. */
+  readonly attempt: number
+  /**
+   * Present when a `retry` or `retryDelay` callback threw: `error` is then the
+   * callback's throw, and `cause` is the fetch error it was deciding on.
+   */
+  readonly cause?: unknown
+}
+
+/**
+ * A promise that settles with `request`, or, once `redirects` hands it a
+ * catch-up for `request`, with the catch-up instead. Backs `invalidate()` on
+ * `Entry` and `InfiniteEntry`.
+ */
+export function followRedirects<R>(
+  request: Promise<R>,
+  redirects: WeakMap<Promise<R>, (catchUp: Promise<R>) => void>,
+): Promise<R> {
+  return new Promise<R>((resolve, reject) => {
+    let current = request
+    const settleWith = (p: Promise<R>): void => {
+      current = p
+      p.then(
+        (value) => {
+          if (current === p) resolve(value)
+        },
+        (err: unknown) => {
+          if (current === p) reject(err)
+        },
+      )
+    }
+    redirects.set(request, settleWith)
+    settleWith(request)
+  })
+}
+
+/** The `ErrorContext` fields a failure contributes, when `err` is that failure. */
+export function failureContext(
+  failure: FetchFailure | null,
+  err: unknown,
+): { attempt: number; cause?: unknown } | undefined {
+  if (failure === null || !Object.is(failure.error, err)) return undefined
+  return 'cause' in failure
+    ? { attempt: failure.attempt, cause: failure.cause }
+    : { attempt: failure.attempt }
+}
+
+/**
  * One cache entry's state machine. Owns the AsyncState signals, race
  * protection, retry loop, optimistic-update snapshot stack.
  *
@@ -93,6 +146,20 @@ export class Entry<T> {
   private structuralShareEnabled: boolean
   private currentFetchId = 0
   private currentAbort: AbortController | null = null
+  /** The request in flight, while one is. */
+  private currentRequest: Promise<T> | null = null
+  /** `currentFetchId` of the catch-up request; `0` when none has run. */
+  private catchUpFetchId = 0
+  /**
+   * `invalidate()` promises waiting on a request, by that request. When a
+   * canonical write discards the request and starts a catch-up, the promise
+   * switches to the catch-up at once: it settles with the fetch that
+   * reconciled, without waiting for the discarded fetcher to notice its abort.
+   */
+  // Keyed at `unknown` to keep `Entry<T>` covariant in `T`, as `onSuccessData`.
+  private readonly redirects = new WeakMap<Promise<unknown>, (catchUp: Promise<unknown>) => void>()
+  /** The latest failed fetch. Read by the client when it reports the failure. */
+  private lastFailure: FetchFailure | null = null
   private staleTimer: (() => void) | null = null
   /** Set by `markStale()` (invalidate without fetch); forces `isStaleNow()`
    *  true until the next successful fetch clears it. Spec §5.7, T3.9. */
@@ -199,7 +266,9 @@ export class Entry<T> {
       // devtools handlers must not break the program.
     }
 
-    return this.releaseOnSettle(this.runWithRetry(myId, abort), abort)
+    const request = this.runWithRetry(myId, abort)
+    this.currentRequest = request
+    return this.releaseOnSettle(request, abort)
   }
 
   /**
@@ -208,9 +277,10 @@ export class Entry<T> {
    * `DOMException`: kept as `currentAbort`, it made every refetch, hydration
    * and dispose pay for one.
    */
-  private releaseOnSettle<R>(work: Promise<R>, abort: AbortController): Promise<R> {
+  private releaseOnSettle(work: Promise<T>, abort: AbortController): Promise<T> {
     const release = (): void => {
       if (this.currentAbort === abort) this.currentAbort = null
+      if (this.currentRequest === work) this.currentRequest = null
     }
     work.then(release, release)
     return work
@@ -292,7 +362,7 @@ export class Entry<T> {
           // hangs `waitForIdle()` (SSR) and `firstValue()` (Suspense) with it.
           // So it settles like any other failure — the retry policy stays out
           // of it, as it is for every abort.
-          return this.applyFailure(err)
+          return this.applyFailure(err, attempt)
         }
         // offlineFirst: a network-shaped failure while offline parks the entry
         // (wait for reconnect, then retry) instead of surfacing the error. A
@@ -306,10 +376,18 @@ export class Entry<T> {
           })
           return this.scheduleDeferredFetch()
         }
-        if (!this.shouldRetry(attempt, err)) {
-          return this.applyFailure(err)
+        let delay: number | null
+        try {
+          delay = this.shouldRetry(attempt, err) ? this.computeDelay(attempt) : null
+        } catch (policyErr) {
+          // A `retry` or `retryDelay` callback threw. That fails this attempt
+          // with the callback's error: escaping the loop instead would reject
+          // the fetch with `isFetching` still true, and nothing would come to
+          // clear it. The fetch error it was deciding on travels as the
+          // failure's `cause`.
+          return this.applyFailure(policyErr, attempt, err)
         }
-        const delay = this.computeDelay(attempt)
+        if (delay === null) return this.applyFailure(err, attempt)
         await abortableSleep(delay, abort.signal)
         attempt += 1
       }
@@ -374,13 +452,20 @@ export class Entry<T> {
     return shared
   }
 
-  private applyFailure(err: unknown): never {
+  /**
+   * Settle the fetch as failed with `err`. `cause` is passed, as a third
+   * argument, only when `err` replaced the fetch's own error: a throwing
+   * `retry` / `retryDelay` callback.
+   */
+  private applyFailure(err: unknown, attempt: number, ...cause: [] | [unknown]): never {
     batch(() => {
       this.error.set(err)
       this.status.set('error')
       this.isLoading.set(false)
       this.isFetching.set(false)
     })
+    this.lastFailure =
+      cause.length === 0 ? { error: err, attempt } : { error: err, attempt, cause: cause[0] }
     try {
       this.events.onFetchError?.(Date.now() - this.fetchStartTime, err, this.currentFetchCauseId)
     } catch {
@@ -470,9 +555,19 @@ export class Entry<T> {
     this.isStale.set(true)
   }
 
+  /**
+   * Mark stale and refetch. The promise settles with that refetch, or, when a
+   * canonical write discarded it and started a catch-up (`supersedeByWrite`),
+   * with the catch-up: the fetch that reconciled, not the one thrown away.
+   */
   invalidate(): Promise<T> {
     this.markStale()
-    return this.startFetch()
+    return followRedirects<unknown>(this.startFetch(), this.redirects) as Promise<T>
+  }
+
+  /** The latest failure's `attempt` and `cause`, when `err` is that failure. */
+  failureOf(err: unknown): { attempt: number; cause?: unknown } | undefined {
+    return failureContext(this.lastFailure, err)
   }
 
   reset(): void {
@@ -501,6 +596,42 @@ export class Entry<T> {
       this.isFetching.set(false)
       this.isLoading.set(false)
       this.status.set(this.data.peek() !== undefined ? 'success' : 'idle')
+    })
+  }
+
+  /**
+   * Supersede the fetch in flight on behalf of a canonical whole-record write
+   * (`replace`, §6.4): its response was requested before the record and must
+   * not land over it.
+   *
+   * When the entry is force-stale, the discarded response was the
+   * reconciliation an invalidation asked for, and the write carries only its
+   * own record. The entry therefore re-fetches once, if `hasSubscribers` says
+   * someone still watches it. A reconnect's `invalidateAll()` followed by a
+   * pushed `replace` is the case: without this, nothing re-runs the catch-up.
+   *
+   * That catch-up is not superseded by a later write. A burst of pushes then
+   * coalesces into the one request instead of cancelling and restarting it on
+   * every push, which would never let it land. A write during the catch-up is
+   * treated as a patch: the catch-up's response is the server truth the
+   * invalidation is waiting for, and it lands over the write.
+   */
+  supersedeByWrite(hasSubscribers: boolean): void {
+    if (this.disposed || !this.isFetching.peek()) return
+    if (this.currentFetchId === this.catchUpFetchId) return
+    const discarded = this.currentRequest
+    const catchUp = this.forcedStale && hasSubscribers
+    // One batch: `isFetching` never reads false between the cancel and the
+    // catch-up, so an awaiter such as `waitForIdle()` cannot resolve early.
+    batch(() => {
+      this.cancel()
+      if (!catchUp) return
+      const request = this.startFetch()
+      this.catchUpFetchId = this.currentFetchId
+      // The outcome settles on the entry; an `invalidate()` waiting on the
+      // discarded request follows the catch-up instead.
+      request.catch(() => {})
+      if (discarded !== null) this.redirects.get(discarded)?.(request)
     })
   }
 

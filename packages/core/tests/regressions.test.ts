@@ -2436,13 +2436,15 @@ describe('W9 mutation-testing regressions: outdated fetches and late releases', 
       },
     )
     await root.waitForIdle()
-    gate = deferred<string>()
+    const outdated = deferred<string>()
+    gate = outdated
     const handle = root.bindQuery(q)
     const invalidated = handle.invalidate()
+    gate = null // the catch-up the replace starts answers at once (§6.4)
     handle.replace('b') // supersedes the refetch the invalidate started
-    gate.reject(new Error('late'))
+    outdated.reject(new Error('late'))
     await invalidated
-    expect(root.api.s.data.value).toBe('b')
+    expect(root.api.s.data.value).toBe('a')
     expect(onError).not.toHaveBeenCalled()
     root.dispose()
   })
@@ -2550,13 +2552,15 @@ describe('W9 mutation-testing regressions: infinite queries', () => {
       },
     )
     await root.waitForIdle()
-    gate = deferred<number[]>()
+    const outdated = deferred<number[]>()
+    gate = outdated
     const handle = root.bindQuery(inf)
     const invalidated = handle.invalidate()
+    gate = null // the catch-up the replace starts answers at once (§6.4)
     handle.replace([[2]])
-    gate.reject(new Error('late'))
+    outdated.reject(new Error('late'))
     await invalidated
-    expect(root.api.feed.pages.value).toEqual([[2]])
+    expect(root.api.feed.pages.value).toEqual([[1]])
     expect(onError).not.toHaveBeenCalled()
     root.dispose()
   })

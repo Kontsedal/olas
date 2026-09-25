@@ -9,11 +9,9 @@
  *
  * The remaining fields are correlation hooks for telemetry adapters
  * (Sentry / OpenTelemetry breadcrumbs / Datadog RUM): `eventId` is a stable
- * per-dispatch UUID, `timestamp` is wall-clock ms, `attempt` is the
- * 0-based retry attempt for cache/mutation paths, `cause` is the
- * `Error.cause`-style underlying error if the surfaced error wrapped it,
- * `pluginName` identifies the throwing plugin (set only when `kind ==
- * 'plugin'`).
+ * per-dispatch UUID, `timestamp` is wall-clock ms, `attempt` and `cause`
+ * describe a failed fetch (`cache` kinds), `pluginName` identifies the
+ * throwing plugin (set only when `kind == 'plugin'`).
  */
 export type ErrorContext = {
   kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction' | 'plugin'
@@ -24,7 +22,16 @@ export type ErrorContext = {
   key?: readonly unknown[]
   eventId: string
   timestamp: number
+  /**
+   * For `cache` kinds: the 0-based attempt that failed last. `0` means the
+   * first attempt failed and no retry ran; `2` means two retries ran first.
+   */
   attempt?: number
+  /**
+   * For `cache` kinds, when the query's `retry` or `retryDelay` callback
+   * threw: the surfaced error is the callback's throw, and `cause` is the
+   * fetch error it was deciding on. Absent otherwise.
+   */
   cause?: unknown
   pluginName?: string
 }

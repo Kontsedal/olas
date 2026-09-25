@@ -55,8 +55,13 @@ export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
   const brand = (query as { [BRAND]?: string })[BRAND]
   const handle =
     brand === 'infiniteQuery'
-      ? createInfiniteUse(client, query as InfiniteQuery<unknown[], unknown, unknown>, keyOrOptions)
-      : createUse(client, query as Query<unknown[], unknown>, keyOrOptions)
+      ? createInfiniteUse(
+          client,
+          query as InfiniteQuery<unknown[], unknown, unknown>,
+          keyOrOptions,
+          internals.path,
+        )
+      : createUse(client, query as Query<unknown[], unknown>, keyOrOptions, internals.path)
   internals.register({
     kind: 'subscription-cache',
     dispose: handle.dispose,
@@ -76,7 +81,8 @@ export function createQuery(ctx: Ctx, query: any, keyOrOptions?: any): any {
  * Unlike `createQuery` this needs **no** query engine: a local cache is not a
  * cache-client entry. It still honours the root's
  * `queryEngine({ defaults })`, which the root reads without the client so
- * that reading them cannot pull the engine into the bundle.
+ * that reading them cannot pull the engine into the bundle. Its fetches count
+ * toward `root.waitForIdle()` all the same.
  */
 export function createCache<T>(
   ctx: Ctx,
@@ -99,7 +105,15 @@ export function createCache<T>(
     },
     ctx.deps,
   )
-  internals.register({ kind: 'cleanup', dispose: () => cache.dispose() })
+  // `root.waitForIdle()` counts the cache's fetches until the controller lets go.
+  const untrack = internals.trackLocalCache(cache)
+  internals.register({
+    kind: 'cleanup',
+    dispose: () => {
+      untrack()
+      cache.dispose()
+    },
+  })
   return cache
 }
 

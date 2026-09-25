@@ -135,6 +135,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   // `root.debug.queryEntries()` on attach and refreshes it whenever a cache
   // event lands — no polling interval (the old 800ms poll is gone).
   const liveCacheState = useValue(store.cacheState$)
+  const liveSubscribers = useValue(store.subscribers$)
 
   // When paused, snapshot once and keep showing that frozen state.
   const [frozen, setFrozen] = useState<{
@@ -144,6 +145,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
     fields: FieldEntry[]
     events: TimelineEvent[]
     cacheState: DebugCacheEntry[]
+    subscribers: ReadonlyMap<string, number>
   } | null>(null)
   useEffect(() => {
     if (paused) {
@@ -154,6 +156,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
         fields: liveFields,
         events: liveEvents,
         cacheState: liveCacheState,
+        subscribers: liveSubscribers,
       })
     } else {
       setFrozen(null)
@@ -167,6 +170,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
   const fields = frozen?.fields ?? liveFields
   const events = frozen?.events ?? liveEvents
   const cacheState = frozen?.cacheState ?? liveCacheState
+  const subscribers = frozen?.subscribers ?? liveSubscribers
 
   // Lanes are hidden panel-wide, so a hidden plugin stays hidden across tabs.
   const [hiddenLanes, setHiddenLanes] = useState<ReadonlySet<string>>(() => new Set())
@@ -291,6 +295,7 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
         {tab === 'inspector' && (
           <InspectorView
             entries={cacheState}
+            subscribers={subscribers}
             filter={debouncedFilter}
             focus={focusFor('inspector')}
           />
@@ -1175,10 +1180,12 @@ const idKey = (e: { id: number }): string => String(e.id)
 
 function InspectorView({
   entries,
+  subscribers,
   filter,
   focus,
 }: {
   entries: DebugCacheEntry[]
+  subscribers: ReadonlyMap<string, number>
   filter: string
   focus: Focus | undefined
 }): ReactElement {
@@ -1198,7 +1205,13 @@ function InspectorView({
       }
       focus={focus}
       renderItem={(entry, expanded, onToggle, hit) => (
-        <InspectorRow entry={entry} expanded={expanded} onToggle={onToggle} hit={hit} />
+        <InspectorRow
+          entry={entry}
+          subscribers={subscribers.get(entryKey(entry.queryId, entry.key)) ?? 0}
+          expanded={expanded}
+          onToggle={onToggle}
+          hit={hit}
+        />
       )}
     />
   )
@@ -1210,9 +1223,11 @@ function inspectorHaystack(e: DebugCacheEntry): string {
 
 function InspectorRow({
   entry,
+  subscribers,
   ...state
 }: {
   entry: DebugCacheEntry
+  subscribers: number
   expanded: boolean
   onToggle: () => void
   hit: boolean
@@ -1230,6 +1245,7 @@ function InspectorRow({
   if (entry.isStale) tags.push('stale')
   if (entry.isFetching) tags.push('fetching')
   if (entry.hasPendingMutations) tags.push('optimistic')
+  if (subscribers > 0) tags.push(subscribers === 1 ? '1 subscriber' : `${subscribers} subscribers`)
   return (
     <Row
       {...state}
@@ -1275,7 +1291,7 @@ function CacheView({ entries, filter }: { entries: CacheEntry[]; filter: string 
 function cacheHaystack(e: CacheEntry): string {
   const parts: string[] = [e.kind, ...e.queryKey.map((p) => String(p))]
   if (e.kind === 'fetch-error') parts.push(toSearchText(e.error))
-  if (e.kind === 'subscribed') parts.push(...e.subscriberPath)
+  if (e.kind === 'subscribed' || e.kind === 'unsubscribed') parts.push(...e.subscriberPath)
   return parts.join(' ')
 }
 
@@ -1305,7 +1321,7 @@ function CacheRow({
   } else if (entry.kind === 'fetch-error') {
     suffix = `${entry.durationMs}ms`
     payload = entry.error
-  } else if (entry.kind === 'subscribed') {
+  } else if (entry.kind === 'subscribed' || entry.kind === 'unsubscribed') {
     inline = `from ${formatPath(entry.subscriberPath)}`
   }
 

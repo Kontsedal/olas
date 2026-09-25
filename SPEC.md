@@ -390,6 +390,7 @@ export const userQuery = defineQuery({
 - `retryDelay: number | (attempt) => number` — ms between attempts. The default for a query is exponential, `min(1000 * 2 ** attempt, 30_000)`. A mutation's default is a constant `1000`.
 - Retries respect `AbortSignal`: any cancellation in §5.5 ends the whole retry chain.
 - A retried fetch counts as one logical fetch for `isFetching` and race protection and inflight counter; only the final outcome (success after retries, or final error) reaches consumers.
+- A `retry` or `retryDelay` callback that throws fails that attempt with the thrown error, which settles the fetch like any final error: `status: 'error'`, `isFetching` false. The fetch error the callback was deciding on is reported as the `ErrorContext.cause` (§12).
 - Mutations support the same `retry` and `retryDelay` fields on `MutationSpec`.
 
 **Resetting.** `subscription.reset()` clears `error` and settles `status` without dropping `data`: `'success'` when data exists, else `'idle'` (useful to dismiss an error toast without forcing a refetch). `subscription.refetch()` re-fetches regardless of stale-state. To both clear and re-fetch: `reset(); refetch();`.
@@ -531,7 +532,7 @@ Internally these all dispatch to the root's query client. An unbound call works 
 
 **Invalidate semantics.** `invalidate` and `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry is marked stale and *not* refetched, and the next subscriber triggers the fetch. An entry is subscriber-less when `gcTime` kept it warm after its last subscriber left, or when `prefetch` created it. This matches TanStack and avoids waking data no subscriber is watching.
 
-Both return a `Promise<void>` that resolves when the refetches they trigger settle or are discarded, or immediately for entries without subscribers (which are marked stale only). Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `bindQuery(ctx, query)` or `root.bindQuery(query)` to select a root (§21.5). Resolution alone does not guarantee reconciliation if a request was superseded (§6.4).
+Both return a `Promise<void>` that resolves when the refetches they trigger settle, or immediately for entries without subscribers (which are marked stale only). A `replace` that discards one of those refetches makes the entry fetch once more to reconcile, and the promise resolves when that catch-up settles (§6.4). Any other supersede, such as a newer refetch or a `cancel`, resolves it. Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `bindQuery(ctx, query)` or `root.bindQuery(query)` to select a root (§21.5).
 
 **Deep updates.** `setData` returns the new value; you build it however you want. Two canonical patterns:
 
@@ -795,19 +796,21 @@ Each `Snapshot` captures the entry's value at the moment its `setData` ran — a
 
 The guarantee this buys is one sentence. **Once every optimistic layer has rolled back, in any order, the data returns to the original pre-mutation value.** Before the chain-splice, an out-of-order rollback restored B's stale baseline last. That resurrected A's delta and corrupted the final state. The order that broke it: A applies, B applies, A fails first, then B fails.
 
-**Fetch success rebases live snapshots.** When a fetch resolves while optimistic snapshots are live, each snapshot's captured baseline is updated to the fresh server value. A subsequent rollback therefore restores *server truth*, not the pre-fetch value — otherwise a refetch landing mid-mutation, followed by that mutation failing, would resurrect stale pre-fetch data. Pair this with `query.cancel(...)` (§5.5): cancelling outgoing refetches *before* an optimistic write prevents a stale response from overwriting it in the first place.
+**Fetch success rebases live snapshots.** When a fetch resolves while optimistic snapshots are live, each snapshot's captured baseline is updated to the fresh server value. A subsequent rollback therefore restores *server truth*, not the pre-fetch value — otherwise a refetch landing mid-mutation, followed by that mutation failing, would resurrect stale pre-fetch data. Pair this with `query.cancel(...)` (§5.5): cancelling outgoing refetches *before* an optimistic write prevents a stale response from overwriting it in the first place. An infinite query rebases the same way. A refetch sets each baseline to the refetched pages. `fetchNextPage` appends the new page to each baseline, and `fetchPreviousPage` prepends it, so a rollback drops the optimistic change and keeps the page.
 
 This is snapshot-based rollback, not full rebasing. It does not re-run the surviving updaters against a new baseline, so a non-top rollback leaves the failed layer's delta on screen until the stack unwinds. For conflicting updates, meaning two mutations writing the same field, prefer `concurrency: 'serial'` or explicit conflict resolution in `onMutate`.
 
 Only `query.setData(...)` (as used inside a mutation's `onMutate`) creates a rollback snapshot and flips `hasPendingMutations`. **Canonical cache writes** that do not originate from an optimistic mutation write straight through the entry without pushing a snapshot. A cross-tab receive (§13.2), an entity backprop (§18.1) and a realtime patch (§16.5) are all of this kind: each goes through `host.queries.write` or a bound `write`. None of them sets `hasPendingMutations` or can wedge it at `true`.
 
-**Userland canonical writes use `query.write(...)`.** It is `setData` minus the snapshot. Same entry, created if absent. It reports `source: 'write'` to plugins and devtools, where `setData` reports `'optimistic'` (§13.1). No rollback handle, and `hasPendingMutations` untouched. Use it whenever the write is not an optimistic guess that a mutation might have to undo. Folding a server-pushed record into the cache, applying a realtime event, and syncing a value another view just changed are all of that kind.
+**Userland canonical writes use `query.write(...)`.** It is `setData` minus the snapshot. Same entry, created if absent. It reports `source: 'write'` to plugins and devtools, where `setData` reports `'optimistic'` (§13.1). No rollback handle, and `hasPendingMutations` untouched. Use it whenever the write is not an optimistic guess that a mutation might have to undo. Folding a server-pushed record into the cache, applying a realtime event, and syncing a value another view just changed are all of that kind. A `createCache` `LocalCache` has the same `write` and `replace`, with the same rules.
 
 **`replace(...keyArgs, value)` is the write that supersedes an in-flight fetch.** It takes a whole VALUE rather than an updater, and that signature is the contract. A patch built from `prev` describes the fields it touches and says nothing about the rest. A response already on its way may carry newer values for those other fields, and discarding it would lose them. A replacement asserts there is nothing else, *this is the record now*, which is exactly the condition under which a request issued earlier has nothing left to contribute. Its canonical source is a server read-back taken after the write it reports.
 
 `write` and `setData` both leave an outstanding fetch alone, for different reasons. `write` is canonical but partial, so it has no claim on what it did not touch. `setData` is a guess, and a server response is entitled to overrule a guess. That is why the cancel-before-`setData` recipe in §5.5 is still the caller's to make. `cancel(...)` remains the escape hatch for a `write` the caller has decided should win anyway.
 
-**`replace` supersedes only when `value` is defined.** A write flips an idle or pending entry to `success` whatever it is handed. Replacing with `undefined` *and* cancelling would therefore strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. Replacing with `undefined` says "there is no record", and the in-flight fetch is left to produce the first value.
+**`replace` supersedes only when `value` is defined.** A write flips an idle or pending entry to `success` whatever it is handed. Replacing with `undefined` *and* cancelling would therefore strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. Replacing with `undefined` says "there is no record", and the in-flight fetch is left to produce the first value. An infinite query spells "no record" as an empty pages array, so its `replace` supersedes only when the new pages hold at least one page. The plugin-side `host.queries.replace` follows the same rule for both kinds.
+
+**A `replace` that discards an invalidation's fetch re-fetches once.** An invalidation asks for a reconciliation. The classic case is a reconnect's `invalidateAll()`, catching up on what the app missed while offline. A push folded in with `replace` while that fetch is in flight supersedes it, and the push carries only its own change. So when an invalidation marked the entry stale and it still has subscribers, the entry starts one catch-up fetch in place of the discarded one. A later `replace` does not supersede the catch-up. A burst of pushes lands on the cache as writes and coalesces into the one request, instead of cancelling and restarting it on every push. The catch-up's response is the server truth the invalidation waits for, and it lands over those writes. `await invalidate()` resolves when the catch-up settles, and a catch-up failure reaches `onError` like the invalidation's own. A `replace` over a fetch nothing invalidated is a plain supersede.
 
 All three rebase live optimistic snapshots onto the written value, so a rollback restores what was written rather than a baseline captured before it.
 
@@ -1528,7 +1531,8 @@ const root = createRoot(rootController, {
 - `controllerPath` — the path from the root to the controller that owned the failing code;
 - `queryId` and `key` — the cache entry, for `cache` kinds;
 - `pluginName` — the plugin, for `plugin` kinds (§13.1);
-- `eventId`, `timestamp`, and `attempt` and `cause` where they apply, for correlating the error in a telemetry tool.
+- `eventId` and `timestamp`, for correlating the error in a telemetry tool.
+- For a failed fetch (`kind: 'cache'`), `attempt`: the 0-based attempt that failed last, so `2` means two retries ran first. When the query's `retry` or `retryDelay` callback threw, the surfaced error is that throw and `cause` is the fetch error it was deciding on (§5.2).
 
 Default `onError` is `console.error`. The handler must never throw — if it does, we swallow and log to console.
 
@@ -1843,7 +1847,8 @@ A new subscriber first receives a replay of the live controller tree, so a panel
 
 - `controller:constructed | suspended | resumed | disposed` — `{ path }` (`constructed` also carries `props`, and any variables the controller registered via `ctx.debug({...})` during construction as `debug`).
 - `controller:debug` — `{ path, values }`. A `ctx.debug({...})` call *after* construction, for example from an effect. It carries the controller's full merged variables record as live references.
-- `cache:subscribed | fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryKey }`, and `queryId` on every one but `subscribed` (`fetch-success`/`fetch-error` add `durationMs`, `fetch-error` adds `error`, `subscribed` adds `subscriberPath`).
+- `cache:fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryId, queryKey }` (`fetch-success` and `fetch-error` add `durationMs`, and `fetch-error` adds `error`). A plugin's `host.queries.invalidate` sends `invalidated` as an app's `invalidate` does.
+- `cache:subscribed | unsubscribed` — `{ queryId, queryKey, subscriberPath }`. A `createQuery` subscription sends `subscribed` when it binds an entry and `unsubscribed` when it lets go. Both happen on a key change, on suspend and resume, and at subscribe, dispose and disable. `subscriberPath` is the subscribing controller's path. There is one pair per subscription, so an entry's subscriber count is the `subscribed` events minus the `unsubscribed` ones. A prefetch holds an entry without subscribing and sends neither. `DebugCacheEntry.subscribers` in `queryEntries()` carries the same count.
 - `cache:set-data` — `{ queryId, queryKey, source, data }`. Emitted on every cache write; `data` is the post-write value and `source` is the plugins' `WriteSource`: `'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'write' | 'replace'` (§13.1). This is what lets a panel show *current* data without polling.
 - `snapshot:push | rollback | finalize` — `{ queryKey }`. The optimistic-update stack (§6.4): a tracked `setData` pushes, a mutation error and supersede rolls back, a mutation success finalizes.
 - `mutation:run | success | error | rollback` — `{ path, id? }`, where `id` is the mutation's `id`, absent for an inline spec without one (`run` adds `vars`, `success` `result`, `error` `error`).
@@ -1887,6 +1892,7 @@ const root = createRoot(rootController, {
 `waitForIdle()` resolves when:
 
 - No cache entry has a fetch in flight.
+- No `createCache` local cache has a fetch in flight. A local cache is not a query-client entry, so the root tracks it separately, and a root without a query engine waits for it too.
 - No mutation is in flight, queued `serial` runs included.
 - No work a plugin `track`ed is pending (§13.1).
 
@@ -2863,7 +2869,9 @@ type Snapshot = {
 // Local — anonymous, owned by one controller
 type LocalCache<T> = AsyncState<T> & {
   invalidate(): Promise<void>
-  setData(updater: (prev: T | undefined) => T): Snapshot
+  setData(updater: (prev: T | undefined) => T): Snapshot // optimistic, as Query.setData
+  write(updater: (prev: T | undefined) => T): void // canonical patch, as Query.write
+  replace(value: T): void // canonical whole record, as Query.replace (§6.4)
   dispose(): void // idempotent; also called when controller disposes
 }
 
@@ -3331,7 +3339,7 @@ type Root<Api> = {
   resume(): void
   dehydrate(): DehydratedState
   hydrate(state: DehydratedState): void // apply entries to the live cache (§15)
-  waitForIdle(): Promise<void> // no fetch, mutation or tracked plugin work in flight
+  waitForIdle(): Promise<void> // no query or local-cache fetch, mutation or tracked plugin work in flight
   readonly debug: DebugBus // §14, §20.9
 }
 
@@ -3516,8 +3524,8 @@ type ErrorContext = {
   key?: readonly unknown[]    // cache kinds: the entry's key(...) output
   eventId: string             // unique per dispatch
   timestamp: number           // epoch ms
-  attempt?: number            // 0-based retry attempt, for cache and mutation kinds
-  cause?: unknown
+  attempt?: number            // cache kinds: the 0-based attempt that failed last
+  cause?: unknown             // cache kinds: the fetch error a throwing retry callback replaced
   pluginName?: string         // plugin kind
 }
 
@@ -3535,7 +3543,8 @@ type DebugEventBody =
   | { type: 'controller:resumed'; path: readonly string[] }
   | { type: 'controller:disposed'; path: readonly string[] }
   | { type: 'controller:debug'; path: readonly string[]; values: Record<string, unknown> }
-  | { type: 'cache:subscribed'; queryKey: readonly unknown[]; subscriberPath: readonly string[] }
+  | { type: 'cache:subscribed'; queryId?: string; queryKey: readonly unknown[]; subscriberPath: readonly string[] }
+  | { type: 'cache:unsubscribed'; queryId?: string; queryKey: readonly unknown[]; subscriberPath: readonly string[] }
   | { type: 'cache:fetch-start'; queryId?: string; queryKey: readonly unknown[] }
   | { type: 'cache:fetch-success'; queryId?: string; queryKey: readonly unknown[]; durationMs: number }
   | { type: 'cache:fetch-error'; queryId?: string; queryKey: readonly unknown[]; error: unknown; durationMs: number }
@@ -3567,6 +3576,7 @@ type DebugCacheEntry = {
   isStale: boolean
   isFetching: boolean
   hasPendingMutations: boolean
+  subscribers?: number   // controller subscriptions; always set by queryEntries()
 }
 
 type DebugBus = {
@@ -4266,7 +4276,7 @@ createRoot(def, { queries: queryEngine(), hydrate: state })
 
 `root.waitForIdle()` loops until nothing moves:
 - it waits until no entry is fetching and the root's mutation in-flight count is zero, `serial` queues included;
-- then it waits for the work plugins `track`ed (§13.1), which can start fetches of its own;
+- then it waits for the work plugins `track`ed (§13.1), which can start fetches of its own, and for every `createCache` local cache that is fetching;
 - it throws after 100 rounds, rather than let `dehydrate()` ship a payload that looks complete and is not.
 
 A fetch that starts *after* `waitForIdle` resolves does not retroactively block it; intentional.

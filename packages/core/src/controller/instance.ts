@@ -8,7 +8,7 @@ import type { Scope } from '../scope'
 import { computed, signal, effect as standaloneEffect, untracked } from '../signals'
 import { readOnly } from '../signals/readonly'
 import { getFactory, getName } from './define'
-import { CTX_INTERNALS, type CtxInternals } from './internals'
+import { CTX_INTERNALS, type CtxInternals, type LocalWork } from './internals'
 import type {
   Collection,
   CollectionFactoryApi,
@@ -35,6 +35,11 @@ export type RootShared = {
    * fields.
    */
   readonly queryDefaults: QueryDefaults
+  /**
+   * The root's live `createCache` local caches. They are not query-client
+   * entries, so `root.waitForIdle()` reads their `isFetching` from here.
+   */
+  readonly localCaches: Set<LocalWork>
   /**
    * Monotonic counter bumped by every `ctx.provide(...)` call inside this
    * root's tree. `ctx.inject(...)` caches its scope-walk result alongside
@@ -471,6 +476,13 @@ export class ControllerInstance {
         self.entries.push(entry as LifecycleEntry)
       },
       requireClient,
+      trackLocalCache: (cache) => {
+        const caches = self.rootShared.localCaches
+        caches.add(cache)
+        return () => {
+          caches.delete(cache)
+        }
+      },
       get queryDefaults() {
         return self.rootShared.queryDefaults as CtxInternals['queryDefaults']
       },

@@ -16,7 +16,7 @@ edges:
   - { type: tested-by, target: ../../packages/devtools/tests/store-stress.test.ts }
   - { type: tested-by, target: ../../packages/devtools/tests/store-foundation.test.ts }
   - { type: tested-by, target: ../../packages/devtools/tests/panel-foundation.test.tsx }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -193,6 +193,10 @@ stands on. **Prerequisite: the T6.3 devtools bug fixes (already landed).**
   this library's audit found (collection reconcile storms, double-activated effects) *to
   the end user*. Acceptance: the T2.3 collection-reconcile-storm bug (pre-fix) would be
   visibly diagnosable via the climbing run-count.
+  *Landed in 1.0:* the query-entry subscriber count. Core emits `cache:subscribed` and
+  `cache:unsubscribed` with the subscribing controller's path, `queryEntries()` carries a
+  `subscribers` count, and the inspector shows it (`../modules/devtools-panel.md`). Effect
+  run counts, field subscribers and component-level holders remain open.
 
 ## 8C — act on state: the panel does things
 

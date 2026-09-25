@@ -5,12 +5,13 @@ type: decision
 covers:
   - packages/core/src/query/infinite.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/query/types.ts:100-125
+  - packages/core/src/query/types.ts:118-143
   - packages/core/src/plugin/types.ts
   - packages/react/src/streaming.ts
   - packages/cross-tab/src/plugin.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/infinite-parity.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/infinite-rebase.test.ts }
   - { type: tested-by, target: ../../packages/react/tests/streaming.test.tsx }
   - { type: tested-by, target: ../../packages/cross-tab/tests/plugin.test.ts }
   - { type: uses, target: ../modules/query.md }
@@ -50,6 +51,6 @@ An infinite entry's state is two aligned arrays, `pages` and `pageParams`. Every
 
 `InfiniteEntry` reports through the same `EntryEvents` bundle as `Entry`: fetch start and settle for each direction, plus the snapshot layer events. `devtoolsEntryEvents` in `client.ts` builds the bundle for both entry kinds. The `cache:fetch-*` events now carry `queryId` for regular queries too; before, only `cache:set-data` did. The fetch `causeId` counter (`nextFetchCauseId` in `entry.ts`) is shared, so ids never collide across the two kinds.
 
-## Still open
+## Open items
 
-Rebasing live optimistic snapshots onto a successful page fetch, which `Entry` does (T3.4), is not done for `InfiniteEntry`. It stays in BACKLOG, because the rebase semantics for an appended page are not obvious.
+Nothing listed here now. The last item, rebasing live optimistic snapshots on a successful page fetch, landed in 1.0. The open question was what a rebase means for an appended page. The answer is to add the page to each baseline. A refetch sets every baseline to the refetched pages, `fetchNextPage` appends the page and its param, and `fetchPreviousPage` prepends them. A rollback then drops the optimistic change and keeps the fetched page. The mechanics are in `../entities/entry.md`; pinned by `infinite-rebase.test.ts`.

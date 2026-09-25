@@ -98,7 +98,7 @@ export async function render(request: Request): Promise<string> {
 
 The controllers subscribe while the root constructs, so `waitForIdle` sees their fetches. `root.waitForIdle()` resolves when three things hold at once (§15):
 
-- no cache entry has a fetch in flight;
+- no cache entry has a fetch in flight, and a `createCache` local cache counts;
 - no mutation is in flight, and a queued `serial` run counts;
 - no work a plugin passed to `host.track` is pending.
 

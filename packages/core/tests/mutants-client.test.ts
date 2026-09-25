@@ -1064,6 +1064,7 @@ describe('devtools cache events', () => {
         isStale: true,
         isFetching: false,
         hasPendingMutations: false,
+        subscribers: 1,
       },
     ])
   })

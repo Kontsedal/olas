@@ -114,6 +114,17 @@ class LocalCacheImpl<T> implements LocalCache<T> {
       () => {},
     )
   setData = (updater: (prev: T | undefined) => T): Snapshot => this.entry.setData(updater)
+  // The canonical writes, with `Query`'s semantics (§6.4): no snapshot, and a
+  // fetch in flight left alone by `write` and superseded by `replace`.
+  write = (updater: (prev: T | undefined) => T): void => {
+    this.entry.setData(updater, { track: false })
+  }
+  replace = (value: T): void => {
+    this.entry.setData(() => value, { track: false })
+    // The owning controller is the cache's one subscriber, for as long as the
+    // cache exists: a discarded invalidation fetch is re-run (§6.4).
+    if (value !== undefined) this.entry.supersedeByWrite(true)
+  }
 
   dispose(): void {
     if (this.disposed) return

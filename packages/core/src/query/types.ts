@@ -89,12 +89,30 @@ export type Snapshot = {
 export type LocalCache<T> = AsyncState<T> & {
   /**
    * Mark stale and trigger an immediate refetch. The returned promise resolves
-   * when that refetch settles (errors surface on the `error` signal, so it
-   * resolves rather than rejects). Ignore it for fire-and-forget.
+   * when that refetch settles, or, when a `replace` discarded it, when the
+   * catch-up fetch settles. Errors surface on the `error` signal, so it
+   * resolves rather than rejects. Ignore it for fire-and-forget.
    */
   invalidate(): Promise<void>
-  /** Patch the current data. Returns a `Snapshot` for rollback. */
+  /**
+   * Patch the current data **optimistically**. Returns a `Snapshot` the caller
+   * must settle, as with `Query.setData`: until then `hasPendingMutations`
+   * stays `true`. Use `write` or `replace` for data that is already true.
+   */
   setData(updater: (prev: T | undefined) => T): Snapshot
+  /**
+   * Patch the current data **canonically**, as `Query.write` does: no
+   * snapshot, `hasPendingMutations` untouched, and a fetch already in flight
+   * left alone. Live optimistic snapshots rebase onto the written value.
+   */
+  write(updater: (prev: T | undefined) => T): void
+  /**
+   * Replace the data with a value that **is** the whole record, as
+   * `Query.replace` does, superseding a fetch already in flight. Supersedes
+   * only when `value` is defined. When the superseded fetch was an
+   * `invalidate()`'s, the cache fetches once more to reconcile (spec §6.4).
+   */
+  replace(value: T): void
   /** Idempotent — also called when the owning controller disposes. */
   dispose(): void
 }
@@ -323,13 +341,15 @@ export type Query<Args extends unknown[], T> = {
   readonly [BRAND]: 'query'
   /**
    * Mark a specific keyed entry stale + trigger refetch if any subscribers. The
-   * returned promise resolves when the triggered refetch settles **or is discarded**
-   * (a supersede — a newer refetch, a key change, or a canonical `replace`, §6.4 —
-   * resolves it rather than rejecting, so a caller cannot tell the two apart from
-   * the promise alone) — immediately if
-   * the entry is subscriber-less (marked stale only). Fetch errors are reported
-   * via the root's `onError`. Ambiguous unbound calls and operations on a disposed
-   * root reject; use a bound handle to select the root explicitly.
+   * returned promise resolves when the triggered refetch settles, and at once if
+   * the entry is subscriber-less (marked stale only).
+   *
+   * A `replace` that discards the refetch makes the entry fetch once more to
+   * reconcile, and the promise resolves when that catch-up settles (§6.4). Any
+   * other supersede — a newer refetch, a `cancel`, a hydration — resolves it
+   * rather than rejecting. Fetch errors are reported via the root's `onError`.
+   * Ambiguous unbound calls and operations on a disposed root reject; use a
+   * bound handle to select the root explicitly.
    */
   invalidate(...args: Args): Promise<void>
   /** Like `invalidate` for every keyed entry; resolves when all triggered refetches settle. */
@@ -397,6 +417,12 @@ export type Query<Args extends unknown[], T> = {
    * to `success` whatever it is handed, so replacing with `undefined` and
    * cancelling together would strand it at `success` over no data with nothing to
    * refetch it. Like `write`, it pushes no snapshot and rebases live ones.
+   *
+   * When the superseded fetch was an invalidation's and the entry has
+   * subscribers, the entry fetches once more: the discarded response was the
+   * reconciliation the invalidation asked for. A `replace` landing while that
+   * catch-up is in flight leaves it alone, so a burst of pushes cannot keep it
+   * from landing.
    */
   replace(...args: [...Args, value: T]): void
   /**

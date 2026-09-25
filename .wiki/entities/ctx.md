@@ -4,7 +4,7 @@ description: The tree-and-lifetime handle passed to every controller factory; th
 type: entity
 covers:
   - packages/core/src/controller/types.ts:182-300
-  - packages/core/src/controller/instance.ts:450-1065
+  - packages/core/src/controller/instance.ts:455-1077
   - packages/core/src/query/bind.ts
   - packages/core/src/forms/bind.ts
 edges:
@@ -56,13 +56,13 @@ type Ctx<TDeps = AmbientDeps> = {
 
 The type is `controller/types.ts:190-300`. `Ctx` has no `ctx.session`, no `ctx.signal` or `ctx.computed`, and none of the primitive factories above as members; each of those left `Ctx` in 1.0.
 
-The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:450-1065`). Each method has the same general shape:
+The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:455-1077`). Each method has the same general shape:
 
 1. Create the primitive.
 2. Push a `LifecycleEntry` onto `self.entries`.
 3. Return the primitive.
 
-The ctx-taking functions follow the same shape through the internals handle: `internals.assertLive(name)`, then `internals.register(entry)` (`instance.ts:468-489`, `query/bind.ts:51-67`).
+The ctx-taking functions follow the same shape through the internals handle: `internals.assertLive(name)`, then `internals.register(entry)` (`instance.ts:473-501`, `query/bind.ts:51-72`).
 
 `ctx.effect`, `ctx.on`, and the lifecycle hooks also wrap user callbacks in a `dispatchError(rootShared.onError, err, {kind, controllerPath})` shield.
 
@@ -74,7 +74,7 @@ Spec §3.4: **any time during the controller's active lifetime, not only the ini
 
 Individual primitives also expose `.dispose()` — idempotent, safe to call early. The owning controller will call it again on its own dispose; both calls are no-ops after the first.
 
-**After dispose, every `ctx.*` factory and every ctx-taking function throws** `[olas] <name>() called after the controller was disposed`, where `<name>` is `effect`, `createQuery` and so on. The guard is `assertLive` in `buildCtx` (`instance.ts:458-462`), which the ctx-taking functions call through the internals handle. A captured `ctx` reused past its owner's lifetime is a programming error. Without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
+**After dispose, every `ctx.*` factory and every ctx-taking function throws** `[olas] <name>() called after the controller was disposed`, where `<name>` is `effect`, `createQuery` and so on. The guard is `assertLive` in `buildCtx` (`instance.ts:463-467`), which the ctx-taking functions call through the internals handle. A captured `ctx` reused past its owner's lifetime is a programming error. Without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
 
 ## `ctx.deps` — DI surface
 
@@ -82,7 +82,7 @@ Read-only getter on `ctx`. Returns the merged deps object (parent's deps + any o
 
 ## `createQuery` overload dispatch
 
-`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on the query's brand (`query/bind.ts:51-67`). It reads `query[BRAND]`, calls `createInfiniteUse` for `'infiniteQuery'` and `createUse` otherwise, and registers the resulting handle as a `subscription-cache` lifecycle entry. The TS overloads in `query/bind.ts:36-50` declare three signatures: a `Query` with `select` options, a `Query`, and an `InfiniteQuery`. Consumers see the right return shape.
+`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on the query's brand (`query/bind.ts:51-72`). It reads `query[BRAND]`, calls `createInfiniteUse` for `'infiniteQuery'` and `createUse` otherwise, and registers the resulting handle as a `subscription-cache` lifecycle entry. The TS overloads in `query/bind.ts:36-50` declare three signatures: a `Query` with `select` options, a `Query`, and an `InfiniteQuery`. Consumers see the right return shape.
 
 ## `ctx.attach` vs `ctx.child`
 
