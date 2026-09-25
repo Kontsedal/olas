@@ -2143,3 +2143,63 @@ Opening PR #3 ran `ci.yml` on Linux for the first time; until then the chain ran
 The local `ci.sh` mirror runs on the machine's Node, so it cannot see a gap like the first one; the `dist-on-node` job covers only the dist smoke on 20.19, 22 and 24.
 
 The second run passed both, and timed out three codemod tests at vitest's 5 s default instead: each builds a TypeScript program through ts-morph, 2–5 s locally and slower on a two-core runner under coverage. The first run had passed them, so they were timing-sensitive all along. `vitest.config.ts` now runs `packages/codemod/tests/` as a third project, `codemod`, with `testTimeout: 30_000`; every other suite keeps the default, so a hang elsewhere still fails fast.
+
+## [2026-09-25 18:00] ingest | the 1.0 BACKLOG burn-down: every item implemented or dropped
+
+The user asked for the backlog to disappear: implement what is worth it, and drop the rest. Eight worktree agents took one area each, then a TSDoc agent and a citation agent followed. The main session cherry-picked each commit, merged the conflicts (lists of dev-build packages; wiki line citations, resolved as ours + theirs − base), and ran the full chain on the merged head. `BACKLOG.md` now holds only the three release chores and a "Dropped" section with a reason for each. 2,232 tests across 176 files.
+
+**A code review's three findings, all fixed:**
+- **Throwing retry callbacks.** A `retry` or `retryDelay` that throws now fails that attempt with its error, in `Entry`, `InfiniteEntry` and page requests. Before, the query stayed `pending` and `waitForIdle()` hung.
+- **A catch-up refetch discarded by `replace`.** It now fetches once more, if the entry was invalidated and still has subscribers, coalesced across a burst. `await invalidate()` waits for it. Every `replace` path calls `supersedeByWrite(hasSubscribers)`.
+- **Zod rules.** `createZodForm` enforces object and array rules (`z.array(...).min(3)`, a root `.refine({ path })`) through one whole-schema validator that drops what a leaf already reports. It is installed only when the schema has such a rule (`decisions/zod-schema-rules.md`).
+
+**Query engine** (`325ecf3`):
+- `LocalCache.write` and `replace`;
+- `ErrorContext.attempt` and `cause` set on cache errors;
+- one rule for when a `replace` supersedes;
+- infinite optimistic snapshots rebase on page-fetch success;
+- `waitForIdle()` counts `createCache` fetches;
+- `host.queries.invalidate` emits `cache:invalidated`;
+- `cache:subscribed` and `cache:unsubscribed`, with a subscriber count in the inspector.
+
+Two core budgets were raised to 17.5 KB and 23.5 KB.
+
+**Controllers, forms, devtools** (`008d8ef`, plus `1648b9a`):
+- `createRoot` checks `deps` against `AmbientDeps` (`TDeps extends AmbientDeps`), and so does `HydrationBoundary`'s `options`. Both are pinned by type tests in their own programs, since an augmentation reaches every file in a program.
+- `ctx.debug` while suspended is sent on resume.
+- Mutation devtools events use `id`; the devtools `MutationEntry` uses `mutationId`.
+- `inspectorPollMs` is gone.
+- A form-level run is the only writer of routed errors, so a no-op reset keeps them.
+- `HydrationBoundary` warns on the server in development builds.
+- The unused query barrel is deleted.
+- The fan-out bench gap is mostly the order of cases in the bench file, not the wrappers (`decisions/benchmarks.md`).
+
+**Satellites:**
+- **entities** (`439b8c2`): the backprop finds an entity by id in each entry's current data, instead of following recorded paths; the walker is linear; the vacuous test pins its contract.
+- **cross-tab + entities:** integration tests, and the default stays opt-in, measured.
+- **mutation-queue** (`9ed7356`): `isRetryable`; `runId` as the tie-break for a colliding `seq`; the async-storage ordering test.
+- **persist:** a marked envelope for version skew; `skipFirstDelivery` skips only a delivery made during `subscribe()`.
+- **realtime** (`50a12c1`): `channel` accepts a signal; one shared connection listener per service, which fixed class-based transports; handlers narrowed per event.
+- **vue:** a dev warning outside an effect scope.
+- **svelte:** `svelte-check` over the fixtures.
+- **eslint-plugin** (`3aef6c5`): `honor-abort-signal` (strict) and `no-testing-outside-tests` (recommended), eight rules in all.
+- **examples** (`bcb0d74`, `85174e4`): a virtualized-table suite; kanban's suspend state shown in the UI; kanban's title check through `extraValidators`; the three React lint rules on for `examples/**`.
+
+**Development builds** now ship for core, cross-tab, entities, mutation-queue, persist, react, vue and zod.
+
+**TSDoc** (`02b45f2`): every public export has a doc comment, 53 were added, and `api:check` enforces `ae-undocumented`. Each overload needs its own comment.
+
+**Member docs survive the declaration bundler** (`d0b11ef`). The bundler moved each one-line member doc onto the previous member's line, where TypeScript attaches it to nothing, so about 135 member docs were missing from the published types. The fix:
+- sources write type-literal member docs as multi-line blocks (210 converted);
+- `smoke:dist` fails on a stranded doc comment.
+
+**Wiki citations:** `wiki-lint` now warns on a body citation whose range, give or take 2 lines, names none of the identifiers its sentence puts in backticks (`fb52a2f`). It flagged 76 citations on 26 pages. With a scratch comparison against each page's last commit, the pass changed 369 body citations and 76 `covers:` entries on 45 pages. Seven claims were rewritten, not just renumbered: `callargs-vs-keyargs`, `brand-markers-not-classes`, `query-subscription`, `devtools-causal-timeline`, `entry`, `scope` and `fieldarray-factory-uses-initial`. The check cannot see a range that moved onto code naming the same identifier, so a manual pass after a large refactor is still worth it. Its writing rule: a citation's sentence names at least one identifier from the cited lines.
+
+**Dropped, with reasons in BACKLOG:**
+- new products: the offline package, `bindField`, the Vite HMR plugin, the devtools browser extension, and the rest of the devtools overhaul;
+- causal ordering across mutation ids, and a cross-tab causality guarantee;
+- path-typed `fieldAt`, updater-replay rebasing, per-root deps generics, `replaceController`;
+- timeline ordering by activity, shared example components, a src-to-src typecheck, the codemod CI job, the reference case collision;
+- the tsdown upstream report, which is the maintainer's call;
+- the wrapper fan-out cost, which turned out not to be the wrappers;
+- `wiki-lint`'s automated candidate promotion, contradiction detection and confidence decay, which need judgment and stay manual lint passes.

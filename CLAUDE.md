@@ -187,6 +187,7 @@ Run `pnpm wiki:lint`. The script in `scripts/wiki-lint.ts` checks:
 - Orphans — pages not linked from `index.md` or any other page's edges/body.
 - Staleness — pages whose `last_verified` is older than 60 days.
 - Drift — covered files modified (per git log) after the page's `last_verified`.
+- Drifted citations — a body `path:N` / `path:N-M` whose range, give or take 2 lines, names none of the identifiers its sentence puts in backticks (a warning). Put at least one backticked identifier from the cited lines in the citation's sentence, so the check can verify it.
 
 Exit code: 0 on warnings only, 1 if any errors.
 

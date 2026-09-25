@@ -28,10 +28,9 @@
  *      into a missing file or past a file's end. It cannot see a range that
  *      drifted onto other code naming the same identifier.
  *
- * Not yet implemented (deferred until needed):
- *   - candidate-promotion suggestions
- *   - contradiction detection between pages
- *   - confidence-decay
+ * Not automated, by design: candidate promotion, contradiction detection
+ * between pages and confidence decay need judgment, so CLAUDE.md lists them
+ * as manual lint passes.
  */
 
 import { execSync } from 'node:child_process'

@@ -127,6 +127,10 @@ It affects one export: core's `validator()` function, whose page `Validator`'s o
 
 Filing an issue in another project is not work in this repo, and it is the maintainer's call. The codemod works around it by putting its shebang at the top of `src/cli.ts`.
 
+### [dropped] Automated candidate promotion, contradiction detection and confidence decay in `wiki-lint`
+
+Each needs judgment a script cannot make: whether evidence confirms a candidate, whether two pages really disagree, whether an old claim still holds. CLAUDE.md lists them as manual lint passes, and `wiki-lint` automates the mechanical checks: frontmatter, paths, orphans, staleness, drift and drifted citations.
+
 ### [dropped] A React hook that creates a query subscription (`useQuery(query, { key })`)
 
 Requested implicitly by every consumer that has a React **context or hook** needing server data with no controller of its own (theme provider, feature-flag gate, keybinding overrides). `useQuery(subscription)` can only read a subscription a controller made; there is no `useQuery(query, { key })` that mints one.
