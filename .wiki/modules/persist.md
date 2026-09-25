@@ -53,7 +53,7 @@ Cleanup is registered via `ctx.onDispose`. `PersistErrorOp` = `'load' | 'deseria
 
 ## Versioning + migration
 
-`version: N` wraps writes in `{"$olas":1,"v":N,"d":<serialized>}` (`encodeForStorage`, `packages/persist/src/index.ts:359-365`). `decode` (`index.ts:375-380`) turns a stored string into `[payload, fromVersion]`, and `applyLoaded` and `applyRemote` both start from it. A matching `v` deserializes directly. A mismatched `v` goes to `migrate(raw, fromVersion)`, and so does a legacy un-enveloped payload, which arrives as `fromVersion: undefined`. A versioned reader with no migrator deserializes a legacy raw payload as is. The migrator returns the upgraded `T`, re-persisted as an envelope under `needsRewrite`, or `undefined` to drop the entry and leave the source at its default. A throwing migrator routes `onError('migrate')`. Version mismatch with no migrator discards the stored value. Tested in `persist.test.ts` (T6.1f).
+`version: N` wraps writes in `{"$olas":1,"v":N,"d":<serialized>}` (`encodeForStorage`, `packages/persist/src/index.ts:384-390`). `decode` (`index.ts:400-405`) turns a stored string into `[payload, fromVersion]`, and `applyLoaded` and `applyRemote` both start from it. A matching `v` deserializes directly. A mismatched `v` goes to `migrate(raw, fromVersion)`, and so does a legacy un-enveloped payload, which arrives as `fromVersion: undefined`. A versioned reader with no migrator deserializes a legacy raw payload as is. The migrator returns the upgraded `T`, re-persisted as an envelope under `needsRewrite`, or `undefined` to drop the entry and leave the source at its default. A throwing migrator routes `onError('migrate')`. Version mismatch with no migrator discards the stored value. Tested in `persist.test.ts` (T6.1f).
 
 ## Builds that disagree on `version` (1.0)
 
@@ -62,7 +62,7 @@ A tab left open across a deploy runs two builds on one key. Before 1.0, a reader
 - **The marker.** 1.0 writes the envelope with a `$olas: 1` key. Every reader unwraps a marked envelope, the unversioned one included (`decode`).
 - **The escape.** A reader without `version` writes raw, as before, unless `envelopeOf` says a reader could take the raw string for an envelope. Then it writes `{"$olas":1,"d":<serialized>}`, a marked envelope with no `v`, which reads back as the raw value with `fromVersion: undefined` (`encodeForStorage`).
 
-`envelopeOf` (`index.ts:284-306`) is the one predicate both sides use, so they cannot disagree. It returns `[payload, version, marked]` for a marked `{d: string, v?: number}` or an unmarked `{d: string, v: number}`, and `undefined` otherwise. A string that does not start with `{` or does not contain `"d"` is raw without a parse. That keeps the escape check off most writes, and it is safe because the writer's check and the reader's are the same function.
+`envelopeOf` (`index.ts:318-331`) is the one predicate both sides use, so they cannot disagree. It returns `[payload, version, marked]` for a marked `{d: string, v?: number}` or an unmarked `{d: string, v: number}`, and `undefined` otherwise. A string that does not start with `{` or does not contain `"d"` is raw without a parse. That keeps the escape check off most writes, and it is safe because the writer's check and the reader's are the same function.
 
 Data stored before 1.0 reads as it did. The unmarked `{v, d}` is an envelope only to a reader with `version`. To a reader without one it stays whole, because it may be a user value that 0.8 stored raw. So the original skew remains for a pre-1.0 envelope read by a 1.0 tab without `version`, which needs an app that dropped `version` between builds. The other residue is a 0.8 raw value that happens to be a marked envelope, a `$olas: 1` key next to a string `d`, which a 1.0 reader now unwraps. A 0.8 reader with `version` accepts the marked envelope, since its check only asked for a numeric `v` and a string `d`.
 
@@ -74,7 +74,7 @@ Every fallible op routes through `onError(err, op, key)`, and is swallowed witho
 
 ## Subscribe gotcha — the synchronous first delivery
 
-Signal-core's `source.subscribe(handler)` fires immediately with the current value AND on every change. If we wrote on the initial delivery, we'd persist the initial value before the user has touched anything — wrong. Mitigation: a `subscribing` flag is true only while `source.subscribe(...)` runs (`index.ts:579-593`), and the handler returns early while it is set. Every later call is a change, and is written.
+Signal-core's `source.subscribe(handler)` fires immediately with the current value AND on every change. If we wrote on the initial delivery, we'd persist the initial value before the user has touched anything — wrong. Mitigation: a `subscribing` flag is true only while `source.subscribe(...)` runs (`index.ts:604-618`), and the handler returns early while it is set. Every later call is a change, and is written.
 
 Before 1.0 the handler skipped its first call, whenever it came. That assumed an immediately-emitting source. An event-emitter-like source, which calls back only on a change, lost its first real change instead. The trade: a source that delivers its current value later, after `subscribe()` returns, now has that delivery written, and with async storage it counts as a user write before ready. No first-party source does that. Pinned by `tests/first-delivery.test.ts`, with a signal and a change-only source.
 
@@ -89,7 +89,7 @@ The *initial default* is not persisted during the not-ready window, because it w
 
 ## Cross-tab sync
 
-`crossTab: true` requires `storage.onChange?(handler)`. The default `localStorageAdapter` uses the browser `storage` event; `indexedDbAdapter` layers `BroadcastChannel`. On a remote change, once ready, `applyRemote(rawValue)` (`index.ts:385-410`) deserializes through `decode`, and a versioned reader ignores peers on a different `v`. It then calls `source.set(value)` with `writingFromLoad` set, so the write is not echoed back. A null value is a cross-tab delete → mirrored as `undefined`. Corrupt payloads route `onError('remoteChange')`.
+`crossTab: true` requires `storage.onChange?(handler)`. The default `localStorageAdapter` uses the browser `storage` event; `indexedDbAdapter` layers `BroadcastChannel`. On a remote change, once ready, `applyRemote(rawValue)` (`index.ts:410-435`) deserializes through `decode`, and a versioned reader ignores peers on a different `v`. It then calls `source.set(value)` with `writingFromLoad` set, so the write is not echoed back. A null value is a cross-tab delete → mirrored as `undefined`. Corrupt payloads route `onError('remoteChange')`.
 
 ## Adapters
 

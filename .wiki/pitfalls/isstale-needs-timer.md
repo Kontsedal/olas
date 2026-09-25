@@ -3,7 +3,9 @@ name: isstale-needs-timer
 description: Expiry cannot be a computed of Date.now() — its deps don't change as time passes. Use a Signal with a timer, and don't hand that timer a raw delay.
 type: pitfall
 covers:
-  - packages/core/src/query/entry.ts:48-177
+  - packages/core/src/query/entry.ts:140-247
+  - packages/core/src/query/entry.ts:489-497
+  - packages/core/src/query/entry.ts:786-791
   - packages/core/src/expiry-timer.ts
   - packages/core/src/utils.ts
   - packages/core/src/controller/root.ts
@@ -118,7 +120,7 @@ This is a *silent* failure — data still renders, it refetches constantly — w
 
 Every user-supplied duration in core routes through it: the staleness timer in `Entry` and `InfiniteEntry`, the gc timer in `ClientEntry` and `InfiniteClientEntry`, the `refetchInterval` chain in `ClientEntry.armIntervalTick` and its infinite twin, the retry backoff in `abortableSleep` fed by user `retryDelay`, and `suspend({ maxIdleTime })` in `controller/root.ts`.
 
-`refetchInterval` is worth calling out, because it looks guarded and is not quite. `resolveRefetchInterval` at `client.ts:60-91` rejects non-finite and non-positive gaps and stops the chain loudly, which covers `Infinity`. A *finite* gap above the 32-bit limit sails through that guard and overflows anyway, turning the longest interval you can ask for into a ~1ms poll storm. Rejecting `Infinity` is not the same as handling overflow; both halves need the scheduler.
+`refetchInterval` is worth calling out, because it looks guarded and is not quite. `resolveRefetchInterval` at `client.ts:62-93` rejects non-finite and non-positive gaps and stops the chain loudly, which covers `Infinity`. A *finite* gap above the 32-bit limit sails through that guard and overflows anyway, turning the longest interval you can ask for into a ~1ms poll storm. Rejecting `Infinity` is not the same as handling overflow; both halves need the scheduler.
 
 ## When to be careful
 

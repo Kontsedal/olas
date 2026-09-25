@@ -3,7 +3,7 @@ name: no-vanilla-adapter
 description: Why olas ships no vanilla DOM adapter — the package was specced, built, measured and dropped, and SPEC §16 was amended to stop promising one.
 type: decision
 covers:
-  - SPEC.md:1571-1600
+  - SPEC.md:1913-1931
 edges:
   - { type: related, target: ../modules/react.md }
   - { type: related, target: framework-adapters.md }

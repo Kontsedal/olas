@@ -5,7 +5,7 @@ type: flow
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/controller/instance.ts:313-341
+  - packages/core/src/query/bind.ts:44-89
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
@@ -32,7 +32,7 @@ const userController = defineController((ctx, props: { id: string }) => {
 
 ## Step by step
 
-### 1. Dispatch on brand — `instance.ts:314`
+### 1. Dispatch on brand — `bind.ts:72`
 
 `createQuery(ctx, query, keyOrOptions)`:
 
@@ -42,7 +42,7 @@ if (brand === 'infiniteQuery') return createInfiniteUse(...)
 return createUse(...)
 ```
 
-### 2. `createUse(client, query, keyOrOptions)` — `use.ts:83`
+### 2. `createUse(client, query, keyOrOptions)` — `use.ts:223`
 
 Builds a `SubscriptionImpl<T>` and an `effect` that owns the binding:
 
@@ -82,7 +82,7 @@ Key tricks:
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
 - We refetch on subscribe only if status is `idle`, stale or errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
 
-### 3. `client.bindEntry(query, args)` — `client.ts:1349`
+### 3. `client.bindEntry(query, args)` — `client.ts:1355`
 
 Looks up the entry in `client.maps`. If absent:
 
@@ -95,7 +95,7 @@ Looks up the entry in `client.maps`. If absent:
 
 `ClientEntry`'s constructor builds an `Entry<T>` with a fetcher closure that captures the original `args` (the user's call args, not the hash key — these are distinct, see `../pitfalls/callargs-vs-keyargs.md`).
 
-### 4. `entry.acquire(subscriberPath)` — `client.ts:325`
+### 4. `entry.acquire(subscriberPath)` — `client.ts:327`
 
 Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer. The subscribing controller's path, which `createQuery` reads from `ctxInternals.path`, moves the entry's `subscriptions` count and sends the devtools `cache:subscribed`. Every `release` passes the same path and sends `cache:unsubscribed`: a key change, a disable, a suspend and dispose each release (1.0).
 
@@ -126,14 +126,14 @@ Subscribers downstream see one notification pass.
 
 ## On disposal
 
-The `LifecycleEntry` recorded by `createQuery` (kind `cleanup`, dispose = the `dispose` returned by `createUse`) fires:
+The `LifecycleEntry` recorded by `createQuery` (kind `subscription-cache`, `bind.ts:83-88`, holding the `dispose`, `suspend` and `resume` that `createUse` returns) fires `dispose`:
 
 ```ts
 const dispose = () => {
-  effectDispose()                # stop tracking keys
-  currentEntry?.release()        # subscriber count down; may start gcTimer
+  effectDispose()                        # stop tracking keys
+  currentEntry?.release(subscriberPath)  # subscriber count down; may start gcTimer
   currentEntry = null
-  sub.detach()
+  sub.close()                            # detach, and reject pending firstValue waiters
 }
 ```
 

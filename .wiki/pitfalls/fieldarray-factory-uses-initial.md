@@ -3,7 +3,8 @@ name: fieldarray-factory-uses-initial
 description: FieldArray.add(x) only does something useful if the factory uses its `initial` argument.
 type: pitfall
 covers:
-  - packages/core/src/forms/form.ts:388-513
+  - packages/core/src/forms/form.ts:845-856
+  - packages/core/src/forms/form.ts:939-953
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
@@ -48,7 +49,7 @@ Canonical patterns:
 createFieldArray(ctx, (initial) => createField(ctx, initial ?? ''))                   # field
 createFieldArray(ctx, (initial) => createForm(ctx, schema, { initial }))              # form
 createFieldArray(ctx, (initial: { sku?: string }) =>                           # form with typed initial
-  createForm(ctx, { sku: createField<string>(ctx, '', [required()]) }, { initial }))
+  createForm(ctx, { sku: createField<string>(ctx, '', { validators: [required()] }) }, { initial }))
 ```
 
 ## The bug we hit

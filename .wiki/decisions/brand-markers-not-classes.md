@@ -4,15 +4,15 @@ description: Why runtime kinds are Symbol.for brand keys on plain objects instea
 type: decision
 covers:
   - packages/core/src/brand.ts
-  - packages/core/src/forms/form.ts:27-37
+  - packages/core/src/forms/form.ts:29-62
   - packages/core/src/query/define.ts
-  - packages/core/src/query/mutation.ts:155-172
+  - packages/core/src/query/mutation.ts:160-213
   - packages/core/src/scope.ts
 edges:
   - { type: uses, target: ../modules/forms.md }
   - { type: tested-by, target: ../../packages/core/tests/scope.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/tree-shaking.test.ts }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -26,7 +26,7 @@ Where core must tell kinds of value apart at runtime, the value carries a brand 
 - **`PHANTOM`** — an optional property that pins a phantom type parameter (`Scope<T>`, `ControllerDef<Props, Api>`, `EntityDef<T>`). No value carries it at runtime.
 - **`INTERNAL`** — plumbing a public value hands to core. Today that is the engine's `options` and `create`.
 
-Forms keep their own two keys, `Symbol.for('olas.form')` and `Symbol.for('olas.fieldArray')` (`form.ts:27-37`), with the predicates `isForm`, `isFieldArray` and `isField`. `isField` is the fallback when neither brand is set.
+Forms keep their own two keys, `Symbol.for('olas.form')` and `Symbol.for('olas.fieldArray')` (`form.ts:29-62`), with the predicates `isForm` and `isFieldArray`. A node with neither brand is treated as a `Field`; no `isField` predicate exists.
 
 Query dispatch reads the kind: `(query as { [BRAND]?: string })[BRAND] === 'infiniteQuery'` in `createQuery` (`query/bind.ts`).
 

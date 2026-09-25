@@ -3,7 +3,7 @@ name: ctx
 description: The tree-and-lifetime handle passed to every controller factory; the primitives that build lifetime-owned things take it as an argument instead.
 type: entity
 covers:
-  - packages/core/src/controller/types.ts:182-300
+  - packages/core/src/controller/types.ts:191-308
   - packages/core/src/controller/instance.ts:455-1077
   - packages/core/src/query/bind.ts
   - packages/core/src/forms/bind.ts
@@ -54,7 +54,7 @@ type Ctx<TDeps = AmbientDeps> = {
 }
 ```
 
-The type is `controller/types.ts:190-300`. `Ctx` has no `ctx.session`, no `ctx.signal` or `ctx.computed`, and none of the primitive factories above as members; each of those left `Ctx` in 1.0.
+The type is `controller/types.ts:198-308`. `Ctx` has no `ctx.session`, no `ctx.signal` or `ctx.computed`, and none of the primitive factories above as members; each of those left `Ctx` in 1.0.
 
 The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:455-1077`). Each method has the same general shape:
 
@@ -62,7 +62,7 @@ The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:455-107
 2. Push a `LifecycleEntry` onto `self.entries`.
 3. Return the primitive.
 
-The ctx-taking functions follow the same shape through the internals handle: `internals.assertLive(name)`, then `internals.register(entry)` (`instance.ts:473-501`, `query/bind.ts:51-72`).
+The ctx-taking functions follow the same shape through the internals handle: `internals.assertLive(name)`, then `internals.register(entry)` (`instance.ts:473-501`, `query/bind.ts:68-89`).
 
 `ctx.effect`, `ctx.on`, and the lifecycle hooks also wrap user callbacks in a `dispatchError(rootShared.onError, err, {kind, controllerPath})` shield.
 
@@ -82,7 +82,7 @@ Read-only getter on `ctx`. Returns the merged deps object (parent's deps + any o
 
 ## `createQuery` overload dispatch
 
-`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on the query's brand (`query/bind.ts:51-72`). It reads `query[BRAND]`, calls `createInfiniteUse` for `'infiniteQuery'` and `createUse` otherwise, and registers the resulting handle as a `subscription-cache` lifecycle entry. The TS overloads in `query/bind.ts:36-50` declare three signatures: a `Query` with `select` options, a `Query`, and an `InfiniteQuery`. Consumers see the right return shape.
+`createQuery(ctx, query, keyOrOptions?)` is implemented as a single function that switches on the query's brand (`query/bind.ts:68-89`). It reads `query[BRAND]`, calls `createInfiniteUse` for `'infiniteQuery'` and `createUse` otherwise, and registers the resulting handle as a `subscription-cache` lifecycle entry. The TS overloads in `query/bind.ts:26-67` declare three signatures: a `Query` with `select` options, a `Query`, and an `InfiniteQuery`. Consumers see the right return shape.
 
 ## `ctx.attach` vs `ctx.child`
 

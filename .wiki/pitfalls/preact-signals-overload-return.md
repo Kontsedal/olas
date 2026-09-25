@@ -3,7 +3,7 @@ name: preact-signals-overload-return
 description: ReturnType<typeof signal<T>> gives Signal<T | undefined> due to TS overload resolution. Use PreactSignal<T> directly.
 type: pitfall
 covers:
-  - packages/core/src/signals/runtime.ts:13-43
+  - packages/core/src/signals/runtime.ts:13-51
 edges:
   - { type: uses, target: ../modules/signals.md }
 last_verified: 2026-05-22

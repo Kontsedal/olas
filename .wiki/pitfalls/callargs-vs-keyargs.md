@@ -3,8 +3,8 @@ name: callargs-vs-keyargs
 description: Two arg arrays inside ClientEntry. One goes to the fetcher; one goes to the hash. They are not the same.
 type: pitfall
 covers:
-  - packages/core/src/query/client.ts:31-242
-  - packages/core/src/query/client.ts:946-1030
+  - packages/core/src/query/client.ts:237-320
+  - packages/core/src/query/client.ts:1355-1578
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
@@ -46,7 +46,7 @@ this.entry = new Entry<T>({
 
 Test `defineQuery + ctx.use > subscribing fetches; data lands on success` failed because the fetcher received `['user', 'u1']` instead of `['u1']`.
 
-Fix: separate both args arrays explicitly on `ClientEntry` (`client.ts:31-89`):
+Fix: separate both args arrays explicitly on `ClientEntry` (`client.ts:237-320`):
 
 ```ts
 constructor(
@@ -68,7 +68,7 @@ constructor(
 }
 ```
 
-`dropEntry`, `invalidate`, `invalidateAll`, and `bindEntry`'s hash-collision dedupe path (`client.ts:946-1030`) all hash with `stableHash(...)` over `keyArgs`.
+`bindEntry` (`client.ts:1365-1366`), `dropEntry` (`client.ts:1445`), `invalidate` (`client.ts:1511-1512`), `cancel` and `peekData` (`client.ts:1546`, `client.ts:1576`) all hash `keyArgs` with `stableHash(...)`. `invalidateAll` walks the map without hashing.
 
 ## Why have both?
 

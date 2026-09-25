@@ -56,7 +56,7 @@ Used everywhere `Form`/`FieldArray`/`Field` are mixed in a child slot. We prefer
 
 `Form.value`, `errors`, `isValid`, `isDirty`, `touched`, `isValidating` are all `computed(() => ...)`. They iterate `Object.values(this.fields)`.
 
-- **`value`** reads `child.value` for every child with no branch. `Field`, `Form` and `FieldArray` are each a `ReadSignal` of their value (`form.ts:277-284`). See `../decisions/forms-are-read-signals.md`.
+- **`value`** reads `child.value` for every child with no branch. `Field`, `Form` and `FieldArray` are each a `ReadSignal` of their value (`form.ts:308-315`). See `../decisions/forms-are-read-signals.md`.
 - **`errors`, touched, validation and path resolution** branch on the child's brand, because the node kinds differ there: a `Form` has `fields`, a `FieldArray` has `items`, and a `Field` has neither.
 
 `applyPartial` (behind `set` and `setAsInitial`) calls the child's own `set` or `setAsInitial`, which all three kinds share.
@@ -89,7 +89,7 @@ The whole body runs inside an `effect`, so any signal read inside any validator 
 
 **`isValid` stability (T5.3).** `isValid` reads live `errors` when settled, but **holds the last settled validity while `isValidating`**, through a `lastValid$` signal updated at every settle point. Without this, a `debouncedValidator` cleared `validatorErrors$` on each async start, `isValid` strobed to `false` on every keystroke, and a bound submit button flickered. A field with no prior settled run defaults to valid, so there is no false-invalid flash on mount. This replaced the older "treat-as-invalid-while-validating" rule (spec §8.2 updated).
 
-`debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` rather than the widened `Validator<T>`, so a direct caller storing the result in a `string | null` signal type-checks. It stays assignable wherever a `Validator<T>` is expected (`field.ts:547-550`).
+`debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` rather than the widened `Validator<T>`, so a direct caller storing the result in a `string | null` signal type-checks. It stays assignable wherever a `Validator<T>` is expected (`field.ts:578-586`).
 
 **A sync failure abandons the pass's async validators (1.0).** A pass runs every validator, sync and async together. When a sync one fails, the pass settles on its errors at once and does not wait for the async ones. `abandonAsyncResults` in `utils.ts` then aborts them and attaches a no-op handler to each promise. Without it, the rejection that the next pass or dispose caused was unhandled: clearing a field with `required` and a `debouncedValidator` logged an `AbortError`. The field, form and field-array runners share the helper. Pinned by `regressions.test.ts`, "an async validator abandoned by a failing sync one settles quietly".
 
@@ -127,7 +127,7 @@ See `../pitfalls/fieldarray-factory-uses-initial.md`.
 
 `remove(i)` calls `.dispose()` on the removed item (Field/Form/FieldArray all implement it). `clear()` disposes all items.
 
-**Structural dirtiness (T5.1).** `FieldArray.isDirty` is `structurallyDirty$ || anyItemDirty`. `add`, `insert`, `remove`, `move` and `clear` flip the `structurallyDirty$` signal, and `reset()` and the `replaceInitialItems()` re-anchor clear it. Item-level dirtiness alone missed add, remove and move. A reactive `initial: () => queryData` under the default `resetOnInitialChange: 'when-clean'` then re-seated the array on a background refetch and deleted rows the user had just added; the guard is in `FormImpl` construction at `form.ts:99-124`. Construction seeds items directly rather than through `add()`, so a fresh array is clean. Pinned by `regressions.test.ts` (R-F5.1).
+**Structural dirtiness (T5.1).** `FieldArray.isDirty` is `structurallyDirty$ || anyItemDirty`. `add`, `insert`, `remove`, `move` and `clear` flip the `structurallyDirty$` signal, and `reset()` and the `replaceInitialItems()` re-anchor clear it. Item-level dirtiness alone missed add, remove and move. A reactive `initial: () => queryData` under the default `resetOnInitialChange: 'when-clean'` then re-seated the array on a background refetch and deleted rows the user had just added; the guard is in `FormImpl` construction at `form.ts:222-252`. Construction seeds items directly rather than through `add()`, so a fresh array is clean. Pinned by `regressions.test.ts` (R-F5.1).
 
 ## What's NOT implemented yet
 

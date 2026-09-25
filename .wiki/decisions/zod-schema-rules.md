@@ -4,7 +4,7 @@ description: Why createZodForm enforces object and array rules with one whole-sc
 type: decision
 covers:
   - packages/zod/src/index.ts:170-304
-  - packages/zod/src/index.ts:508-525
+  - packages/zod/src/index.ts:510-527
 edges:
   - { type: uses, target: ../modules/zod.md }
   - { type: uses, target: ../modules/forms.md }
@@ -28,11 +28,11 @@ The parse also ran for a schema with no such rule, where it could find nothing t
 
 ## What it does now
 
-Each leaf field keeps its own `zodValidator(leafSchema)`. `hasStructuralRules` (`packages/zod/src/index.ts:192-209`) walks the objects and arrays of the schema, with their `.optional()`, `.nullable()` and `.default()` wrappers, and looks for a non-empty `def.checks`. Only then does the root form get `schemaRulesValidator` (`packages/zod/src/index.ts:296-304`, installed at `:514`).
+Each leaf field keeps its own `zodValidator(leafSchema)`. `hasStructuralRules` (`packages/zod/src/index.ts:192-209`) walks the objects and arrays of the schema, with their `.optional()`, `.nullable()` and `.default()` wrappers, and looks for a non-empty `def.checks`. Only then does the root form get `schemaRulesValidator` (`packages/zod/src/index.ts:296-304`, installed at `:516-517`).
 
 That validator parses the whole schema through core's Standard Schema `validator`. `unownedIssues` (`packages/zod/src/index.ts:259-280`) sorts each issue with `leafAlong` (`:218-246`), which walks the schema and the value together:
 
-- A path that ends at a `Form` or a `FieldArray`, or names a key the schema lacks, keeps its path. Core's router (`packages/core/src/forms/form.ts:114-143`) puts it in that node's `topLevelErrors`, or in the root's when nothing resolves.
+- A path that ends at a `Form` or a `FieldArray`, or names a key the schema lacks, keeps its path. Core's router (`routeFormIssues`, `packages/core/src/forms/form.ts:105-143`) puts it in that node's `topLevelErrors`, or in the root's when nothing resolves.
 - A path at or under a leaf is cut to the leaf's path. It is dropped when the leaf's own schema reports the same message for the leaf's value. Otherwise it lands on the field, in the channel core keeps for form-level messages.
 
 ## Why one validator at the root

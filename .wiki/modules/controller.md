@@ -35,16 +35,16 @@ Implements the controller container: `defineController`, `createRoot` and the ro
 ## Files
 
 - **`types.ts`** — `Ctx<TDeps>`, `Root<Api>` (the handle), `RootOptions`, `SuspendOptions`, `ControllerDef`, `AmbientDeps`, `Field`, `Collection` and its option types, `LazyChild`.
-- **`define.ts`** — `defineController(factory, { name? })`, with one signature and `Props = void` as the default, which dodges the TS overload pitfalls (see `../pitfalls/literal-type-narrowing.md`). `getFactory` and `getName` read the internal `__factory` and `__name` off a `ControllerDef` (`packages/core/src/controller/define.ts:29-51`).
+- **`define.ts`** — `defineController(factory, { name? })`, with one signature and `Props = void` as the default, which dodges the TS overload pitfalls (see `../pitfalls/literal-type-narrowing.md`). `getFactory` and `getName` read the internal `__factory` and `__name` off a `ControllerDef` (`packages/core/src/controller/define.ts:53-62`).
 - **`instance.ts`** — the `ControllerInstance` class. It owns the lifecycle list and builds each `Ctx`, and most of the lifecycle implementation lives here. See `../entities/controller-instance.md`.
-- **`internals.ts`** — `CTX_INTERNALS`, a `Symbol.for` key, and `CtxInternals`, the seam the free-function primitives use (`internals.ts:21-67`). `ctxInternals(ctx, op)` reads it and throws a message naming the fix when handed something that is not a ctx (`internals.ts:75-84`). The reasoning is in `../decisions/ctx-primitives-are-free-functions.md`.
+- **`internals.ts`** — `CTX_INTERNALS`, a `Symbol.for` key, and `CtxInternals`, the seam the free-function primitives use (`internals.ts:21-83`). `ctxInternals(ctx, op)` reads it and throws a message naming the fix when handed something that is not a ctx (`internals.ts:85-100`). The reasoning is in `../decisions/ctx-primitives-are-free-functions.md`.
 - **`root.ts`** — `createRoot` and `createRootWithProps`, plus `buildRootHandle`, which returns the frozen root handle (`root.ts:114-230`).
 - **`index.ts`** — public re-exports.
 
 `testing.ts`, at the root of `core/src/`, is published as `@kontsedal/olas-core/testing`:
 
-- **`createRoot` checks `deps` against `AmbientDeps`, since 1.0.** Its type parameter is `TDeps extends AmbientDeps = AmbientDeps` (`root.ts:210-223`). A root that leaves out a service the app's augmentation requires does not compile, and a root that passes extra members does. `createRootWithProps` keeps `TDeps extends Record<string, unknown>`, because `createTestController` calls it and a test passes only the fakes its controller reads. Pinned by `packages/core/tests/ambient-deps.test-d.ts`. An augmentation reaches its whole TypeScript program, so that file compiles alone, through `tsconfig.ambient-deps.json`, against the built `dist` types. Core's own source assigns `{}` to `AmbientDeps` in places and cannot compile under an augmentation. The integration suite is one program, so its realtime test narrows `ctx` to `Ctx<RealtimeDeps>` instead of augmenting.
-- `createTestController(def, { deps, props?, onError?, queries?, plugins?, scopes?, hydrate? })` returns the same `Root<Api>` as `createRoot`, so the api is on `.api` (`packages/core/src/testing.ts:27-65`). `props` is optional for a `void` controller. `queries` defaults to a live `queryEngine()`, and `null` builds a root with no engine.
+- **`createRoot` checks `deps` against `AmbientDeps`, since 1.0.** Its type parameter is `TDeps extends AmbientDeps = AmbientDeps` (`root.ts:248-253`). A root that leaves out a service the app's augmentation requires does not compile, and a root that passes extra members does. `createRootWithProps` keeps `TDeps extends Record<string, unknown>`, because `createTestController` calls it and a test passes only the fakes its controller reads. Pinned by `packages/core/tests/ambient-deps.test-d.ts`. An augmentation reaches its whole TypeScript program, so that file compiles alone, through `tsconfig.ambient-deps.json`, against the built `dist` types. Core's own source assigns `{}` to `AmbientDeps` in places and cannot compile under an augmentation. The integration suite is one program, so its realtime test narrows `ctx` to `Ctx<RealtimeDeps>` instead of augmenting.
+- `createTestController(def, { deps, props?, onError?, queries?, plugins?, scopes?, hydrate? })` returns the same `Root<Api>` as `createRoot`, so the api is on `.api` (`packages/core/src/testing.ts:43-65`). `props` is optional for a `void` controller. `queries` defaults to a live `queryEngine()`, and `null` builds a root with no engine.
 - Each call builds its **own** root and so its own query cache, and two calls never share an entry. Test cache-lifetime behavior such as `gcTime` and dedup inside one root, through `ctx.attach`.
 - `fakeField` and `fakeAsyncState` build shape-correct stand-ins for UI tests (`testing.ts:73-190`).
 - It re-exports the plugin test helpers from `test-plugins.ts`: `mockFetchPlugin`, a `wrapFetch` that answers by query id, and `createPluginRecorder`, which records every observation event. `PLUGINS.md` shows them in use.
@@ -52,7 +52,7 @@ Implements the controller container: `defineController`, `createRoot` and the ro
 
 ## Ctx surface
 
-`Ctx` holds composition, effects, scopes and lifecycle (`types.ts:190-300`). The primitives that create data are free functions that take `ctx`: `createQuery`, `createCache`, `createMutation`, `bindQuery`, `createField`, `createForm`, `createFieldArray`, plus `signal` and `computed` from core.
+`Ctx` holds composition, effects, scopes and lifecycle (`types.ts:191-308`). The primitives that create data are free functions that take `ctx`: `createQuery`, `createCache`, `createMutation`, `bindQuery`, `createField`, `createForm`, `createFieldArray`, plus `signal` and `computed` from core.
 
 ```ts nocheck
 type Ctx<TDeps = AmbientDeps> = {
@@ -86,7 +86,7 @@ type Ctx<TDeps = AmbientDeps> = {
 }
 ```
 
-1.0 removed `ctx.cache`, `ctx.use`, `ctx.mutation`, `ctx.bindQuery`, `ctx.field`, `ctx.form`, `ctx.fieldArray`, `ctx.signal`, `ctx.computed` and `ctx.session`. `ctx.attach` covers what `ctx.session` did. A free function reaches the controller through `ctxInternals(ctx, op)`, calls `assertLive`, and registers its teardown with `register` (for example `packages/core/src/query/bind.ts:51-72`).
+1.0 removed `ctx.cache`, `ctx.use`, `ctx.mutation`, `ctx.bindQuery`, `ctx.field`, `ctx.form`, `ctx.fieldArray`, `ctx.signal`, `ctx.computed` and `ctx.session`. `ctx.attach` covers what `ctx.session` did. A free function reaches the controller through `ctxInternals(ctx, op)`, calls `assertLive`, and registers its teardown with `register` (for example `packages/core/src/query/bind.ts:68-89`).
 
 `ctx.attach(def, props)` returns `{ api, dispose, suspend, resume }`. `<SuspendOnUnmount controller={…}>` in `@kontsedal/olas-react` consumes the `{ suspend, resume }` pair directly, so the child needs no hand-rolled `isPaused` signal. `suspend` and `resume` cascade through the attached sub-tree's lifecycle entries: paused effects re-instantiate on resume, and suspended query subscriptions release their entry.
 
@@ -117,7 +117,7 @@ Dispose and suspend iterate in **reverse** order, and resume iterates **forward*
 
 ## The root handle
 
-`createRoot(def, options)` returns a frozen `Root<Api>` (`types.ts:360-408`, `root.ts:191-229`):
+`createRoot(def, options)` returns a frozen `Root<Api>` (`types.ts:360-426`, `root.ts:191-229`):
 
 ```ts nocheck
 type Root<Api> = {
@@ -143,7 +143,7 @@ Without a query engine:
 
 With an engine, `hydrate` goes to `QueryClient.hydrateLive`. `root.inject(scope)` resolves through `ControllerInstance.resolveScope`, the same walk `ctx.inject` uses.
 
-`createRootWithProps` (`root.ts:20-112`) creates the client, sets up the plugins in order, seeds plugin scopes and then `RootOptions.scopes`, and runs the factory. A factory or setup throw tears down what was built and rethrows. `root.dispose()` closes plugin delivery, closes the client, disposes the controllers, disposes the plugins in reverse, then disposes the client (`root.ts:126-142`). `root.waitForIdle()` alternates between the client's idle wait and the plugins' tracked work, and waits for every `createCache` that is fetching (`root.ts:206-223`). The full sequence is `../flows/plugin-lifecycle.md`.
+`createRootWithProps` (`root.ts:20-100`) creates the client, sets up the plugins in order, seeds plugin scopes and then `RootOptions.scopes`, and runs the factory. A factory or setup throw tears down what was built and rethrows. `root.dispose()` closes plugin delivery, closes the client, disposes the controllers, disposes the plugins in reverse, then disposes the client (`root.ts:126-142`). `root.waitForIdle()` alternates between the client's idle wait and the plugins' tracked work, and waits for every `createCache` that is fetching (`root.ts:206-223`). The full sequence is `../flows/plugin-lifecycle.md`.
 
 `suspend({ maxIdleTime })` arms an auto-dispose that many milliseconds out, and `resume()` or `dispose()` cancels it (`root.ts:144-169`). It schedules through `scheduleExpiry` in `packages/core/src/expiry-timer.ts` rather than a bare `setTimeout`. `maxIdleTime: Infinity` arms nothing, so the root stays suspended until something else disposes it. A finite value above the 32-bit timer limit is chunked rather than overflowing into an immediate dispose. `suspendTimer` holds the cancellation closure. See `../pitfalls/isstale-needs-timer.md`, and the `maxIdleTime` tests in `controller.test.ts`.
 

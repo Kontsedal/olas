@@ -3,9 +3,9 @@ name: literal-type-narrowing
 description: createField infers T from its initial value. With validators the literal sticks (Field<''>), and null or [] give a field that holds only that. Annotate the type parameter.
 type: pitfall
 covers:
-  - packages/core/src/forms/bind.ts:31
+  - packages/core/src/forms/bind.ts:34
   - packages/core/src/forms/validators.ts:66-69
-  - packages/core/src/controller/types.ts:37-47
+  - packages/core/src/controller/types.ts:38-48
 edges:
   - { type: tested-by, target: ../../packages/core/tests/type-pitfalls.test-d.ts }
 last_verified: 2026-09-25
@@ -14,7 +14,7 @@ confidence: high
 
 # `createField` infers `T` from the initial value: annotate it
 
-`createField<T>(ctx, initial: T, options?: FieldOptions<T>): Field<T>` (`packages/core/src/forms/bind.ts:31`) infers `T` from `initial`. What it infers depends on the call:
+`createField<T>(ctx, initial: T, options?: FieldOptions<T>): Field<T>` (`packages/core/src/forms/bind.ts:34`) infers `T` from `initial`. What it infers depends on the call:
 
 ```ts nocheck
 createField(ctx, '')                                         // Field<string>   fine

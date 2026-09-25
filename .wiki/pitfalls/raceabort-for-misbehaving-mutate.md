@@ -3,8 +3,8 @@ name: raceabort-for-misbehaving-mutate
 description: Wrap the mutate fn's promise in a raceAbort against the abort signal. Otherwise misbehaving mutates can hang forever.
 type: pitfall
 covers:
-  - packages/core/src/query/mutation.ts:755-791
-  - packages/core/src/query/mutation.ts:526-594
+  - packages/core/src/query/mutation.ts:768-801
+  - packages/core/src/query/mutation.ts:536-604
 edges:
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: uses, target: ../entities/mutation.md }
@@ -60,7 +60,7 @@ try {
 }
 ```
 
-The late-abort branch finalizes rather than rolls back (`mutation.ts:528-550`). Once `raceAbort` resolved, the server holds the write, so a rollback would put a known-stale value into the cache. The catch block rolls back only when the abort came first (`mutation.ts:562-583`).
+The late-abort branch finalizes rather than rolls back (`mutation.ts:538-560`). Once `raceAbort` resolved, the server holds the write, so a rollback would put a known-stale value into the cache. The catch block rolls back only when the abort came first (`mutation.ts:572-593`).
 
 ```ts
 function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {

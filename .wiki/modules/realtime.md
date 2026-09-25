@@ -63,14 +63,14 @@ After augmentation, `Ctx<AmbientDeps>` satisfies the `Ctx<RealtimeDeps>` paramet
 
 ## Handler typing
 
-`PatcherHandlers<TEvent>` (`index.ts:71-75`) maps each `TEvent['type']` to a handler of `Extract<TEvent, { type: K }>`, so `'comment-added': (ev) => ev.comment` compiles with no narrowing. Before 1.0 every handler received the whole union, and RECIPES and the kanban board cast around it. A handler annotated with the whole union still fits a key, since a parameter is contravariant. A key outside the union is an excess-property error. The dispatcher itself still sees the union, so `createRealtimePatcher` casts the looked-up handler to `(e: TEvent) => void` in one place (`index.ts:106`). `tests/handlers.test-d.ts` pins all of it, and `tsc` checks that file; vitest does not run it.
+`PatcherHandlers<TEvent>` (`index.ts:77-81`) maps each `TEvent['type']` to a handler of `Extract<TEvent, { type: K }>`, so `'comment-added': (ev) => ev.comment` compiles with no narrowing. Before 1.0 every handler received the whole union, and RECIPES and the kanban board cast around it. A handler annotated with the whole union still fits a key, since a parameter is contravariant. A key outside the union is an excess-property error. The dispatcher itself still sees the union, so `createRealtimePatcher` casts the looked-up handler to `(e: TEvent) => void` in one place (`index.ts:112`). `tests/handlers.test-d.ts` pins all of it, and `tsc` checks that file; vitest does not run it.
 
 ## Channels as signals
 
-`channel` is a name or a `ReadSignal<string>`. `channelName` (`index.ts:78-79`) reads a signal's `.value` inside the owning `ctx.effect`, so the signal is a tracked dependency:
+`channel` is a name or a `ReadSignal<string>`. `channelName` (`index.ts:84-85`) reads a signal's `.value` inside the owning `ctx.effect`, so the signal is a tracked dependency:
 
-- **Patcher** (`index.ts:103-115`). A new name re-runs the effect: the cleanup unsubscribes from the old channel and the body subscribes to the new one. A write of the same name does not notify, so nothing resubscribes. A per-route room is a `computed` over the route params.
-- **Live stream** (`index.ts:292-312`). The effect reads the channel *before* `isPaused`, so a change re-runs it during a pause too. `bufferedFrom` records the channel the buffered events came from. A new name empties `events` and `pending` through the same `clear()` the api returns. The reason is that a tail holds one channel's events, and nothing in an event says which channel it came from. Pause and resume on one channel keep the buffer.
+- **Patcher** (`index.ts:104-122`). A new name re-runs the effect: the cleanup unsubscribes from the old channel and the body subscribes to the new one. A write of the same name does not notify, so nothing resubscribes. A per-route room is a `computed` over the route params.
+- **Live stream** (`index.ts:299-322`). The effect reads the channel *before* `isPaused`, so a change re-runs it during a pause too. `bufferedFrom` records the channel the buffered events came from. A new name empties `events` and `pending` through the same `clear()` the api returns. The reason is that a tail holds one channel's events, and nothing in an event says which channel it came from. Pause and resume on one channel keep the buffer.
 
 ## Lifecycle
 
@@ -84,7 +84,7 @@ Both composables hold their subscription inside `ctx.effect(() => { ... return (
 
 `createConnectionState(ctx): ReadSignal<ConnectionState>` where `ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'`, backed by the optional `RealtimeService.onConnectionChange?(handler): () => void`. With a reporter it starts optimistically at `'connected'` and tracks changes; **without one it reports `'unknown'`** — the hook can't observe state, so it says so rather than lying `'connected'` (T6.7). `onReconnect(ctx, fn)` fires `fn` on a transition back to `'connected'` (not on the initial value), the canonical "invalidate queries that missed updates during the disconnect" trigger.
 
-**One transport listener per `RealtimeService`.** `onReconnect` builds on `createConnectionState`, so a controller with both used to open two `onConnectionChange` subscriptions, and N controllers opened N. Now `joinConnection` (`index.ts:379-416`) keeps a hub per service in a `WeakMap`:
+**One transport listener per `RealtimeService`.** `onReconnect` builds on `createConnectionState`, so a controller with both used to open two `onConnectionChange` subscriptions, and N controllers opened N. Now `joinConnection` (`index.ts:389-426`) keeps a hub per service in a `WeakMap`:
 
 - Each `createConnectionState` keeps its own signal and joins the hub from its `ctx.effect`. The effect's cleanup leaves it, so dispose and suspend leave, and resume joins again.
 - The first listener opens the subscription before it adds itself, and the hub fans every report out to all listeners inside one `batch`. The last listener to leave closes it.

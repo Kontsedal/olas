@@ -3,7 +3,7 @@ name: raf-unbound-illegal-invocation
 description: "Assigning native requestAnimationFrame UNBOUND to a field then calling it as a method throws 'Illegal invocation' in real browsers — invisible to jsdom, so tests miss it."
 type: pitfall
 covers:
-  - packages/devtools/src/store.ts:242-256
+  - packages/devtools/src/store.ts:464-490
 edges:
   - { type: tested-by, target: ../../packages/devtools/tests/store.test.ts }
   - { type: related, target: ../modules/devtools-panel.md }

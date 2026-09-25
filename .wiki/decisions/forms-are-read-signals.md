@@ -3,14 +3,15 @@ name: forms-are-read-signals
 description: Why Form and FieldArray are ReadSignals of their value, like Field, so `.value` means the same thing on every form node.
 type: decision
 covers:
-  - packages/core/src/forms/form-types.ts:73-225
-  - packages/core/src/forms/form.ts:261-345
-  - packages/core/src/forms/form.ts:869-978
+  - packages/core/src/controller/types.ts:38
+  - packages/core/src/forms/form-types.ts:135-300
+  - packages/core/src/forms/form.ts:254-376
+  - packages/core/src/forms/form.ts:859-1014
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/form-submit.test.ts }
   - { type: uses, target: ../modules/forms.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -18,7 +19,7 @@ confidence: medium
 
 ## The decision
 
-`Field<T>`, `Form<S>` and `FieldArray<I>` are all `ReadSignal`s of their value (`packages/core/src/forms/form-types.ts:108`, `:190`):
+`Field<T>`, `Form<S>` and `FieldArray<I>` are all `ReadSignal`s of their value (`packages/core/src/controller/types.ts:38`, `packages/core/src/forms/form-types.ts:173` and `form-types.ts:267`):
 
 ```ts
 field.value            // T
@@ -28,7 +29,7 @@ useValue(form)         // re-renders when any leaf changes
 form.subscribe(fn)     // same
 ```
 
-The three node kinds also share `set` and `setAsInitial`, each taking its own value shape. `Form.resetWithInitial` was renamed `setAsInitial`, and `FieldArray` gained both methods (`packages/core/src/forms/form.ts:944-978`).
+The three node kinds also share `set` and `setAsInitial`, each taking its own value shape. `Form.resetWithInitial` was renamed `setAsInitial`, and `FieldArray` gained both methods (`packages/core/src/forms/form.ts:987-1014`).
 
 ## Why
 
@@ -40,10 +41,10 @@ The old reason for the asymmetry was that a form-level `subscribe` "would fire o
 
 ## What it bought
 
-- `computeValue` reads `(child as ReadSignal<unknown>).value` for every child, with no brand branch (`packages/core/src/forms/form.ts:277-284`). `FieldArrayImpl`'s aggregate does the same.
+- `computeValue` reads `(child as ReadSignal<unknown>).value` for every child, with no brand branch (`packages/core/src/forms/form.ts:308-315`). `FieldArrayImpl`'s aggregate does the same.
 - `applyPartial` calls `set` or `setAsInitial` on any child. The array branch, with its cast to reach the internal `replaceInitialItems`, moved into `FieldArrayImpl.set` / `setAsInitial`.
 - Brands are still needed wherever the node kinds differ: errors, touched, validation, path resolution.
 
 ## `submit` resolves a union
 
-The same pass made `Form.submit` resolve a `SubmitResult<R>` (`packages/core/src/forms/form-types.ts:81-84`). `ok: true` carries `data`. `ok: false` carries a `reason`: `'invalid'`, `'error'` (with `error`), `'busy'` or `'disposed'`. Before, `{ ok: boolean; data?; error? }` could not tell "invalid" from "already submitting" without matching an error message.
+The same pass made `Form.submit` resolve a `SubmitResult<R>` (`packages/core/src/forms/form-types.ts:142-145`). `ok: true` carries `data`. `ok: false` carries a `reason`: `'invalid'`, `'error'` (with `error`), `'busy'` or `'disposed'`. Before, `{ ok: boolean; data?; error? }` could not tell "invalid" from "already submitting" without matching an error message.

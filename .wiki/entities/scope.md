@@ -4,8 +4,10 @@ description: Typed cross-tree data slot — defineScope + ctx.provide/inject for
 type: entity
 covers:
   - packages/core/src/scope.ts
-  - packages/core/src/controller/instance.ts:438-468
-  - packages/core/src/controller/types.ts:158-159
+  - packages/core/src/controller/instance.ts:164
+  - packages/core/src/controller/instance.ts:186-229
+  - packages/core/src/controller/instance.ts:593-606
+  - packages/core/src/controller/types.ts:300-301
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/scope.test.ts }
@@ -58,7 +60,7 @@ See `scope.test.ts:115-138` for the canonical reactive-scope pattern (`{ theme: 
 
 ## Lifecycle
 
-The `scopes: Map<symbol, unknown> | null` lives on `ControllerInstance` and is lazily created on the first `provide` call. `dispose()` nulls it out so a long-lived root reference doesn't keep big provided values alive after the providing controller is gone.
+The `scopes: Map<Scope<unknown>, unknown> | null` lives on `ControllerInstance` and is lazily created on the first `provide` call. `dispose()` nulls it out so a long-lived root reference doesn't keep big provided values alive after the providing controller is gone.
 
 Rollback (construction throws) also disposes the partial instance — the scopes map dies with it. Children injecting from a disposed ancestor never happens because the walk-up checks the live `parent` reference and disposed parents are already torn down.
 

@@ -4,8 +4,9 @@ description: "End-to-end flow of the devtools causal timeline: how a mutation's 
 type: flow
 covers:
   - packages/core/src/devtools.ts
-  - packages/core/src/query/mutation.ts:387-536
-  - packages/core/src/query/client.ts:98-140
+  - packages/core/src/query/mutation.ts:476-642
+  - packages/core/src/query/client.ts:152-204
+  - packages/core/src/query/client.ts:1083-1104
   - packages/devtools/src/store.ts
   - packages/devtools/src/DevtoolsPanel.tsx
   - packages/devtools/src/diff.ts
@@ -39,7 +40,7 @@ save: createMutation(ctx, {
 ## 1. Core mints one `causeId` for the run
 
 `MutationImpl.executeRun` mints `runId` up front (`mutation.ts`, near the top of
-`executeRun`; `makeRunId()` runs when persistable OR `__DEV__`). It is the devtools
+`executeRun`; `makeRunId()` runs when a plugin observes mutations OR under `__DEV__`). It is the devtools
 `causeId` for the whole run.
 
 ## 2. The ambient cause threads it into triggered writes
@@ -51,9 +52,10 @@ core sets a **dev-only ambient cause**:
 
 - `MutationImpl` wraps `onMutate` in `__runWithCause(runId, () => onMutate())` and wraps
   the snapshot's `rollback`/`finalize` bodies the same way (`mutation.ts` `wrapSnapshot`).
-- The QueryClient's devtools emit closures — `emitDevtoolsSetData` and the
-  `onSnapshotPush/Rollback/Finalize` hooks in the `ClientEntry` `EntryEvents` bundle
-  (`client.ts:98-140`) — read `__currentCauseId()` **at emit time**.
+- The QueryClient's devtools emit closures — `emitDevtoolsSetData` (`client.ts:1083-1104`)
+  and the `onSnapshotPush/Rollback/Finalize` hooks in the `EntryEvents` bundle that
+  `devtoolsEntryEvents` builds for every entry (`client.ts:152-204`) — read
+  `__currentCauseId()` **at emit time**.
 
 Because `onMutate` and the rollback run synchronously on the stack while the ambient is
 active, every write they trigger inherits `runId`. Outside dev the helper is a plain

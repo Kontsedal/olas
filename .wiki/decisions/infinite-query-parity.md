@@ -5,7 +5,7 @@ type: decision
 covers:
   - packages/core/src/query/infinite.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/query/types.ts:118-143
+  - packages/core/src/query/types.ts:122-151
   - packages/core/src/plugin/types.ts
   - packages/react/src/streaming.ts
   - packages/cross-tab/src/plugin.ts

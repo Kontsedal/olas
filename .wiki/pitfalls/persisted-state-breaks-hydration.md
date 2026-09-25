@@ -4,8 +4,8 @@ description: createPersisted reads localStorage during controller construction, 
 type: pitfall
 covers:
   - packages/persist/src/storage.ts:23-27
-  - packages/persist/src/index.ts:430-431
-  - packages/persist/src/index.ts:516-526
+  - packages/persist/src/index.ts:455-456
+  - packages/persist/src/index.ts:541-551
   - examples/reader-ssr/src/App.tsx
   - examples/reader-ssr/src/controller.ts:110-130
 edges:
@@ -20,7 +20,7 @@ confidence: medium
 
 ## The trap
 
-`createPersisted(ctx, key, source)` loads the stored value while the controller is being constructed (`persist/src/index.ts:430-431`, `const loaded = storage.get(key)`, applied at once on the sync branch at `index.ts:516-526`). For `localStorageAdapter` that read is synchronous (`persist/src/storage.ts:23-27`). The client builds its root before `hydrateRoot`, so by the time React hydrates, the signal already holds the visitor's stored value.
+`createPersisted(ctx, key, source)` loads the stored value while the controller is being constructed (`persist/src/index.ts:455-456`, `const loaded = storage.get(key)`, applied at once on the sync branch at `index.ts:541-551`). For `localStorageAdapter` that read is synchronous (`persist/src/storage.ts:23-27`). The client builds its root before `hydrateRoot`, so by the time React hydrates, the signal already holds the visitor's stored value.
 
 The server had no localStorage. It rendered the default.
 

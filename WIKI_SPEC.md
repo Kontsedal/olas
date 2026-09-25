@@ -102,6 +102,7 @@ Good query answers can themselves become wiki pages. A comparison the agent gene
 The wiki health-checks itself periodically (a nightly cron, a pre-commit hook, or an on-demand command). Lint looks for:
 
 - Pages whose cited line ranges no longer exist — stale, needs verification.
+- Citations whose range still exists but no longer holds the code the sentence names — drifted, needs a new range.
 - Pages with no inbound links — orphans, probably obsolete.
 - Contradictions between pages — flag for human review.
 - Modules without pages, public APIs without entity pages — coverage gaps.

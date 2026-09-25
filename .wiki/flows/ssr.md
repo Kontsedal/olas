@@ -3,16 +3,16 @@ name: ssr
 description: Server-side waitForIdle and dehydrate, client-side hydrate, and streaming SSR through the streaming hydrator plugin and the intake.
 type: flow
 covers:
-  - packages/core/src/query/client.ts:107-148
-  - packages/core/src/query/client.ts:1063-1189
-  - packages/core/src/query/client.ts:1235-1318
-  - packages/core/src/query/client.ts:1349-1408
-  - packages/core/src/query/client.ts:1713-1774
+  - packages/core/src/query/client.ts:107-150
+  - packages/core/src/query/client.ts:1069-1195
+  - packages/core/src/query/client.ts:1241-1324
+  - packages/core/src/query/client.ts:1355-1414
+  - packages/core/src/query/client.ts:1719-1780
   - packages/core/src/controller/root.ts:171-223
-  - packages/core/src/query/bind.ts:73-118
-  - packages/core/src/query/entry.ts:491-540
+  - packages/core/src/query/bind.ts:91-135
+  - packages/core/src/query/entry.ts:503-552
   - packages/react/src/streaming.ts
-  - packages/react/src/context.ts:118-251
+  - packages/react/src/context.ts:129-265
 edges:
   - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
@@ -93,24 +93,24 @@ Only the query cache is serialized, never controller state. Controllers reconstr
 }
 ```
 
-`QueryClient.dehydrate` (`packages/core/src/query/client.ts:1235-1262`) includes only entries with `status: 'success'`. Errors and pending fetches are not serialized, because they would be useless on the client. An infinite entry carries its pages in `data` and one param per page in `pageParams`, and the client seeds the pages without refetching them. See `../decisions/infinite-query-parity.md`.
+`QueryClient.dehydrate` (`packages/core/src/query/client.ts:1241-1268`) includes only entries with `status: 'success'`. Errors and pending fetches are not serialized, because they would be useless on the client. An infinite entry carries its pages in `data` and one param per page in `pageParams`, and the client seeds the pages without refetching them. See `../decisions/infinite-query-parity.md`.
 
-`key` is `spec.key(...callArgs)`, and `id` is the query's required `id`, identical in the server and client bundles. `defineQuery` and `defineInfiniteQuery` throw on a missing or empty `id` (`packages/core/src/query/define.ts:12-19`), so every successful entry is dehydrated and no anonymous fallback exists. Registration order plays no part in identity. `cache-identity.test.ts` pins this: "reversed registration order is safe" evaluates separate module copies in opposite orders, and "a query without an id is rejected at definition time". A hand-authored payload must set each entry's `id` to the target query's `id`.
+`key` is `spec.key(...callArgs)`, and `id` is the query's required `id`, identical in the server and client bundles. `defineQuery` and `defineInfiniteQuery` throw on a missing or empty `id`, through `assertId` (`packages/core/src/query/define.ts:12-19`), so every successful entry is dehydrated and no anonymous fallback exists. Registration order plays no part in identity. `cache-identity.test.ts` pins this: "reversed registration order is safe" evaluates separate module copies in opposite orders, and "a query without an id is rejected at definition time". A hand-authored payload must set each entry's `id` to the target query's `id`.
 
 ## What hydration does
 
-Two entry points take a payload, and both drop one whose `version` is not `1` with a development warning (`acceptsState`, `client.ts:1063-1075`):
+Two entry points take a payload, and both drop one whose `version` is not `1` with a development warning (`acceptsState`, `client.ts:1069-1081`):
 
-- **`RootOptions.hydrate`** reaches `QueryClient.hydrate` from the constructor (`client.ts:790`, `client.ts:1158-1169`). It creates no entries. It buffers each row in `hydratedData`, keyed by `hydrationKey(id, keyHash) = JSON.stringify([id, keyHash])` (`client.ts:107-114`). The key includes the query's identity, so a query B whose key hashes the same cannot adopt query A's payload. That is T1.2, pinned by `regressions.test.ts` under R-Q1.2.
-- **`root.hydrate(state)`** and `host.queries.hydrate(state)` reach `QueryClient.hydrateLive` (`client.ts:1152-1155`). `applyDehydratedEntry` writes a row straight into an entry this root already holds, through `Entry.applyHydration`, and buffers the rest (`client.ts:1117-1145`).
+- **`RootOptions.hydrate`** reaches `QueryClient.hydrate` from the constructor (`client.ts:797`, `client.ts:1164-1175`). It creates no entries. It buffers each row in `hydratedData`, keyed by `hydrationKey(id, keyHash) = JSON.stringify([id, keyHash])` (`client.ts:107-114`). The key includes the query's identity, so a query B whose key hashes the same cannot adopt query A's payload. That is T1.2, pinned by `regressions.test.ts` under R-Q1.2.
+- **`root.hydrate(state)`** and `host.queries.hydrate(state)` reach `QueryClient.hydrateLive` (`client.ts:1158-1161`). `applyDehydratedEntry` writes a row straight into an entry this root already holds, through `Entry.applyHydration`, and buffers the rest (`client.ts:1123-1151`).
 
-A buffered row is consumed on the first `bindEntry` or `bindInfiniteEntry` of its key (`client.ts:1362-1387`, `client.ts:1730-1744`). The new entry starts with `initialData` and `initialUpdatedAt`, so it is in `status: 'success'` from the start. An infinite entry adopts a row only when `pageParams` has one param per page (`infinitePayload`, `client.ts:132-139`).
+A buffered row is consumed on the first `bindEntry` or `bindInfiniteEntry` of its key (`client.ts:1355-1373`, `client.ts:1719-1745`). The new entry starts with `initialData` and `initialUpdatedAt`, so it is in `status: 'success'` from the start. An infinite entry adopts a row only when `pageParams` has one param per page (`infinitePayload`, `client.ts:132-139`).
 
 Each row is consumed once. If a controller disposes and the key is bound again later, the row is gone and the second bind fetches as usual. This is intentional: hydration is a warm start, not a permanent cache.
 
-`Entry.applyHydration` (`packages/core/src/query/entry.ts:505-540`) supersedes any fetch in flight, rebases live optimistic snapshots onto the server data, and reports nothing itself. The client reports exactly one `'hydrate'` write to plugins per row, from either path. Pinned by `plugin-host.test.ts`: "hydrating a bound entry reports ONE write, as hydrate" and "a buffered payload reports as hydrate when its entry binds".
+`Entry.applyHydration` (`packages/core/src/query/entry.ts:517-552`) supersedes any fetch in flight, rebases live optimistic snapshots onto the server data, and reports nothing itself. The client reports exactly one `'hydrate'` write to plugins per row, from either path. Pinned by `plugin-host.test.ts`: "hydrating a bound entry reports ONE write, as hydrate" and "a buffered payload reports as hydrate when its entry binds".
 
-Each malformed entry is skipped with a development warning (`eachHydrationEntry`, `client.ts:1177-1189`), so one bad row cannot fail `createRoot`. Pinned by `regressions.test.ts`, "a malformed hydration payload".
+Each malformed entry is skipped with a development warning (`eachHydrationEntry`, `client.ts:1183-1195`), so one bad row cannot fail `createRoot`. Pinned by `regressions.test.ts`, "a malformed hydration payload".
 
 ## `staleTime` interaction
 
@@ -144,7 +144,7 @@ for (let safety = 0; safety < 100; safety++) {
 throw an error listing the entries still fetching
 ```
 
-The client's loop re-checks because a new fetch can start during the wait: a `refetchInterval` fires, or one fetch's success starts an effect that fetches again (`client.ts:1264-1318`). Plugin work can start fetches too, such as a startup replay, and a settling fetch can start plugin work, hence the outer loop. Both loops give up after 100 rounds and throw, so a runaway setup fails the render instead of dehydrating an incomplete payload.
+The client's `waitForIdle` loop re-checks because a new fetch can start during the wait: a `refetchInterval` fires, or one fetch's success starts an effect that fetches again (`client.ts:1270-1324`). Plugin work can start fetches too, such as a startup replay, and a settling fetch can start plugin work, hence the outer loop. Both loops give up after 100 rounds and throw, so a runaway setup fails the render instead of dehydrating an incomplete payload.
 
 A local cache is not a query-client entry, so the client's loop cannot see it. `createCache` registers each cache through `ctxInternals.trackLocalCache` into `RootShared.localCaches`, and the owning controller's cleanup removes it (1.0). The root's loop reads that set, so a root without a query engine waits for its local caches too. Before 1.0 the docs told SSR code to await `cache.firstValue()` instead. Pinned by `local-cache-writes.test.ts`, "root.waitForIdle() counts createCache fetches".
 
@@ -156,9 +156,9 @@ The `waitForIdle` → `dehydrate` path serializes the cache once, *after* the sl
 
 ### Server
 
-`createStreamingHydrator({ nonce? })` (`packages/react/src/streaming.ts:118-186`) returns `{ plugin, flush, dispose }`. The plugin's `onWrite` captures committed writes, meaning sources `'fetch'`, `'write'` and `'replace'`, deduplicated per query id and key hash so the latest value wins. It skips `'hydrate'`, data the client already has, and `'optimistic'` and `'rollback'`, guesses the server never confirmed. An infinite entry carries its `pageParams`. `flush()` drains the captured entries into one `<script>` tag, with the payload built by `serializeForScript`. `dispose()` drops what is captured, after the stream closes.
+`createStreamingHydrator({ nonce? })` (`packages/react/src/streaming.ts:126-194`) returns `{ plugin, flush, dispose }`. The plugin's `onWrite` captures committed writes, meaning sources `'fetch'`, `'write'` and `'replace'`, deduplicated per query id and key hash so the latest value wins. It skips `'hydrate'`, data the client already has, and `'optimistic'` and `'rollback'`, guesses the server never confirmed. An infinite entry carries its `pageParams`. `flush()` drains the captured entries into one `<script>` tag, with the payload built by `serializeForScript`. `dispose()` drops what is captured, after the stream closes.
 
-`createStreamingTransform(flush)` (`streaming.ts:350-376`) is a `TransformStream` over React's HTML stream. It writes a batch only where the HTML so far sits between elements, tracked by the `HtmlBoundary` tokenizer (`streaming.ts:213-312`). React writes fixed-size chunks, and a chunk can end inside a tag or an attribute value, where a `<script>` would break the markup and its payload could inject attributes (`../pitfalls/stream-chunks-split-tags.md`). The transform drains once more on close.
+`createStreamingTransform(flush)` (`streaming.ts:361-387`) is a `TransformStream` over React's HTML stream. It writes a batch only where the HTML so far sits between elements, tracked by the `HtmlBoundary` tokenizer (`streaming.ts:221-320`). React writes fixed-size chunks, and a chunk can end inside a tag or an attribute value, where a `<script>` would break the markup and its payload could inject attributes (`../pitfalls/stream-chunks-split-tags.md`). The transform drains once more on close.
 
 <!-- snippet-prelude
 import type { ControllerDef } from '@kontsedal/olas-core'
@@ -193,11 +193,11 @@ export async function handle(nonce: string): Promise<Response> {
 }
 ```
 
-With Node's `renderToPipeableStream`, the package docs advise rendering with `renderToReadableStream` instead, since Node has Web Streams, or writing `flush()` output only after the stream has ended (`streaming.ts:67-75`). Writing it between React's chunks is the unsafe case above. `nonce` goes on every tag, for a `script-src 'nonce-…'` policy.
+With Node's `renderToPipeableStream`, the package docs advise rendering with `renderToReadableStream` instead, since Node has Web Streams, or writing `flush()` output only after the stream has ended (`streaming.ts:69-76`). Writing it between React's chunks is the unsafe case above. `nonce` goes on every tag, for a `script-src 'nonce-…'` policy.
 
 ### Client
 
-`OLAS_BOOTSTRAP_SCRIPT` primes `self.__OLAS_HYDRATION__` as a push-only queue before React hydrates (`streaming.ts:48`). Each flushed tag pushes its batch there, and checks first that the global is an intake, so a page element with that id cannot clobber it.
+`OLAS_BOOTSTRAP_SCRIPT` primes `self.__OLAS_HYDRATION__` as a push-only queue before React hydrates (`streaming.ts:50`). Each flushed tag pushes its batch there, and checks first that the global is an intake, so a page element with that id cannot clobber it.
 
 <!-- snippet-prelude
 import type { ControllerDef } from '@kontsedal/olas-core'
@@ -217,7 +217,7 @@ hydrateRoot(
 )
 ```
 
-`HydrationBoundary` creates and owns the client root, and on mount it calls `installStreamingIntake(root)` (`packages/react/src/context.ts:240-248`). The intake (`streaming.ts:387-440`):
+`HydrationBoundary` creates and owns the client root, and on mount it calls `installStreamingIntake(root)` (`packages/react/src/context.ts:254-262`). The intake (`streaming.ts:398-451`):
 
 1. upgrades the bootstrap queue into a fan-out intake that keeps every batch it has seen;
 2. applies the batches that arrived before mount to this root;

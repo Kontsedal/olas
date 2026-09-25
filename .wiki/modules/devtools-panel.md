@@ -192,7 +192,7 @@ A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.
 
 A tree row whose `ControllerNode.debug` record is non-empty renders a **Variables** section, open by default, listing each `name: value` a controller registered via `ctx.debug({...})`. The store sets the record from `controller:constructed`'s `debug` field and updates it on `controller:debug`. `controller:debug` is kept off the timeline, because it is a state re-registration rather than a causal event.
 
-Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:605-606`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
+Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:595-622`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
 
 ## Event-driven inspector (the poll is gone)
 

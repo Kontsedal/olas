@@ -41,7 +41,7 @@ type Signal<T>     = ReadSignal<T> & { value: T; set(v: T): void; update(fn: (pr
 type Computed<T>   = ReadSignal<T>
 ```
 
-`Signal<T>` extends `ReadSignal<T>` structurally — assignable downward only. The runtime is `SignalImpl` and `ComputedImpl` classes in `runtime.ts:13-66`.
+`Signal<T>` extends `ReadSignal<T>` structurally — assignable downward only. The runtime is `SignalImpl` and `ComputedImpl` classes in `runtime.ts:13-75`.
 
 ## Internal helper
 
