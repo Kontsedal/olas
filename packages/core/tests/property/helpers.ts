@@ -125,3 +125,11 @@ export function pickFrom<T>(list: readonly T[], pick: number): T | undefined {
 
 /** The release gate: 1,000 runs per property. */
 export const NUM_RUNS = 1000
+
+/**
+ * The per-test timeout for a property: 1,000 runs are CPU-bound, and a CI
+ * runner with coverage takes about four times as long as a laptop. The
+ * infinite-entry property took 4.4 s there against vitest's 5 s default, and
+ * then 5.1 s, a timeout with nothing wrong.
+ */
+export const PROPERTY_TIMEOUT = 30_000

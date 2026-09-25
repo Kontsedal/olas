@@ -30,6 +30,7 @@ import {
   controllable,
   flushMicrotasks,
   NUM_RUNS,
+  PROPERTY_TIMEOUT,
   pickFrom,
   type Tracked,
   track,
@@ -472,12 +473,16 @@ async function runScenario(
 }
 
 describe('InfiniteEntry — property', () => {
-  test('page fetches race, cancel and hydrate without misaligning or leaking a superseded page', async () => {
-    await fc.assert(
-      fc.asyncProperty(scenarioArb, (scenario) =>
-        runScenario(scenario, { strictDirectionFlags: true, canonicalRebases: true }),
-      ),
-      { numRuns: NUM_RUNS },
-    )
-  })
+  test(
+    'page fetches race, cancel and hydrate without misaligning or leaking a superseded page',
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(scenarioArb, (scenario) =>
+          runScenario(scenario, { strictDirectionFlags: true, canonicalRebases: true }),
+        ),
+        { numRuns: NUM_RUNS },
+      )
+    },
+    PROPERTY_TIMEOUT,
+  )
 })

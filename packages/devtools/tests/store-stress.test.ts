@@ -19,7 +19,10 @@ const BATCH = 250
  * The most a doubled workload may cost, as a multiple of the single one.
  * Linear work doubles, and quadratic work quadruples. 3 still fails a
  * quadratic regression, and leaves room for a loaded CI runner: 2.5 failed
- * once on GitHub Actions at 2.54 with linear code.
+ * once on GitHub Actions at 2.54 with linear code. 3 failed once at 3.04,
+ * with code that measures 2.0 locally, so the test now takes the smallest of
+ * three ratios: runner load only ever inflates one, and a quadratic loop
+ * reads near 4 every time.
  */
 const LINEAR_BOUND = 3
 
@@ -163,8 +166,18 @@ describe('DevtoolsStore under load — T8.2', () => {
   test('doubling the events at most ~doubles the time: no O(n²) in the apply loop', () => {
     run(events) // warm the JIT on the full workload first
     const half = events.slice(0, 25_000)
-    const tHalf = best(5, () => sum(run(half).frames))
-    const tFull = best(5, () => sum(run(events).frames))
+    let tHalf = 0
+    let tFull = 0
+    let ratio = Number.POSITIVE_INFINITY
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const h = best(5, () => sum(run(half).frames))
+      const f = best(5, () => sum(run(events).frames))
+      if (f / h < ratio) {
+        ratio = f / h
+        tHalf = h
+        tFull = f
+      }
+    }
     if (env.DEVTOOLS_STRESS_REPORT) {
       const { frames } = run(events)
       const sorted = [...frames].sort((a, b) => a - b)
@@ -175,7 +188,7 @@ describe('DevtoolsStore under load — T8.2', () => {
           `max ${(sorted[sorted.length - 1] as number).toFixed(2)}ms`,
       )
     }
-    expect(tFull / tHalf).toBeLessThan(LINEAR_BOUND)
+    expect(ratio).toBeLessThan(LINEAR_BOUND)
   })
 
   test('a frame costs the same once the store is full as while it is filling', () => {

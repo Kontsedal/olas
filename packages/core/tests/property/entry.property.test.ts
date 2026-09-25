@@ -21,6 +21,7 @@ import {
   controllable,
   flushMicrotasks,
   NUM_RUNS,
+  PROPERTY_TIMEOUT,
   pickFrom,
   type Tracked,
   track,
@@ -380,10 +381,16 @@ async function runScenario(
 }
 
 describe('Entry — property', () => {
-  test('fetch race, cancel, hydration and the snapshot chain match the model', async () => {
-    await fc.assert(
-      fc.asyncProperty(scenarioArb, (scenario) => runScenario(scenario, { hydrateRebases: true })),
-      { numRuns: NUM_RUNS },
-    )
-  })
+  test(
+    'fetch race, cancel, hydration and the snapshot chain match the model',
+    async () => {
+      await fc.assert(
+        fc.asyncProperty(scenarioArb, (scenario) =>
+          runScenario(scenario, { hydrateRebases: true }),
+        ),
+        { numRuns: NUM_RUNS },
+      )
+    },
+    PROPERTY_TIMEOUT,
+  )
 })

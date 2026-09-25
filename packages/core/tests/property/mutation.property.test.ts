@@ -37,6 +37,7 @@ import {
   controllable,
   flushMicrotasks,
   NUM_RUNS,
+  PROPERTY_TIMEOUT,
   pickFrom,
   type Tracked,
   track,
@@ -426,13 +427,17 @@ async function runScenario(
 
 describe('mutation concurrency — property', () => {
   for (const mode of ['parallel', 'serial', 'latest-wins'] as const) {
-    test(`${mode}: every run settles once, plugins see one outcome per start, state is the last write`, async () => {
-      await fc.assert(
-        fc.asyncProperty(scenarioArb, (scenario) =>
-          runScenario(mode, scenario, { strictOutcome: true, strictIdle: true }),
-        ),
-        { numRuns: NUM_RUNS },
-      )
-    })
+    test(
+      `${mode}: every run settles once, plugins see one outcome per start, state is the last write`,
+      async () => {
+        await fc.assert(
+          fc.asyncProperty(scenarioArb, (scenario) =>
+            runScenario(mode, scenario, { strictOutcome: true, strictIdle: true }),
+          ),
+          { numRuns: NUM_RUNS },
+        )
+      },
+      PROPERTY_TIMEOUT,
+    )
   }
 })
