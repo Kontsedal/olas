@@ -11,8 +11,10 @@ export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
  * - `data` / `error` / `status` — current outcome.
  * - `isLoading` — true only on the first pending fetch (no `data` yet).
  * - `isFetching` — true on any pending fetch.
- * - `isStale` — true when `staleTime` has elapsed since `lastUpdatedAt`.
- * - `lastUpdatedAt` — epoch ms of last success.
+ * - `isStale` — true when `staleTime` has elapsed since the last fetch,
+ *   hydrated row or canonical write. An optimistic `setData` does not reset it.
+ * - `lastUpdatedAt` — epoch ms of the last change to `data`, an optimistic
+ *   `setData` included.
  * - `hasPendingMutations` — at least one mutation has a snapshot on this entry.
  * - `isPaused` — a fetch is parked waiting for network reconnect.
  * - `isEnabled` — false while a subscription's `enabled` returns false;

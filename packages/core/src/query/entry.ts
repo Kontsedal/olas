@@ -207,10 +207,17 @@ export class Entry<T> {
   /**
    * When the server truth the entry holds was written: by a fetch, a hydrated
    * row or a canonical write. Unlike `lastUpdatedAt`, an optimistic `setData`
-   * leaves it alone, so a hydrated row is compared against what the server
-   * last said, not against a guess (§15).
+   * leaves it alone. Staleness is measured from it (§5.9), and a hydrated row
+   * is compared against it (§15), so a guess never counts as server data.
    */
   private serverUpdatedAt: number | undefined
+  /**
+   * Set when `isStaleNow()` answered "no" only because an optimistic write was
+   * live: a subscriber, a focus or reconnect trigger, or a prefetch wanted a
+   * fetch and did not start one. The entry runs it once the last live write
+   * settles (`runHeldBackFetch`). Any fetch that starts clears it.
+   */
+  private fetchHeldBack = false
   private readonly hasSubscribers: () => boolean
   private snapshots: Array<SnapshotRecord<T>> = []
   private nextSnapshotId = 0
@@ -261,24 +268,8 @@ export class Entry<T> {
       // For hydrated data, derive `isStale` from the *actual* age of the
       // payload, not the timer alone — otherwise a payload older than
       // `staleTime` would read `isStale === false` until the (fresh, full-
-      // length) timer fires. `isStaleNow()` already does this correctly for
-      // the subscribe-time refetch check; mirror that here for the signal.
-      if (this.staleTime === 0) {
-        this.isStale.set(true)
-      } else {
-        const last = initialUpdatedAt
-        const alreadyStale = last === undefined || Date.now() - last >= this.staleTime
-        this.isStale.set(alreadyStale)
-        // Only schedule a timer if the data isn't already stale. If it is,
-        // there's nothing to wait for.
-        if (!alreadyStale) {
-          const remaining = this.staleTime - (Date.now() - (last as number))
-          this.staleTimer = scheduleExpiry(remaining, () => {
-            this.staleTimer = null
-            if (!this.disposed) this.isStale.set(true)
-          })
-        }
-      }
+      // length) timer fires, and disagree with `isStaleNow()`.
+      this.settleStaleness(initialUpdatedAt)
     } else {
       this.status = signal<AsyncStatus>('idle')
     }
@@ -289,6 +280,8 @@ export class Entry<T> {
     if (this.disposed) {
       return Promise.reject(new Error('Entry disposed'))
     }
+    // This fetch, or the parked one below, brings what a held-back fetch wanted.
+    this.fetchHeldBack = false
     // `online` mode: defer until reconnect when the browser thinks we're
     // offline. The UI keeps showing last-known data. `always` / `offlineFirst`
     // proceed to the fetcher; `offlineFirst` will re-handle a network
@@ -524,7 +517,7 @@ export class Entry<T> {
       this.isFetching.set(false)
       this.lastUpdatedAt.set(now)
       this.serverUpdatedAt = now
-      this.isStale.set(this.forcedStale || this.staleTime === 0)
+      this.settleStaleness(now)
       // Announced before any catch-up starts, while `currentFetchCauseId` is
       // still this fetch's.
       try {
@@ -534,7 +527,6 @@ export class Entry<T> {
       }
       this.catchUpIfStillStale(landed)
     })
-    if (this.staleTime > 0 && !this.forcedStale) this.scheduleStaleness()
     this.onSuccessData?.(shared)
     return shared
   }
@@ -589,10 +581,22 @@ export class Entry<T> {
     throw err
   }
 
-  private scheduleStaleness(): void {
-    if (this.staleTimer != null) this.staleTimer()
-    if (this.staleTime > 0) {
-      this.staleTimer = scheduleExpiry(this.staleTime, () => {
+  /**
+   * Set `isStale` from the age of server truth written at `at`, and arm the
+   * timer for the rest of `staleTime`. Every write of server truth calls it:
+   * a fetch, a hydrated row, a canonical write. An optimistic write does not,
+   * so the signal and `isStaleNow()` follow one clock (§5.9).
+   */
+  private settleStaleness(at: number | undefined): void {
+    if (this.staleTimer !== null) {
+      this.staleTimer()
+      this.staleTimer = null
+    }
+    const age = at === undefined ? Number.POSITIVE_INFINITY : Date.now() - at
+    const alreadyStale = this.forcedStale || this.staleTime === 0 || age >= this.staleTime
+    this.isStale.set(alreadyStale)
+    if (!alreadyStale) {
+      this.staleTimer = scheduleExpiry(this.staleTime - age, () => {
         this.staleTimer = null
         if (!this.disposed) this.isStale.set(true)
       })
@@ -638,15 +642,9 @@ export class Entry<T> {
     this.currentFetchId += 1
     this.currentAbort?.abort()
     this.currentAbort = null
-    if (this.staleTimer !== null) {
-      this.staleTimer()
-      this.staleTimer = null
-    }
     // A row stamped at or after the latest `markStale()` reconciles it, as a
     // fetch requested after it does (§5.7). An older row does not.
     if (lastUpdatedAt >= this.staleSince) this.forcedStale = false
-    const alreadyStale =
-      this.forcedStale || this.staleTime === 0 || Date.now() - lastUpdatedAt >= this.staleTime
     // Hydrated data is server truth, like a fetch result: rebase live
     // optimistic snapshots onto it, so a later rollback restores it rather
     // than a baseline from before it arrived (spec §6.4, as in `applySuccess`).
@@ -659,16 +657,9 @@ export class Entry<T> {
       this.isFetching.set(false)
       this.lastUpdatedAt.set(lastUpdatedAt)
       this.serverUpdatedAt = lastUpdatedAt
-      this.isStale.set(alreadyStale)
+      this.settleStaleness(lastUpdatedAt)
       this.catchUpIfStillStale(discarded)
     })
-    if (!alreadyStale && this.staleTime > 0) {
-      const remaining = this.staleTime - (Date.now() - lastUpdatedAt)
-      this.staleTimer = scheduleExpiry(remaining, () => {
-        this.staleTimer = null
-        if (!this.disposed) this.isStale.set(true)
-      })
-    }
     // Not `onSuccessData`: that reports a fetch, and this is not one. The
     // client reports the write itself, once, as `'hydrate'`. First-value
     // awaiters subscribe to `status`, which the batch above already woke.
@@ -813,8 +804,12 @@ export class Entry<T> {
         this.status.set('success')
       }
       this.lastUpdatedAt.set(now)
-      // A canonical write is server truth; an optimistic one is a guess.
-      if (!track) this.serverUpdatedAt = now
+      // A canonical write is server truth, so the stale clock restarts from
+      // it. An optimistic one is a guess and leaves the clock alone (§5.9).
+      if (!track) {
+        this.serverUpdatedAt = now
+        this.settleStaleness(now)
+      }
       if (record) this.hasPendingMutations.set(true)
     })
 
@@ -857,6 +852,7 @@ export class Entry<T> {
         } catch {
           // devtools handlers must not break the program.
         }
+        this.runHeldBackFetch()
       },
       finalize: () => {
         if (!record.live || this.disposed) return
@@ -870,8 +866,35 @@ export class Entry<T> {
         } catch {
           // devtools handlers must not break the program.
         }
+        this.runHeldBackFetch()
       },
     }
+  }
+
+  /**
+   * Run the fetch a live optimistic write held back (`isStaleNow`), once the
+   * last live write has settled. The decision waits one microtask: a
+   * mutation's `onSuccess` or `onSettled` that calls `invalidate()` right
+   * after the settle starts its own fetch first, and this one then has nothing
+   * to add. It fetches only while someone still holds the entry, nothing is in
+   * flight, and the entry is still stale.
+   */
+  private runHeldBackFetch(): void {
+    if (!this.fetchHeldBack || this.snapshots.length > 0) return
+    queueMicrotask(() => {
+      // A new optimistic write went live meanwhile: its own settle decides.
+      if (this.disposed || !this.fetchHeldBack || this.snapshots.length > 0) return
+      this.fetchHeldBack = false
+      if (!this.hasSubscribers() || this.isFetching.peek()) return
+      // A parked fetch runs once the network is back, as the triggers' does.
+      if (this.isPaused.peek()) {
+        this.resumeParked()
+        return
+      }
+      if (!this.forcedStale && !this.isServerStale()) return
+      // The outcome settles on the entry, as a subscribe-time fetch's does.
+      this.startFetch().catch(() => {})
+    })
   }
 
   /**
@@ -958,14 +981,30 @@ export class Entry<T> {
   }
 
   /**
-   * True iff data is older than `staleTime` (or no data has been fetched yet).
-   * Used by the query client to decide whether to refetch on subscribe.
+   * Whether a subscriber, a focus or reconnect trigger, or a prefetch should
+   * fetch now. An invalidation still standing says yes (§5.7). Otherwise the
+   * answer follows the server's clock: yes when the entry holds no server data,
+   * or when its last fetch, hydrated row or canonical write is `staleTime` old.
+   * An optimistic write does not reset that clock (§5.9).
+   *
+   * While an optimistic write is live the answer is no, because the response
+   * would land over the guess on screen (§6.4). The entry records the request
+   * and runs it once the last live write settles (`runHeldBackFetch`).
    */
   isStaleNow(): boolean {
     if (this.forcedStale) return true
-    const last = this.lastUpdatedAt.peek()
-    if (last === undefined) return true
-    return Date.now() - last >= this.staleTime
+    if (!this.isServerStale()) return false
+    if (this.snapshots.length > 0) {
+      this.fetchHeldBack = true
+      return false
+    }
+    return true
+  }
+
+  /** Whether the server truth is `staleTime` old, or the entry holds none. */
+  private isServerStale(): boolean {
+    const at = this.serverUpdatedAt
+    return at === undefined || Date.now() - at >= this.staleTime
   }
 
   dispose(): void {

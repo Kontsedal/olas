@@ -214,6 +214,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private staleSince = 0
   /** When the server truth the pages hold was written. See `Entry.serverUpdatedAt`. */
   private serverUpdatedAt: number | undefined
+  /** A fetch a live optimistic write held back. See `Entry.fetchHeldBack`. */
+  private fetchHeldBack = false
   /** See `EntryOptions.hasSubscribers`. */
   private readonly hasSubscribers: () => boolean
   private snapshots: Array<{
@@ -350,6 +352,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
    */
   startFetch(): Promise<TPage> {
     if (this.disposed) return Promise.reject(new Error('Entry disposed'))
+    // This refetch, or the parked one below, brings what a held-back fetch wanted.
+    this.fetchHeldBack = false
     if (this.networkMode === 'online' && this.isOffline()) {
       // Supersede the request in flight before parking, as `Entry.startFetch`.
       let parked: Promise<unknown> | undefined
@@ -505,12 +509,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         this.isLoading.set(false)
         this.isFetching.set(false)
         this.markServerWrite(Date.now())
-        this.isStale.set(this.forcedStale || this.staleTime === 0)
         // Before any catch-up starts, while `fetchCauseId` is still this one's.
         this.announceFetchSuccess()
         this.catchUpIfStillStale(landed)
       })
-      if (this.staleTime > 0 && !this.forcedStale) this.scheduleStaleness()
       this.onSuccessData?.(this.pages.peek())
       return finalPages[0] as TPage
     } finally {
@@ -788,10 +790,15 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     if (landed !== null) this.redirects.get(landed)?.(request)
   }
 
-  /** Stamp a write of server truth: a fetch, a hydrated row or a canonical write. */
+  /**
+   * Stamp a write of server truth: a fetch (a page included), a hydrated row or
+   * a canonical write. The stale clock restarts from it; an optimistic write
+   * does not come here, and leaves the clock alone (§5.9).
+   */
   private markServerWrite(at: number): void {
     this.lastUpdatedAt.set(at)
     this.serverUpdatedAt = at
+    this.settleStaleness(at)
   }
 
   reset(): void {
@@ -923,6 +930,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           this.hasPendingMutations.set(this.snapshots.some((s) => s.live))
         })
         this.announce(() => this.events.onSnapshotRollback?.())
+        this.runHeldBackFetch()
       },
       finalize: () => {
         if (!record.live || this.disposed) return
@@ -932,8 +940,28 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           this.hasPendingMutations.set(false)
         }
         this.announce(() => this.events.onSnapshotFinalize?.())
+        this.runHeldBackFetch()
       },
     }
+  }
+
+  /**
+   * Run the refetch a live optimistic write held back, one microtask after the
+   * last live write settles. Mirrors `Entry.runHeldBackFetch`.
+   */
+  private runHeldBackFetch(): void {
+    if (!this.fetchHeldBack || this.snapshots.length > 0) return
+    queueMicrotask(() => {
+      if (this.disposed || !this.fetchHeldBack || this.snapshots.length > 0) return
+      this.fetchHeldBack = false
+      if (!this.hasSubscribers() || this.isFetching.peek()) return
+      if (this.isPaused.peek()) {
+        this.resumeParked()
+        return
+      }
+      if (!this.forcedStale && !this.isServerStale()) return
+      this.startFetch().catch(() => {})
+    })
   }
 
   /** Resolves at once when a page is loaded. Mirrors `Entry.firstValue`. */
@@ -1008,11 +1036,26 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     return Promise.reject(new DOMException('Cancelled', 'AbortError'))
   }
 
+  /**
+   * Whether a subscriber, a focus or reconnect trigger, or a prefetch should
+   * refetch now: measured from the last server write, and "no" while an
+   * optimistic write is live, which holds the refetch back until it settles.
+   * Mirrors `Entry.isStaleNow`.
+   */
   isStaleNow(): boolean {
     if (this.forcedStale) return true
-    const last = this.lastUpdatedAt.peek()
-    if (last === undefined) return true
-    return Date.now() - last >= this.staleTime
+    if (!this.isServerStale()) return false
+    if (this.snapshots.length > 0) {
+      this.fetchHeldBack = true
+      return false
+    }
+    return true
+  }
+
+  /** Whether the server truth is `staleTime` old, or the entry holds none. */
+  private isServerStale(): boolean {
+    const at = this.serverUpdatedAt
+    return at === undefined || Date.now() - at >= this.staleTime
   }
 
   /**
@@ -1161,13 +1204,12 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.isFetchingNextPage.set(false)
       this.isFetchingPreviousPage.set(false)
       this.markServerWrite(lastUpdatedAt)
-      this.settleStaleness(lastUpdatedAt)
       this.catchUpIfStillStale(discarded)
     })
     return true
   }
 
-  /** `isStale` from the payload's real age, and a timer for the remainder. */
+  /** `isStale` from the server truth's real age, and a timer for the remainder. See `Entry.settleStaleness`. */
   private settleStaleness(lastUpdatedAt: number | undefined): void {
     if (this.staleTimer != null) {
       this.staleTimer()
@@ -1229,16 +1271,6 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       fn()
     } catch {
       // swallowed on purpose
-    }
-  }
-
-  private scheduleStaleness(): void {
-    if (this.staleTimer != null) this.staleTimer()
-    if (this.staleTime > 0) {
-      this.staleTimer = scheduleExpiry(this.staleTime, () => {
-        this.staleTimer = null
-        if (!this.disposed) this.isStale.set(true)
-      })
     }
   }
 
