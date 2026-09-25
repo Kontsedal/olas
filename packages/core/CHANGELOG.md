@@ -1,5 +1,76 @@
 # @kontsedal/olas-core
 
+## 1.1.0
+
+### Minor Changes
+
+- e5f9834: **Plugins hear a committed optimistic write as a new `'commit'` write source.**
+  
+  `finalize()` reported nothing, so a plugin that keeps canonical sources only, such as the query-cache persister, never saw the committed value. A reload then brought back the value from before the mutation. `WriteSource` gains `'commit'`. It is reported once no optimistic write on the entry is live, so its `data` holds no pending guess. A commit made while another optimistic write is live is reported by the settle that clears the last one, a rollback included, in place of that `'rollback'`. Its `updatedAt` is when the server last answered, since a commit does not make data fresh, and `0` when it never did. Devtools see it as a `cache:set-data` with `source: 'commit'`.
+- e5f9834: **Plugins see the server truth beneath a guess, and can make a guess of their own.**
+  
+  - `WriteEvent.server` is the entry's server truth after the write, as `dehydrate()` ships it. It holds the data beneath every live optimistic write, when the server last said it, and the server pages' params for an infinite query. While an optimistic write is live, `data` holds the guess whatever the source is. A `'write'` made under a guess carried it to a persister, and the rollback that corrected it was a source such a plugin skips. With no optimistic write live, `server` holds the same value as `data`.
+  - `host.queries.setData(id, key, updater, options?)` is an optimistic write, as `setData` in `onMutate`. It returns the `Snapshot` the plugin settles with `rollback()` or `finalize()`, reports `'optimistic'`, and leaves the stale clock and a fetch in flight alone. A relay uses it to show another tab's guess as a guess. It returns `undefined` when the root holds no entry for the key.
+
+### Patch Changes
+
+- e5f9834: **Reads and teardown behave after a controller is gone, and a child that fails to build reports `kind: 'construction'` everywhere.**
+  
+  `ctx.inject` and `root.inject` threw "no provider" after dispose. SPEC §4 says reads do not throw, so they now return what the scope resolved to while the controller was live. `root.suspend({ maxIdleTime })` after `root.dispose()` armed a real timer; it now does nothing.
+  
+  A failed construction rolled back with the controller still marked as constructing. A teardown hook that called `ctx.effect` or `ctx.child` registered into a list that was then dropped, and the new effect ran on for good. The rollback now marks the controller disposed first, as `dispose()` does, so that call throws and reaches `onError`.
+  
+  A `ctx.child` or `ctx.attach` whose factory threw inside an effect reached `onError` as `kind: 'effect'`, and inside a `ctx.on` handler as `'emitter'`. SPEC §12.1.6 names these construction errors, and they now report `kind: 'construction'` wherever the throw is caught.
+  
+  Devtools subscribers to `root.debug` now run untracked. A subscriber that read a signal while a field validated made that signal a dependency of the validator, so a write to it re-ran the validation.
+- e5f9834: **One bad collection item no longer freezes `ctx.collection`, and a `lazyChild` handle follows disposal and loader failures.**
+  
+  A `ctx.collection` item whose `propsOf`, `factory` or `keyOf` threw stopped the whole reconcile. A removed item was disposed but still listed, the items after the bad one were not built, and every later change stopped at the same item. The throw now reaches `onError` as `kind: 'construction'`, that item is skipped, and the rest lands. A kept key whose `factory` throws keeps its child. A key rebuilt for a new controller type keeps its `suspendItem(key)`: the new child is built suspended. After the owner disposes, `items` is empty and `has()` is `false`.
+  
+  A `ctx.lazyChild` handle kept `status: 'ready'` and the dead `api` after `dispose()`, and stayed `'loading'` when disposed mid-load. A disposed handle now reads `'idle'` with no `api`. A loader that throws synchronously, or returns no promise, sets `status: 'error'`, reaches `onError`, and makes `load()` return a rejected promise instead of throwing.
+- e5f9834: **`fakeField` keeps its own copy of the baseline, as a real field does.**
+  
+  An in-place edit of a fake field's object value, which is what a Svelte nested bind makes, reached the value `reset()` restores. The fake now copies plain objects and arrays with `copyPlainData` on construction and in `setAsInitial`, and `reset()` writes a fresh copy.
+- e5f9834: **A `set` of the object a field already holds counts as a change, and every form baseline is a copy of its own.**
+  
+  Svelte writes a nested bind on a raw field, `bind:value={$person.first}`, by assigning the member on the field's own value object and passing that object back to `set`. The field compared by reference, so it heard no change: no validator ran and `isDirty` stayed `false`. Its `initial` was that same object, so `reset()` returned the edited value.
+  
+  Now `set` of the held object notifies, re-validates and recomputes `isDirty`, as a Svelte store's `set` does. A primitive equal to the current value is still no change, and `setAsInitial` and `reset` still leave the same object alone. A field keeps what `reset()` restores as a structural copy. Plain objects and arrays are copied at every depth, and a class instance, a `Date` or a `Map` is kept by reference, so a copy compares equal and does not read as dirty. A form keeps a fixed `initial` object the same way, and a field array its initial rows. The value stays the object passed in, so `field.set(x)` leaves `field.value === x`.
+- e5f9834: **`form.submit()` validates first inside `batch()` and effects, and a form's state matches what a fresh one would show.**
+  
+  Inside `batch()` or an effect, a field write starts its validator when that ends. `revalidate()` checked for a pending pass before that, so `batch(() => { username.set('taken'); form.submit(save) })` ran `save` while the async check was pending. `revalidate()`, `validate()` and `submit()` now wait for the pass the write started.
+  
+  A `debouncedValidator` whose `fn` threw synchronously, or returned no promise, left the field validating for good, and a form's `isSubmitting` stuck. That failure now settles the pass the way a throwing sync validator does: the message shows and the error reaches `onError`.
+  
+  `reset()` cleared a field's validator errors without re-running a sync validator when the value did not change, so a pristine `required()` field read valid after `form.reset()`. It now reads as a fresh field with that value would. An async validator is not re-sent for an unchanged value; `submit()` still runs it.
+  
+  `form.dirtyFields` left out a field array whose rows were added, removed or moved, while `isDirty` counted it. Such an array is now listed by its own path, such as `tags`. A `null` row in a field array of forms built from a reactive `initial` threw out of the signal write. The row now builds from its schema defaults, and a throw while seating the form reaches `onError`. A field array builds its new rows before it drops the old ones, so a factory throw leaves it whole.
+  
+  `form.setErrors` with a path naming a nested form or a field array dropped the messages, or split them into stray paths. They now land on that node's `topLevelErrors` until its value next changes, and `''` names the form itself.
+  
+  The state members typed `ReadSignal` were the writable signals behind them, so a cast could write `field.touched` or `array.items` and skip item disposal. They are read-only views now: `field.touched`, `field.isDirty`, `field.isValidating`, `form.isSubmitting`, `form.submitCount`, `form.submitError` and `array.items`.
+- e5f9834: **A shift-click with a `Map` index selects by the index values, not by the order the `Map` was filled in.**
+  
+  `handleClick(id, { shift: true }, index)` collected the ids at insertion positions between the two ends. A `Map` filled in id order but valued by display order selected the wrong rows: display order `c, a, b, d`, a click on `c` and a shift-click on `a` selected `c, a, b`. The range is now every id whose index lies between the two ends.
+- e5f9834: **`dehydrate()` ships server truth, stamped when the server said it.**
+  
+  Each row was stamped with `lastUpdatedAt`, which an optimistic write moves and its rollback leaves, so data fetched at 1000 shipped stamped 5000 after a guess and its rollback. The stamp is now the entry's last fetch, hydrated row or canonical write. Under a live optimistic write the row carries the data beneath the guess, so a guess never ships as server truth. A hydrated row whose data is `undefined` now reads `status: 'success'` on the buffered path, as it did on a bound entry. It used to read `'pending'` and refetch despite `staleTime`.
+- e5f9834: **`firstValue()` never waits on nothing, and `select` is never called with `undefined`.**
+  
+  A `cancel()` of the first load left `firstValue()` pending for good, so a Suspense boundary kept its fallback up. A cancel while it waits now makes the entry fetch again, unless data arrives first, as the optimistic write that usually follows a cancel does. `firstValue()` called on an idle entry with nothing coming, such as after a `reset()` of a failed first load, starts a fetch. `firstValue()` and `refetch()` also skip `select` for an `undefined` value, as `data` already did, where they rejected with the projection's `TypeError`.
+- e5f9834: **An infinite refetch starts from the first loaded page, and paging during the first load joins it.**
+  
+  A refetch started at `initialPageParam`, so a list paged backwards to `[-2, -1, 0]` came back as `[0, 1, 2]`. It now starts at the first loaded page's param and walks forward, as TanStack does, hydrated and persisted entries included. Pages written into an entry with no params take `initialPageParam` as their param, not `undefined`. `fetchNextPage()` or `fetchPreviousPage()` before a page has loaded aborted the first load and started it again, one request per call; they now join the load in flight.
+- e5f9834: **A local cache ignores a key thunk that re-runs to an equal key.**
+  
+  A `createCache` key effect fetched on every run. So `key: () => [user.value.id]` refetched and aborted the request in flight whenever `user` got a new object with the same id, whatever the `staleTime`. It now compares keys by the same hash `createQuery` uses and does nothing when the key is unchanged. A key the hash cannot encode, such as a class instance, compares element by element.
+- e5f9834: **`cancel()` drops a fetch parked for the network, and a fetch made online ends the park.**
+  
+  `cancel()` did nothing when no request was in flight, so a fetch parked offline survived it and landed over the optimistic value written next, once the network returned. It now clears `isPaused`, stops waiting for reconnect and rejects the parked callers with an `AbortError`, as it does for a request in flight. A fetch made after the network came back, before an `online` event reached the entry, left the park in place. A parked `invalidate()` then never settled, and the later event made one more request and aborted work in flight. That fetch now serves the parked callers. Infinite queries do the same for parked refetches and page requests.
+- e5f9834: **A rollback keeps every canonical write and every committed layer made while it was live.**
+  
+  A canonical `write` during a live optimistic write set the rollback baseline to the data on screen, guess included. A failed mutation then left its guess in place: a pushed title over a pending like kept the like. A `write` now re-runs its patch on each live baseline, and a `replace` value still becomes each one. A committed layer, which is what `finalize()` and a successful mutation make, is now folded into the baselines of the layers still live below it. An older mutation that fails no longer undoes a newer one that succeeded. A rollback of a layer below the top left its guess on screen while a layer above was live. A commit of that layer then reported the failed guess as committed truth. The layers above a removed one are now replayed over the baseline it restored, so the failed change leaves the screen at once. An updater can throw on a baseline it was not written for, and a plain value such as `() => data` may hold a change it captured. In both cases the entry marks itself stale and refetches once the last optimistic write settles. Infinite queries follow the same rules.
+
 ## 1.0.0
 
 ### Major Changes

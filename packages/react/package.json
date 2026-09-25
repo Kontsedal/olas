@@ -1,6 +1,6 @@
 {
   "name": "@kontsedal/olas-react",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Olas React adapter — OlasProvider, useRoot, useValue, useQuery, useField, useMutation, SuspendOnUnmount, SSR hydration and streaming.",
   "keywords": [
     "olas",
