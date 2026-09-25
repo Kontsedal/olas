@@ -4,6 +4,7 @@
 
 ```ts
 
+import { AmbientDeps } from '@kontsedal/olas-core';
 import { AsyncState } from '@kontsedal/olas-core';
 import { AsyncStatus } from '@kontsedal/olas-core';
 import { ChangeEvent } from 'react';
@@ -37,8 +38,8 @@ export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): Reac
 
 // @public
 export type HydrationBoundaryProps<Api> = {
-    def: ControllerDef<void, Api>;
-    options: RootOptions<Record<string, unknown>>;
+    def: ControllerDef<void, Api>; /** Root options, with `deps` checked against `AmbientDeps` as `createRoot` checks them. */
+    options: RootOptions<AmbientDeps>;
     streaming?: boolean;
     children: ReactNode;
 };

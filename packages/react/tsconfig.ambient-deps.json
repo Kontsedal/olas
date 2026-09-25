@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "include": ["tests/ambient-deps.test-d.tsx"],
+  "exclude": []
+}

@@ -42,7 +42,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.ambient-deps.json"
   },
   "peerDependencies": {
     "@kontsedal/olas-core": ">=0.3.0 <1.0.0",
