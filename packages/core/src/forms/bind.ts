@@ -1,7 +1,7 @@
 import { ctxInternals } from '../controller/internals'
 import type { Ctx, Field } from '../controller/types'
 import type { DevtoolsEmitter } from '../devtools'
-import { bindFieldDevtoolsOwner, createField as createFieldImpl } from './field'
+import { addNodeDisposeHook, bindFieldDevtoolsOwner, createField as createFieldImpl } from './field'
 import {
   bindTreeToDevtools,
   bindTreeValidatorErrorReporter,
@@ -41,7 +41,11 @@ export function createField<T>(ctx: Ctx, initial: T, options?: FieldOptions<T>):
     onValidatorError: (err) => internals.report(err, 'effect'),
     validateOn: options?.validateOn,
   })
-  internals.register({ kind: 'cleanup', dispose: () => field.dispose() })
+  // A field a `FieldArray` drops is disposed early. Its dispose releases the
+  // entry, so a churning array does not grow the controller's lifecycle list
+  // or dispose every dropped field a second time at teardown.
+  const release = internals.register({ kind: 'cleanup', dispose: () => field.dispose() })
+  addNodeDisposeHook(field, release)
   // A standalone field still publishes `field:validated`. The devtools panel
   // groups by controller path, so the placeholder name is fine.
   bindFieldDevtoolsOwner(field, {
@@ -68,7 +72,6 @@ export function createForm<S extends FormSchema>(
   internals.assertLive('createForm')
   const reporter = (err: unknown): void => internals.report(err, 'effect')
   const form = createFormImpl(schema, options, { onValidatorError: reporter })
-  internals.register({ kind: 'cleanup', dispose: () => form.dispose() })
   // Every leaf publishes `field:validated` with its key path inside the form
   // (§20.9).
   const stop = bindTreeToDevtools(
@@ -77,7 +80,13 @@ export function createForm<S extends FormSchema>(
     internals.path,
     internals.devtools as DevtoolsEmitter,
   )
-  internals.register({ kind: 'cleanup', dispose: stop })
+  // One entry. The form's dispose stops the devtools binding and releases the
+  // entry, so a form item a `FieldArray` drops leaves nothing registered.
+  const release = internals.register({ kind: 'cleanup', dispose: () => form.dispose() })
+  addNodeDisposeHook(form, () => {
+    stop()
+    release()
+  })
   // Nested forms and arrays inside the schema were constructed by the caller
   // before this ran, so they never received the reporter. Idempotent for
   // leaves that already have it.
@@ -104,14 +113,18 @@ export function createFieldArray<I extends Field<any> | Form<any>>(
   internals.assertLive('createFieldArray')
   const reporter = (err: unknown): void => internals.report(err, 'effect')
   const array = createFieldArrayImpl<I>(itemFactory, options, { onValidatorError: reporter })
-  internals.register({ kind: 'cleanup', dispose: () => array.dispose() })
   const stop = bindTreeToDevtools(
     array as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
     '',
     internals.path,
     internals.devtools as DevtoolsEmitter,
   )
-  internals.register({ kind: 'cleanup', dispose: stop })
+  // One entry, released on dispose, as in `createForm`.
+  const release = internals.register({ kind: 'cleanup', dispose: () => array.dispose() })
+  addNodeDisposeHook(array, () => {
+    stop()
+    release()
+  })
   bindTreeValidatorErrorReporter(
     array as unknown as FieldArray<Field<unknown> | Form<FormSchema>>,
     reporter,

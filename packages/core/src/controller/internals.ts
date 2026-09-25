@@ -43,9 +43,12 @@ export type CtxInternals = {
    */
   assertLive(method: string): void
   /**
-   * Register teardown owned by this controller.
+   * Register teardown owned by this controller. Returns a function that
+   * removes the entry again, for a primitive torn down before its controller:
+   * a field that a `FieldArray` drops. Idempotent, and safe to call from the
+   * entry's own `dispose` while the controller disposes.
    */
-  register(entry: CtxEntry): void
+  register(entry: CtxEntry): () => void
   /**
    * The root's `QueryClient`, or a thrown error naming the missing engine.
    */

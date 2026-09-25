@@ -75,7 +75,9 @@ export type Field<T> = ReadSignal<T> & {
 /** Options for `root.suspend(options?)`. */
 export type SuspendOptions = {
   /**
-   * Dispose the root if it is not resumed within this many milliseconds.
+   * Dispose the root if it is not resumed within this many milliseconds. A
+   * second `suspend({ maxIdleTime })` restarts the timer, and a second
+   * `suspend()` without it keeps the timer running.
    */
   maxIdleTime?: number
 }

@@ -1,8 +1,9 @@
 import { createRootWithProps } from './controller/root'
 import type { ControllerDef, Field, Root, RootOptions } from './controller/types'
+import { isStructurallyEqual } from './forms/field'
 import { type QueryEngine, queryEngine } from './query/engine'
 import type { AsyncState, AsyncStatus } from './query/types'
-import { computed, type ReadSignal, type Signal, signal } from './signals'
+import { batch, computed, type ReadSignal, type Signal, signal } from './signals'
 
 // Test-only registry teardown — lives on the `@kontsedal/olas-core/testing`
 // sub-path, NOT the public entry (T3.9). Lets tests reusing a mutation `id`
@@ -69,6 +70,13 @@ export function createTestController<
  * overrides for the read-only signals. The returned object satisfies `Field<T>`
  * so it can be passed straight into `useField(...)` or any component that
  * accepts a real field. See spec §20.10.
+ *
+ * It behaves like a real field that has no validators. `errors` seeds the
+ * validator errors. `setErrors` writes a separate server channel that the next
+ * `set()` clears. `set()` recomputes `isDirty` against the initial value.
+ * `reset()` restores the initial value and clears dirty, touched and every
+ * error. `isValid` holds `true` while `isValidating` is set, because a real
+ * field with no settled pass reads valid mid-check (spec §8.2).
  */
 export function fakeField<T>(
   initial: T,
@@ -88,24 +96,52 @@ export function fakeField<T>(
   }>,
 ): Field<T> {
   const value$: Signal<T> = signal(initial)
-  const errors$: Signal<string[]> = signal(overrides?.errors ?? [])
+  const validatorErrors$: Signal<string[]> = signal(overrides?.errors ?? [])
+  const serverErrors$: Signal<string[]> = signal([])
+  const errors$: ReadSignal<string[]> = computed(() => {
+    const server = serverErrors$.value
+    return server.length === 0 ? validatorErrors$.value : [...validatorErrors$.value, ...server]
+  })
   const touched$: Signal<boolean> = signal(overrides?.touched ?? false)
   const dirty$: Signal<boolean> = signal(overrides?.isDirty ?? false)
   const validating$: Signal<boolean> = signal(overrides?.isValidating ?? false)
+  // Nothing settles a fake's validation, so the value held while validating is
+  // the no-prior-pass default: valid.
   const isValid$: ReadSignal<boolean> =
     overrides?.isValid !== undefined
       ? signal(overrides.isValid)
-      : computed(() => errors$.value.length === 0 && !validating$.value)
+      : computed(() => validating$.value || errors$.value.length === 0)
 
   let currentInitial = initial
-  const set = overrides?.set ?? ((next: T) => value$.set(next))
+  const set =
+    overrides?.set ??
+    ((next: T) =>
+      batch(() => {
+        value$.set(next)
+        dirty$.set(!isStructurallyEqual(next, currentInitial))
+        if (serverErrors$.peek().length > 0) serverErrors$.set([])
+      }))
   const setAsInitial =
     overrides?.setAsInitial ??
     ((next: T) => {
       currentInitial = next
-      value$.set(next)
-      dirty$.set(false)
+      batch(() => {
+        value$.set(next)
+        dirty$.set(false)
+        if (serverErrors$.peek().length > 0) serverErrors$.set([])
+      })
     })
+  const reset =
+    overrides?.reset ??
+    (() =>
+      batch(() => {
+        value$.set(currentInitial)
+        dirty$.set(false)
+        touched$.set(false)
+        validatorErrors$.set([])
+        serverErrors$.set([])
+        validating$.set(false)
+      }))
   const fake: Field<T> = {
     get value() {
       return value$.value
@@ -120,10 +156,10 @@ export function fakeField<T>(
     isValidating: validating$,
     set,
     setAsInitial,
-    reset: overrides?.reset ?? (() => value$.set(currentInitial)),
+    reset,
     markTouched: overrides?.markTouched ?? (() => touched$.set(true)),
     revalidate: overrides?.revalidate ?? (async () => errors$.peek().length === 0),
-    setErrors: overrides?.setErrors ?? ((errs) => errors$.set([...errs])),
+    setErrors: overrides?.setErrors ?? ((errs) => serverErrors$.set([...errs])),
     dispose: overrides?.dispose ?? (() => {}),
   }
   return fake
@@ -134,6 +170,13 @@ export function fakeField<T>(
  * the signal-backed properties; everything else falls back to inert defaults.
  * The returned object satisfies `AsyncState<T>` so it can stand in for a real
  * query subscription in component tests. See spec §20.10.
+ *
+ * The defaults follow a real subscription. `status` is `'error'` when `error`
+ * is given, `'success'` when `data` is, and `'idle'` otherwise. A `'pending'`
+ * status is fetching, and loading while there is no data. `firstValue()`
+ * rejects with the error in the `'error'` status, resolves with the data in
+ * the `'success'` status or when there is data, and otherwise stays pending,
+ * as a real one waits for data.
  */
 export function fakeAsyncState<T>(
   overrides?: Partial<{
@@ -155,11 +198,14 @@ export function fakeAsyncState<T>(
 ): AsyncState<T> {
   const data$: ReadSignal<T | undefined> = signal(overrides?.data)
   const error$: ReadSignal<unknown | undefined> = signal(overrides?.error)
-  const status$: ReadSignal<AsyncStatus> = signal(
-    overrides?.status ?? (overrides?.data !== undefined ? 'success' : 'idle'),
+  const status: AsyncStatus =
+    overrides?.status ??
+    (overrides?.error !== undefined ? 'error' : overrides?.data !== undefined ? 'success' : 'idle')
+  const status$: ReadSignal<AsyncStatus> = signal(status)
+  const isLoading$: ReadSignal<boolean> = signal(
+    overrides?.isLoading ?? (status === 'pending' && overrides?.data === undefined),
   )
-  const isLoading$: ReadSignal<boolean> = signal(overrides?.isLoading ?? false)
-  const isFetching$: ReadSignal<boolean> = signal(overrides?.isFetching ?? false)
+  const isFetching$: ReadSignal<boolean> = signal(overrides?.isFetching ?? status === 'pending')
   const isStale$: ReadSignal<boolean> = signal(overrides?.isStale ?? false)
   const lastUpdatedAt$: ReadSignal<number | undefined> = signal(overrides?.lastUpdatedAt)
   const hasPendingMutations$: ReadSignal<boolean> = signal(overrides?.hasPendingMutations ?? false)
@@ -169,7 +215,16 @@ export function fakeAsyncState<T>(
   const refetch = overrides?.refetch ?? (async () => data$.peek() as T)
   const reset = overrides?.reset ?? (() => {})
   const cancel = overrides?.cancel ?? (() => {})
-  const firstValue = overrides?.firstValue ?? (async () => data$.peek() as T)
+  const firstValue =
+    overrides?.firstValue ??
+    ((): Promise<T> => {
+      if (status === 'error') return Promise.reject(error$.peek())
+      if (status === 'success' || data$.peek() !== undefined) {
+        return Promise.resolve(data$.peek() as T)
+      }
+      // A real subscription waits for data, and nothing brings data to a fake.
+      return new Promise<T>(() => {})
+    })
 
   return {
     data: data$,

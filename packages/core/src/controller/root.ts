@@ -72,6 +72,7 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
         engine: queryClient,
       })
     } catch (err) {
+      queryClient?.close()
       queryClient?.dispose()
       throw err
     }
@@ -86,10 +87,15 @@ export function createRootWithProps<Props, Api, TDeps extends Record<string, unk
 
   // Bootstrap failure throws straight out of createRoot. Spec §12.1.5.
   // Tear down the plugins and the client before re-throwing so the failure
-  // doesn't leak their listeners and transports.
+  // doesn't leak their listeners and transports. The order is `dispose`'s:
+  // plugin delivery and the client close before the factory's partial state
+  // rolls back, so no plugin hears the rollback's events.
   let api: Api
   try {
-    api = instance.construct(getFactory(def), props)
+    api = instance.construct(getFactory(def), props, () => {
+      plugins?.close()
+      queryClient?.close()
+    })
   } catch (err) {
     plugins?.dispose()
     queryClient?.dispose()
@@ -143,21 +149,23 @@ function buildRootHandle<Api>(
 
   const suspend = (opts?: SuspendOptions): void => {
     instance.suspend()
+    const maxIdleTime = opts?.maxIdleTime
+    // A plain suspend() keeps an armed auto-dispose. A visibility hook that
+    // suspends an already-suspended root must not lift the memory bound.
+    if (maxIdleTime == null) return
+    // A new `maxIdleTime` restarts the timer.
     if (suspendTimer != null) {
       suspendTimer()
       suspendTimer = null
     }
-    const maxIdleTime = opts?.maxIdleTime
-    if (maxIdleTime != null) {
-      // `scheduleExpiry` returns `null` for `Infinity` (stay suspended until
-      // something else disposes) and chunks a finite value, so a `maxIdleTime`
-      // above the signed 32-bit limit can't overflow into "dispose on the next
-      // tick" — the opposite of asking to idle for a month. §21.5.
-      suspendTimer = scheduleExpiry(maxIdleTime, () => {
-        suspendTimer = null
-        dispose()
-      })
-    }
+    // `scheduleExpiry` returns `null` for `Infinity` (stay suspended until
+    // something else disposes) and chunks a finite value, so a `maxIdleTime`
+    // above the signed 32-bit limit can't overflow into "dispose on the next
+    // tick" — the opposite of asking to idle for a month. §21.5.
+    suspendTimer = scheduleExpiry(maxIdleTime, () => {
+      suspendTimer = null
+      dispose()
+    })
   }
 
   const resume = (): void => {

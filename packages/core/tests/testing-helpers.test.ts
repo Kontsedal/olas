@@ -25,11 +25,56 @@ describe('fakeField', () => {
     expect(f.isValidating.value).toBe(false)
   })
 
-  test('isValid derives from errors + validating when not explicitly overridden', () => {
+  test('isValid derives from errors when not explicitly overridden', () => {
     const f = fakeField('x', { errors: ['bad'] })
     expect(f.isValid.value).toBe(false)
+  })
+
+  test('isValid holds its settled value while validating, as a real field does', () => {
+    // A real field has no settled pass before its first check ends, and that
+    // reads valid (spec §8.2), so a validating fake reads valid too.
     const g = fakeField('x', { isValidating: true })
-    expect(g.isValid.value).toBe(false)
+    expect(g.isValid.value).toBe(true)
+    const h = fakeField('x', { isValidating: true, errors: ['bad'] })
+    expect(h.isValid.value).toBe(true)
+  })
+
+  test('reset() restores the initial value and clears dirty, touched and errors', () => {
+    const f = fakeField<string>('a', { errors: ['bad'], touched: true, isValidating: true })
+    f.set('b')
+    f.setErrors(['server'])
+    f.reset()
+    expect(f.value).toBe('a')
+    expect(f.isDirty.value).toBe(false)
+    expect(f.touched.value).toBe(false)
+    expect(f.errors.value).toEqual([])
+    expect(f.isValidating.value).toBe(false)
+  })
+
+  test('setErrors is a separate server channel that the next set() clears', () => {
+    const f = fakeField<string>('a', { errors: ['validator'] })
+    f.setErrors(['server'])
+    expect(f.errors.value).toEqual(['validator', 'server'])
+    f.set('b')
+    expect(f.errors.value).toEqual(['validator'])
+    f.setErrors(['server'])
+    f.setErrors([])
+    expect(f.errors.value).toEqual(['validator'])
+  })
+
+  test('set() marks the field dirty, and setting it back to the initial clears it', () => {
+    const f = fakeField<{ n: number }>({ n: 1 })
+    f.set({ n: 2 })
+    expect(f.isDirty.value).toBe(true)
+    f.set({ n: 1 })
+    expect(f.isDirty.value).toBe(false)
+  })
+
+  test('setAsInitial clears server errors', () => {
+    const f = fakeField<string>('a')
+    f.setErrors(['server'])
+    f.setAsInitial('b')
+    expect(f.errors.value).toEqual([])
   })
 
   test('isValid override wins over derived signal', () => {
@@ -150,6 +195,34 @@ describe('fakeAsyncState', () => {
     await expect(s.refetch()).resolves.toBe(7)
     await expect(s.firstValue()).resolves.toBe(7)
     expect(() => s.reset()).not.toThrow()
+  })
+
+  test('an error without a status reads as status error; firstValue rejects with it', async () => {
+    const boom = new Error('boom')
+    const s = fakeAsyncState<number>({ error: boom })
+    expect(s.status.value).toBe('error')
+    await expect(s.firstValue()).rejects.toBe(boom)
+  })
+
+  test('a pending status with no data reads as loading and fetching', () => {
+    const s = fakeAsyncState<number>({ status: 'pending' })
+    expect(s.isLoading.value).toBe(true)
+    expect(s.isFetching.value).toBe(true)
+    const refetching = fakeAsyncState<number>({ status: 'pending', data: 1 })
+    expect(refetching.isLoading.value).toBe(false)
+    expect(refetching.isFetching.value).toBe(true)
+  })
+
+  test('firstValue waits while there is no data, as a real subscription does', async () => {
+    const s = fakeAsyncState<number>()
+    const settled = await Promise.race([
+      s.firstValue().then(
+        () => 'settled',
+        () => 'settled',
+      ),
+      new Promise((resolve) => setTimeout(() => resolve('pending'), 0)),
+    ])
+    expect(settled).toBe('pending')
   })
 
   test('overrides for refetch / reset / firstValue are honored', async () => {

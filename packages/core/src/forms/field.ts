@@ -23,14 +23,115 @@ function messagesFromResult(result: ValidatorResult): string[] {
   return result.map((issue) => issue.message)
 }
 
+/** A validator as one pass calls it: the value and the pass's `AbortSignal`. */
+type PassValidator<V> = (
+  value: V,
+  signal: AbortSignal,
+) => ValidatorResult | Promise<ValidatorResult>
+
+/**
+ * One flag per validator: `true` once it counts as async. A pass cannot tell a
+ * sync validator from an async one before calling it, so a validator counts as
+ * async when it is declared `async`, or once it has returned a promise. The
+ * flag never goes back to `false`.
+ */
+export function asyncValidatorFlags(validators: ReadonlyArray<unknown>): boolean[] {
+  return validators.map((v) => Object.prototype.toString.call(v) === '[object AsyncFunction]')
+}
+
+/**
+ * Call one pass's validators, sync ones first (spec §8.1). The first round
+ * calls, in declared order, every validator not flagged async. `onResult`
+ * collects a synchronous result and says whether it failed; `onThrow` handles
+ * a synchronous throw, which always fails. When the first round fails, the
+ * async validators are not called at all. Otherwise the second round calls
+ * them. A validator not yet flagged can return a promise in the first round,
+ * before a failure is known; the caller abandons what `pending` holds then.
+ */
+export function callValidators<V>(
+  validators: ReadonlyArray<PassValidator<V>>,
+  isAsync: boolean[],
+  value: V,
+  signal: AbortSignal,
+  onResult: (result: ValidatorResult) => boolean,
+  onThrow: (err: unknown) => void,
+): { failed: boolean; pending: Promise<ValidatorResult>[] } {
+  const pending: Promise<ValidatorResult>[] = []
+  let failed = false
+  const call = (i: number): void => {
+    try {
+      const result = (validators[i] as PassValidator<V>)(value, signal)
+      if (result instanceof Promise) {
+        isAsync[i] = true
+        pending.push(result)
+      } else if (onResult(result)) {
+        failed = true
+      }
+    } catch (err) {
+      onThrow(err)
+      failed = true
+    }
+  }
+  const secondRound: number[] = []
+  for (let i = 0; i < validators.length; i++) {
+    if (isAsync[i]) secondRound.push(i)
+    else call(i)
+  }
+  if (!failed) for (const i of secondRound) call(i)
+  return { failed, pending }
+}
+
+/**
+ * The errors that form-level validators routed onto one node (T5.2), one list
+ * per routing node. An inner form's rule and an outer form's rule can both
+ * target the same field. Each router replaces only its own list, so fixing one
+ * rule leaves the other rule's message in place. `merged` is what the node
+ * shows, in the order the routers first wrote.
+ */
+export class RoutedErrors {
+  private readonly bySource = new Map<object, string[]>()
+  readonly merged: Signal<string[]> = signal([])
+
+  set(source: object, errors: ReadonlyArray<string>): void {
+    if (errors.length === 0) {
+      // Nothing from this router, before or now: leave subscribers asleep.
+      if (!this.bySource.delete(source)) return
+    } else {
+      this.bySource.set(source, [...errors])
+    }
+    const out: string[] = []
+    for (const list of this.bySource.values()) out.push(...list)
+    this.merged.set(out)
+  }
+}
+
+/**
+ * Internal — run `fn` once when `node` (a field, form or field array built by
+ * core) disposes, or at once if it already has. The `createField`,
+ * `createForm` and `createFieldArray` bindings release their controller
+ * lifecycle entry this way, so an item a `FieldArray` drops does not stay
+ * registered on the controller. A node without the hook (a test fake) is
+ * skipped.
+ */
+export function addNodeDisposeHook(node: object, fn: () => void): void {
+  const impl = node as { addDisposeHook?: (fn: () => void) => void }
+  if (typeof impl.addDisposeHook === 'function') impl.addDisposeHook(fn)
+}
+
+/** Runs and drops the hooks `addDisposeHook` collected. */
+export function runDisposeHooks(hooks: Array<() => void> | null): void {
+  if (hooks === null) return
+  for (const fn of hooks) fn()
+}
+
 /**
  * Structural equality used by `Field.set` to decide whether a write returns
  * the field to its initial value (clearing `isDirty`). Cheap path for
  * primitives + `Object.is`; deep walk for arrays and plain objects. Class
  * instances, Map, Set, Date fall back to reference identity — same trade-off
- * `structural-share.ts` makes for cache data.
+ * `structural-share.ts` makes for cache data. `fakeField` uses it too.
  */
-function isStructurallyEqual(a: unknown, b: unknown): boolean {
+export function isStructurallyEqual(a: unknown, b: unknown): boolean {
   if (Object.is(a, b)) return true
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false
   if (Array.isArray(a)) {
@@ -120,14 +221,15 @@ class FieldImpl<T> implements Field<T> {
   /**
    * Errors routed here by a parent (or ancestor) form-level validator that
    * targeted this field via a `FormIssue` path — the third error channel
-   * beside validator + server errors (T5.2). Owned by the routing form: cleared
-   * and re-applied on every form-level validation run, and written by nothing
-   * else. So neither the field's `set()` nor its `reset()` or `setAsInitial()`
-   * clears it. A write that changes the value re-runs the form, which
-   * recomputes the channel. A no-op reset leaves the form's value as it was,
-   * so the rule's last result still stands and must stay visible.
+   * beside validator + server errors (T5.2). One list per routing form, each
+   * owned by its router: cleared and re-applied on every run of that form's
+   * validators, and written by nothing else. So neither the field's `set()`
+   * nor its `reset()` or `setAsInitial()` clears it. A write that changes the
+   * value re-runs the form, which recomputes the channel. A no-op reset leaves
+   * the form's value as it was, so the rule's last result still stands and
+   * must stay visible.
    */
-  private readonly formErrors$: Signal<string[]>
+  private readonly formErrors = new RoutedErrors()
   private readonly errors$: Computed<string[]>
   private readonly touched$: Signal<boolean>
   private readonly dirty$: Signal<boolean>
@@ -145,6 +247,8 @@ class FieldImpl<T> implements Field<T> {
   private readonly revalidateTrigger$: Signal<number>
 
   private readonly validators: ReadonlyArray<Validator<T>>
+  /** Which validators count as async — see `asyncValidatorFlags`. */
+  private readonly asyncValidators: boolean[]
   /** The value `reset()` returns to. Mutated by `setAsInitial()` so a form
    * initialized from server data resets to *that* data, not the empty seed. */
   private initial: T
@@ -152,6 +256,7 @@ class FieldImpl<T> implements Field<T> {
   private currentAbort: AbortController | null = null
   private runId = 0
   private disposed = false
+  private disposeHooks: Array<() => void> | null = null
   private devtoolsOwner: FieldDevtoolsOwner | null = null
   private onValidatorError: ValidatorErrorReporter | null = null
   private readonly validateOn: ValidateOn
@@ -169,6 +274,7 @@ class FieldImpl<T> implements Field<T> {
   ) {
     this.initial = initial
     this.validators = validators
+    this.asyncValidators = asyncValidatorFlags(validators)
     // Capture the reporter BEFORE the validator effect kicks off so a sync
     // throw on the very first pass routes through `onError` instead of
     // disappearing into the effect (`bindValidatorErrorReporter` is a
@@ -178,7 +284,6 @@ class FieldImpl<T> implements Field<T> {
     this.value$ = signal(initial)
     this.validatorErrors$ = signal<string[]>([])
     this.serverErrors$ = signal<string[]>([])
-    this.formErrors$ = signal<string[]>([])
     this.touched$ = signal(false)
     this.dirty$ = signal(false)
     this.validating$ = signal(false)
@@ -190,7 +295,7 @@ class FieldImpl<T> implements Field<T> {
     this.errors$ = computed(() => {
       const v = this.validatorErrors$.value
       const s = this.serverErrors$.value
-      const f = this.formErrors$.value
+      const f = this.formErrors.merged.value
       if (s.length === 0 && f.length === 0) return v
       if (v.length === 0 && f.length === 0) return s
       if (v.length === 0 && s.length === 0) return f
@@ -282,16 +387,14 @@ class FieldImpl<T> implements Field<T> {
   }
 
   /**
-   * Internal — set the parent-form-validator error channel (`formErrors$`).
-   * Called by the owning form's issue router when a `FormIssue` path resolves
-   * to this field. Guards against churning the signal when nothing changes so
-   * a whole-tree clear pass doesn't wake unrelated subscribers. See T5.2 /
-   * `routeFormIssues` in `form.ts`.
+   * Internal — set `source`'s list in the parent-form-validator error channel.
+   * Called by a form's issue router when a `FormIssue` path resolves to this
+   * field; `source` is that routing form. See T5.2 / `routeFormIssues` in
+   * `form.ts`.
    */
-  setFormErrors(errors: ReadonlyArray<string>): void {
+  setFormErrors(errors: ReadonlyArray<string>, source: object): void {
     if (this.disposed) return
-    if (this.formErrors$.peek().length === 0 && errors.length === 0) return
-    this.formErrors$.set(errors.length === 0 ? [] : [...errors])
+    this.formErrors.set(source, errors)
   }
 
   /**
@@ -311,8 +414,8 @@ class FieldImpl<T> implements Field<T> {
       // response is no longer relevant. Without clearing, errors like
       // "username taken" persist across a successful re-hydrate.
       if (this.serverErrors$.peek().length > 0) this.serverErrors$.set([])
-      // `formErrors$` stays: the routing form owns it. A new value re-runs the
-      // form, which recomputes it; the same value leaves its rule's result
+      // `formErrors` stays: the routing forms own it. A new value re-runs the
+      // forms, which recompute it; the same value leaves their rules' results
       // standing.
     })
   }
@@ -321,13 +424,16 @@ class FieldImpl<T> implements Field<T> {
     if (this.disposed) return
     this.currentAbort?.abort()
     this.currentAbort = null
+    // Retire the pass in flight. A validator that ignores its AbortSignal
+    // still resolves, and its result must not land on the reset field.
+    this.runId++
     batch(() => {
       this.value$.set(this.initial)
       this.dirty$.set(false)
       this.touched$.set(false)
       this.validatorErrors$.set([])
       this.serverErrors$.set([])
-      // Not `formErrors$`: the routing form owns it (see its declaration).
+      // Not `formErrors`: the routing forms own it (see its declaration).
       this.validating$.set(false)
       // Re-lock validation if the field was in blur/submit mode — a reset
       // means we're back to a clean slate, so the user shouldn't immediately
@@ -365,6 +471,23 @@ class FieldImpl<T> implements Field<T> {
     this.currentAbort?.abort()
     this.currentAbort = null
     this.devtoolsOwner = null
+    // A pass in flight never settles now: its result is dropped. End it here,
+    // so a `revalidate()`, `validate()` or `submit()` waiting on it resolves.
+    // A row removed from a field array mid-submit otherwise hung the submit.
+    this.validating$.set(false)
+    const hooks = this.disposeHooks
+    this.disposeHooks = null
+    runDisposeHooks(hooks)
+  }
+
+  /** Internal — see `addNodeDisposeHook`. */
+  addDisposeHook(fn: () => void): void {
+    if (this.disposed) {
+      fn()
+      return
+    }
+    if (this.disposeHooks === null) this.disposeHooks = []
+    this.disposeHooks.push(fn)
   }
 
   /**
@@ -414,6 +537,9 @@ class FieldImpl<T> implements Field<T> {
     // While locked, skip the pass entirely — errors stay empty, the field
     // reads as valid, no async work starts.
     if (!this.validateUnlocked$.value) {
+      // Retire any pass still in flight, as `reset()` does, so its result
+      // cannot land on the locked field.
+      this.runId++
       batch(() => {
         if (this.validatorErrors$.peek().length > 0) this.validatorErrors$.set([])
         if (this.validating$.peek()) this.validating$.set(false)
@@ -429,24 +555,23 @@ class FieldImpl<T> implements Field<T> {
     const myId = ++this.runId
 
     const syncErrors: string[] = []
-    const asyncPromises: Promise<ValidatorResult>[] = []
-
-    for (const validator of this.validators) {
-      try {
-        const result = validator(value, abort.signal)
-        if (result instanceof Promise) {
-          // Defend against the validator promise rejecting *synchronously*
-          // with a thrown error (rare but legal) — the catch-handler in
-          // `Promise.allSettled` covers true async rejection.
-          asyncPromises.push(result)
-        } else {
-          // A Standard-Schema validator returns `FormIssue[]`; a stdlib one
-          // returns `string | null`. Flatten both to messages (a leaf field
-          // has no descendants to route issue paths to).
-          const msgs = messagesFromResult(result)
-          if (msgs.length > 0) syncErrors.push(...msgs)
-        }
-      } catch (err) {
+    // Sync validators first; the async ones start only when every sync one
+    // passed (spec §8.1).
+    const { failed, pending: asyncPromises } = callValidators(
+      this.validators,
+      this.asyncValidators,
+      value,
+      abort.signal,
+      (result) => {
+        // A Standard-Schema validator returns `FormIssue[]`; a stdlib one
+        // returns `string | null`. Flatten both to messages (a leaf field has
+        // no descendants to route issue paths to).
+        const msgs = messagesFromResult(result)
+        if (msgs.length === 0) return false
+        syncErrors.push(...msgs)
+        return true
+      },
+      (err) => {
         // A buggy validator that throws synchronously: surface it twice.
         // (1) Route through `onError` so the developer knows something is wrong.
         // (2) Mark the field invalid until the bug is fixed (don't pretend OK).
@@ -461,10 +586,10 @@ class FieldImpl<T> implements Field<T> {
         syncErrors.push(
           __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
         )
-      }
-    }
+      },
+    )
 
-    if (syncErrors.length > 0) {
+    if (failed) {
       abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.validatorErrors$.set(syncErrors)

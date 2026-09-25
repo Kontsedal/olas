@@ -3,8 +3,12 @@ import { batch, computed, effect, type Signal, signal, untracked } from '../sign
 import type { ReadSignal } from '../signals/types'
 import { abandonAsyncResults, isAbortError } from '../utils'
 import {
+  asyncValidatorFlags,
   bindFieldDevtoolsOwner,
   bindFieldValidatorErrorReporter,
+  callValidators,
+  RoutedErrors,
+  runDisposeHooks,
   type ValidatorErrorReporter,
 } from './field'
 import type {
@@ -24,7 +28,7 @@ import type {
   SubmitOptions,
   SubmitResult,
 } from './form-types'
-import type { FormIssue, ValidatorResult } from './types'
+import type { FormIssue, Validator, ValidatorResult } from './types'
 
 const FORM_BRAND = Symbol.for('olas.form')
 const FIELD_ARRAY_BRAND = Symbol.for('olas.fieldArray')
@@ -61,8 +65,11 @@ const isForm = (x: unknown): x is Form<FormSchema> =>
 const isFieldArray = (x: unknown): x is FieldArray<Field<unknown> | Form<FormSchema>> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FIELD_ARRAY_BRAND] === true
 
-/** Any node that can receive parent-form-validator-routed errors (T5.2). */
-type FormErrorTarget = { setFormErrors?: (msgs: ReadonlyArray<string>) => void }
+/**
+ * Any node that can receive parent-form-validator-routed errors (T5.2).
+ * `source` is the routing node, so each router keeps its own list.
+ */
+type FormErrorTarget = { setFormErrors?: (msgs: ReadonlyArray<string>, source: object) => void }
 
 /**
  * Walk a form tree from `root` following `FormIssue.path` segments. Forms walk
@@ -103,16 +110,54 @@ function appendIssues(out: FormIssue[], result: ValidatorResult): void {
 }
 
 /**
+ * One form-level or array-level pass, sync validators first (spec §8.1) —
+ * see `callValidators`. Collects the synchronous issues. A synchronous throw
+ * reaches `report` and becomes an issue on the node itself. Prod shows a
+ * generic message for it, so internal error text does not leak into form
+ * errors; the real error still reaches `report` (T5.3).
+ */
+function runLevelValidators<V>(
+  validators: ReadonlyArray<Validator<V>>,
+  isAsync: boolean[],
+  value: V,
+  signal: AbortSignal,
+  report: (err: unknown) => void,
+): { issues: FormIssue[]; failed: boolean; pending: Promise<ValidatorResult>[] } {
+  const issues: FormIssue[] = []
+  const { failed, pending } = callValidators(
+    validators,
+    isAsync,
+    value,
+    signal,
+    (result) => {
+      const before = issues.length
+      appendIssues(issues, result)
+      return issues.length > before
+    },
+    (err) => {
+      report(err)
+      issues.push({
+        path: [],
+        message: __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
+      })
+    },
+  )
+  return { issues, failed, pending }
+}
+
+/**
  * Route a fully-collected issue set for one form-level validation run:
  *  - empty-path (and unresolvable) issues → `topLevelErrors$` on the owning node
- *  - path issues → the resolved descendant's `setFormErrors`
+ *  - path issues → the resolved descendant's `setFormErrors`, under `root`
  *
  * Targets that received an error last run but not this one are cleared, so a
- * fixed cross-field rule removes its message from the field it landed on.
- * Returns the new target set for the caller to retain. MUST run inside a batch.
+ * fixed cross-field rule removes its message from the field it landed on. The
+ * clear removes only `root`'s list: another router's messages on the same
+ * target stay. Returns the new target set for the caller to retain. MUST run
+ * inside a batch.
  */
 function routeFormIssues(
-  root: unknown,
+  root: object,
   issues: FormIssue[],
   topLevelErrors$: Signal<string[]>,
   lastTargets: Set<FormErrorTarget>,
@@ -136,9 +181,9 @@ function routeFormIssues(
   }
   topLevelErrors$.set(topLevel)
   for (const t of lastTargets) {
-    if (!byTarget.has(t)) t.setFormErrors?.([])
+    if (!byTarget.has(t)) t.setFormErrors?.([], root)
   }
-  for (const [t, msgs] of byTarget) t.setFormErrors?.(msgs)
+  for (const [t, msgs] of byTarget) t.setFormErrors?.(msgs, root)
   return new Set(byTarget.keys())
 }
 
@@ -162,16 +207,16 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   private readonly topLevelErrors$: Signal<string[]> = signal([])
   /**
-   * Errors routed to THIS form by an ancestor form-level validator (a
-   * `FormIssue` whose path resolves to this node). Merged into `topLevelErrors`
-   * beside this form's own validator output, so `topLevelErrors` means "errors
-   * attached to this node itself, whatever their source". Owned by the ancestor
-   * router (T5.2) — see `setFormErrors`.
+   * Errors routed to THIS form by ancestor form-level validators (a
+   * `FormIssue` whose path resolves to this node), one list per ancestor.
+   * Merged into `topLevelErrors` beside this form's own validator output, so
+   * `topLevelErrors` means "errors attached to this node itself, whatever their
+   * source". Each list is owned by its router (T5.2) — see `setFormErrors`.
    */
-  private readonly parentFormErrors$: Signal<string[]> = signal([])
+  private readonly parentFormErrors = new RoutedErrors()
   readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
     const own = this.topLevelErrors$.value
-    const parent = this.parentFormErrors$.value
+    const parent = this.parentFormErrors.merged.value
     if (parent.length === 0) return own
     if (own.length === 0) return parent
     return [...own, ...parent]
@@ -189,6 +234,8 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   readonly submitError: ReadSignal<unknown> = this.submitError$
 
   private readonly validators: ReadonlyArray<FormValidator<S>>
+  /** Which top-level validators count as async — see `asyncValidatorFlags`. */
+  private readonly asyncValidators: boolean[]
   private readonly options: FormOptions<S> | undefined
   private validatorDispose: (() => void) | null = null
   private validityDispose: (() => void) | null = null
@@ -196,6 +243,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
   private disposed = false
+  private disposeHooks: Array<() => void> | null = null
   private onValidatorError: ((err: unknown) => void) | null = null
 
   /** Internal — wire a sync-throw reporter for the top-level validators. */
@@ -215,6 +263,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     this.fields = schema
     this.options = options
     this.validators = options?.validators ?? []
+    this.asyncValidators = asyncValidatorFlags(this.validators)
     // Capture reporter BEFORE the top-level validator effect kicks off in
     // this constructor — mirrors the FieldImpl fix.
     this.onValidatorError = internalOptions?.onValidatorError ?? null
@@ -227,22 +276,32 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       if (typeof options.initial === 'function') {
         const initialFn = options.initial
         const mode = options.resetOnInitialChange ?? 'when-clean'
-        let firstRun = true
+        let seated = false
         this.initialDispose = effect(() => {
-          // Track signals read by `initialFn`. The dirty-guard MUST run
-          // untracked — otherwise `isDirty` would become a dep and re-seating
-          // on user input would cascade.
-          const ini = initialFn()
+          // Track signals read by `initialFn`. A throw routes like a validator
+          // throw, to the controller's `onError`. Uncaught, it escaped into
+          // whatever wrote the signal: a refetch that changed the data's shape
+          // rejected with the form's TypeError. The reads made before the
+          // throw stay tracked, so a later good value still re-seats.
+          let ini: DeepPartial<FormValue<S>> | undefined
+          try {
+            ini = initialFn()
+          } catch (err) {
+            this.reportError(err)
+            return
+          }
           if (ini === undefined) return
+          // The dirty guard MUST run untracked — otherwise `isDirty` would
+          // become a dep and re-seating on user input would cascade.
           untracked(() => {
             if (this.disposed) return
-            if (firstRun) {
-              firstRun = false
-              this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
-              return
-            }
-            if (mode === 'never') return
-            if (mode === 'when-clean' && this.isDirty.peek()) return
+            if (mode === 'never' && seated) return
+            // The guard covers the first defined value too: data that arrives
+            // after the user started typing must not overwrite the edit (spec
+            // §8.4). `computeBool`, because `isDirty` is not built yet on the
+            // first run.
+            if (mode !== 'always' && this.computeBool('isDirty')) return
+            seated = true
             this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
           })
         })
@@ -489,6 +548,13 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     try {
       if (validateFirst) {
         const ok = await this.validate()
+        // Disposed while validating: the form is gone, so the handler must not
+        // run on it. `dispose()` settled the validation, which is why this
+        // point is reached at all.
+        if (this.disposed) {
+          this.isSubmitting$.set(false)
+          return { ok: false, reason: 'disposed' }
+        }
         if (!ok) {
           this.markAllTouched()
           this.isSubmitting$.set(false)
@@ -530,15 +596,13 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   }
 
   /**
-   * Internal — receive errors routed here by an ancestor form-level validator
-   * (a `FormIssue` whose path resolved to this nested form). Guards against
-   * spurious writes so a whole-tree clear pass doesn't wake subscribers. See
+   * Internal — receive errors routed here by the ancestor form-level validator
+   * of `source` (a `FormIssue` whose path resolved to this nested form). See
    * `routeFormIssues`.
    */
-  setFormErrors(errors: ReadonlyArray<string>): void {
+  setFormErrors(errors: ReadonlyArray<string>, source: object): void {
     if (this.disposed) return
-    if (this.parentFormErrors$.peek().length === 0 && errors.length === 0) return
-    this.parentFormErrors$.set(errors.length === 0 ? [] : [...errors])
+    this.parentFormErrors.set(source, errors)
   }
 
   /**
@@ -598,8 +662,36 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     this.validityDispose?.()
     this.initialDispose?.()
     this.currentValidatorAbort?.abort()
+    // The form-level pass in flight never settles now; end it so a
+    // `validate()` or `submit()` waiting on it resolves (see FieldImpl).
+    this.topLevelValidating$.set(false)
     for (const child of Object.values(this.fields)) {
       ;(child as { dispose?: () => void }).dispose?.()
+    }
+    const hooks = this.disposeHooks
+    this.disposeHooks = null
+    runDisposeHooks(hooks)
+  }
+
+  /** Internal — see `addNodeDisposeHook` in `./field.ts`. */
+  addDisposeHook(fn: () => void): void {
+    if (this.disposed) {
+      fn()
+      return
+    }
+    if (this.disposeHooks === null) this.disposeHooks = []
+    this.disposeHooks.push(fn)
+  }
+
+  /**
+   * Route a throw from `initial()` to the controller's error handler, the
+   * reporter validator throws use.
+   */
+  private reportError(err: unknown): void {
+    try {
+      this.onValidatorError?.(err)
+    } catch {
+      // The reporter must not propagate.
     }
   }
 
@@ -611,33 +703,15 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     this.currentValidatorAbort = abort
     const myId = ++this.currentValidatorRun
 
-    const syncIssues: FormIssue[] = []
-    const asyncPromises: Promise<ValidatorResult>[] = []
-    for (const v of this.validators) {
-      try {
-        const r = v(value, abort.signal)
-        if (r instanceof Promise) asyncPromises.push(r)
-        else appendIssues(syncIssues, r)
-      } catch (err) {
-        try {
-          this.onValidatorError?.(err)
-        } catch {
-          // The reporter must not propagate.
-        }
-        // Prod shows a generic message (don't leak internal error text into
-        // form errors); the real error still reaches `onValidatorError` (T5.3).
-        syncIssues.push({
-          path: [],
-          message: __DEV__
-            ? err instanceof Error
-              ? err.message
-              : String(err)
-            : 'Validation failed',
-        })
-      }
-    }
+    const {
+      issues: syncIssues,
+      failed,
+      pending: asyncPromises,
+    } = runLevelValidators(this.validators, this.asyncValidators, value, abort.signal, (err) =>
+      this.reportError(err),
+    )
 
-    if (syncIssues.length > 0) {
+    if (failed) {
       abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
@@ -807,12 +881,13 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
    */
   private readonly structurallyDirty$: Signal<boolean> = signal(false)
   private readonly topLevelErrors$: Signal<string[]> = signal([])
-  /** Errors routed to this array by an ancestor form-level validator (T5.2) —
-   *  merged into `topLevelErrors` beside the array's own validator output. */
-  private readonly parentFormErrors$: Signal<string[]> = signal([])
+  /** Errors routed to this array by ancestor form-level validators (T5.2), one
+   *  list per ancestor — merged into `topLevelErrors` beside the array's own
+   *  validator output. */
+  private readonly parentFormErrors = new RoutedErrors()
   readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
     const own = this.topLevelErrors$.value
-    const parent = this.parentFormErrors$.value
+    const parent = this.parentFormErrors.merged.value
     if (parent.length === 0) return own
     if (own.length === 0) return parent
     return [...own, ...parent]
@@ -824,11 +899,14 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   private readonly itemFactory: (initial?: ItemInitial<I>) => I
   private initialItems: Array<ItemInitial<I>> = []
   private readonly validators: ReadonlyArray<FieldArrayValidator<I>>
+  /** Which array-level validators count as async — see `asyncValidatorFlags`. */
+  private readonly asyncValidators: boolean[]
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
   private validatorDispose: (() => void) | null = null
   private validityDispose: (() => void) | null = null
   private disposed = false
+  private disposeHooks: Array<() => void> | null = null
   private onValidatorError: ((err: unknown) => void) | null = null
 
   /** Internal — see `FormImpl.bindValidatorErrorReporter`. */
@@ -844,6 +922,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     brand(this, FIELD_ARRAY_BRAND) // see FormImpl's constructor
     this.itemFactory = itemFactory
     this.validators = options?.validators ?? []
+    this.asyncValidators = asyncValidatorFlags(this.validators)
     this.onValidatorError = internalOptions?.onValidatorError ?? null
     this.items$ = signal<I[]>([])
     if (options?.initial) {
@@ -927,13 +1006,13 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
   }
 
   /**
-   * Internal — receive errors routed here by an ancestor form-level validator
-   * (a `FormIssue` whose path resolved to this array). See `routeFormIssues`.
+   * Internal — receive errors routed here by the ancestor form-level validator
+   * of `source` (a `FormIssue` whose path resolved to this array). See
+   * `routeFormIssues`.
    */
-  setFormErrors(errors: ReadonlyArray<string>): void {
+  setFormErrors(errors: ReadonlyArray<string>, source: object): void {
     if (this.disposed) return
-    if (this.parentFormErrors$.peek().length === 0 && errors.length === 0) return
-    this.parentFormErrors$.set(errors.length === 0 ? [] : [...errors])
+    this.parentFormErrors.set(source, errors)
   }
 
   add(initial?: ItemInitial<I>): void {
@@ -1067,9 +1146,24 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     this.validatorDispose?.()
     this.validityDispose?.()
     this.currentValidatorAbort?.abort()
+    // End the array-level pass in flight, as `FormImpl.dispose` does.
+    this.topLevelValidating$.set(false)
     for (const item of this.items$.peek()) {
       ;(item as { dispose?: () => void }).dispose?.()
     }
+    const hooks = this.disposeHooks
+    this.disposeHooks = null
+    runDisposeHooks(hooks)
+  }
+
+  /** Internal — see `addNodeDisposeHook` in `./field.ts`. */
+  addDisposeHook(fn: () => void): void {
+    if (this.disposed) {
+      fn()
+      return
+    }
+    if (this.disposeHooks === null) this.disposeHooks = []
+    this.disposeHooks.push(fn)
   }
 
   private runTopLevelValidators(): void {
@@ -1080,33 +1174,19 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     this.currentValidatorAbort = abort
     const myId = ++this.currentValidatorRun
 
-    const syncIssues: FormIssue[] = []
-    const asyncPromises: Promise<ValidatorResult>[] = []
-    for (const v of this.validators) {
+    const {
+      issues: syncIssues,
+      failed,
+      pending: asyncPromises,
+    } = runLevelValidators(this.validators, this.asyncValidators, value, abort.signal, (err) => {
       try {
-        const r = v(value, abort.signal)
-        if (r instanceof Promise) asyncPromises.push(r)
-        else appendIssues(syncIssues, r)
-      } catch (err) {
-        try {
-          this.onValidatorError?.(err)
-        } catch {
-          // The reporter must not propagate.
-        }
-        // Prod shows a generic message (don't leak internal error text into
-        // form errors); the real error still reaches `onValidatorError` (T5.3).
-        syncIssues.push({
-          path: [],
-          message: __DEV__
-            ? err instanceof Error
-              ? err.message
-              : String(err)
-            : 'Validation failed',
-        })
+        this.onValidatorError?.(err)
+      } catch {
+        // The reporter must not propagate.
       }
-    }
+    })
 
-    if (syncIssues.length > 0) {
+    if (failed) {
       abandonAsyncResults(asyncPromises, abort)
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(

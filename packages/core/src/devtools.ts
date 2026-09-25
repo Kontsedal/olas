@@ -220,11 +220,14 @@ export class DevtoolsEmitter {
   private seq = 0
 
   subscribe(handler: (event: DebugEvent) => void): () => void {
-    // Replay the snapshot of the current tree, in insertion order. Insertion
-    // order matches construction order, which is parent-before-child (parents
-    // construct their children inside their factories). The replayed handler
-    // gets the same event shape it would have seen live, `seq`/`t`-stamped so
-    // it sorts (before any subsequent live event) in the subscriber's timeline.
+    // Replay the snapshot of the current tree, in insertion order. That is the
+    // order construction *finished* in, because `controller:constructed` is
+    // emitted after the factory returns. A child built inside its parent's
+    // factory therefore replays before the parent; one attached later replays
+    // after it. A consumer building a tree must not assume a parent arrives
+    // first. The replayed handler gets the same event shape it would have seen
+    // live, `seq`/`t`-stamped so it sorts (before any subsequent live event) in
+    // the subscriber's timeline.
     for (const entry of this.liveControllers.values()) {
       try {
         handler(

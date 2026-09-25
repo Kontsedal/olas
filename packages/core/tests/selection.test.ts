@@ -185,6 +185,44 @@ describe('selection — handleClick', () => {
     s.handleClick('e', { shift: true }, items)
     expect([...s.selectedIds.value].sort()).toEqual(['a', 'c', 'd', 'e'])
   })
+
+  test('a programmatic toggle ends the shift run, so the next range keeps it', () => {
+    const letters = ['a', 'b', 'c', 'x', 'y', 'z']
+    const s = createSelection<string>()
+    s.handleClick('a', {}, letters)
+    s.handleClick('c', { shift: true }, letters) // {a,b,c}
+    s.toggle('z') // {a,b,c,z}, anchor = z
+    s.handleClick('y', { shift: true }, letters)
+    expect([...s.selectedIds.value].sort()).toEqual(['a', 'b', 'c', 'y', 'z'])
+  })
+
+  test('selectAll ends the shift run', () => {
+    const s = createSelection<string>()
+    s.handleClick('a', {}, items)
+    s.handleClick('b', { shift: true }, items) // snapshot {a}
+    s.selectAll(['a', 'b', 'c', 'd', 'e']) // anchor = e
+    s.handleClick('d', { shift: true }, items)
+    expect([...s.selectedIds.value].sort()).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
+
+  test('select ends the shift run', () => {
+    const s = createSelection<string>()
+    s.handleClick('a', {}, items)
+    s.handleClick('b', { shift: true }, items) // snapshot {a}, selection {a,b}
+    s.select('e') // anchor = e
+    s.handleClick('d', { shift: true }, items)
+    expect([...s.selectedIds.value].sort()).toEqual(['a', 'b', 'd', 'e'])
+  })
+
+  test('deselect ends the shift run, so a deselected id does not come back', () => {
+    const s = createSelection<string>()
+    s.handleClick('e', {}, items)
+    s.handleClick('a', { meta: true }, items) // {a,e}, anchor = a
+    s.handleClick('b', { shift: true }, items) // snapshot {a,e}, selection {a,b,e}
+    s.deselect('e')
+    s.handleClick('c', { shift: true }, items)
+    expect([...s.selectedIds.value].sort()).toEqual(['a', 'b', 'c'])
+  })
 })
 
 describe('selection — read-only projection', () => {

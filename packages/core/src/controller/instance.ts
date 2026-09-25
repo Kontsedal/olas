@@ -101,9 +101,10 @@ type LifecycleNode = {
  *
  * Iteration order is insertion order for `forward()` and reverse-insertion
  * for `reverse()`. Iteration is safe against `push` during traversal (the
- * generator captures `next`/`prev` *before* yielding) but not against
- * unlinking the current node from inside the visitor — visitors must not
- * call `unlink` on the entry they're currently inspecting.
+ * generator captures `next`/`prev` *before* yielding) and against `unlink`
+ * from inside the visitor: an unlinked node keeps its own `prev`/`next`, so a
+ * walk that reaches one steps past it without yielding it. A field's
+ * `dispose` unlinks its own entry that way while the controller disposes.
  */
 class LifecycleList {
   private head: LifecycleNode | null = null
@@ -135,7 +136,7 @@ class LifecycleList {
     let n = this.head
     while (n !== null) {
       const next = n.next
-      yield n.entry
+      if (!n.unlinked) yield n.entry
       n = next
     }
   }
@@ -145,7 +146,7 @@ class LifecycleList {
     let n = this.tail
     while (n !== null) {
       const prev = n.prev
-      yield n.entry
+      if (!n.unlinked) yield n.entry
       n = prev
     }
   }
@@ -243,13 +244,20 @@ export class ControllerInstance {
   /**
    * Run the factory and produce an api. On throw, the partially-constructed
    * state is rolled back (entries disposed in reverse) and the error is rethrown.
+   * `beforeRollback` runs first: `createRoot` closes plugin delivery there, so
+   * a failed bootstrap tears down in the order `root.dispose()` uses.
    */
-  construct<Props, Api>(factory: (ctx: Ctx, props: Props) => Api, props: Props): Api {
+  construct<Props, Api>(
+    factory: (ctx: Ctx, props: Props) => Api,
+    props: Props,
+    beforeRollback?: () => void,
+  ): Api {
     const ctx = this.buildCtx()
     let api: Api
     try {
       api = factory(ctx, props)
     } catch (err) {
+      beforeRollback?.()
       this.rollbackPartialConstruction()
       throw err
     }
@@ -340,6 +348,34 @@ export class ControllerInstance {
 
   isSuspended(): boolean {
     return this.state === 'suspended'
+  }
+
+  /**
+   * Run a new child's factory, then settle the child against this parent's
+   * state now. The factory runs untracked, so a child built inside an effect
+   * does not make that effect depend on what the factory reads; `collection`
+   * does the same (T2.3). A factory throw propagates after the child's own
+   * rollback.
+   *
+   * `live: false` means this parent was disposed while the child constructed,
+   * for one because the child's factory disposed the root. The child is
+   * disposed then, and the caller must not register it: in the parent's
+   * cleared list its `onDispose` hooks would never run. A parent suspended by
+   * then gets the child suspended, so the child's effects do not run inside a
+   * frozen tree. The parent's next resume wakes it.
+   */
+  private constructChild<Props, Api>(
+    child: ControllerInstance,
+    factory: (ctx: Ctx, props: Props) => Api,
+    props: Props,
+  ): { api: Api; live: boolean } {
+    const api = untracked(() => child.construct(factory, props))
+    if (this.isTerminal()) {
+      child.dispose()
+      return { api, live: false }
+    }
+    if (this.isSuspended()) child.suspend()
+    return { api, live: true }
   }
 
   suspend(): void {
@@ -473,7 +509,8 @@ export class ControllerInstance {
     const internals: CtxInternals = {
       assertLive,
       register: (entry) => {
-        self.entries.push(entry as LifecycleEntry)
+        const node = self.entries.push(entry as LifecycleEntry)
+        return () => self.entries.unlink(node)
       },
       requireClient,
       trackLocalCache: (cache) => {
@@ -547,8 +584,15 @@ export class ControllerInstance {
         // `dispose` ref (the just-activated effect), leaking it.
         if (self.state !== 'suspended') {
           entry.dispose = standaloneEffect(wrapped)
+          // The first run can dispose or suspend this controller. That pass
+          // ran before this entry held its disposer, so it missed the effect:
+          // stop it here. A suspended controller re-runs it on resume.
+          if (self.isTerminal() || self.isSuspended()) {
+            entry.dispose()
+            entry.dispose = null
+          }
         }
-        self.entries.push(entry)
+        if (!self.isTerminal()) self.entries.push(entry)
       },
 
       debug(values) {
@@ -633,8 +677,8 @@ export class ControllerInstance {
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
         // child.construct() rolls back its own partial state on throw; we let
         // the throw propagate so the parent's rollback handles cleanup.
-        const api = childInstance.construct(getFactory(def), props)
-        self.entries.push({ kind: 'child', instance: childInstance })
+        const { api, live } = self.constructChild(childInstance, getFactory(def), props)
+        if (live) self.entries.push({ kind: 'child', instance: childInstance })
         return api
       },
 
@@ -648,20 +692,24 @@ export class ControllerInstance {
         const override = options?.deps
         const childDeps = override !== undefined ? { ...self.deps, ...override } : self.deps
         const childInstance = new ControllerInstance(self, self.rootShared, segment, childDeps)
-        const api = childInstance.construct(getFactory(def), props)
+        const { api, live } = self.constructChild(childInstance, getFactory(def), props)
+        // A child that starts suspended under a suspended parent is not
+        // explicitly suspended: the parent's next resume wakes it.
         const entry = {
           kind: 'child' as const,
           instance: childInstance,
           explicitlySuspended: false,
         }
-        const node = self.entries.push(entry)
-        let disposed = false
+        const node = live ? self.entries.push(entry) : null
+        // A child the dead parent could not adopt is already disposed, so the
+        // handle starts out as a disposed one.
+        let disposed = !live
         return {
           api,
           dispose: () => {
             if (disposed) return
             disposed = true
-            self.entries.unlink(node)
+            if (node !== null) self.entries.unlink(node)
             try {
               childInstance.dispose()
             } catch (err) {
@@ -748,16 +796,19 @@ export class ControllerInstance {
             def = homoOpts.controller as unknown as ControllerDef<unknown, unknown>
             childProps = homoOpts.propsOf(item)
           }
+          // An earlier item's factory can dispose the owner mid-reconcile.
+          if (self.isTerminal()) return null
           const segment = self.makeChildSegment(getFactory(def), getName(def))
           const childDeps =
             options.deps !== undefined ? { ...self.deps, ...options.deps } : self.deps
           const instance = new ControllerInstance(self, self.rootShared, segment, childDeps)
           try {
-            const api = instance.construct(
+            const { api, live } = self.constructChild(
+              instance,
               getFactory(def) as (ctx: Ctx, props: unknown) => Api,
               childProps,
             )
-            return { instance, api, def }
+            return live ? { instance, api, def } : null
           } catch (err) {
             // SPEC §12.1.6: runtime construction errors in collection items
             // route to onError; the bad item is skipped.
@@ -875,8 +926,14 @@ export class ControllerInstance {
         }
         if (self.state !== 'suspended') {
           effectEntry.dispose = standaloneEffect(wrapped)
+          // The first reconcile can dispose or suspend the owner, as a
+          // `ctx.effect`'s first run can. Settle it the same way.
+          if (self.isTerminal() || self.isSuspended()) {
+            effectEntry.dispose()
+            effectEntry.dispose = null
+          }
         }
-        self.entries.push(effectEntry)
+        if (!self.isTerminal()) self.entries.push(effectEntry)
 
         return {
           // readOnly so the writable backing signals can't be mutated through
@@ -962,17 +1019,25 @@ export class ControllerInstance {
               const childDeps =
                 options?.deps !== undefined ? { ...self.deps, ...options.deps } : self.deps
               const instance = new ControllerInstance(self, self.rootShared, segment, childDeps)
+              let built: { api: Api; live: boolean }
               try {
-                const api = instance.construct(getFactory(def), props)
-                childInstance = instance
-                childNode = self.entries.push({ kind: 'child', instance })
-                api$.set(api)
-                status$.set('ready')
-                return api
+                built = self.constructChild(instance, getFactory(def), props)
               } catch (err) {
                 handleFailure(err)
                 throw err
               }
+              // The parent, or this handle, can be disposed while the child
+              // constructs. `constructChild` already disposed a child the dead
+              // parent could not adopt.
+              if (!built.live || disposed) {
+                if (built.live) instance.dispose()
+                throw new Error('[olas] ctx.lazyChild: disposed during load')
+              }
+              childInstance = instance
+              childNode = self.entries.push({ kind: 'child', instance })
+              api$.set(built.api)
+              status$.set('ready')
+              return built.api
             },
             (err) => {
               if (disposed) throw err

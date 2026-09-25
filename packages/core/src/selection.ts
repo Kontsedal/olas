@@ -48,7 +48,9 @@ export function createSelection<T = unknown>(options?: {
     : null
   // Snapshot of the selection just before the first shift-click of a run.
   // Subsequent shift-clicks re-compute the range against this snapshot so the
-  // user can shrink or grow the range. Reset on any non-shift click.
+  // user can shrink or grow the range. Reset on any non-shift click, and by
+  // every programmatic change below: a stale snapshot dropped the ids selected
+  // since, and brought back the ids deselected since, on the next shift-click.
   let preShiftSelection: ReadonlySet<string> | null = null
 
   const size = computed(() => ids.value.size)
@@ -72,6 +74,7 @@ export function createSelection<T = unknown>(options?: {
   }
 
   const select = (id: string): void => {
+    preShiftSelection = null
     const prev = ids.peek()
     if (!prev.has(id)) {
       const next = new Set(prev)
@@ -84,6 +87,7 @@ export function createSelection<T = unknown>(options?: {
   const deselect = (id: string): void => {
     const prev = ids.peek()
     if (!prev.has(id)) return
+    preShiftSelection = null
     const next = new Set(prev)
     next.delete(id)
     ids.set(next)
@@ -93,6 +97,7 @@ export function createSelection<T = unknown>(options?: {
   }
 
   const toggle = (id: string): void => {
+    preShiftSelection = null
     const prev = ids.peek()
     const next = new Set(prev)
     if (prev.has(id)) {
@@ -105,6 +110,7 @@ export function createSelection<T = unknown>(options?: {
   }
 
   const clear = (): void => {
+    preShiftSelection = null
     if (ids.peek().size === 0) {
       anchor = null
       return
@@ -114,6 +120,7 @@ export function createSelection<T = unknown>(options?: {
   }
 
   const selectAll = (incoming: readonly string[]): void => {
+    preShiftSelection = null
     ids.set(new Set(incoming))
     anchor = incoming.length > 0 ? (incoming[incoming.length - 1] ?? null) : null
   }
