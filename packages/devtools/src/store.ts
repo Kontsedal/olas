@@ -56,8 +56,9 @@ export type CacheEntry =
 
 /** One entry in the mutation log. `id` numbers the log entry; `mutationId` is
  * the mutation's own `id`, absent for an inline spec without one. `durationMs`
- * is set on success/error when the entry can be paired with a preceding `run`
- * for the same path and mutation id. */
+ * is set on success/error when the store saw the run start: it pairs the two
+ * by the run id core sends as `causeId`. A `cancel` closes a run core
+ * cancelled, and says why; the store logs one only for a run it saw start. */
 export type MutationEntry =
   | {
       id: number
@@ -86,6 +87,15 @@ export type MutationEntry =
       durationMs?: number
     }
   | { id: number; t: number; kind: 'rollback'; path: readonly string[]; mutationId?: string }
+  | {
+      id: number
+      t: number
+      kind: 'cancel'
+      path: readonly string[]
+      mutationId?: string
+      reason: 'superseded' | 'reset' | 'dispose'
+      durationMs: number
+    }
 
 /** One entry in the field validation log. */
 export type FieldEntry = {
@@ -149,6 +159,13 @@ export const DEFAULT_MAX_TIMELINE_ENTRIES = 10_000
  * unbounded. Active and suspended nodes are never pruned.
  */
 export const DEFAULT_MAX_DISPOSED_NODES = 200
+
+/**
+ * Cap on runs the store saw start and has not seen end. A core that reports
+ * no `mutation:cancel` leaves each superseded run here; past the cap the
+ * oldest start is dropped.
+ */
+const MAX_PENDING_RUNS = 1000
 
 /** Options for `new DevtoolsStore(options?)`. Every field is optional. */
 export type DevtoolsStoreOptions = {
@@ -421,11 +438,16 @@ export class DevtoolsStore {
   private readonly index = new SearchIndex()
 
   /**
-   * Pending `run` start times, in a trie by controller path, then by mutation
-   * id: a FIFO queue each. Overlapping runs of one mutation each pair with
-   * their own start (T6.3). The trie lets a dispose drop a controller's
-   * starts and all its descendants' in O(depth), where a flat map needed a
-   * scan of every pending key.
+   * Start times of the runs in flight, by run id. Core stamps that id as the
+   * `causeId` of every event of the run, so a settle or a cancel finds its
+   * own start. Capped at `MAX_PENDING_RUNS`, oldest first.
+   */
+  private readonly runStarts = new Map<string, number>()
+
+  /**
+   * Start times of runs with no `causeId`, which only a hand-built event
+   * lacks: a trie by controller path, then by mutation id, a FIFO queue
+   * each. A dispose drops a controller's subtree of it in O(depth).
    */
   private starts: StartNode = newStartNode()
 
@@ -536,6 +558,21 @@ export class DevtoolsStore {
 
   /** Apply one event. Exposed for tests. */
   handle(event: DebugEvent): void {
+    if (event.type === 'mutation:cancel') {
+      // A queued run dropped before it started, or a run from before `attach`
+      // or a Clear, has no start here and no run on screen to close.
+      const durationMs = this.consumeStart(event.path, event.id, event.causeId)
+      if (durationMs === undefined) return
+      this.pushTimeline(event)
+      this.pushMutation({
+        kind: 'cancel',
+        path: event.path,
+        mutationId: event.id,
+        reason: event.reason,
+        durationMs,
+      })
+      return
+    }
     // The subscriber count moves first: a synchronous flush inside
     // `pushTimeline` re-seeds it from the snapshot, which already includes
     // this event, and a delta applied after that would count it twice.
@@ -601,9 +638,9 @@ export class DevtoolsStore {
           this.disposedQueue.push({ cell, seq: cell.disposeSeq })
           this.pruneDisposed()
         }
-        // A controller that disposed mid-mutation (before `success`/`error`
-        // ever fired) would otherwise leave its `mutation:run` start entry
-        // in `mutationStarts` forever. Drop any starts under this path.
+        // A hand-built run with no `causeId` gets no cancel, so its start would
+        // stay forever. A run with one stays: core reports its cancel after
+        // this event, and a detached run settles after it.
         this.dropStartsForPath(event.path)
         return
       }
@@ -649,19 +686,25 @@ export class DevtoolsStore {
         return
       }
       case 'mutation:run': {
-        let node = this.starts
-        for (const seg of event.path) {
-          let kid = node.kids.get(seg)
-          if (kid === undefined) {
-            kid = newStartNode()
-            node.kids.set(seg, kid)
+        const runs = this.runStarts
+        if (event.causeId !== undefined) {
+          runs.set(event.causeId, this.now())
+          if (runs.size > MAX_PENDING_RUNS) runs.delete(runs.keys().next().value as string)
+        } else {
+          let node = this.starts
+          for (const seg of event.path) {
+            let kid = node.kids.get(seg)
+            if (kid === undefined) {
+              kid = newStartNode()
+              node.kids.set(seg, kid)
+            }
+            node = kid
           }
-          node = kid
+          const mutationId = event.id ?? ''
+          const q = node.ids.get(mutationId)
+          if (q === undefined) node.ids.set(mutationId, [this.now()])
+          else q.push(this.now())
         }
-        const mutationId = event.id ?? ''
-        const q = node.ids.get(mutationId)
-        if (q === undefined) node.ids.set(mutationId, [this.now()])
-        else q.push(this.now())
         this.pushMutation({
           kind: 'run',
           path: event.path,
@@ -671,7 +714,7 @@ export class DevtoolsStore {
         return
       }
       case 'mutation:success': {
-        const durationMs = this.consumeStart(event.path, event.id)
+        const durationMs = this.consumeStart(event.path, event.id, event.causeId)
         this.pushMutation({
           kind: 'success',
           path: event.path,
@@ -682,7 +725,7 @@ export class DevtoolsStore {
         return
       }
       case 'mutation:error': {
-        const durationMs = this.consumeStart(event.path, event.id)
+        const durationMs = this.consumeStart(event.path, event.id, event.causeId)
         this.pushMutation({
           kind: 'error',
           path: event.path,
@@ -731,6 +774,7 @@ export class DevtoolsStore {
     // user's "start fresh" gesture; any subsequent `success`/`error` for a
     // pre-clear `run` would have produced a duration anchored to noise.
     this.starts = newStartNode()
+    this.runStarts.clear()
   }
 
   /**
@@ -966,10 +1010,18 @@ export class DevtoolsStore {
 
   // ---- mutation timing ----------------------------------------------------
 
+  /** The run's duration so far, forgetting its start; undefined when the store never saw it start. */
   private consumeStart(
     path: readonly string[],
     mutationId: string | undefined,
+    causeId: string | undefined,
   ): number | undefined {
+    if (causeId !== undefined) {
+      const startedAt = this.runStarts.get(causeId)
+      if (startedAt === undefined) return undefined
+      this.runStarts.delete(causeId)
+      return this.now() - startedAt
+    }
     const trail: StartNode[] = [this.starts]
     for (const seg of path) {
       const kid = (trail[trail.length - 1] as StartNode).kids.get(seg)
@@ -979,10 +1031,8 @@ export class DevtoolsStore {
     const node = trail[trail.length - 1] as StartNode
     const q = node.ids.get(mutationId ?? '')
     if (q === undefined) return undefined
-    // FIFO: pair this settle with the OLDEST pending start so overlapping runs
-    // of the same mutation each get a duration (T6.3). Exact run↔settle
-    // attribution isn't possible — the debug bus carries no per-run id — but
-    // FIFO never loses a start the way the old single-value map did.
+    // With no run id, pair this settle with the OLDEST pending start, so
+    // overlapping runs of the same mutation each get a duration (T6.3).
     const startedAt = q.shift() as number
     if (q.length === 0) node.ids.delete(mutationId ?? '')
     // Prune the now-empty tail of the path, so the trie holds only paths
@@ -996,9 +1046,9 @@ export class DevtoolsStore {
   }
 
   /**
-   * Drop every pending mutation-start record under `path` (and its
-   * descendants). Called on `controller:disposed` so a dispose mid-mutation
-   * doesn't leave a start behind forever.
+   * Drop every cause-less start under `path` (and its descendants). Called
+   * on `controller:disposed`, so a hand-built run that never settles does not
+   * stay forever.
    */
   private dropStartsForPath(path: readonly string[]): void {
     let node: StartNode | undefined = this.starts

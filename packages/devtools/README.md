@@ -35,7 +35,9 @@ export function AppShell() {
 
 The panel reads the events that `@kontsedal/olas-core` emits only in its development build. Core's `development` export condition points at that build, and Vite's dev server, webpack and Rspack in development mode, and Next.js in dev resolve it without configuration. With esbuild or Rollup, add `conditions: ['development']` to the dev config. Against core's default build, the panel shows the cache but no controller tree or timeline (SPEC §23).
 
-`DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open and minimized state persist to `localStorage`.
+`DevtoolsLauncher` renders a small launcher button in the bottom right; clicking it opens a draggable, resizable window with the panel. Position + size + open and minimized state persist to `localStorage`. The launcher records from the moment it mounts, and closing or minimizing the window keeps what it recorded.
+
+A devtools error stays in the devtools. A render error inside the panel shows in place of the panel, with a Retry button, and the host app stays mounted.
 
 If you'd rather host the panel yourself (e.g., fixed sidebar in a layout), import `DevtoolsPanel` directly and size it however you like. Styles are scoped to the `.olas-devtools-*` class prefix; no CSS imports needed.
 
@@ -45,11 +47,11 @@ A search box sits above the tabs. Press `/` anywhere in the panel to focus it. I
 
 | Tab | Content |
 |-----|---------|
-| **Timeline** | The default. Every event, newest first, grouped by cause: a mutation run, its optimistic write and its rollback read as one collapsible chain. A cache write expands to a before-and-after diff. A plugin's `host.debug` events carry the plugin's name, and a chip per lane shows or hides them. |
+| **Timeline** | The default. Every event, newest first, grouped by cause: a mutation run, its optimistic write and its rollback read as one collapsible chain. A superseded, reset or disposed run ends its chain with `cancel` and the reason. A cache write expands to a before-and-after diff. A plugin's `host.debug` events carry the plugin's name, and a chip per lane shows or hides them. |
 | **Tree** | Live controller tree. Each node shows its path segment, lifecycle state and its `ctx.debug` variables, live. A disposed node stays for a while, greyed, with its variables frozen at dispose time. |
 | **Cache** | Chronological log of cache events. |
 | **Inspector** | Live state of every cache entry, refreshed on cache events. |
-| **Mutations** | Chronological log of `mutation:run`, `success`, `error` and `rollback` events. |
+| **Mutations** | Chronological log of `mutation:run`, `success`, `error`, `rollback` and `cancel` events. A settle or a cancel shows how long its own run took. |
 | **Fields** | Field-level validation outcomes. |
 
 Every long view mounts only the rows in view, so a 10,000-event timeline scrolls like a short one. The **Clear** button empties the event logs and the timeline. The tree and the inspector show live state rather than a log, so Clear keeps them.
@@ -72,7 +74,8 @@ function DevtoolsPanel(props: {
   defaultTab?: DevtoolsTab
   maxEntries?: number
   maxTimelineEntries?: number
-  urlHashKey?: string
+  urlHashKey?: string         // its own key=value segment of the hash; the rest stays as it was
+  store?: DevtoolsStore       // render this store; its owner attaches it, and it outlives the panel
 }): ReactElement
 
 type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
@@ -107,11 +110,13 @@ class DevtoolsStore {
 
 ## Important: what the panel keeps
 
-The panel subscribes to `root.debug` on mount, and the bus replays the live controller tree to it, so the Tree is complete from the start. Cache, mutation and field events that fired before the mount are not replayed. Mount the panel early if you want them.
+The panel subscribes to `root.debug` on mount, and the bus replays the live controller tree to it, so the Tree is complete from the start. Cache, mutation and field events that fired before the mount are not replayed. `<DevtoolsLauncher>` subscribes when it mounts, not when its window opens, so render it next to your app. A `<DevtoolsPanel>` of your own records from its own mount.
+
+With `urlHashKey`, the panel keeps its tab and filters in one `key=value` segment of the URL hash. It writes only when the rest of the hash is empty or `key=value` pairs too. It leaves a hash router's path or an anchor untouched, so there the state does not persist.
 
 Memory stays bounded however long the session runs. The timeline keeps the newest `maxTimelineEntries` events, default 10,000, and its toolbar counts the ones it dropped. The cache, mutation and field logs keep `maxEntries` each, default 100. The tree drops the earliest-disposed subtrees beyond `maxDisposedNodes`, default 200, a `DevtoolsStore` option.
 
-If you need historical state, build a parallel `DevtoolsStore` early (next to `createRoot`) and pass it into a custom UI later.
+If you need historical state, build a `DevtoolsStore` early, next to `createRoot`, and `attach` it. Pass it to `<DevtoolsPanel store={store}>` or to a custom UI later. The panel renders a store it is given and leaves attaching it to you.
 
 ## What's emitted by the runtime
 
@@ -120,7 +125,7 @@ Spec §20.9 lists the full `DebugEvent` union. In development builds the runtime
 - **controller:** `constructed`, `suspended`, `resumed`, `disposed` and `debug`
 - **cache:** `subscribed`, `unsubscribed`, `fetch-start`, `fetch-success`, `fetch-error`, `set-data`, `invalidated` and `gc`
 - **snapshot:** `push`, `rollback` and `finalize`, for optimistic writes
-- **mutation:** `run`, `success`, `error` and `rollback`
+- **mutation:** `run`, `success`, `error`, `rollback` and `cancel`
 - **field:** `validated`
 - **plugin:** `event`, for each `host.debug(payload)` a plugin makes
 

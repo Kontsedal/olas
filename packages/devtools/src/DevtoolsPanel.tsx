@@ -1,13 +1,22 @@
-import type { DebugCacheEntry, DebugEvent, ReadSignal, Root } from '@kontsedal/olas-core'
+import {
+  type DebugCacheEntry,
+  type DebugEvent,
+  effect,
+  type ReadSignal,
+  type Root,
+} from '@kontsedal/olas-core'
 import { useValue } from '@kontsedal/olas-react'
 import {
+  Component,
   type KeyboardEvent,
   type ReactElement,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from 'react'
 import { type Diff, diffValues, hasChange } from './diff'
 import { badgeLabel, eventPayload, eventTarget, laneOf, timelineKindClass } from './events'
@@ -68,9 +77,18 @@ export type DevtoolsPanelProps = {
   maxTimelineEntries?: number
   /**
    * Persist filter state to the URL hash under this key. When set,
-   * reloading the page restores filter + tab. Default: no persistence.
+   * reloading the page restores filter + tab. The panel writes its own
+   * `key=value` segment and leaves the rest of the hash as it was. A hash
+   * that is not `key=value` pairs, such as a router's path or an anchor, is
+   * never written. Default: no persistence.
    */
   urlHashKey?: string
+  /**
+   * A store to render instead of one the panel builds. Its owner attaches
+   * it, and its history outlives the panel. With it, `maxEntries` and
+   * `maxTimelineEntries` do nothing. `<DevtoolsLauncher>` passes one.
+   */
+  store?: DevtoolsStore
 }
 
 /** A search jump: the row to scroll to and highlight. `nonce` makes a repeat jump fire again. */
@@ -91,12 +109,66 @@ type Focus = { tab: DevtoolsTab; key: string; nonce: number }
  *
  * Styled inline (no CSS import needed) and scoped to the `.olas-devtools-*`
  * class prefix. Hosts override the palette via `--olas-*` custom properties.
- * Spec §14.
+ * A render error inside the panel shows in the panel, never unmounting the
+ * host app. Spec §14.
  */
 export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
-  const { root, defaultTab = 'timeline', maxEntries, maxTimelineEntries, urlHashKey } = props
+  return (
+    <Boundary>
+      <Panel {...props} />
+    </Boundary>
+  )
+}
+
+/**
+ * Keeps a devtools bug inside the devtools. The panel renders in the host
+ * app's React tree, where an uncaught error unmounts everything. With
+ * `quiet`, a failure renders nothing; otherwise it shows the error and a
+ * Retry button.
+ */
+export class Boundary extends Component<
+  { children: ReactNode; quiet?: boolean },
+  { failure: { error: unknown } | null }
+> {
+  override state: { failure: { error: unknown } | null } = { failure: null }
+
+  static getDerivedStateFromError(error: unknown): { failure: { error: unknown } } {
+    return { failure: { error } }
+  }
+
+  override render(): ReactNode {
+    const { failure } = this.state
+    if (failure === null) return this.props.children
+    if (this.props.quiet) return null
+    return (
+      <div className="olas-devtools" role="alert">
+        <style>{DEVTOOLS_CSS}</style>
+        <Empty title="The devtools panel hit an error" hint={toSearchText(failure.error, 300)} />
+        <button
+          type="button"
+          className="olas-devtools-clear"
+          onClick={() => this.setState({ failure: null })}
+        >
+          Retry
+        </button>
+      </div>
+    )
+  }
+}
+
+/**
+ * The store a live panel reads. Without `given`, it builds one and attaches it
+ * to `root` while mounted. A `given` store is its owner's to attach.
+ */
+export function usePanelStore(
+  root: Pick<Root<unknown>, 'debug'>,
+  maxEntries: number | undefined,
+  maxTimelineEntries: number | undefined,
+  given?: DevtoolsStore,
+): DevtoolsStore {
   const store = useMemo(
     () =>
+      given ??
       new DevtoolsStore({
         ...(maxEntries !== undefined ? { maxEntries } : {}),
         ...(maxTimelineEntries !== undefined ? { maxTimelineEntries } : {}),
@@ -105,9 +177,15 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement {
         // directly without this option and stay synchronous.
         coalesce: 'raf',
       }),
-    [maxEntries, maxTimelineEntries],
+    [given, maxEntries, maxTimelineEntries],
   )
-  useEffect(() => store.attach(root), [root, store])
+  useEffect(() => (given === undefined ? store.attach(root) : undefined), [root, store, given])
+  return store
+}
+
+function Panel(props: DevtoolsPanelProps): ReactElement {
+  const { root, defaultTab = 'timeline', maxEntries, maxTimelineEntries, urlHashKey } = props
+  const store = usePanelStore(root, maxEntries, maxTimelineEntries, props.store)
 
   // Initial state read from URL hash if `urlHashKey` is set.
   const initial = useMemo(() => readUrlHash(urlHashKey, defaultTab), [urlHashKey, defaultTab])
@@ -462,7 +540,7 @@ function rollupPending(entries: readonly MutationEntry[]): Map<string, number> {
     if (e.kind === 'run') {
       inFlight.set(key, (inFlight.get(key) ?? 0) + 1)
       out.set(pathKey, (out.get(pathKey) ?? 0) + 1)
-    } else if (e.kind === 'success' || e.kind === 'error') {
+    } else if (e.kind === 'success' || e.kind === 'error' || e.kind === 'cancel') {
       // Only a settle for a (path, mutation id) with a run in flight lowers the
       // path's count: the run may predate the panel, a Clear, or the log's
       // window, and another mutation's badge must not drop with it.
@@ -611,12 +689,45 @@ function DebugVar({ name, value }: { name: string; value: unknown }): ReactEleme
   )
 }
 
-/** Subscribes to a signal via `use()` so the rendered value updates live. */
+/**
+ * Renders a signal's value and follows it. A read that throws, such as a
+ * computed over an empty list, shows the error in place. It follows the
+ * signal through an effect that catches that throw: `subscribeChanges`
+ * rethrows it into the write that made the signal throw, which is the app's.
+ */
 function ReactiveValue({ signal }: { signal: SignalLike }): ReactElement {
-  const value = useValue(signal as unknown as ReadSignal<unknown>)
+  // One box per thrown error, so the snapshot stays stable while a computed
+  // keeps rethrowing the error it cached.
+  const failure = useRef<{ error: unknown } | null>(null)
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      let first = true
+      return effect(() => {
+        try {
+          void (signal as unknown as ReadSignal<unknown>).value
+        } catch {
+          // The render shows it.
+        }
+        if (first) first = false
+        else onChange()
+      })
+    },
+    [signal],
+  )
+  const read = useCallback((): unknown => {
+    try {
+      return signal.peek()
+    } catch (error) {
+      if (failure.current?.error !== error) failure.current = { error }
+      return failure.current
+    }
+  }, [signal])
+  const value = useSyncExternalStore(subscribe, read, read)
+  const threw = value !== null && value === failure.current
   return (
     <span className="olas-devtools-var-value">
-      <JsonView value={value} />
+      {threw && <span className="olas-devtools-json-summary">threw </span>}
+      <JsonView value={threw ? (value as { error: unknown }).error : value} />
     </span>
   )
 }
@@ -929,12 +1040,18 @@ function groupHeadline(events: readonly TimelineEvent[]): string {
   return `${badgeLabel(first)} · ${eventTarget(first)}`
 }
 
-/** Worst outcome seen in a group — drives the group's accent color. */
-function groupStatus(events: readonly TimelineEvent[]): 'error' | 'rollback' | 'ok' | 'active' {
+/**
+ * Worst outcome seen in a group — drives the group's accent color. A
+ * cancelled run has no outcome, so its group keeps the neutral edge.
+ */
+function groupStatus(
+  events: readonly TimelineEvent[],
+): 'error' | 'rollback' | 'ok' | 'cancelled' | 'active' {
   const types = new Set(events.map((e) => e.event.type))
   if (types.has('mutation:error') || types.has('cache:fetch-error')) return 'error'
   if (types.has('mutation:rollback') || types.has('snapshot:rollback')) return 'rollback'
   if (types.has('mutation:success') || types.has('cache:fetch-success')) return 'ok'
+  if (types.has('mutation:cancel')) return 'cancelled'
   return 'active'
 }
 
@@ -1123,16 +1240,28 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
+/**
+ * Write the panel state as one `key=value` segment of the hash. The rest of
+ * the hash is the app's, a router's path or an anchor, so it keeps its exact
+ * bytes: the panel writes only beside other `key=value` segments, never
+ * re-encodes one, and keeps `history.state`.
+ */
 function writeUrlHash(
   key: string,
   state: { tab: DevtoolsTab; filters: Record<DevtoolsTab, string> },
 ): void {
   if (typeof window === 'undefined') return
-  const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-  params.set(key, encodeURIComponent(JSON.stringify(state)))
-  const next = `#${params.toString()}`
+  const hash = window.location.hash.replace(/^#/, '')
+  const segment = new URLSearchParams([[key, encodeURIComponent(JSON.stringify(state))]]).toString()
+  const name = segment.slice(0, segment.indexOf('=') + 1)
+  const parts = hash === '' ? [] : hash.split('&')
+  if (!parts.every((p) => p === '' || /^[^=/?]+=/.test(p))) return
+  const at = parts.findIndex((p) => p.startsWith(name))
+  if (at === -1) parts.push(segment)
+  else parts[at] = segment
+  const next = `#${parts.join('&')}`
   if (next !== window.location.hash) {
-    window.history.replaceState(null, '', next)
+    window.history.replaceState(window.history.state, '', next)
   }
 }
 
@@ -1228,7 +1357,7 @@ function InspectorView({
 }
 
 function inspectorHaystack(e: DebugCacheEntry): string {
-  return [...e.key.map(String), e.status, toSearchText(e.data)].join(' ')
+  return [toSearchText(e.key), e.status, toSearchText(e.data)].join(' ')
 }
 
 function InspectorRow({
@@ -1299,7 +1428,7 @@ function CacheView({ entries, filter }: { entries: CacheEntry[]; filter: string 
 }
 
 function cacheHaystack(e: CacheEntry): string {
-  const parts: string[] = [e.kind, ...e.queryKey.map((p) => String(p))]
+  const parts: string[] = [e.kind, toSearchText(e.queryKey)]
   if (e.kind === 'fetch-error') parts.push(toSearchText(e.error))
   if (e.kind === 'subscribed' || e.kind === 'unsubscribed') parts.push(...e.subscriberPath)
   return parts.join(' ')
@@ -1379,6 +1508,7 @@ function mutationHaystack(e: MutationEntry): string {
   if (e.kind === 'run') parts.push(toSearchText(e.vars))
   if (e.kind === 'success') parts.push(toSearchText(e.result))
   if (e.kind === 'error') parts.push(toSearchText(e.error))
+  if (e.kind === 'cancel') parts.push(e.reason)
   return parts.join(' ')
 }
 
@@ -1398,7 +1528,9 @@ function MutationRow({
         ? 'olas-devtools-kind-rollback'
         : entry.kind === 'success'
           ? 'olas-devtools-kind-success'
-          : ''
+          : entry.kind === 'cancel'
+            ? 'olas-devtools-kind-warn'
+            : ''
 
   const target = entry.mutationId
     ? `${entry.mutationId} · ${formatPath(entry.path)}`
@@ -1413,7 +1545,7 @@ function MutationRow({
   } else if (entry.kind === 'error') {
     payload = entry.error
     if (entry.durationMs !== undefined) suffix = `${entry.durationMs}ms`
-  }
+  } else if (entry.kind === 'cancel') suffix = `${entry.reason} · ${entry.durationMs}ms`
 
   return (
     <Row

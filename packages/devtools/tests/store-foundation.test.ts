@@ -273,7 +273,7 @@ describe('store.search — T8.3', () => {
     const groups = store.search('posts')
     const queries = groups.find((g) => g.kind === 'query')
     expect(queries?.hits[0]).toMatchObject({
-      label: 'users/byId · user › [object Object]',
+      label: 'users/byId · user › {"id":42,"tab":"posts"}',
       tab: 'inspector',
     })
     expect(store.search('users/byId').some((g) => g.kind === 'query')).toBe(true)

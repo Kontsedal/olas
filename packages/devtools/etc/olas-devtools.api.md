@@ -90,6 +90,7 @@ export type DevtoolsPanelProps = {
     maxEntries?: number;
     maxTimelineEntries?: number;
     urlHashKey?: string;
+    store?: DevtoolsStore;
 };
 
 // @public
@@ -180,6 +181,14 @@ export type MutationEntry = {
     kind: 'rollback';
     path: readonly string[];
     mutationId?: string;
+} | {
+    id: number;
+    t: number;
+    kind: 'cancel';
+    path: readonly string[];
+    mutationId?: string;
+    reason: 'superseded' | 'reset' | 'dispose';
+    durationMs: number;
 };
 
 // @public

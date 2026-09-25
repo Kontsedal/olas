@@ -9,12 +9,12 @@
 // API:
 //   <DevtoolsLauncher root={root} />
 //
-// Optional props mirror DevtoolsPanel's. The launcher manages the window
-// chrome and ferries the rest through.
+// Optional props mirror DevtoolsPanel's. The launcher owns the store and the
+// window chrome, and ferries the rest through.
 
 import type { Root } from '@kontsedal/olas-core'
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
-import { DevtoolsPanel, type DevtoolsTab } from './DevtoolsPanel'
+import { Boundary, DevtoolsPanel, type DevtoolsTab, usePanelStore } from './DevtoolsPanel'
 import { DEVTOOLS_CSS } from './styles'
 
 /**
@@ -23,7 +23,8 @@ import { DEVTOOLS_CSS } from './styles'
  */
 export type DevtoolsLauncherProps = {
   /**
-   * The root to inspect. The panel subscribes to `root.debug` on mount.
+   * The root to inspect. The launcher subscribes to `root.debug` on mount and
+   * records until it unmounts, with the window closed or minimized too.
    */
   root: Pick<Root<unknown>, 'debug'>
   /**
@@ -74,8 +75,21 @@ const MARGIN = 16
  * resizes it. Position, size, and open and minimized state persist to
  * `localStorage` under `storageKey`. Render `<DevtoolsLauncher root={root} />`
  * once, near the app's root, typically only in development builds.
+ *
+ * The launcher owns the panel's store: it records from mount, and the
+ * history survives closing and minimizing the window. A devtools error
+ * never unmounts the host app; a failure outside the panel hides the launcher.
  */
 export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
+  return (
+    <Boundary quiet>
+      <Launcher {...props} />
+    </Boundary>
+  )
+}
+
+function Launcher(props: DevtoolsLauncherProps): ReactElement {
+  const store = usePanelStore(props.root, props.maxEntries, props.maxTimelineEntries)
   const storageKey = props.storageKey ?? 'olas-devtools-window'
   const [state, setState] = useState<WindowState>(() => loadState(storageKey, props.initial))
 
@@ -118,9 +132,8 @@ export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
             <div className="olas-devtools-floating-body">
               <DevtoolsPanel
                 root={props.root}
+                store={store}
                 defaultTab={props.defaultTab}
-                maxEntries={props.maxEntries}
-                maxTimelineEntries={props.maxTimelineEntries}
                 urlHashKey={props.urlHashKey}
               />
             </div>

@@ -91,12 +91,12 @@ describe('<DevtoolsLauncher> open / close', () => {
     expect(launcher().getAttribute('aria-label')).toBe('Hide Olas devtools')
     expect(launcher().className).toContain('olas-devtools-launcher-active')
     expect(geometry()).toEqual({ left: '488px', top: '176px', width: '520px', height: '520px' })
-    expect(handlers.size).toBe(1) // the panel attached to the root's bus
+    expect(handlers.size).toBe(1) // the launcher's one subscription
     expect(persisted().open).toBe(true)
 
     fireEvent.click(launcher())
     expect(screen.queryByRole('dialog')).toBeNull()
-    expect(handlers.size).toBe(0) // unmounting the panel detached it
+    expect(handlers.size).toBe(1) // the launcher keeps recording while closed
     expect(persisted().open).toBe(false)
   })
 
@@ -122,7 +122,7 @@ describe('<DevtoolsLauncher> open / close', () => {
     expect(geometry().height).toBe('30px')
     expect(screen.queryByTestId('olas-devtools')).toBeNull()
     expect(screen.queryByRole('separator', { name: 'Resize' })).toBeNull()
-    expect(handlers.size).toBe(0) // a minimized window holds no subscription
+    expect(handlers.size).toBe(1) // the launcher keeps recording while minimized
     const expand = screen.getByRole('button', { name: 'Expand' })
     expect(expand.textContent).toBe('▢')
     expect(persisted().minimized).toBe(true)

@@ -22,7 +22,10 @@ export function eventTarget(ev: DebugEvent): string {
     case 'mutation:success':
     case 'mutation:error':
     case 'mutation:rollback':
-      return ev.id !== undefined ? `${ev.id} · ${formatPath(ev.path)}` : formatPath(ev.path)
+    case 'mutation:cancel': {
+      const target = ev.id !== undefined ? `${ev.id} · ${formatPath(ev.path)}` : formatPath(ev.path)
+      return ev.type === 'mutation:cancel' ? `${target} (${ev.reason})` : target
+    }
     case 'field:validated':
       return `${formatPath(ev.path)} · ${ev.field}`
     case 'plugin:event':
@@ -72,11 +75,13 @@ export function timelineKindClass(type: DebugEvent['type']): string {
   if (type === 'mutation:success' || type === 'cache:fetch-success') {
     return 'olas-devtools-kind-success'
   }
+  // A deliberate end, like a dispose: worth noticing, not a failure.
   if (
     type === 'cache:invalidated' ||
     type === 'cache:gc' ||
     type === 'controller:disposed' ||
-    type === 'controller:suspended'
+    type === 'controller:suspended' ||
+    type === 'mutation:cancel'
   ) {
     return 'olas-devtools-kind-warn'
   }
