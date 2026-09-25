@@ -29,6 +29,9 @@ edges:
   - { type: tested-by, target: ../../packages/devtools/tests/url-hash-hostile.test.tsx }
   - { type: tested-by, target: ../../packages/devtools/tests/diff.test.ts }
   - { type: tested-by, target: ../../packages/devtools/tests/store-subscribers.test.tsx }
+  - { type: tested-by, target: ../../packages/devtools/tests/store-cancel.test.ts }
+  - { type: tested-by, target: ../../packages/devtools/tests/panel-review.test.tsx }
+  - { type: tested-by, target: ../../packages/devtools/tests/format.test.ts }
   - { type: uses, target: devtools.md }
   - { type: uses, target: react.md }
   - { type: related, target: ../decisions/devtools-overhaul.md }
@@ -54,6 +57,7 @@ function DevtoolsPanel(props: {
   maxEntries?: number         // per-log cap, default 100
   maxTimelineEntries?: number // timeline ring capacity, default 10,000
   urlHashKey?: string
+  store?: DevtoolsStore       // render this store; its owner attaches it
 }): ReactElement
 
 function DevtoolsLauncher(props: {
@@ -71,6 +75,7 @@ class DevtoolsStore {
   readonly cache$: ReadSignal<CacheEntry[]>           // cache event log (ring, maxEntries)
   readonly mutations$: ReadSignal<MutationEntry[]>    // mutation event log (ring)
   // MutationEntry.mutationId is the mutation's own id (event.id); MutationEntry.id numbers the entry
+  // kind: 'run' | 'success' | 'error' | 'rollback' | 'cancel'; a cancel carries reason and durationMs
   readonly fields$: ReadSignal<FieldEntry[]>          // field-validation log (ring)
   readonly events$: ReadSignal<TimelineEvent[]>       // unified timeline (ring, maxTimelineEntries)
   readonly droppedEvents$: ReadSignal<number>         // timeline events the ring overwrote
@@ -101,7 +106,7 @@ The log and tree signals became `ReadSignal`s in the 8A change. The store derive
 ## Architecture
 
 1. **`store.ts`** — pure logic, no React. `handle(event)` routes each `DebugEvent` to the timeline ring, one of the three log rings and the keyed tree. Applying an event costs constant time plus the path depth, and nothing in `handle` scans the tree or a log.
-2. **`DevtoolsPanel.tsx`** — the React component. It builds a `DevtoolsStore` with `coalesce: 'raf'`, attaches it in an effect, and reads each signal through `@kontsedal/olas-react`'s `useValue`.
+2. **`DevtoolsPanel.tsx`** — the React component. `usePanelStore` builds a `DevtoolsStore` with `coalesce: 'raf'` and attaches it in an effect, unless the caller passed a `store`, which its owner attaches. The panel reads each signal through `@kontsedal/olas-react`'s `useValue`. `DevtoolsLauncher.tsx` calls `usePanelStore` itself and hands the store to the panel, so the launcher records from its own mount and keeps the history while the window is closed or minimized. The panel unmounts on close and minimize, and a store built inside it lost everything.
 3. **`virtual.tsx`** — `VirtualList`, the windowed renderer every long view uses, and `useToggles`, which keeps per-row open state outside the row.
 4. **`search.ts` and `Omnibox.tsx`** — the lazily built search index and the search box over it.
 5. **`events.ts` and `util.ts`** — per-event display helpers (badge, target, payload, lane), path and key hashing, the signal duck-type and `toSearchText`.
@@ -115,7 +120,8 @@ The log and tree signals became `ReadSignal`s in the 8A change. The store derive
 - **The keyed tree.** Each controller is a mutable `Cell` in a `Map` by path key (`util.ts` `pathKey`), and each cell keeps its children in a `Map` by segment. A cell caches its immutable `ControllerNode` snapshot. A change clears the snapshot on the cell and its ancestors, stopping at the first one already cleared, and `tree$` rebuilds only those. The tree publishes once per event, at once, whatever `coalesce` says. The panel tests read the tree right after a lifecycle event inside one `act`, and they pin that.
 - **Retained-but-capped disposed nodes.** Each cell counts the nodes and the live nodes in its subtree. A dispose queues the cell. Past `maxDisposedNodes`, the store pops the queue, skips a stale entry or a cell with a live descendant, and removes the largest fully-disposed subtree containing the popped cell. The order is dispose order; the old whole-tree walk used construction order. A compaction keeps the queue within about twice the disposed count, so churn on the same paths does not grow it.
 - **Frozen disposal.** On `controller:disposed` the store replaces each signal in the node's `ctx.debug` record with the value it holds, and records `disposedAt`. A re-construction of a disposed path clears those frozen values unless the new event carries its own.
-- **Mutation starts.** Pending `run` start times sit in a trie by controller path, then by mutation id, as FIFO queues. A settle pops the oldest start and prunes emptied trie nodes. A dispose drops the controller's subtree of the trie in O(depth). The earlier flat map was scanned on every dispose.
+- **Mutation starts.** Core stamps the run id as the `causeId` of every mutation event, so `runStarts` keys each pending start by it (`store.ts:445`). `consumeStart` pairs a settle or a `mutation:cancel` with its own start (`store.ts:1014-1024`). A dispose leaves these starts alone, because core reports a disposed run's cancel a tick after `controller:disposed`, and a detached run settles after it. A core that sends no cancel would leave each superseded start behind, so `MAX_PENDING_RUNS` caps the map at 1,000 and drops the oldest. Only a hand-built event lacks a `causeId`. Such an event falls back to the older trie: a FIFO queue per controller path and mutation id, whose subtree a dispose drops in O(depth).
+- **Cancelled runs.** `handle` routes `mutation:cancel` first (`store.ts:561-575`). A cancel whose start the store holds goes on the timeline and adds a `cancel` entry to the mutation log, with the reason and the duration. A cancel with no start is dropped whole. Core sends one for a queued `serial` run that was dropped before it started, and a run from before `attach` or a Clear has no start either. Before 1.0 the store paired settles oldest-start-first. Three `latest-wins` runs at 0, 100 and 200 ms whose last settled at 210 ms read as a 210 ms success, and the two superseded starts stayed queued forever.
 
 ## Why the tree has a virtual empty root
 
@@ -159,7 +165,7 @@ A plugin's `host.debug(payload)` reaches the bus as `plugin:event` with the plug
 ## T6.3 hardening
 
 - **Bounded tree.** See the retained-but-capped item above. T6.3 set the cap and its default, `DEFAULT_MAX_DISPOSED_NODES = 200`, and neither changed. The prune removes only subtrees whose live count is 0, so it skips active and suspended nodes and any disposed node with a live descendant.
-- **Concurrent mutation durations.** Overlapping runs of the same mutation each pair, oldest first, with their own start. Exact run-to-settle attribution isn't possible, because the bus carries no per-run id on settle, but FIFO keeps every start.
+- **Concurrent mutation durations.** Overlapping runs of the same mutation each pair with their own start. The run id every mutation event carries as `causeId` gives the exact pairing, and the FIFO trie keeps every start of a hand-built run with no id. See "Mutation starts" above.
 - **`JsonView` cycle guard.** `seen` is the set of **ancestors on the current path**, rebuilt immutably per level. A shared reference is no longer mis-flagged `[Circular]`, and true cycles are still caught. Tested in `jsonview.test.tsx`.
 - **Debounced filter.** The per-tab filter input stays responsive, and views filter against a 150ms-debounced value. Each entry's filter text is cached in a `WeakMap` the first time a filter runs over it, and it uses `toSearchText`, so a keystroke re-scans cached strings.
 
@@ -167,9 +173,17 @@ A plugin's `host.debug(payload)` reaches the bus as `plugin:event` with the plug
 
 With `urlHashKey`, the panel reads its tab and filters from the URL hash. `readUrlHash` validates the parsed JSON instead of trusting it. An unknown or non-string `tab` falls back to `defaultTab`, a non-string filter is dropped, and a value that is not a JSON object gives the defaults. Before, a crafted hash with a non-string filter reached `filter.trim()` during render, and with no error boundary React unmounted the host app. `url-hash-hostile.test.tsx` pins the fallbacks.
 
+**The write leaves the app's hash alone** (`DevtoolsPanel.tsx:1249-1276`). `writeUrlHash` splits the hash on `&` and writes only when every segment is `name=value`, with no `/` or `?` in the name. It replaces its own segment where it stands, or appends it, and passes `history.state` to `replaceState`. The panel leaves a hash router's `#/users/42?tab=posts`, an anchor's `#section` and a `#!/inbox` untouched, so there its state does not persist. Until 1.0 the panel parsed the whole hash as URL parameters and re-encoded it. `#/users/42?tab=posts` became `#%2Fusers%2F42%3Ftab=posts&olas=…`, and the write also cleared the router's `history.state`. `panel-review.test.tsx` pins the new rule.
+
 ## Post-mount observability
 
-The bus replays the live-controller snapshot to a new subscriber, so the Tree is complete on mount. Cache, mutation and field events from before the mount are not replayed. Mount the panel early to capture them, or build a `DevtoolsStore` next to `createRoot` and hand it to a custom UI later. `attach` flushes the replay at once, so the tree shows on the first render after mount.
+The bus replays the live-controller snapshot to a new subscriber, so the Tree is complete on mount. Cache, mutation and field events from before the mount are not replayed. `<DevtoolsLauncher>` attaches when it mounts, not when its window opens. To record earlier still, build a `DevtoolsStore` next to `createRoot`, attach it, and pass it to `<DevtoolsPanel store>` or a custom UI later. `attach` flushes the replay at once, so the tree shows on the first render after mount.
+
+## The error boundary
+
+The panel renders inside the host app's React tree, where an uncaught render error unmounts everything. `DevtoolsPanel` wraps its body in `Boundary`, a class component with `getDerivedStateFromError` (`DevtoolsPanel.tsx:129-156`). A failure shows the error and a Retry button in place of the panel. `DevtoolsLauncher` wraps itself in `Boundary quiet`, which renders nothing on a failure outside the panel, such as a `root.debug.subscribe` that throws. React still logs a caught error to the console.
+
+Two data shapes used to throw during render. `formatPath` called `String` on each key member, which throws on a null-prototype object such as `query-string`'s `parse()` output. `formatPayload` now serializes a non-primitive member through a replacer that tracks ancestors: a cycle reads `[Circular]`, a bigint its digits, and a value nothing can read `[unserializable]` (`format.ts:7-36`). `formatPath` caps an object member at 60 characters (`format.ts:52-61`), so `['users', { page: 1 }]` no longer reads `users › [object Object]`. The Cache and Inspector filters build their haystacks with `toSearchText`. The other shape is a `ctx.debug` computed that throws; see "Controller variables" below.
 
 ## The six tabs
 
@@ -186,13 +200,17 @@ The bus replays the live-controller snapshot to a new subscriber, so the Tree is
 
 `store.events$` is a `seq`-ordered ring of every event except `controller:debug`. `groupByCause` folds it into rows. Events sharing a `causeId` collapse into one `<CauseGroup>` at the group's first event. The group array fills by reference as later events arrive, so a whole mutation chain renders together. A group decides its default open state when the panel first sees it: open at 12 events or fewer. Rows render newest-first; a group's inner events stay chronological so cause → effect reads top-down.
 
+`groupStatus` colours a group's edge by its worst outcome (`DevtoolsPanel.tsx:1047-1058`). A group with a `mutation:cancel` and no other outcome is `cancelled`, which has no CSS rule of its own, so it keeps the neutral `--olas-muted` edge. Before `mutation:cancel`, a superseded run's group had no outcome event and read `active` forever. The cancel row's badge takes the warn colour, as `controller:disposed` does, and its target ends in the reason, as in `search · root (superseded)`.
+
 A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.prev, event.data)` from `diff.ts`. That is a small structural walker, both cycle-safe and depth-bounded by `MAX_DIFF_DEPTH`. It highlights added, removed and changed keys, and wholly-unchanged subtrees collapse to "+N unchanged". `diff.ts` deliberately does NOT import core's structural-share internals. The store seeds the per-key diff baseline (`lastDataByKey`) on attach and evicts it on `cache:gc`, so a re-fetch after GC reads as an initial write.
 
 ## Controller variables (`ctx.debug`)
 
 A tree row whose `ControllerNode.debug` record is non-empty renders a **Variables** section, open by default, listing each `name: value` a controller registered via `ctx.debug({...})`. The store sets the record from `controller:constructed`'s `debug` field and updates it on `controller:debug`. `controller:debug` is kept off the timeline, because it is a state re-registration rather than a causal event.
 
-Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:595-622`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
+Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value with `util.ts` `isSignalLike`, which checks for `peek` and `subscribeChanges`. It renders a signal through `<ReactiveValue>` (`DevtoolsPanel.tsx:698-733`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
+
+**A computed that throws** renders as `threw` and the error, in place. `ReactiveValue` reads through `useSyncExternalStore`: `read` catches a throwing `peek()` and returns one box per error object, so the snapshot stays stable while a computed keeps rethrowing its cached error. It follows the signal with core's `effect`, reading `.value` inside a `try`. Until 1.0 it called `useValue`, and two things broke. `computed(() => items.value[0].name)` on an empty list threw during render and unmounted the host app. And `useValue` subscribes through `subscribeChanges`, whose Preact effect rethrows at the end of the batch, so the app's own `items.set([])` threw. The effect's `try` keeps that error out of the app's write.
 
 ## Event-driven inspector (the poll is gone)
 
@@ -202,7 +220,12 @@ The store seeds `cacheState$` from `queryEntries()` once on `attach()` and refre
 
 ## What's tested
 
-291 tests across 20 files (`packages/devtools/tests/`). The 8A work added these:
+330 tests across 23 files (`packages/devtools/tests/`). The second 1.0 review round added two files:
+
+- `store-cancel.test.ts`, 10 tests. Runs pair by `causeId`; `mutation:cancel` closes a run with its reason; a cancel with no start is dropped; a dispose-time cancel after `controller:disposed` still closes its run; the 1,000-start cap. Two tests drive a real `latest-wins` mutation and a real `serial` reset.
+- `panel-review.test.tsx`, 17 tests. The cancelled group and log row, null-prototype and object key members in every view, a throwing `ctx.debug` computed, the boundary, the launcher's own store, and the hash writer.
+
+The 8A work added these:
 
 - `store-stress.test.ts`, 4 tests. It drives 1,001 controllers and 50,000 events in 250-event frames, and the ring ends holding exactly its capacity. Doubling the events costs under 2.5× the time, and a late frame costs under 2.5× an early one. 10,000 siblings cost under 2.5× what 5,000 do.
 - `store-foundation.test.ts`, 30 tests. Ring capacity, dropped count, clear and pause; structural sharing; frozen disposal; dispose-order pruning; queue bound under churn; the start trie; `search` for each kind; lazy, cached index builds; `toSearchText`.

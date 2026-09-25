@@ -63,38 +63,38 @@ export const root = createRoot(app, {
 
 | Name | Signature | Notes |
 |---|---|---|
-| `defineEntity<T>` | `({ name, idOf, isCanonical?, maxSlots? }) => EntityDef<T>` | Module scope. `idOf(value)` returns the id when the value is this entity, else `null` or `undefined` (`packages/entities/src/index.ts:84-87`). |
-| `entitiesPlugin` | `({ entities }) => OlasPlugin` | A duplicate `name` throws when `entitiesPlugin` is called (`index.ts:378-389`). The value is a definition: each root it is installed in gets its own store. `setup` throws without a query engine (`index.ts:392-399`). |
-| `Entities` | `Scope<EntityStore>` | `setup` provides the store under it (`index.ts:343`, `index.ts:400-403`). Read it with `ctx.inject(Entities)` or `root.inject(Entities)`. A test seeds a fake through `RootOptions.scopes`. |
-| `ENTITIES_PLUGIN_NAME` | `'olas-entities'` | The plugin's name, and the `origin` of its backprop writes (`index.ts:336`). |
-| `store.signal(entity, id)` | `ReadSignal<T \| undefined>` | A read of the id's slot, the same handle for as long as anything holds it (`handleFor`, `index.ts:855-893`). It survives `remove` and eviction. Throws for an entity the plugin was not given. |
-| `store.get(entity, id)` | `T \| undefined` | Non-reactive. Allocates no slot (`index.ts:904-913`). |
+| `defineEntity<T>` | `({ name, idOf, isCanonical?, maxSlots? }) => EntityDef<T>` | Module scope. `idOf(value)` returns the id when the value is this entity, else `null` or `undefined` (`packages/entities/src/index.ts:88-91`). |
+| `entitiesPlugin` | `({ entities }) => OlasPlugin` | A duplicate `name` throws when `entitiesPlugin` is called (`index.ts:387-398`). The value is a definition: each root it is installed in gets its own store. `setup` throws without a query engine (`index.ts:401-408`). |
+| `Entities` | `Scope<EntityStore>` | `setup` provides the store under it (`index.ts:352`, `index.ts:409-412`). Read it with `ctx.inject(Entities)` or `root.inject(Entities)`. A test seeds a fake through `RootOptions.scopes`. |
+| `ENTITIES_PLUGIN_NAME` | `'olas-entities'` | The plugin's name, and the `origin` of its backprop writes (`index.ts:345`). |
+| `store.signal(entity, id)` | `ReadSignal<T \| undefined>` | A read of the id's slot, the same handle for as long as anything holds it (`handleFor`, `index.ts:864-904`). It survives `remove` and eviction. Throws for an entity the plugin was not given. |
+| `store.get(entity, id)` | `T \| undefined` | Non-reactive. Allocates no slot (`index.ts:915-924`). |
 | `store.upsert(entity, value)` | `void` | For sources no query carries, such as a WebSocket event. A value whose `idOf` is null is ignored. |
 | `store.update(entity, id, patch, { merge? })` | `void` | Backprops to every query holding the id, in one `batch`. `patch` is a `Partial<T>` merged per `merge` (`'shallow'` by default, or `'deep'`), or an updater `(prev) => next`. A missing entity warns in development and is a no-op. |
-| `store.remove(entity, id)` | `void` | Drops the id from the store and the reverse index. It touches no query (`index.ts:1016-1030`). A handle reads `undefined`, then follows the entity again when it returns. 1.0 renamed it from `invalidate`. |
-| `store.list(entity, { filter? })` | `ReadSignal<T[]>` | Every stored entity of one type, re-derived when a slot for that type changes (`index.ts:1063-1087`). |
-| `store.entries(entity)` | `ReadonlyMap<string, T>` | Devtools snapshot. A fresh `Map` with shallow-cloned, frozen values (`index.ts:1032-1061`). |
-| `store.bindings(entity, id)` | `readonly EntityBinding[]` | Devtools view of the reverse index for one id. Frozen copies; `[]` for an id no query holds (`index.ts:1089-1111`). |
+| `store.remove(entity, id)` | `void` | Drops the id from the store and the reverse index. It touches no query (`index.ts:1027-1041`). A handle reads `undefined`, then follows the entity again when it returns. 1.0 renamed it from `invalidate`. |
+| `store.list(entity, { filter? })` | `ReadSignal<T[]>` | Every stored entity of one type, re-derived when a slot for that type changes (`index.ts:1074-1098`). |
+| `store.entries(entity)` | `ReadonlyMap<string, T>` | Devtools snapshot. A fresh `Map` with shallow-cloned, frozen values (`index.ts:1043-1072`). |
+| `store.bindings(entity, id)` | `readonly EntityBinding[]` | Devtools view of the reverse index for one id. Frozen copies; `[]` for an id no query holds (`index.ts:1100-1122`). |
 
 ## How auto-walk works
 
-The plugin's `onWrite` observes every write of either query kind, whatever its source, except writes whose `origin` is its own name (`index.ts:405-415`). It walks the entry's **current** data, `queries.peek(id, key)`, and falls back to `event.data` only when the engine cannot find the entry. A plugin earlier in the list can write the entry again, or call `update`, before this hook sees the event. Walking the older `event.data` then put stale entities back into the store. Pinned by "a patch made before the plugin walked a reorder lands on the entity, not its old index", which fails on the store assertion with `event.data`.
+The plugin's `onWrite` observes every write of either query kind, whatever its source, except writes whose `origin` is its own name (`index.ts:414-424`). It walks the entry's **current** data, `queries.peek(id, key)`, and falls back to `event.data` only when the engine cannot find the entry. A plugin earlier in the list can write the entry again, or call `update`, before this hook sees the event. Walking the older `event.data` then put stale entities back into the store. Pinned by "a patch made before the plugin walked a reorder lands on the entity, not its old index", which fails on the store assertion with `event.data`.
 
-For each walk, `observe` (`index.ts:711-769`):
+For each walk, `observe` (`index.ts:720-778`):
 
 1. Drops the reverse-index bindings the previous walk of that entry recorded. It rebuilds rather than diffs, bounded by the size of the query.
-2. Walks the data. For each reachable object or array, `claim` runs every registered entity's `idOf` (`index.ts:723-740`). A non-null id means the node is that entity.
-3. Records a binding `(queryId, keyArgs, path)` and writes the node into the entity's slot. With `isCanonical` set, a node that fails it gets the binding but no store write (`index.ts:738`), so a stub like `{ id: '1' }` cannot overwrite the full record.
+2. Walks the data. For each reachable object or array, `claim` runs every registered entity's `idOf` (`index.ts:732-749`). A non-null id means the node is that entity.
+3. Records a binding `(queryId, keyArgs, path)` and writes the node into the entity's slot. With `isCanonical` set, a node that fails it gets the binding but no store write (`index.ts:747`), so a stub like `{ id: '1' }` cannot overwrite the full record.
 
 For an infinite query, the data is the pages array, and the walker's array branch records `[pageIndex, …pathInPage]`.
 
 ### Path accumulator
 
-The walker reuses **one mutable `Array<string | number>`** for the whole traversal, a local of `observe`. It pushes on descent and pops on ascent. `addBinding` clones it with `.slice()` (`index.ts:632-653`), so allocation happens only per recorded binding.
+The walker reuses **one mutable `Array<string | number>`** for the whole traversal, a local of `observe`. It pushes on descent and pops on ascent. `addBinding` clones it with `.slice()` (`index.ts:641-662`), so allocation happens only per recorded binding.
 
 ### Cycles and shared references: each object is descended into once
 
-`walk` (`index.ts:743-763`) keeps two sets per walk:
+`walk` (`index.ts:752-772`) keeps two sets per walk:
 
 - **`inProgress`**, the objects on the current descent path. Reaching one again is a cycle (`post.self = post`). The walk returns with no claim, so a self-loop binds once, at `[]`.
 - **`walked`**, the objects already descended into. Reaching one again is a shared reference, such as one `Post` object at `posts[3]` and at `pinned`. The walk claims the node at this path too, then returns without descending.
@@ -105,20 +105,20 @@ Until 1.0 the walk removed a node from its guard on exit and descended into a sh
 
 ## How backprop works
 
-`update(Post, id, patch)` (`index.ts:922-1014`) does this inside one `batch`:
+`update(Post, id, patch)` (`index.ts:933-1025`) does this inside one `batch`:
 
 1. Reads the current value from the partition without allocating a slot. A missing one warns in development and returns.
 2. Computes `next` from the updater, a deep merge, or a shallow spread.
 3. Writes `next` into the slot.
-4. For each entry the reverse index lists, reads the entry's current data with `queries.peek` and rebuilds it with `replaceEntity` (`index.ts:805-845`), which replaces every node `idOf` claims as `id` with `next`.
-5. Writes the rebuilt data with `host.queries.write` (`index.ts:993`) and re-walks the entry (`index.ts:999`). A nested entity the patch brought in is normalized, and the entry's bindings follow the patch.
-6. With no bindings at all, `absorbNested` stores the nested entities of `next` (`index.ts:776-789`), since no query walk will reach them.
+4. For each entry the reverse index lists, reads the entry's current data with `queries.peek` and rebuilds it with `replaceEntity` (`index.ts:814-854`), which replaces every node `idOf` claims as `id` with `next`.
+5. Writes the rebuilt data with `host.queries.write` (`index.ts:1004`) and re-walks the entry (`index.ts:1010`). A nested entity the patch brought in is normalized, and the entry's bindings follow the patch.
+6. With no bindings at all, `absorbNested` stores the nested entities of `next` (`index.ts:785-798`), since no query walk will reach them.
 
-`replaceEntity` is memoized per object. It calls `idOf` once per reachable object, rebuilds a shared object once, and keeps it shared. It keeps every unchanged subtree by reference and returns the root itself when nothing changed. A cycle back to an ancestor keeps pointing at the original object. It writes a changed key with `defineOwn`, an `Object.defineProperty` call (`index.ts:197-199`), so an own `__proto__` key in query data stays data.
+`replaceEntity` is memoized per object. It calls `idOf` once per reachable object, rebuilds a shared object once, and keeps it shared. It keeps every unchanged subtree by reference and returns the root itself when nothing changed. A cycle back to an ancestor keeps pointing at the original object. It writes a changed key with `defineOwn`, an `Object.defineProperty` call (`index.ts:206-208`), so an own `__proto__` key in query data stays data.
 
 Two outcomes skip the write:
-- **The entry no longer holds the entity.** `update` counts it as `stale`, re-walks the entry through `observe` to drop the binding, and writes nothing (`index.ts:982-988`).
-- **The rebuild changed nothing,** as with an updater that returns the stored value (`index.ts:990`).
+- **The entry no longer holds the entity.** `update` counts it as `stale`, re-walks the entry through `observe` to drop the binding, and writes nothing (`index.ts:993-999`).
+- **The rebuild changed nothing,** as with an updater that returns the stored value (`index.ts:1001`).
 
 ### Why backprop does not follow the recorded paths (1.0)
 
@@ -139,7 +139,7 @@ The host stamps each backprop write with `origin: 'olas-entities'`, so the plugi
 
 ## Devtools lane
 
-After each `update`, a development build calls `host.debug` with the fan-out (`index.ts:1004-1013`):
+After each `update`, a development build calls `host.debug` with the fan-out (`index.ts:1015-1024`):
 
 ```ts nocheck
 { kind: 'update', entity: 'Post', id: 'p1', entries: 2, stale: 0, queries: ['feed', 'profile'] }
@@ -151,9 +151,9 @@ The package ships a `development` build for this (`packages/entities/tsdown.conf
 
 ## What the plugin uses from the host
 
-- `onWrite` feeds the walker, and `onRemove` drops the removed entry's bindings (`index.ts:405-422`).
+- `onWrite` feeds the walker, and `onRemove` drops the removed entry's bindings (`index.ts:414-431`).
 - `host.queries.peek` reads each entry's current data for the walk and for backprop, and `host.queries.write` carries backprop.
-- `host.queries.hashKey` builds the binding key, `${queryId}\u0000${hashKey(keyArgs)}` (`index.ts:676-677`). It is the engine's own hash, so a binding collides with the cache entry it points at exactly when the same key would. Date values hash to ISO strings and object keys sort.
+- `host.queries.hashKey` builds the binding key, `${queryId}\u0000${hashKey(keyArgs)}` (`index.ts:685-686`). It is the engine's own hash, so a binding collides with the cache entry it points at exactly when the same key would. Date values hash to ISO strings and object keys sort.
 - `host.provide(Entities, store)` exposes the store, and the hook `dispose` clears it.
 - `host.debug` carries the lane event.
 
@@ -161,17 +161,17 @@ The package ships a `development` build for this (`packages/entities/tsdown.conf
 
 - **Regular and infinite queries are both walked**, and backprop reaches both through `host.queries.write`, which keeps an infinite entry's `pageParams` aligned.
 - **A backprop does not cross tabs by default.** `crossTabPlugin` mirrors only origin-`undefined` writes, so an `update` stays in its tab unless cross-tab's `origins` lists `ENTITIES_PLUGIN_NAME`. `cross-tab.md` records why that default stays.
-- **The entity must be registered.** Every store method calls `assertRegistered` (`index.ts:513-531`) and throws for an `EntityDef` the plugin was not given. That catches the mistake at the call site instead of leaking orphan signals.
+- **The entity must be registered.** Every store method calls `assertRegistered` (`index.ts:522-540`) and throws for an `EntityDef` the plugin was not given. That catches the mistake at the call site instead of leaking orphan signals.
 - **`update` defaults to a shallow merge.** The updater form covers anything else.
 - **No `update` without a stored value.** There is nothing to patch onto. Development builds warn, and production builds return.
 - **An `update` reaches the entries the reverse index lists when it starts.** An entry that gains the entity during the update, through another plugin's write, is not patched.
 
 ## Memory model
 
-- Per-id slot signals live in a `Map<entityName, Map<id, Signal>>` (`index.ts:445`) until the plugin's `dispose` clears the whole map (`index.ts:1114-1123`). The slots are internal. `signal(entity, id)` hands out a handle that reads the slot, not the slot itself (see "Handles outlive their slots" below).
+- Per-id slot signals live in a `Map<entityName, Map<id, Signal>>` (`index.ts:454`) until the plugin's `dispose` clears the whole map (`index.ts:1125-1134`). The slots are internal. `signal(entity, id)` hands out a handle that reads the slot, not the slot itself (see "Handles outlive their slots" below).
 - `dispose()` also sets a `disposed` flag, and `assertRegistered` checks it first. An emptied store and a never-registered entity look the same to a `store.get(name)` probe. Without the flag, every call after dispose reported `entity "X" was not registered…` and sent the reader after a registration that was there all along (0.9 review). Pinned by "calling into the store after dispose says it was disposed, not unregistered".
 - The reverse index follows the cache. On `onRemove`, the plugin drops the removed entry's bindings and keeps the entity's slot, so a detail view subscribed to that entity keeps working after its source query is collected.
-- Orphan slots accumulate over the app's lifetime. `defineEntity({ maxSlots })` caps a partition: on overflow, `getSlot` calls `trimOrphans`, which evicts orphans in LRU order (`index.ts:533-610`). An orphan has no live bindings and no `subscribe` open on its handle (`isWatched`, `index.ts:464-465`). A bound or watched slot is never evicted, so a cap below that count is exceeded without a warning. A partition without a cap warns once in development at `SLOT_BLOAT_WARN_AT`, 10,000 ids (`index.ts:177`).
+- Orphan slots accumulate over the app's lifetime. `defineEntity({ maxSlots })` caps a partition: on overflow, `getSlot` calls `trimOrphans`, which evicts orphans in LRU order (`index.ts:542-619`). An orphan has no live bindings and no `subscribe` open on its handle (`isWatched`, `index.ts:473-474`). A bound or watched slot is never evicted, so a cap below that count is exceeded without a warning. A partition without a cap warns once in development at `SLOT_BLOAT_WARN_AT`, 10,000 ids (`index.ts:186`).
 
 ### Handles outlive their slots (1.0 review)
 
@@ -182,12 +182,20 @@ Until the review, `signal(entity, id)` returned the slot `Signal` itself, and bo
 
 The fix separates the handle from the slot:
 
-- **The handle reads by id.** `handleFor` (`index.ts:855-893`) wraps a `computed` that looks the slot up in the partition on every evaluation. With no slot it reads `undefined` and tracks the entity's `arrivals` counter. `getSlot` bumps that counter whenever it allocates a slot, so the handle picks up the new slot when the entity returns. The handle is a plain `ReadSignal`, no longer the writable slot.
-- **Leaving a slot notifies its readers.** `detach` (`index.ts:472-475`) deletes the slot from the partition first, then sets it to the `DETACHED` symbol (`index.ts:170`). The order matters: a handle re-evaluating during the set must already find no slot. The sentinel matters too: a slot that held `undefined`, such as one `signal()` allocated for an id never seen, would not notify on a set to `undefined`, and its readers would keep tracking a signal nothing writes again.
-- **Handles are cached weakly.** `handles` maps each id to a `WeakRef` of its handle plus a `watchers` count, and a `FinalizationRegistry` drops the entry once the handle is collected, as core's `createSelection` does for `isSelected`. So identity holds for as long as anything holds the handle, and an id a view looked at once pins nothing. Only an unheld handle is ever replaced, which no caller can observe.
+- **The handle reads by id.** `handleFor` (`index.ts:864-904`) wraps a `computed` that looks the slot up in the partition on every evaluation. With no slot it reads `undefined` and tracks the entity's `arrivals` counter. `getSlot` bumps that counter whenever it allocates a slot, so the handle picks up the new slot when the entity returns. The handle is a plain `ReadSignal`, no longer the writable slot.
+- **Leaving a slot notifies its readers.** `detach` (`index.ts:481-484`) deletes the slot from the partition first, then sets it to the `DETACHED` symbol (`index.ts:179`). The order matters: a handle re-evaluating during the set must already find no slot. The sentinel matters too: a slot that held `undefined`, such as one `signal()` allocated for an id never seen, would not notify on a set to `undefined`, and its readers would keep tracking a signal nothing writes again.
+- **Handles are cached weakly.** `handles` maps each id to a `WeakRef` of its handle plus a `watchers` count, and a `FinalizationRegistry` drops the entry once the handle is collected, as core's `createSelection` does for `isSelected`. So identity holds for as long as anything holds the handle, and an id a view looked at once pins nothing. An open `subscribe` holds the handle too (see the next section). Only an unheld handle is ever replaced, which no caller can observe.
 - **`subscribe` holds a slot; `.value` does not.** The handle's `subscribe` and `subscribeChanges` count into `watchers`, and `trimOrphans` skips a watched id. The framework adapters subscribe that way. A `computed` or `effect` that reads `.value` is invisible to the count, because core's `signal` exposes no watched callback. Eviction therefore reads as `undefined` through such a reader, and it follows the entity again when the entity returns.
 
 What it costs: one `computed` and a small wrapper per handle, created on the first `signal()` call for an id. A handle whose slot is missing re-evaluates on each slot allocation of its entity type, and on nothing else.
+
+### A subscription outlives its handle (second 1.0 review)
+
+The `watchers` count lived on the handle's cache entry, and the `FinalizationRegistry` deleted that entry once the handle was collected. The unsubscribe closure held the entry and the inner `computed`, but not the handle. So `const off = entities.signal(Item, 'p1').subscribe(fn)`, which keeps only the unsubscribe, lost its count at the next collection. `trimOrphans` then evicted p1 under a live subscriber, and `fn` saw `undefined`, against SPEC §18.1.
+
+The fix pins the handle while a subscription is open. `watch` sets `entry.held` to the handle on the first open `subscribe` and clears it on the last close (`index.ts:880-891`). It reads the handle through `entry.ref.deref()`. A closure that named `handle` would put it in the scope the returned unsubscribe keeps, so a caller holding a closed unsubscribe would pin the handle.
+
+Pinned by "a subscription holds its slot after the caller drops the handle and it is collected" in `entities.test.ts`. The test gets a real `gc` at runtime: `v8.setFlagsFromString('--expose-gc')`, then `vm.runInNewContext('gc')`, both through `process.getBuiltinModule` because the package's types leave Node out. It collects between tasks, since a `WeakRef` keeps its target alive until the current task ends. Its first half failed on the old code. Its second half checks that the handle is collectable again after `off()`, and it fails when `watch` names `handle` directly.
 
 ## Tests
 
@@ -199,7 +207,8 @@ What it costs: one `computed` and a small wrapper per handle, created on the fir
 - one subscriber notification per affected query per `update`;
 - bindings dropped when an entity leaves a query, and `remove` touching no query;
 - cycles, the shared-reference DAG, the chain of diamonds, and non-entity objects with an `id` field;
-- unregistered entities, calls after dispose, a `Date` in the key, the updater form, `merge: 'deep'`, `entries()` and `bindings()` snapshots, and `maxSlots` eviction, including a watched slot that eviction skips and a handle that comes back after it;
+- unregistered entities, calls after dispose, a `Date` in the key, the updater form, `merge: 'deep'`, and the `entries()` and `bindings()` snapshots;
+- `maxSlots` eviction, including a watched slot that eviction skips, one whose handle was collected, and a handle that comes back;
 - nested entities a patch brings in, with and without a query holding the entity.
 
 "reverse index drops bindings when an entity disappears from a query" was vacuous until 1.0 (0.9 review). It never read the reverse index, so it passed with a plugin that recorded no bindings at all. It now checks the binding exists first, that it is gone after the write, and that the `update` writes no query. It fails when `addBinding` records nothing and when `removeBindingsForKey` drops nothing.
@@ -208,7 +217,7 @@ What it costs: one `computed` and a small wrapper per handle, created on the fir
 
 ## Deep merge and prototype keys (1.0)
 
-`deepMerge` reads the current value with `Object.hasOwn` and writes each key with `defineOwn`, an `Object.defineProperty` call (`index.ts:210-222`). A patch parsed from JSON can carry an own `__proto__` key. An assignment `out[key] = v` with that key replaced the merged entity's prototype, and the read `current[key]` returned `Object.prototype` as if it were a plain object to merge into. The backprop rebuild writes the same way. Pinned by `tests/merge-security.test.ts`; the bug class is `../pitfalls/proto-key-assignment.md`.
+`deepMerge` reads the current value with `Object.hasOwn` and writes each key with `defineOwn`, an `Object.defineProperty` call (`index.ts:219-231`). A patch parsed from JSON can carry an own `__proto__` key. An assignment `out[key] = v` with that key replaced the merged entity's prototype, and the read `current[key]` returned `Object.prototype` as if it were a plain object to merge into. The backprop rebuild writes the same way. Pinned by `tests/merge-security.test.ts`; the bug class is `../pitfalls/proto-key-assignment.md`.
 
 ## Where to read next
 

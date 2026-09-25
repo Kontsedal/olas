@@ -3,8 +3,8 @@ name: render-phase-root-leak
 description: A root built during render and disposed in an effect leaks whenever React discards the render before it commits. A retry must reuse it, and something other than an effect must dispose it.
 type: pitfall
 covers:
-  - packages/react/src/context.ts:176-282
-  - packages/react/src/context.ts:332-398
+  - packages/react/src/context.ts:177-290
+  - packages/react/src/context.ts:340-408
 edges:
   - { type: tested-by, target: ../../packages/react/tests/hydration-boundary.test.tsx }
   - { type: uses, target: ../modules/react.md }
@@ -42,9 +42,10 @@ Measured against the pre-fix boundary under React 19.2:
 The rules, implemented in `packages/react/src/context.ts`:
 
 1. **A render never disposes and never takes ownership.** Only the commit writes `ownedRef`, claims a root, and disposes the root it replaces.
-2. **A retry reuses the root of its earlier attempt.** `acquireRoot` keys unclaimed roots by the props object, which a retry of the same element shares (`context.ts:213-235`).
-3. **Something other than an effect disposes a root that never commits.** `armSweep` disposes a root still unclaimed ten seconds after its work goes idle (`context.ts:243-259`). The countdown waits for idle because a child suspended on the root's own fetch retries only when that fetch settles.
-4. **A commit that cannot claim its root rebuilds it.** The root may have been swept, claimed by another fiber rendering the same element, or disposed by StrictMode's simulated unmount. The claim effect builds a fresh one and renders again before paint (`context.ts:368-375`).
+2. **A retry reuses the root of its earlier attempt.** `acquireRoot` keys unclaimed roots by the props object, which a retry of the same element shares (`context.ts:216-238`). The server builds a root per render instead, because nothing there commits.
+3. **Something other than an effect disposes a root that never commits.** `armSweep` disposes a root still unclaimed ten seconds after its work goes idle (`context.ts:246-266`). The countdown waits for idle because a child suspended on the root's own fetch retries only when that fetch settles. A minute bounds that wait, for a root that never goes idle.
+4. **A commit that cannot claim its root rebuilds it.** The root may have been swept, claimed by another fiber rendering the same element, or disposed by StrictMode's simulated unmount. The claim effect builds a fresh one and renders again before paint (`context.ts:376-383`).
+5. **Dispose on unmount in a passive effect, never a layout effect.** React runs layout-effect cleanups when a `<Suspense>` above hides content it already showed. A layout-effect dispose treated that hide as an unmount and killed the live root. The second review round caught this regression in the first version of the fix.
 
 React gives no signal for a discarded render, so a timer is the only deterministic way to catch one. A `FinalizationRegistry` on the fiber would never dispose too early, but it disposes at an unknown time, and its effects keep running until then.
 

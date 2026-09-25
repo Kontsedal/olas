@@ -36,16 +36,18 @@ Eight rules, each for a mistake the type system cannot see. They read syntax onl
 | `define-at-module-scope` | error | `defineQuery` / `defineInfiniteQuery` / `defineMutation` / `defineScope` with an enclosing function |
 | `no-async-controller-factory` | error | an `async` function as `defineController`'s first argument |
 | `optimistic-returns-snapshot` | error | a `setData(…, fn)` method call whose result is discarded; `dropped` inside an `onMutate`, `outside` elsewhere |
-| `cancel-before-optimistic` | warn | a `setData` in an `onMutate` with no `<same receiver>.cancel(…)` textually before it |
+| `cancel-before-optimistic` | warn | a `setData` in an `onMutate` with no `<same receiver>.cancel(…)` or `.cancelAll()` textually before it |
 | `no-testing-outside-tests` | error | an import, `export … from`, `import()` or `require()` of `@kontsedal/olas-core/testing` in a file that matches none of `testFiles` |
 | `no-network-in-components` | off (strict: error) | `fetch` / `axios` inside a function whose name starts with a capital |
 | `honor-abort-signal` | off (strict: error) | a `fetcher` or `mutate` written in place whose context gives up no `signal` |
 
 **What counts as an Olas `setData`.** A method call whose last argument is a function (`isOlasSetData`). That excludes `DataTransfer.setData(format, data)` and a bare `setData(...)` from a `useState` pair.
 
-**What counts as the hook.** A function that is the value of an `onMutate` property. So does a function whose bound name is used as an `onMutate` value somewhere in the file, as in `onMutate: applyOptimistic`.
+**What counts as the hook.** A function that is the value of an `onMutate` property. So does a function whose bound name is used as an `onMutate` value somewhere in the file, as in `onMutate: applyOptimistic`. Both `setData` rules share that test through `onMutateHooks` in `utils.ts`. The names are known only once the file is read, so both rules judge their calls in `Program:exit`.
 
-**Receivers are compared as source text.** `todos.cancel()` covers `todos.setData(…)`, and `this.q.cancel()` covers `this.q.setData(…)`. A cancel on another query does not count, and neither does one after the write.
+**Receivers are compared as source text.** `todos.cancel()` covers `todos.setData(…)`, and `this.q.cancel()` covers `this.q.setData(…)`. A cancel on another query does not count, and neither does one after the write. `receiverText` first strips what leaves the value alone, at every level of a member chain: `x!`, `x as T`, `x satisfies T`, `<T>x` and the `ChainExpression` of `x?.y`. The parser keeps no node for parentheses. So `(this as any).q` and `this.q!` both read as `this.q`.
+
+**A result is judged past the same wrappers.** `optimistic-returns-snapshot` asks `valueParent` for the call's parent. The `ChainExpression` around `todos?.setData(fn);` is not a use, so the dropped snapshot is reported.
 
 ## `honor-abort-signal`
 

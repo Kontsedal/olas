@@ -5,7 +5,7 @@ type: decision
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/errors.ts
-  - packages/core/src/query/types.ts:7-69
+  - packages/core/src/query/types.ts:7-70
   - packages/react/src/hooks.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/use-edges.test.ts }

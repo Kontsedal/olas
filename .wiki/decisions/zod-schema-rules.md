@@ -32,7 +32,7 @@ Each leaf field keeps its own `zodValidator(leafSchema)`. `hasStructuralRules` (
 
 That validator parses the whole schema through core's Standard Schema `validator`. `unownedIssues` (`packages/zod/src/index.ts:259-280`) sorts each issue with `leafAlong` (`:218-246`), which walks the schema and the value together:
 
-- A path that ends at a `Form` or a `FieldArray`, or names a key the schema lacks, keeps its path. Core's router (`routeFormIssues`, `packages/core/src/forms/form.ts:148-188`) puts it in that node's `topLevelErrors`, or in the root's when nothing resolves.
+- A path that ends at a `Form` or a `FieldArray`, or names a key the schema lacks, keeps its path. Core's router (`routeFormIssues`, `packages/core/src/forms/form.ts:159-199`) puts it in that node's `topLevelErrors`, or in the root's when nothing resolves.
 - A path at or under a leaf is cut to the leaf's path. It is dropped when the leaf's own schema reports the same message for the leaf's value. Otherwise it lands on the field, in the channel core keeps for form-level messages.
 
 ## Why one validator at the root

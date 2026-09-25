@@ -17,7 +17,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Ambient deps.** The `AmbientDeps` interface (in `controller/types.ts`). Users module-augment it to add app-wide services; every `ctx.deps` carries that type. Default has an index signature so `ctx.deps.anything` compiles as `unknown`.
 
-**AsyncState.** What every cache subscription exposes: the ten signals `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`, `isPaused` and `isEnabled`, plus the methods `refetch`, `reset`, `cancel` and `firstValue`. Defined in `query/types.ts:34-69`.
+**AsyncState.** What every cache subscription exposes: the ten signals `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`, `isPaused` and `isEnabled`, plus the methods `refetch`, `reset`, `cancel` and `firstValue`. Defined in `query/types.ts:35-70`.
 
 **Brand.** A value's kind, stored under core's non-exported `BRAND` symbol (`packages/core/src/brand.ts`). A `ControllerDef` carries `'controller'`, a `Query` `'query'`, an `InfiniteQuery` `'infiniteQuery'`, a `QueryEngine` `'queryEngine'`, a `Scope` `'scope'`, and a `defineMutation` result `'mutation'`, non-enumerable. `createQuery` dispatches on it. See `decisions/brand-markers-not-classes.md`.
 

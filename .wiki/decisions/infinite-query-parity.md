@@ -5,7 +5,7 @@ type: decision
 covers:
   - packages/core/src/query/infinite.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/query/types.ts:127-161
+  - packages/core/src/query/types.ts:128-162
   - packages/core/src/plugin/types.ts
   - packages/react/src/streaming.ts
   - packages/cross-tab/src/plugin.ts
@@ -45,7 +45,7 @@ An infinite entry's state is two aligned arrays, `pages` and `pageParams`. Every
 ## Focus, reconnect and `offlineFirst`
 
 - **Focus and reconnect.** `InfiniteClientEntry` subscribes on its first `acquire`, reading the spec field or the engine default. A focus or reconnect refetch re-fetches every loaded page, because that is what an infinite refetch is (T3.7).
-- **The `offlineFirst` park.** A network-shaped failure (`TypeError`) while offline parks the fetch, in `runRefetchAll` and in `runFetch` alike, instead of surfacing an error. `park` clears the fetching flags and keeps the loaded pages, in the batch that parks the request, so no observer sees the entry idle and unpaused in between. The drain re-runs the parked direction on reconnect. A parked refetch re-runs whole: the pages it had already fetched are dropped, because a partial refetch would mix fresh pages with stale ones.
+- **The `offlineFirst` park.** A network-shaped failure (`TypeError`) while offline parks the fetch, in `runRefetchAll` and in `runFetch` alike, instead of surfacing an error. `park` clears the fetching flags and keeps the loaded pages, in the batch that parks the request, so no observer sees the entry idle and unpaused in between. The drain re-runs the parked direction on reconnect. A parked refetch re-runs whole: the pages it had already fetched are dropped, because a partial refetch would mix fresh pages with stale ones. The drain resolves a parked refetch with the first page, as a refetch made online does. A `prefetch` requested offline therefore resolves with the page, not `undefined` (1.0, second pass). Pinned by `query-focus-online.test.ts`, "an infinite prefetch requested offline resolves with the first page".
 
 ## Devtools
 

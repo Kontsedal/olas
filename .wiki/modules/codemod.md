@@ -43,7 +43,7 @@ edges:
   - { type: related, target: ../decisions/ctx-primitives-are-free-functions.md }
   - { type: related, target: ../decisions/forms-are-read-signals.md }
   - { type: related, target: ../decisions/plugin-host-v2.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -60,7 +60,7 @@ The migration starts at 0.8 because npm has no 0.9: the release plan skipped it.
 - **Type-driven first:** `forms`, `async-state`, `react-mutation`, `suspend-options`, `error-context`, `entities`, `mutation-queue`, `removed-apis`. Their rewrites keep the types of the code around them.
 - **`root-api` last among them**, because the `root.api.x` it writes has no 0.8 type either.
 - **The syntactic ones after:** `ctx-primitives`, `create-field`, `identity-meta`, `mutate-context`, `root-options`, `persist`, `renames`. They match callees and import bindings, not types, and later ones read what earlier ones wrote. `create-field` expects `createField(ctx, …)`, which `ctx-primitives` produces.
-- **`use-controller` at the very end**, so the `.api` it writes is not taken for an api member by `root-api`.
+- **`use-controller` at the very end**, so the `.api` it writes is not taken for an api member by `root-api`. It follows the named import through `importsOf`, which sees named imports only. So it also walks every `PropertyAccessExpression` and `QualifiedName` whose left side `namespacePackage` resolves to `react`, as `renames` and `persist` do. `OlasReact.useController(root)` becomes `root.api`, and a namespace member used any other way is reported (`transforms/use-controller.ts`, `rewrite`).
 
 The type checks live in `util/shape.ts`. Each asks for a few members only that 0.8 type combines: a root has `__debug`, `waitForIdle` and `applyDehydratedEntry`, and a form has `submit`, `resetWithInitial` and `markAllTouched`. So the checks work wherever the declarations come from, and they find nothing against the 1.0 types. `main.ts` warns when `node_modules/@kontsedal/olas-core` is 1.x, walking up from the project root as Node does.
 

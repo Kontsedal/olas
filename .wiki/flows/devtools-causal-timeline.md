@@ -4,9 +4,9 @@ description: "End-to-end flow of the devtools causal timeline: how a mutation's 
 type: flow
 covers:
   - packages/core/src/devtools.ts
-  - packages/core/src/query/mutation.ts:526-706
-  - packages/core/src/query/client.ts:181-233
-  - packages/core/src/query/client.ts:1116-1137
+  - packages/core/src/query/mutation.ts:539-717
+  - packages/core/src/query/client.ts:219-271
+  - packages/core/src/query/client.ts:1174-1195
   - packages/devtools/src/store.ts
   - packages/devtools/src/DevtoolsPanel.tsx
   - packages/devtools/src/diff.ts
@@ -53,9 +53,9 @@ core sets a **dev-only ambient cause**:
 
 - `MutationImpl` wraps `onMutate` in `__runWithCause(runId, () => onMutate())` and wraps
   the snapshot's `rollback`/`finalize` bodies the same way (`mutation.ts` `wrapSnapshot`).
-- The QueryClient's devtools emit closures — `emitDevtoolsSetData` (`client.ts:1116-1137`)
+- The QueryClient's devtools emit closures — `emitDevtoolsSetData` (`client.ts:1174-1195`)
   and the `onSnapshotPush/Rollback/Finalize` hooks in the `EntryEvents` bundle that
-  `devtoolsEntryEvents` builds for every entry (`client.ts:181-233`) — read
+  `devtoolsEntryEvents` builds for every entry (`client.ts:219-271`) — read
   `__currentCauseId()` **at emit time**.
 
 Because `onMutate` and the rollback run synchronously on the stack while the ambient is
@@ -68,12 +68,14 @@ passthrough (zero cost). See [../modules/devtools.md](../modules/devtools.md) �
 ```
 mutation:run          causeId=R   (id 'save')
 snapshot:push         causeId=R   (queryKey ['1'])
-cache:set-data        causeId=R   source 'mutate'  data 'optimistic'
-snapshot:rollback     causeId=R   (mutate threw → auto-rollback)
-cache:set-data        causeId=R   source 'mutate'  data 'server-1'   (rollback re-broadcast)
+cache:set-data        causeId=R   source 'optimistic'  data 'optimistic'
+mutation:error        causeId=R   (mutate threw; sent before the user's onError)
+snapshot:rollback     causeId=R   (auto-rollback after onError)
+cache:set-data        causeId=R   source 'rollback'    data 'server-1'
 mutation:rollback     causeId=R
-mutation:error        causeId=R
 ```
+
+The order follows `mutation.ts:674-679`: `mutation:error` goes out, the user's `onError` runs, then the snapshot rolls back. A superseded, reset or disposed run ends with `mutation:cancel` and its `reason` instead.
 
 Each event is `seq`/`t`-stamped by `DevtoolsEmitter.emit` (`stamp`, `devtools.ts`). A
 successful run instead ends `snapshot:finalize` + `mutation:success`.
@@ -88,13 +90,24 @@ baseline — this is the diff's "before". Cache/snapshot events also flip
 `cacheStateDirty`, so `flushPending` refreshes `cacheState$` from `queryEntries()` (the
 event-driven inspector — no poll).
 
+The same `causeId` times the run. `route` files the `mutation:run` start under it in
+`runStarts`, and `consumeStart` pairs the `mutation:error` with that start, not with the
+oldest start of the same mutation. A run that core cancels (supersede, `reset()`,
+dispose) ends in `mutation:cancel` instead of a settle. `handle` closes the run with it:
+the cancel joins the group, and the mutation log gets a `cancel` entry with the reason
+and the duration. A cancel with no start in the store stays off the timeline. Core
+sends one for a queued `serial` run that was dropped before it started. See
+[../modules/devtools-panel.md](../modules/devtools-panel.md), "Mutation starts".
+
 ## 5. The panel folds it into a cause-chain + diff
 
 `TimelineView` → `groupByCause` collapses all events with one `causeId` into a single
 `<CauseGroup>` (`DevtoolsPanel.tsx`), colored by worst outcome (this run → red, it
 errored), with `+Δms` deltas from the group start. The two `cache:set-data` rows expand
 to `<DiffView>`, which runs `diffValues(prev, data)` from `diff.ts` — the first shows
-`'server-1' → 'optimistic'`, the rollback shows `'optimistic' → 'server-1'`.
+`'server-1' → 'optimistic'`, the rollback shows `'optimistic' → 'server-1'`. A
+superseded run's group ends in its `cancel` row and keeps the neutral edge, because
+`groupStatus` reads a cancel with no other outcome as `cancelled`.
 
 Net: the entire optimistic-apply → fail → rollback story is one readable, timestamped
 group instead of seven scattered log lines — the correlation Olas can do because one bus

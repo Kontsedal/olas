@@ -28,7 +28,7 @@ useRoot<Api = RegisteredApi>(): Api        // root.api; throws with the fix when
 useValue<T>(signal, { isEqual? }): Readonly<Ref<T>>
 useQuery<T>(sub: AsyncState<T>): UseQueryReturn<T>              // a ref per signal + refetch/reset/cancel
 useInfiniteQuery<P, I>(sub): UseInfiniteQueryReturn<P, I>       // + pages, flat, paging flags and actions
-useField<T>(field: Field<T>): UseFieldReturn<T>                 // `value` is a WritableComputedRef for v-model
+useField<T>(field: Field<T>): UseFieldReturn<T>                 // `value` is a writable Ref<T> for v-model
 useMutation<V, R>(m: Mutation<V, R>): UseMutationReturn<V, R>   // refs + mutate (void) / run (promise) / reset
 interface Register {}                                           // augmented by the app: { root: typeof root }
 ```
@@ -39,7 +39,15 @@ Everything else is built from it, through `valueRef`, which is `useValue` withou
 - A `customRef` whose getter calls `track()` and returns `signal.peek()`. A read therefore sees a write at once, before Vue flushes.
 - One `subscribeChanges` subscription calls the ref's `trigger()` when the value moves and `isEqual` (default `Object.is`) calls it a change.
 - `onScopeDispose` ends the subscription with the current effect scope. Outside a scope, the ref still works and nothing ends it.
-- The ref's `set` ignores the write. `useField`'s `value` is a separate `computed` whose setter calls `field.set`.
+- The ref's `set` ignores the write unless the hook passes `write`. `useField`'s `value` is `valueRef(field, undefined, (next) => field.set(next))`, so it reads `field.peek()` like every other ref and writes through `field.set`.
+
+The `value` was a Vue `computed` over the field's ref until the 1.0 review. A `computed` caches, and the ref beneath it is marked stale only when a `batch` ends. So inside a `batch`, after `field.set('b')`, `value.value` still read `'a'`. The `customRef` reads the field on every access, and SPEC §16.2 promises exactly that: a write is visible to the next read before Vue flushes.
+
+## Server render
+
+Vue never stops a component's effect scope on the server, so `onScopeDispose` never fires there. A subscription made during `renderToString` would outlive the request, one per ref per render. `valueRef` subscribes only when `hasInjectionContext() && inject(ssrContextKey, null)` finds no server-render context. `renderToString` and the stream renderers provide `ssrContextKey` on the app, so a server-rendered component sees it, and a client component, a hydrating one included, does not. Outside any component, `hasInjectionContext()` is false and the ref subscribes as before. `useSSRContext()` would have done the same lookup, but it warns on the client when the context is missing.
+
+The server reads each ref once, through `signal.peek()`, so the refs render the current values. React's `useSyncExternalStore` does not subscribe on the server either, and Svelte unsubscribes at the end of a server render.
 
 ## Outside an effect scope
 
@@ -59,7 +67,7 @@ The package ships two builds for this, like core and react (SPEC §23). `dist/` 
 
 ## Tests
 
-- `packages/vue/tests/vue.test.ts` mounts components with `createApp` in jsdom and covers every hook, the missing-plugin error, unsubscribe on unmount, `isEqual`, and the read-only ref.
+- `packages/vue/tests/vue.test.ts` mounts components with `createApp` in jsdom and covers every hook, the missing-plugin error, unsubscribe on unmount, `isEqual`, and the read-only ref. "value reads a write at once, inside a batch too" pins `useField`'s `value`. "a server render reads each signal and leaves no subscription behind" renders three times with `renderToString` and counts live subscriptions.
 - `packages/vue/tests/register.test-d.ts` pins the `Register` augmentation at the type level.
 - `packages/integration/tests/adapter-parity/vue.test.ts` runs the shared scenarios.
 - `examples/vue-tasks` is the example app.

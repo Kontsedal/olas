@@ -106,7 +106,7 @@ The controllers subscribe while the root constructs, so `waitForIdle` sees their
 
 It loops until nothing moves, because a settling fetch can start another fetch, and plugin work can start fetches too. After 100 rounds it throws, so a runaway setup fails the render instead of shipping a payload that looks complete and is not. A fetch that starts after `waitForIdle` resolves does not block it.
 
-`root.dehydrate()` returns a JSON-serializable `DehydratedState`. It holds each entry with `status: 'success'`: its `id`, `key`, `data` and `lastUpdatedAt`. Errors and pending fetches are left out, so a query that failed on the server fetches again on the client. A root without a query engine returns an empty state.
+`root.dehydrate()` returns a JSON-serializable `DehydratedState`. It holds each entry that has data: its `id`, `key`, `data` and `lastUpdatedAt`. An entry mid-refetch, or one that kept its data through a failed refetch, ships that data, because `status` reads `'pending'` or `'error'` over it. An entry with no data is left out, so a query whose first fetch failed on the server fetches again on the client. A root without a query engine returns an empty state.
 
 ## Inline the state safely
 
@@ -325,7 +325,7 @@ Batches can arrive before React hydrates. `OLAS_BOOTSTRAP_SCRIPT` queues them, a
 2. It applies the batches that arrived before mount to this root.
 3. It applies each later batch to every installed root.
 
-A second boundary, or the fresh root of a StrictMode remount, therefore catches up on the stream instead of taking it from the first root. Each batch goes through `root.hydrate` inside one signal `batch`, so subscribers see one notification per batch. A bound entry takes its row at once, and the row supersedes any fetch in flight for it. A row stamped before the entry's `lastUpdatedAt` is older than what the entry holds, so the entry skips it. An unbound key waits in the buffer until its first bind. A client root that no `HydrationBoundary` builds connects with [`installStreamingIntake(root)`](/reference/olas-react.installstreamingintake), which returns the uninstall.
+A second boundary, or the fresh root of a StrictMode remount, therefore catches up on the stream instead of taking it from the first root. Each batch goes through `root.hydrate` inside one signal `batch`, so subscribers see one notification per batch. A bound entry takes its row at once, and the row supersedes any fetch in flight for it. A row stamped before the entry's last fetch, hydrated row or canonical write is older than what the server last said, so the entry skips it. An optimistic `setData` does not count, so a newer row still lands under a pending mutation and becomes its rollback baseline. A row stamped before an invalidation leaves the entry stale, and an entry with a subscriber fetches once more. An unbound key waits in the buffer until its first bind, which keeps the newest row per key. A client root that no `HydrationBoundary` builds connects with [`installStreamingIntake(root)`](/reference/olas-react.installstreamingintake), which returns the uninstall.
 
 ### Why the transform places the tags
 

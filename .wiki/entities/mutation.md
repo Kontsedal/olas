@@ -8,6 +8,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/mutation-plugin-events.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/mutation-cancel-devtools.test.ts }
   - { type: uses, target: entry.md }
   - { type: uses, target: ../flows/mutation-concurrency.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
@@ -87,11 +88,13 @@ Notes:
 
 `runWithRetry` follows the same shape as `Entry.runWithRetry`: catch err → check `shouldRetry(retry, attempt, err)` → `await abortableSleep(...)` → retry. The user-facing promise resolves with the final outcome. Only a function `retry` is called; a number caps the attempts, and anything else, `retry: false` included, never retries (spec §5.2). The loop used to call any non-number, so `retry: false` failed the run with "retry is not a function" in place of the error `mutate` threw. Pinned by `mutation.test.ts`, "retry: false never retries". `abortableSleep` schedules via `scheduleExpiry`, so a user `retryDelay` past the 32-bit timer limit backs off for the time asked instead of overflowing to ~1ms, and a non-finite one parks until the abort fires.
 
-## What plugins hear on a cancel
+## What plugins and devtools hear on a cancel
 
 Every abort goes through `cancel(handle, reason)`, which records the reason on the run's handle before it aborts, and the first reason wins. A `latest-wins` supersede records `'superseded'`, `reset()` records `'reset'`, and `dispose()` records `'dispose'`. The run's `'cancel'` event carries it as `reason`. `dropSerialQueue` rejects the queued `serial` runs for `reset()` and `dispose()`, and reports a `'cancel'` with the same reason for each, because each one reported `'queued'` (spec §13.1).
 
 The reason exists for `@kontsedal/olas-mutation-queue`. A supersede and a reset are the app dropping the run, so the queue drops its entry. A dispose only means the screen is gone, so the queue keeps it for a replay. Before the reason existed the queue kept every cancelled entry, and an autosave's superseded draft replayed after the draft that replaced it. Pinned by `mutation-plugin-events.test.ts`.
+
+Every `'cancel'` goes out through `reportCancel` (`mutation.ts:398-407`), which also sends devtools a `mutation:cancel` with the same `reason`, in dev builds, under the run id as `causeId` (spec §14.1). The three call sites are `dropSerialQueue`, the queued run aborted during its `onMutate`, and the catch block's abort branch. Before 1.0's second review devtools heard nothing on a cancel. The panel then paired the superseding run's settle with the superseded run's start. A queued run that never started sends one too, with no `mutation:run` before it. A run whose work finished before a late abort reports `'success'`, so it sends no cancel. Pinned by `mutation-cancel-devtools.test.ts`, which checks that the two streams agree run by run.
 
 ## Dispose
 
@@ -101,8 +104,8 @@ Aborts every inflight handle. Drains the serial queue with `AbortError`. Plugins
 
 **`detached: true` (§6.5) turns all of that off.** `dispose()` marks the mutation disposed and returns without aborting. In-flight runs finish, the serial queue drains, `run()` keeps working, and the lifecycle callbacks still fire. That is how the invalidation hanging off `onSuccess` lands instead of being skipped. `reset()` and a `latest-wins` supersede still cancel, because both are the app explicitly dropping a run, where dispose only means the screen is gone. `reset()` deliberately keeps working after dispose, because it is then the only stop button left. Internally the whole distinction is the `cancelledByDispose` getter, defined as `disposed && !detached`. `run()`, `reset()` and the post-await branch consult that instead of `disposed`.
 
-Callbacks on a detached run execute after the controller is torn down, so they must stay at client level (`query.invalidate()`, a toast). If the root is gone the run still completes but its cache writes no-op, since `QueryClient.dispose()` deregisters the client from every query (`client.ts:2026-2047`).
+Callbacks on a detached run execute after the controller is torn down, so they must stay at client level (`query.invalidate()`, a toast). If the root is gone the run still completes but its cache writes no-op, since `QueryClient.dispose()` deregisters the client from every query (`client.ts:2105-2126`).
 
-`reset()` is similar but doesn't mark disposed — it aborts inflight, drains the queue, and clears `data`/`error`/`lastVariables`/`isPending` and sets `status` back to `'idle'`. The mutation remains usable. `mutation.ts:754-774`; spec §6.2 lists it among the abort triggers; pinned by `mutation.test.ts:57` and regression B2.
+`reset()` is similar but doesn't mark disposed — it aborts inflight, drains the queue, and clears `data`/`error`/`lastVariables`/`isPending` and sets `status` back to `'idle'`. The mutation remains usable. `mutation.ts:765-785`; spec §6.2 lists it among the abort triggers; pinned by `mutation.test.ts:57` and regression B2.
 
 **The abort is a migration hazard.** react-query's `reset()` detaches the observer and lets the in-flight request finish; ours cancels it. Same name, same signature, no type error on a port. The public TSDoc claimed "without aborting in-flight runs" from 612720b until 2026-07-31. That is ten weeks and three releases, long enough for a porting consumer to have taken it at face value. This was reported rather than corroborated here; see `../log.md`. `mutation.ts:255-273` now carries the warning, as do the Mutations section of `../../API.md` and `../../MIGRATING.md`.

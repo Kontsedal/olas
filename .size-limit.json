@@ -11,21 +11,21 @@
     "path": "packages/core/dist/index.js",
     "import": "{ createRoot, defineController, createField, createForm, createFieldArray }",
     "ignore": ["@preact/signals-core"],
-    "limit": "10.2 KB"
+    "limit": "10.35 KB"
   },
   {
     "name": "core: + queries and mutations",
     "path": "packages/core/dist/index.js",
     "import": "{ createRoot, defineController, queryEngine, defineQuery, createQuery, createMutation }",
     "ignore": ["@preact/signals-core"],
-    "limit": "18.2 KB"
+    "limit": "18.5 KB"
   },
   {
     "name": "core: everything",
     "path": "packages/core/dist/index.js",
     "import": "*",
     "ignore": ["@preact/signals-core"],
-    "limit": "24.5 KB"
+    "limit": "25.1 KB"
   },
   {
     "name": "react",
@@ -46,7 +46,7 @@
     "path": "packages/svelte/dist/index.js",
     "import": "*",
     "ignore": ["svelte", "@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "0.85 KB"
+    "limit": "0.87 KB"
   },
   {
     "name": "cross-tab",
@@ -67,14 +67,14 @@
     "path": "packages/mutation-queue/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@kontsedal/olas-persist", "@preact/signals-core"],
-    "limit": "3.45 KB"
+    "limit": "3.75 KB"
   },
   {
     "name": "persist: createPersisted",
     "path": "packages/persist/dist/index.js",
     "import": "{ createPersisted, localStorageAdapter }",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "1.17 KB"
+    "limit": "1.21 KB"
   },
   {
     "name": "persist: persistQueryCachePlugin",
@@ -109,6 +109,6 @@
     "path": "packages/devtools/dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom", "@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "18.8 KB"
+    "limit": "19.7 KB"
   }
 ]

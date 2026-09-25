@@ -713,7 +713,7 @@ pnpm check:doc-snippets                            # typecheck the TypeScript bl
 pnpm wiki:lint                                     # check .wiki/ for broken refs
 ```
 
-CI = `install → build → typecheck → lint → doc snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. 2,232 tests across 176 files (including a cross-package `packages/integration` suite), all green.
+CI = `install → build → typecheck → lint → doc snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. 2,533 tests across 187 files (including a cross-package `packages/integration` suite), all green.
 
 ---
 

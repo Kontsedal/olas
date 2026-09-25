@@ -8,6 +8,7 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/mutation.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/regressions.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/mutation-cancel-devtools.test.ts }
   - { type: uses, target: ../entities/mutation.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
@@ -72,7 +73,7 @@ enqueueSerial(vars):
 
 `advanceSerialQueue(generation)` shifts the next entry, calls `executeRun(vars, runId)` under the id it was queued with, resolves/rejects the stored promise, recurses with the same `generation`. When the queue is empty, `active = false`.
 
-`dispose()` aborts the current inflight AND rejects every queued entry with `AbortError`. `reset()` is similar but doesn't dispose. Both go through `dropSerialQueue`, which reports a `'cancel'` for each rejected entry, with reason `'dispose'` or `'reset'`.
+`dispose()` aborts the current inflight AND rejects every queued entry with `AbortError`. `reset()` is similar but doesn't dispose. Both go through `dropSerialQueue`, which reports a `'cancel'` for each rejected entry, with reason `'dispose'` or `'reset'`. The report goes through `reportCancel`, so devtools hears a `mutation:cancel` with the same reason, though the run never sent a `mutation:run`.
 
 ### Why a waiting run reports `'queued'`
 

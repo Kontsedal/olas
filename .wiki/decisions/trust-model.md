@@ -19,6 +19,8 @@ edges:
   - { type: tested-by, target: ../../packages/mutation-queue/tests/security.test.ts }
   - { type: tested-by, target: ../../packages/cross-tab/tests/security.test.ts }
   - { type: tested-by, target: ../../packages/cross-tab/tests/ssr.test.ts }
+  - { type: tested-by, target: ../../packages/cross-tab/tests/channel.test.ts }
+  - { type: tested-by, target: ../../packages/persist/tests/coverage-indexeddb.test.ts }
   - { type: related, target: ../modules/cross-tab.md }
   - { type: related, target: ../pitfalls/stream-chunks-split-tags.md }
   - { type: related, target: ../pitfalls/proto-key-assignment.md }
@@ -71,6 +73,13 @@ A second review pass reproduced two more cross-tab holes with probes. Each fix h
 |---|---|---|---|---|
 | R1 | high | the default channel factory opened a real `BroadcastChannel` on a server. Node (every supported version), Bun and Deno define one, and it reaches every root in the process, so per-request roots read each other's writes | `defaultChannelFactory` opens a channel only in a browser scope: a `document`, or a `WorkerGlobalScope` outside Deno and Bun | `cross-tab/tests/ssr.test.ts` |
 | R2 | low | `receive` moved a peer's cursor before validating, so one malformed `{ sourceId, msgId: Number.MAX_SAFE_INTEGER }` silenced that peer for good | the cursor moves only for an applied message; a `msgId` 64 or more below the cursor restarts it | `cross-tab/tests/security.test.ts` |
+
+A third pass, the second 1.0 review, found two gaps in R1's rule. Each fix has a regression test that failed on the old code.
+
+| # | Severity | Finding | Fix | Test |
+|---|---|---|---|---|
+| R3 | low | the factory checked the Deno and Bun names before the `document`, and HTML named access makes an element with the id `Bun` the global `Bun`, so such a page ran with cross-tab off | the `document` check comes first | `cross-tab/tests/channel.test.ts` |
+| R4 | low | persist's `indexedDbAdapter` opened a `BroadcastChannel` wherever one was defined, so a server with an IndexedDB polyfill passed one request's writes to another's `onChange` | the adapter copies R1's browser-scope rule; its `broadcastChannel` option opts in anywhere | `persist/tests/coverage-indexeddb.test.ts` |
 
 R1 changes what "same-origin script" means on a server: there it is every request's root, and requests do not trust each other. The trust model above assumes one user per process, which a browser gives and a server does not. `../modules/cross-tab.md` has the detection rule and why it asks for a browser scope instead of a `BroadcastChannel` constructor.
 

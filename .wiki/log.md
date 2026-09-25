@@ -2243,3 +2243,25 @@ Two core budgets were raised to 17.5 KB and 23.5 KB.
 **Numbers.** Tests went from 2,238 to 2,389 in 184 files. The public API changed in two places (`RetryPolicy`, `MutationEvent`). Nine size budgets were re-set to about 5% over the new sizes; `decisions/esm-only-build.md` records them.
 
 **BACKLOG** gained three follow-ups: a superseded run that still sends once behind a slow storage write, `indexedDbAdapter`'s channel on a server, and `Form.reset()` calling `initial()` unguarded.
+
+## [2026-09-25 16:30] ingest | the correctness pass, second round: 39 more findings fixed
+
+**Review.** Four reviewers checked the first round's fix commits and the packages no one had read: vue, svelte, router, devtools, eslint-plugin, codemod and the docs. They reported 39 findings. About half were gaps or regressions in the first round's own fixes, both high ones among them:
+- `HydrationBoundary` disposed its root in a layout-effect cleanup, and React runs those when a `<Suspense>` above hides shown content. A later suspension killed the live app root (`pitfalls/render-phase-root-leak.md`, rule 5).
+- The stale-epoch fix left the join paths open: a subscriber, `resume()` or `prefetch` that joined an older in-flight fetch never refetched after the invalidation.
+
+**Fixes.** Six agents, one set of files each, plus the `HydrationBoundary` fixes by hand; every finding got a failing test first. The decisions worth knowing:
+- **The entry runs a catch-up fetch** when data lands under a surviving stale mark and someone holds the entry, which covers every join path, hydration and page requests at once (`entry.ts`, `infinite.ts`). SPEC §5.7.
+- **Live hydration compares against `serverUpdatedAt`**, which only a fetch, a hydrated row or a canonical write sets; buffered rows keep the newest; `dehydrate()` ships every entry that holds data. SPEC §15.
+- **Parked entries resume on interval, focus and reconnect once online**, instead of waiting only for a `window` `'online'` event. SPEC §5.9.
+- **Core sends `mutation:cancel`** with the run's `reason`, and devtools pairs settles with starts by `causeId`. SPEC §14.1.
+- **The mutation queue gives a queued `serial` run its own entry**, and a kept `dedupeBy` entry holds the newest write. SPEC §13.3.
+- **The first `initial()` value seats per leaf**: untouched fields fill in, an edited field keeps its value and takes the loaded baseline. SPEC §8.4.
+- **A `null` for a nested form or field array leaves it alone**, as `undefined` does. SPEC §8.
+- **A `retryDelay` of `NaN` retries at once** instead of sleeping forever (`utils.ts`, `abortableSleep`).
+- **Svelte's `fieldStore` binds by member**, and the docs say to bind a form's leaf fields rather than `$form.member`. Vue refs skip subscribing during SSR, and `useField().value` reads through inside a `batch`.
+- **Devtools** survives any key shape or throwing `ctx.debug` computed, keeps history in the launcher, and leaves a non-`key=value` URL hash alone.
+
+**Numbers.** Tests went from 2,389 to 2,533 in 187 files. API reports changed for core (`mutation:cancel`), devtools (`store` prop, `cancel` entry kind) and vue (`useField().value` is a `Ref<T>`). Seven size budgets were re-set; `decisions/esm-only-build.md` records them.
+
+**BACKLOG.** The three first-round follow-ups are fixed and removed. Two ideas were added: `gcTime`/`maxIdleTime` of `NaN` never expire, and an optimistic write makes a stale entry look fresh.

@@ -397,7 +397,8 @@ test('shows the first error once the field is touched', () => {
 ```
 
 - `fakeField(initial, overrides?)` returns a real `Field<T>`. Its `set`, `reset`, `markTouched` and the other methods work, and each one can be overridden, with `vi.fn()` for example. `isValid` follows `errors` and `isValidating` unless you override it.
-- `fakeAsyncState(overrides?)` returns a real `AsyncState<T>`. `status` defaults to `'success'` when `data` is given and `'idle'` otherwise, and `isEnabled` defaults to `true`. `refetch` and `firstValue` resolve with the current data.
+- `fakeAsyncState(overrides?)` returns a real `AsyncState<T>`. `status` defaults to `'error'` when `error` is given, `'success'` when `data` is, and `'idle'` otherwise. A `'pending'` status reads as fetching, and as loading while there is no data. `isEnabled` defaults to `true`.
+- The fake's `firstValue()` behaves as a real subscription's does. It resolves with the data when there is data or the status is `'success'`, even beside an error. Otherwise it rejects with the error in the `'error'` status, and stays pending while nothing has loaded. `refetch()` resolves with the current data.
 - Both satisfy the real types, so `useField`, `useQuery` and any component that takes the real thing accept them without a cast.
 - A `fakeAsyncState` holds fixed values. Build one per state you want to render.
 

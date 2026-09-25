@@ -570,7 +570,7 @@ type QuerySpec<Args extends unknown[], T> = {
 
 type FetchCtx = { signal: AbortSignal; deps: AmbientDeps }
 type RefetchInterval<T> = number | ((data: T | undefined) => number)
-type RetryPolicy = number | ((attempt: number, error: unknown) => boolean)
+type RetryPolicy = false | number | ((attempt: number, error: unknown) => boolean)
 type RetryDelay = number | ((attempt: number) => number)
 type NetworkMode = 'online' | 'always' | 'offlineFirst'
 ```
@@ -699,13 +699,13 @@ type AsyncState<T> = {
   refetch: () => Promise<T>
   reset: () => void                       // clear error and status without re-fetching
   cancel: () => void                      // abort the in-flight fetch, keep data
-  firstValue: () => Promise<T>            // resolves with the first success after subscribe
+  firstValue: () => Promise<T>            // the data now if there is some for the current key, else the first success
 }
 ```
 
 Subscribers can read any of the 10 signals individually, or use `useQuery(state)` in React to read them through one hook. A `createCache` `LocalCache` has the same surface, and its `isEnabled` stays `true`.
 
-**`firstValue()`** resolves at once when data is already there, and rejects on the first failure. It is the promise to hand to Suspense or React 19's `use(...)`. A repeat call while it is pending returns the same promise.
+**`firstValue()`** resolves at once when data for the current key is already there, and rejects on the first failure. The previous key's data that `keepPreviousData` keeps on screen does not count. It is the promise to hand to Suspense or React 19's `use(...)`. A repeat call while it is pending returns the same promise.
 
 **`isPaused`** is `true` while a fetch is deferred waiting for connectivity. Two cases reach it: an `online`-mode fetch that hit `navigator.onLine === false`, and an `offlineFirst` fetch that got a `fetch` `TypeError` while offline. It resumes automatically on the next `online` event. Nothing is in flight while paused (`isFetching` is `false`) and `status` stays `idle` or last-success rather than flipping to `error`.
 
@@ -1202,7 +1202,7 @@ type FormOptions<S> = {
 }
 ```
 
-- `initial` — initial value object, or a thunk. If a thunk reads signals, the initial value re-applies when those signals change *and the form is not dirty*, so a background refetch cannot clobber a user mid-edit. Useful for "form-from-server" patterns (SPEC §8.4). `resetOnInitialChange` changes the rule: `'never'` runs the thunk once, and `'always'` re-seats a dirty form too.
+- `initial` — initial value object, or a thunk. If a thunk reads signals, the initial value re-applies when those signals change *and the form is not dirty*, so a background refetch cannot clobber a user mid-edit. Useful for "form-from-server" patterns (SPEC §8.4). The first defined value fills every leaf the user has not edited; an edited field keeps its value and takes the loaded value as its baseline. `resetOnInitialChange` changes the rule for later values: `'never'` seats the form once, from the first defined value or a `reset()` that seats one, and `'always'` re-seats a dirty form too.
 - `validators` — top-level validators that see the whole `FormValue<S>`. A validator that returns a `string` lands in `topLevelErrors`; one that returns `FormIssue[]` routes each issue by `path` onto the matching field (empty path → `topLevelErrors`). Field-targeted messages merge into that field's `errors` and clear on the next form-level run.
 
 ---
@@ -1556,7 +1556,7 @@ declare module '@kontsedal/olas-core' {
 
 ### `root.dehydrate(): DehydratedState`
 
-JSON-serializable snapshot of the root's query cache. Call on the server *after* `await root.waitForIdle()`. An infinite query serializes its pages with their `pageParams`, so the client keeps paging from where the server stopped.
+JSON-serializable snapshot of the root's query cache: every entry that holds data, one mid-refetch or after a failed refetch included. Call on the server *after* `await root.waitForIdle()`. An infinite query serializes its pages with their `pageParams`, so the client keeps paging from where the server stopped.
 
 ### `root.waitForIdle(): Promise<void>`
 
@@ -1568,7 +1568,7 @@ Replay a `DehydratedState` on the client. It needs a query engine. Hydrated entr
 
 ### `root.hydrate(state: DehydratedState): void`
 
-Apply dehydrated entries to a live root. An entry whose key is already bound is written through and supersedes a fetch in flight. The rest wait until a subscription binds their key. The React streaming intake uses it, and so does a warm start from storage. Idempotent.
+Apply dehydrated entries to a live root. An entry whose key is already bound is written through and supersedes a fetch in flight. The rest wait until a subscription binds their key, and a waiting key keeps its newest row. A row older than the entry's server data is skipped; an optimistic write does not count as server data. A row older than an invalidation leaves the entry stale, and an entry that is held refetches. The React streaming intake uses it, and so does a warm start from storage. Idempotent.
 
 ### `serializeForScript(value: unknown): string`
 
@@ -1733,6 +1733,7 @@ type DebugEventBody =
   | { type: 'mutation:success'; path: readonly string[]; id?: string; result: unknown }
   | { type: 'mutation:error'; path: readonly string[]; id?: string; error: unknown }
   | { type: 'mutation:rollback'; path: readonly string[]; id?: string }
+  | { type: 'mutation:cancel'; path: readonly string[]; id?: string; reason: 'superseded' | 'reset' | 'dispose' }
   | { type: 'field:validated'; path: readonly string[]; field: string; valid: boolean; errors: string[] }
   | { type: 'plugin:event'; plugin: string; payload: unknown }
 ```
@@ -1904,7 +1905,7 @@ render(<NameInput field={name} />)
 
 ### `fakeAsyncState<T>(overrides?): AsyncState<T>`
 
-Same idea for `AsyncState<T>`. Pass overrides for any of the signal-backed fields, `isPaused` and `isEnabled` included, plus the `refetch`, `reset`, `cancel` and `firstValue` methods. Defaults: `status: 'idle'` unless `data` is provided (then `'success'`), and `isEnabled: true`.
+Same idea for `AsyncState<T>`. Pass overrides for any of the signal-backed fields, `isPaused` and `isEnabled` included, plus the `refetch`, `reset`, `cancel` and `firstValue` methods. Defaults: `status: 'idle'` unless `data` is provided (then `'success'`) or `error` is (then `'error'`), and `isEnabled: true`. `firstValue()` resolves with the data when there is any, otherwise rejects with the error, and otherwise stays pending, as a real subscription waits.
 
 ```tsx
 import { fakeAsyncState } from '@kontsedal/olas-core/testing'
@@ -2000,7 +2001,8 @@ export const Main = () => (
 
 The boundary **owns** the root:
 
-- Created lazily during the first render (in a ref, so `createRoot`'s side effects don't run twice under StrictMode) and **disposed on unmount**.
+- Created during the first render, so the children read hydrated data in it, and **disposed on unmount**. A `<Suspense>` above that later hides the boundary's content does not dispose it. StrictMode's simulated remount builds a second root in development, as TanStack Query's provider does.
+- A render that never commits, because a child suspended or threw before the first commit, does not leak its root. A retry of the same element reuses it, and a root no commit claims is disposed about ten seconds after its work goes idle, or after a minute at most. Put a `<Suspense>` inside the boundary so it commits first.
 - `options` is read **once** on mount. A new inline `options={{...}}` on a parent re-render is ignored on purpose, so it won't discard cache state every render.
 - The root is recreated only when the **`def` identity** changes (pass a different `def`, or re-key the component, to swap it on navigation). The replacement starts without `options.hydrate`, because the server payload described the first root's tree.
 - `streaming` (default `true`) installs the streaming-SSR intake, so the `<script>` tags that `createStreamingHydrator().flush()` writes route into this root. Pass `false` for a one-shot `options.hydrate`.
@@ -2372,7 +2374,7 @@ type PersistOptions<T> = {
 }
 ```
 
-`version` and `migrate` wrap writes in a `{"$olas":1,"v":N,"d":<serialized>}` envelope and forward-migrate a stale or legacy payload on load. A reader without `version` unwraps that envelope, and the `$olas` marker keeps it from unwrapping a value of the same shape. The unmarked `{"v":N,"d":…}` that earlier versions wrote still reads. Every fallible op routes through `onError`: storage `get` and `set`, encode and decode, migrate throws, and cross-tab corruption. Without it, errors are swallowed. A user write that lands before an async load settles wins over the stored value (and is flushed); a racing cross-tab change is buffered until ready.
+`version` and `migrate` wrap writes in a `{"$olas":1,"v":N,"d":<serialized>}` envelope and forward-migrate a stale or legacy payload on load and from another tab. A payload from a newer version is ignored in both places, so an older build never feeds it to its migrator. A reader without `version` unwraps that envelope, and the `$olas` marker keeps it from unwrapping a value of the same shape. The unmarked `{"v":N,"d":…}` that earlier versions wrote still reads. Every fallible op routes through `onError`: storage `get` and `set`, encode and decode, migrate throws, and cross-tab corruption. Without it, errors are swallowed. A user write that lands before an async load settles wins over the stored value (and is flushed); a racing cross-tab change is buffered until ready.
 
 ### Type: `PersistableSource<T>`
 
@@ -2414,7 +2416,7 @@ The default adapter, as a factory. `get` returns `null` if `localStorage` is und
 
 ### `indexedDbAdapter(options?): StorageAdapter`
 
-Async IndexedDB-backed adapter (single key/value object store). `options?: IndexedDbAdapterOptions`, which is `{ databaseName?, storeName?, channelName?, indexedDB?, broadcastChannel? }`; `channelName: null` turns cross-tab notifications off. IDB has no native change event, so `onChange` is layered via `BroadcastChannel`. Writes resolve on the transaction's **commit** (not the request's `onsuccess`), so quota or commit failures reject and reach `onError('write')`. SSR-safe (no `IDBFactory` → every op no-ops). Pick it over `localStorage` for larger payloads or where async storage is acceptable.
+Async IndexedDB-backed adapter (single key/value object store). `options?: IndexedDbAdapterOptions`, which is `{ databaseName?, storeName?, channelName?, indexedDB?, broadcastChannel? }`; `channelName: null` turns cross-tab notifications off. IDB has no native change event, so `onChange` is layered via `BroadcastChannel`. Without a `broadcastChannel` option it opens one only in a browser tab or a web worker, never on a server, as cross-tab does. Writes resolve on the transaction's **commit** (not the request's `onsuccess`), so quota or commit failures reject and reach `onError('write')`. SSR-safe (no `IDBFactory` → every op no-ops). Pick it over `localStorage` for larger payloads or where async storage is acceptable.
 
 ### `clearPersisted(storage?, options?): Promise<void>`
 
@@ -2591,9 +2593,9 @@ export function Shell({ root }: { root: Root<unknown> }) {
 }
 ```
 
-### `<DevtoolsPanel root defaultTab? maxEntries? maxTimelineEntries? urlHashKey? />`
+### `<DevtoolsPanel root defaultTab? maxEntries? maxTimelineEntries? urlHashKey? store? />`
 
-The panel itself — for embedding inside your own chrome (e.g., a fixed sidebar). The launcher uses this internally. The timeline keeps the newest events in a ring buffer, 10,000 by default (`maxTimelineEntries`), and counts what it overwrote. `/` focuses the omnibox, which searches controllers, cache entries, mutations, fields and events. A plugin's `host.debug` payloads show in the timeline as that plugin's lane. `urlHashKey` keeps the tab and filters in the URL hash.
+The panel itself — for embedding inside your own chrome (e.g., a fixed sidebar). The launcher uses this internally, and passes it its own `store`, so history survives closing and minimizing the window. An error boundary keeps a panel failure from reaching the host app. The timeline keeps the newest events in a ring buffer, 10,000 by default (`maxTimelineEntries`), and counts what it overwrote. `/` focuses the omnibox, which searches controllers, cache entries, mutations, fields and events. A plugin's `host.debug` payloads show in the timeline as that plugin's lane. `urlHashKey` keeps the tab and filters in the URL hash, beside other `key=value` segments; a hash in any other form, such as a hash-router route, is left alone.
 
 ### Type: `DevtoolsTab`
 

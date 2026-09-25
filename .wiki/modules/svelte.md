@@ -23,6 +23,12 @@ The Svelte adapter, one file (`packages/svelte/src/index.ts`). It is the smalles
 
 Svelte's contract is `subscribe(run)` that calls `run` with the current value at once and on every change, and returns the unsubscribe. `ReadSignal.subscribe` does exactly that. So `$count` works on a `signal`, a `computed`, a `Field`, a `Form` or a `FieldArray`, and Svelte subscribes on mount and unsubscribes on destroy. A `Field` also has `set`, so it is a writable store and `bind:value={$name}` writes through `field.set`.
 
+## Binding a `fieldStore` member
+
+`fieldStore` also has `set`, so Svelte treats it as writable too. For `bind:value={$state.value}`, Svelte 4 and 5 compile the write the same way: assign `value` on the object the store last handed the component, then call `store.set(thatObject)`. Two things went wrong before the 1.0 review. `set` passed the whole state object to `field.set`, so typing "ab" left the field holding `{ value: 'ab', errors: [], … }`. And the object Svelte assigned into was the core `computed`'s cached value.
+
+`fieldStore` now replaces the store's `subscribe`. Each call hands the subscriber a shallow copy of the state and records the copy in a `WeakSet`. `set` writes `copy.value` when its argument is a recorded copy, and passes anything else to `field.set` unchanged. A copy is never a valid field value, so the check cannot misread a field whose value is itself an object with a `value` key. `peek()` and `value` still return the `computed`'s own object. `FieldStore.set` keeps its `(value: T) => void` type, since only Svelte passes the state object.
+
 ## Public surface
 
 ```ts
@@ -51,6 +57,6 @@ The first run found no type errors and one warning, twice: `state_referenced_loc
 
 ## Tests
 
-- `packages/svelte/tests/svelte.test.ts` covers the store contract in a real component, the missing-root error, unsubscribe on unmount, `bind:value` on a field, each store's actions, and `mutate` swallowing the rejection.
+- `packages/svelte/tests/svelte.test.ts` covers the store contract in a real component, the missing-root error, unsubscribe on unmount, `bind:value` on a field, each store's actions, and `mutate` swallowing the rejection. "bind:value on a fieldStore member writes the value, not the state object" types into `FieldMember.svelte`. "a member write leaves the store’s own state object untouched" replays Svelte's assign-then-`set` by hand.
 - `packages/svelte/tests/register.test-d.ts` pins the `Register` augmentation.
 - `packages/integration/tests/adapter-parity/svelte.test.ts` runs the shared scenarios.

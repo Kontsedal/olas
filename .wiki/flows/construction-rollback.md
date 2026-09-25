@@ -3,7 +3,7 @@ name: construction-rollback
 description: When a controller factory throws, the partially-built state tears itself down — siblings stay alive.
 type: flow
 covers:
-  - packages/core/src/controller/instance.ts:250-296
+  - packages/core/src/controller/instance.ts:252-298
   - packages/core/src/controller/root.ts:88-103
 edges:
   - { type: documented-in, target: ../../SPEC.md }
@@ -29,7 +29,7 @@ Spec §12.1 has the formal semantics. Summary:
 
 ## Implementation
 
-`ControllerInstance.construct(factory, props, beforeRollback?)` (`instance.ts:250-277`):
+`ControllerInstance.construct(factory, props, beforeRollback?)` (`instance.ts:252-279`):
 
 ```ts nocheck
 construct(factory, props, beforeRollback?): Api {

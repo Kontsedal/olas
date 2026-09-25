@@ -114,7 +114,7 @@ A subscription is an [`AsyncState<T>`](/reference/olas-core.asyncstate). Every f
 | `isPaused` | A fetch is parked until the network returns. |
 | `isEnabled` | `false` while the subscription's `enabled` gate is closed. |
 
-Four actions sit beside them. `refetch()` fetches regardless of staleness and resolves with the value. `reset()` clears `error` and settles `status` without fetching. `cancel()` aborts the fetch in flight and keeps `data`. `firstValue()` resolves with the data at once when there is some, and otherwise on the first success. That makes it the promise for Suspense, React 19's `use(...)` and navigation guards.
+Four actions sit beside them. `refetch()` fetches regardless of staleness and resolves with the value. `reset()` clears `error` and settles `status` without fetching. `cancel()` aborts the fetch in flight and keeps `data`. `firstValue()` resolves with the data at once when there is some for the current key, and otherwise on the first success. That makes it the promise for Suspense, React 19's `use(...)` and navigation guards. After a key change, the previous key's data that `keepPreviousData` keeps on screen does not count, on a shared query and on a `createCache` local cache alike.
 
 In React, `useQuery(sub)` returns every field as a plain value and re-renders only for the fields the component read. See [the React adapter](/adapters/react#usequery-re-renders-for-what-the-component-reads). The [Vue](/adapters/vue) `useQuery` returns refs, and the [Svelte](/adapters/svelte) `queryStore` returns a store.
 
@@ -215,7 +215,7 @@ Resolution is `spec.X ?? defaults.X ?? built-in`, so a field on the query wins o
 
 ## Invalidate after a change
 
-`userQuery.invalidate('u1')` marks one entry stale and refetches it if it has subscribers. `invalidateAll()` does the same for every entry of the query. An entry without subscribers is only marked stale, and its next subscriber fetches it. Both return a promise that resolves when the refetches they started settle. A failed refetch lands on the entry's `error` signal and the root's `onError`, and the promise still resolves (§5.7).
+`userQuery.invalidate('u1')` marks one entry stale and refetches it if it has subscribers. `invalidateAll()` does the same for every entry of the query. An entry without subscribers is only marked stale, and its next subscriber fetches it. That holds when the subscriber returns while a fetch requested before the invalidation still runs. The subscriber joins that fetch, and when the older response lands, the entry fetches once more. A `resume()` and a `prefetch` that join such a fetch get the same catch-up (§5.7). Both return a promise that resolves when the refetches they started settle. A failed refetch lands on the entry's `error` signal and the root's `onError`, and the promise still resolves (§5.7).
 
 An invalidation often catches up on what the app missed, such as a reconnect's `invalidateAll()`. When a `replace` lands while that refetch is in flight, it discards the response, and the entry fetches once more to reconcile. The promise resolves when that catch-up settles. Further `replace` calls during the catch-up leave it in flight, so a burst of pushes cannot keep it from landing (§6.4).
 
@@ -340,6 +340,8 @@ In React, `useInfiniteQuery(sub)` reads it with `useQuery`'s rules.
 | `'offlineFirst'` | Runs anyway. A network-shaped failure while offline parks the entry at `isPaused: true` and retries on reconnect. |
 
 A network-shaped failure is a `fetch` `TypeError`. An `AbortError` does not count. While parked, nothing is in flight and `status` stays at `idle` or the last success. The UI can therefore show "waiting for network" apart from the spinner and the error (§5.5).
+
+A parked fetch runs on the next `online` event. A worker has no `window` to fire that event, and a browser can fire it while `navigator.onLine` still reads `false`. So a `refetchInterval` tick, or a focus or reconnect trigger, that finds the network back runs the parked fetch too (§5.9).
 
 ## Structural sharing
 
