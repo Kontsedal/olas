@@ -97,7 +97,7 @@ Every export, grouped by what it is for.
 | Export | Purpose |
 |---|---|
 | `<SuspendOnUnmount controller>` | Suspend a child controller on unmount, resume on remount. Refcounted, so overlapping wrappers during a cross-fade keep it resumed. The React tree still unmounts: DOM, scroll and input state are not kept. |
-| `useSuspendOnHidden(controller)` | Suspend while `document.visibilityState` is hidden; resume on visible, and on unmount if it is still suspended. |
+| `useSuspendOnHidden(controller)` | Suspend while `document.visibilityState` is hidden; resume on visible, and on unmount if it is still suspended. With `<SuspendOnUnmount>` on the same controller, it resumes only if a wrapper is still mounted. |
 
 **Streaming SSR** — the server writes `<script>` tags as data lands; the client applies each one as it arrives. See [SPEC §15](../../SPEC.md).
 

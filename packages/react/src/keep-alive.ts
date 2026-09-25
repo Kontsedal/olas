@@ -16,13 +16,26 @@ export type SuspendableController = {
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 /**
- * Refcount per controller handle, shared across every `<SuspendOnUnmount>`
- * mounted on the same controller. `resume()` fires on 0→1 (first consumer),
- * `suspend()` on 1→0 (last consumer). A WeakMap so a controller that's no
- * longer referenced is collected. Module-level on purpose — two wrappers in
- * different React subtrees (a cross-fade) must share the count.
+ * Why a controller is suspended, shared by every `<SuspendOnUnmount>` and
+ * `useSuspendOnHidden` on it. `held` counts the mounted wrappers, and
+ * `released` is set once the last of them unmounts. `hidden` counts the hooks
+ * holding it suspended for a hidden tab. Each reason suspends as it starts,
+ * and the controller resumes only when none is left. A WeakMap so a
+ * controller that's no longer referenced is collected. Module-level on
+ * purpose — two wrappers in different React subtrees (a cross-fade) must
+ * share the count.
  */
-const refCounts = new WeakMap<SuspendableController, number>()
+type Reasons = { held: number; released: boolean; hidden: number }
+const reasons = new WeakMap<SuspendableController, Reasons>()
+
+const reasonsFor = (controller: SuspendableController): Reasons => {
+  let r = reasons.get(controller)
+  if (r === undefined) {
+    r = { held: 0, released: false, hidden: 0 }
+    reasons.set(controller, r)
+  }
+  return r
+}
 
 /** Props of `<SuspendOnUnmount>`. */
 export type SuspendOnUnmountProps = { controller: SuspendableController; children: ReactNode }
@@ -43,21 +56,22 @@ export type SuspendOnUnmountProps = { controller: SuspendableController; childre
  * resumed regardless of the order React runs the effects, and the exiting
  * screen's unmount can't suspend a controller the entering screen still uses
  * (T4.6). `suspend()` should still be idempotent for safety.
+ *
+ * **Shares its bookkeeping with `useSuspendOnHidden`.** A first mount while a
+ * hidden tab holds the controller suspended leaves it suspended until the tab
+ * shows. Once the last wrapper unmounts, the tab showing again does not resume
+ * it.
  */
 export function SuspendOnUnmount(props: SuspendOnUnmountProps): ReactElement {
   const { controller, children } = props
   useIsomorphicLayoutEffect(() => {
-    const prev = refCounts.get(controller) ?? 0
-    refCounts.set(controller, prev + 1)
-    if (prev === 0) controller.resume() // 0 → 1: first consumer
+    const r = reasonsFor(controller)
+    r.released = false
+    if (r.held++ === 0 && r.hidden === 0) controller.resume() // 0 → 1: first consumer
     return () => {
-      const next = (refCounts.get(controller) ?? 1) - 1
-      if (next <= 0) {
-        refCounts.delete(controller)
-        controller.suspend() // 1 → 0: last consumer
-      } else {
-        refCounts.set(controller, next)
-      }
+      if (--r.held > 0) return
+      r.released = true
+      controller.suspend() // 1 → 0: last consumer
     }
   }, [controller])
   return children as ReactElement
@@ -72,36 +86,41 @@ export function SuspendOnUnmount(props: SuspendOnUnmountProps): ReactElement {
  * or swapping the `controller` argument while hidden — would otherwise leave
  * that controller suspended with nothing left listening for the
  * `visibilitychange` that was supposed to wake it.
+ *
+ * It shares its bookkeeping with `<SuspendOnUnmount>`, so it resumes only a
+ * controller nothing else holds suspended. A controller whose last wrapper
+ * unmounted while the tab was hidden stays suspended when the tab shows, and
+ * when this hook's own component unmounts.
  */
 export function useSuspendOnHidden(controller: SuspendableController): void {
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
-    // Whether the suspension standing right now is this effect's doing.
+    const r = reasonsFor(controller)
+    // Whether this effect holds the controller suspended right now.
     let suspendedHere = false
-    const onChange = () => {
-      if (document.visibilityState === 'hidden') {
-        suspendedHere = true
+    const hold = (hidden: boolean) => {
+      if (hidden === suspendedHere) return
+      suspendedHere = hidden
+      if (hidden) {
+        r.hidden++
         controller.suspend()
-      } else {
-        suspendedHere = false
+      } else if (--r.hidden === 0 && !r.released) {
         controller.resume()
       }
     }
-    // Sync once on mount IFF the tab is already hidden. We don't call
+    const onChange = () => hold(document.visibilityState === 'hidden')
+    // Sync once on mount. Only a hidden tab does anything: we don't call
     // `resume()` on a visible tab because the caller is responsible for
     // the controller's pre-mount state — and a stray `resume()` on an
     // already-active controller would be a no-op on a healthy
     // implementation but noisy in tests / event logs. The real bug we're
     // closing here is: mount under a hidden tab never suspends until the
     // next visibility change, which may never come.
-    if (document.visibilityState === 'hidden') {
-      suspendedHere = true
-      controller.suspend()
-    }
+    onChange()
     document.addEventListener('visibilitychange', onChange)
     return () => {
       document.removeEventListener('visibilitychange', onChange)
-      if (suspendedHere) controller.resume()
+      hold(false)
     }
   }, [controller])
 }

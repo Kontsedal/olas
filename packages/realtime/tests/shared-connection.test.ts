@@ -151,6 +151,45 @@ describe('one connection subscription per transport', () => {
     expect(root.api.conn.value).toBe('connected')
     root.dispose()
   })
+
+  test('resuming into a fresh subscription starts optimistic again, and that is a reconnect', () => {
+    // The transport reports changes only. It came back while the controller was
+    // suspended, with nothing listening, and says nothing on the next subscribe.
+    const t = reportingRealtime()
+    const fn = vi.fn()
+    const def = defineController((ctx) => {
+      const conn = createConnectionState(ctx)
+      onReconnect(ctx, fn)
+      return { conn }
+    })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime: t.realtime } })
+    t.report('offline')
+    expect(root.api.conn.value).toBe('offline')
+
+    root.suspend()
+    root.resume()
+    expect(root.api.conn.value).toBe('connected')
+    expect(fn).toHaveBeenCalledTimes(1)
+    root.dispose()
+  })
+
+  test('a transport that reports its state on subscribe is not reset first', () => {
+    const t = reportingRealtime('offline')
+    const fn = vi.fn()
+    const def = defineController((ctx) => {
+      const conn = createConnectionState(ctx)
+      onReconnect(ctx, fn)
+      return { conn }
+    })
+    const root = createRoot(def, { queries: queryEngine(), deps: { realtime: t.realtime } })
+    expect(root.api.conn.value).toBe('offline')
+
+    root.suspend()
+    root.resume()
+    expect(root.api.conn.value).toBe('offline')
+    expect(fn).not.toHaveBeenCalled()
+    root.dispose()
+  })
 })
 
 describe('connection transports', () => {

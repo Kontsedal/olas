@@ -47,7 +47,9 @@ export type RealtimeService = {
    *
    * Returns an unsubscribe function. Many transports emit a synchronous
    * "current state" callback on subscribe — that's fine; the hook reads
-   * it as the initial value.
+   * it as the initial value. A transport that reports only changes reads as
+   * `'connected'` after each subscribe until its next report, a resume
+   * included.
    */
   onConnectionChange?(handler: (state: ConnectionState) => void): () => void
 }
@@ -345,6 +347,9 @@ export function createLiveStream<TEvent>(
  * and the last one to dispose (or suspend) unsubscribes. One that starts
  * while the listener is live begins at the transport's latest report, since
  * the transport's own "current state" call came once, on that subscribe.
+ * With no report since the listener opened, it begins at `'connected'`. A
+ * resume counts as a start: the state from before the suspend is dropped,
+ * because nothing listened while the controller was suspended.
  *
  * Useful for "stale-during-disconnect" UIs and as a refetch trigger when
  * the connection comes back up:
@@ -413,8 +418,11 @@ function joinConnection(
   }
   hub.listeners.add(listener)
   // A transport's synchronous "current state" call reached the hub once, when
-  // it opened; `last` hands it to every listener that joins after.
-  if (hub.last !== undefined) listener(hub.last)
+  // it opened; `last` hands it to every listener that joins after. With no
+  // report yet, the listener starts optimistic, as a new one does. A listener
+  // resuming from a suspend held its pre-suspend state, and the transport may
+  // have come back in the gap without anything listening.
+  listener(hub.last ?? 'connected')
   return () => {
     hub.listeners.delete(listener)
     if (hub.listeners.size > 0) return
@@ -433,6 +441,12 @@ function joinConnection(
  * The handler fires AFTER the transition is observed; it does NOT fire on
  * the initial `'connected'` value (no transition happened yet). Wrapped
  * in `untracked` so cache writes don't accidentally hook the effect.
+ *
+ * A resume that moves the state from `'offline'` or `'reconnecting'` back to
+ * `'connected'` counts: `createConnectionState` restarts at the transport's
+ * latest report, or at `'connected'` when there is none. The controller's own
+ * channel subscriptions stopped while it was suspended, so the refetch is due
+ * either way.
  */
 export function onReconnect(ctx: Ctx<RealtimeDeps>, fn: () => void): void {
   const conn = createConnectionState(ctx)

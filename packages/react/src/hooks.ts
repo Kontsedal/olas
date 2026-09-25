@@ -19,8 +19,8 @@ import {
   useSyncExternalStore,
 } from 'react'
 
-// Layout effect on the client, so the render flag clears before the browser
-// paints; plain effect on the server, where useLayoutEffect warns.
+// Layout effect on the client, so the commit counts before the browser paints;
+// plain effect on the server, where useLayoutEffect warns.
 const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffect : useEffect
 
 /**
@@ -179,17 +179,22 @@ function warnSuspendedWhileDisabled(subscription: object): void {
  * consistent. A read after commit (an event handler, an effect, a test)
  * returns the live value, so a field that never triggered a re-render is never
  * read stale.
+ *
+ * "During render" means no commit of this component since the render that
+ * made the getter. A commit counter tells, not a flag the render sets: a
+ * render React throws away never commits to clear a flag, and would leave the
+ * committed result reading its rendered snapshot.
  */
 function useTrackedSnapshot<S extends object>(
   snapshot: ReadSignal<S>,
   alwaysTracked: readonly (keyof S)[],
 ): { snap: S; read: <K extends keyof S>(key: K) => S[K] } {
-  const stateRef = useRef<{ tracked: Set<keyof S>; rendering: boolean } | null>(null)
+  const stateRef = useRef<{ tracked: Set<keyof S>; commits: number } | null>(null)
   if (stateRef.current === null) {
-    stateRef.current = { tracked: new Set(alwaysTracked), rendering: true }
+    stateRef.current = { tracked: new Set(alwaysTracked), commits: 0 }
   }
   const state = stateRef.current
-  state.rendering = true
+  const renderedAt = state.commits
   for (const key of alwaysTracked) state.tracked.add(key)
 
   const subscribe = useCallback(
@@ -215,12 +220,12 @@ function useTrackedSnapshot<S extends object>(
   const getSnapshot = useCallback(() => snapshot.value, [snapshot])
   const snap = useSyncExternalStore(subscribe, getSnapshot, getSnapshot)
   useIsomorphicLayoutEffect(() => {
-    state.rendering = false
+    state.commits++
   })
 
   const read = <K extends keyof S>(key: K): S[K] => {
     state.tracked.add(key)
-    return state.rendering ? snap[key] : snapshot.peek()[key]
+    return state.commits === renderedAt ? snap[key] : snapshot.peek()[key]
   }
   return { snap, read }
 }

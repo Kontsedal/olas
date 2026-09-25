@@ -17,7 +17,7 @@ import {
   signal,
 } from '@kontsedal/olas-core'
 import { act, cleanup, render, renderHook, screen } from '@testing-library/react'
-import { Suspense, useState } from 'react'
+import { Suspense, startTransition, useLayoutEffect, useState } from 'react'
 import { afterEach, describe, expect, test } from 'vitest'
 import { type UseQueryResult, useInfiniteQuery, useQuery, useValue } from '../src'
 
@@ -160,6 +160,55 @@ describe('useQuery is fine-grained', () => {
     await flush()
     expect(renders).toBeGreaterThan(settled)
     expect(result?.isFetching).toBe(false)
+  })
+
+  test('a read after commit stays live when a later render is thrown away', async () => {
+    // A transition whose sibling suspends renders View and then discards that
+    // render. The committed result must still read live values afterwards.
+    const { root, gates } = gatedQueryRoot('fine/discarded-render')
+    let committed: UseQueryResult<string> | undefined
+    let bump: (() => void) | undefined
+    const never = new Promise<never>(() => {})
+    function View({ n }: { n: number }) {
+      const current = useQuery(root.api.q)
+      useLayoutEffect(() => {
+        committed = current
+      })
+      return <p>{`${current.data ?? 'none'}|${n}`}</p>
+    }
+    function Sibling({ n }: { n: number }) {
+      if (n > 0) throw never
+      return null
+    }
+    function Parent() {
+      const [n, setN] = useState(0)
+      bump = () => startTransition(() => setN(1))
+      return (
+        <Suspense fallback={<p>loading</p>}>
+          <View n={n} />
+          <Sibling n={n} />
+        </Suspense>
+      )
+    }
+    render(<Parent />)
+    await act(async () => {
+      gates[0]?.resolve('v1')
+    })
+    await flush()
+    expect(screen.getByText('v1|0')).toBeTruthy()
+
+    await act(async () => {
+      bump?.()
+    })
+    await flush()
+    // The transition suspended, so the committed tree is still the old one.
+    expect(screen.getByText('v1|0')).toBeTruthy()
+
+    await act(async () => {
+      void root.api.q.refetch()
+    })
+    expect(root.api.q.isFetching.peek()).toBe(true)
+    expect(committed?.isFetching).toBe(true)
   })
 
   test('before anything is read, every change re-renders (renderHook reads after the fact)', async () => {

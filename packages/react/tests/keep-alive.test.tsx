@@ -175,6 +175,87 @@ describe('useSuspendOnHidden', () => {
   })
 })
 
+// Both helpers on one controller: it resumes only when neither has a reason
+// left to keep it suspended.
+describe('SuspendOnUnmount with useSuspendOnHidden on the same controller', () => {
+  const recorder = () => {
+    const calls: string[] = []
+    const controller: SuspendableController = {
+      suspend() {
+        calls.push('suspend')
+      },
+      resume() {
+        calls.push('resume')
+      },
+    }
+    return { calls, controller }
+  }
+  const setVisibility = (state: 'hidden' | 'visible') => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, value: state })
+    act(() => {
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+  }
+
+  test('unmounting the wrapped subtree while hidden leaves the controller suspended', () => {
+    const { calls, controller } = recorder()
+    function Screen() {
+      useSuspendOnHidden(controller)
+      return null
+    }
+    const { unmount } = render(
+      <SuspendOnUnmount controller={controller}>
+        <Screen />
+      </SuspendOnUnmount>,
+    )
+    setVisibility('hidden')
+    act(() => unmount())
+    // The hook's cleanup used to resume after the wrapper's suspended it.
+    expect(calls.at(-1)).toBe('suspend')
+    setVisibility('visible')
+    expect(calls.at(-1)).toBe('suspend')
+  })
+
+  test('a visible tab does not resume a controller whose wrapper unmounted while hidden', () => {
+    const { calls, controller } = recorder()
+    function App({ screen }: { screen: boolean }) {
+      useSuspendOnHidden(controller)
+      return screen ? (
+        <SuspendOnUnmount controller={controller}>
+          <div />
+        </SuspendOnUnmount>
+      ) : null
+    }
+    const { rerender } = render(<App screen />)
+    setVisibility('hidden')
+    act(() => rerender(<App screen={false} />))
+    setVisibility('visible')
+    expect(calls.at(-1)).toBe('suspend')
+
+    // Mounting a wrapper again resumes it.
+    act(() => rerender(<App screen />))
+    expect(calls.at(-1)).toBe('resume')
+  })
+
+  test('a wrapper that mounts while hidden waits for the tab to show', () => {
+    const { calls, controller } = recorder()
+    function App({ screen }: { screen: boolean }) {
+      useSuspendOnHidden(controller)
+      return screen ? (
+        <SuspendOnUnmount controller={controller}>
+          <div />
+        </SuspendOnUnmount>
+      ) : null
+    }
+    const { rerender } = render(<App screen={false} />)
+    setVisibility('hidden')
+    act(() => rerender(<App screen />))
+    expect(calls.at(-1)).toBe('suspend')
+    setVisibility('visible')
+    expect(calls.at(-1)).toBe('resume')
+  })
+})
+
 // R4.6 (T4.6) — cross-fade overlap: two wrappers around the SAME controller must
 // refcount so the exiting screen's unmount doesn't suspend a controller the
 // entering screen is still using.

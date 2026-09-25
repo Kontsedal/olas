@@ -116,8 +116,8 @@ type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'
 |---|---|
 | `createRealtimePatcher` | Subscribe; dispatch by `event.type`. Each handler receives its own variant of the union. A `'*'` handler also sees every event, after the specific one. Handlers run inside `untracked`. Auto-unsubscribes on dispose. |
 | `createLiveStream` | Tail buffer. `capacity` caps memory (oldest drops, and `onDrop` receives them); `flushMs` coalesces bursts into one signal write; `flushMs <= 0` flushes synchronously. `rafFlush` coalesces on `requestAnimationFrame` instead, and falls back to `setTimeout(0)` where there is none. |
-| `createConnectionState` | A `ReadSignal` of the transport's connection state. It is `'unknown'` for a transport without `onConnectionChange`. With one, it starts at `'connected'` until the first report, or at the latest report when another user already holds the subscription. |
-| `onReconnect` | Call `fn` when the connection returns to `'connected'` from another state. It does not fire for the initial `'connected'`. Pair it with a query `invalidate` to refetch what a disconnect missed. |
+| `createConnectionState` | A `ReadSignal` of the transport's connection state. It is `'unknown'` for a transport without `onConnectionChange`. With one, it starts at `'connected'` until the first report, or at the latest report when another user already holds the subscription. A resume starts it the same way. |
+| `onReconnect` | Call `fn` when the connection returns to `'connected'` from another state. It does not fire for the initial `'connected'`. A resume that moves the state back to `'connected'` counts too. Pair it with a query `invalidate` to refetch what a disconnect missed. |
 | `RealtimeService` | The consumer-implemented contract — `subscribe(channel, handler) → { unsubscribe }`, plus an optional `onConnectionChange`. |
 
 ## `RealtimeService` contract
