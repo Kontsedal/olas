@@ -2,16 +2,7 @@
 
 Olas splits an app into two trees. The controller tree owns the state and the logic, and the component tree draws it. This page describes the model in the order you meet it, and says briefly why each part is shaped the way it is. [SPEC.md](https://github.com/Kontsedal/olas/blob/main/SPEC.md) is the full contract, cited here as §N.M.
 
-```text
-Component tree (draws)                Controller tree (owns state and logic)
-
-App                                   app            ← root, from createRoot
-├── Toolbar ─── useValue ───────────▶ ├── toolbar
-└── BoardPage ─ useQuery ───────────▶ └── board
-                                          ├── createQuery(ctx, boardQuery)
-                                          ├── createMutation(ctx, …)
-                                          └── cardEditor  ← attached while open
-```
+<TwoTrees />
 
 ## Two trees
 

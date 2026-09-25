@@ -16,6 +16,49 @@ const referencePackages = (() => {
   }
 })()
 
+const GITHUB = 'https://github.com/Kontsedal/olas'
+
+const guideSidebar = [
+  {
+    text: 'Introduction',
+    items: [
+      { text: 'What is Olas?', link: '/guide/what-is-olas' },
+      { text: 'Getting started', link: '/guide/getting-started' },
+      { text: 'Concepts', link: '/guide/concepts' },
+    ],
+  },
+  {
+    text: 'Essentials',
+    items: [
+      { text: 'Queries', link: '/guide/queries' },
+      { text: 'Mutations', link: '/guide/mutations' },
+      { text: 'Forms', link: '/guide/forms' },
+      { text: 'Testing', link: '/guide/testing' },
+    ],
+  },
+  {
+    text: 'Your framework',
+    items: [
+      { text: 'React and Preact', link: '/adapters/react' },
+      { text: 'Vue', link: '/adapters/vue' },
+      { text: 'Svelte', link: '/adapters/svelte' },
+    ],
+  },
+  {
+    text: 'Going further',
+    items: [
+      { text: 'Server rendering', link: '/guide/ssr' },
+      { text: 'Plugins', link: '/guide/plugins' },
+      { text: 'Performance', link: '/guide/performance' },
+      { text: 'Recipes', link: '/guide/recipes' },
+    ],
+  },
+  {
+    text: 'Upgrading',
+    items: [{ text: 'Migrating from 0.8', link: '/guide/migration' }],
+  },
+]
+
 export default defineConfig({
   title: 'Olas',
   description:
@@ -48,57 +91,63 @@ export default defineConfig({
     },
   },
   themeConfig: {
+    logo: { light: '/favicon.svg', dark: '/logo-dark.svg', alt: '' },
     nav: [
-      { text: 'Guide', link: '/guide/getting-started' },
-      { text: 'Adapters', link: '/adapters/react' },
-      { text: 'Packages', link: '/packages/core' },
-      { text: 'Reference', link: '/reference/' },
-      { text: 'Migrating to 1.0', link: '/guide/migration' },
+      { text: 'Guide', link: '/guide/what-is-olas', activeMatch: '^/(guide|adapters)/' },
+      { text: 'Packages', link: '/packages/core', activeMatch: '^/packages/' },
+      { text: 'API', link: '/reference/', activeMatch: '^/reference/' },
+      {
+        text: '1.0',
+        items: [
+          { text: 'Migrating from 0.8', link: '/guide/migration' },
+          { text: 'Example apps', link: `${GITHUB}/tree/main/examples` },
+          { text: 'Specification', link: `${GITHUB}/blob/main/SPEC.md` },
+          { text: 'Changelog', link: `${GITHUB}/blob/main/packages/core/CHANGELOG.md` },
+        ],
+      },
     ],
     sidebar: {
-      '/guide/': [
-        {
-          text: 'Guide',
-          items: [
-            { text: 'Getting started', link: '/guide/getting-started' },
-            { text: 'Concepts', link: '/guide/concepts' },
-            { text: 'Queries', link: '/guide/queries' },
-            { text: 'Mutations', link: '/guide/mutations' },
-            { text: 'Forms', link: '/guide/forms' },
-            { text: 'Plugins', link: '/guide/plugins' },
-            { text: 'SSR', link: '/guide/ssr' },
-            { text: 'Testing', link: '/guide/testing' },
-            { text: 'Recipes', link: '/guide/recipes' },
-            { text: 'Performance', link: '/guide/performance' },
-            { text: 'Migrating to 1.0', link: '/guide/migration' },
-          ],
-        },
-      ],
-      '/adapters/': [
-        {
-          text: 'Adapters',
-          items: [
-            { text: 'React (and Preact)', link: '/adapters/react' },
-            { text: 'Vue', link: '/adapters/vue' },
-            { text: 'Svelte', link: '/adapters/svelte' },
-          ],
-        },
-      ],
+      // The guide and the adapter pages share one sidebar, ordered the way a
+      // new reader meets the library: what it is, the core primitives, their
+      // framework, then the rest.
+      '/guide/': guideSidebar,
+      '/adapters/': guideSidebar,
       '/packages/': [
         {
-          text: 'Packages',
+          text: 'Core',
+          items: [{ text: 'olas-core', link: '/packages/core' }],
+        },
+        {
+          text: 'Data and sync',
           items: [
-            { text: 'core', link: '/packages/core' },
-            { text: 'persist', link: '/packages/persist' },
-            { text: 'zod', link: '/packages/zod' },
-            { text: 'cross-tab', link: '/packages/cross-tab' },
-            { text: 'entities', link: '/packages/entities' },
-            { text: 'realtime', link: '/packages/realtime' },
-            { text: 'mutation-queue', link: '/packages/mutation-queue' },
-            { text: 'router', link: '/packages/router' },
-            { text: 'devtools', link: '/packages/devtools' },
-            { text: 'eslint-plugin', link: '/packages/eslint-plugin' },
-            { text: 'codemod', link: '/packages/codemod' },
+            { text: 'Persistence', link: '/packages/persist' },
+            { text: 'Cross-tab sync', link: '/packages/cross-tab' },
+            { text: 'Entities', link: '/packages/entities' },
+            { text: 'Realtime', link: '/packages/realtime' },
+            { text: 'Mutation queue', link: '/packages/mutation-queue' },
+          ],
+        },
+        {
+          text: 'Routing and forms',
+          items: [
+            { text: 'Router', link: '/packages/router' },
+            { text: 'Zod', link: '/packages/zod' },
+          ],
+        },
+        {
+          text: 'Tools',
+          items: [
+            { text: 'Devtools', link: '/packages/devtools' },
+            { text: 'ESLint plugin', link: '/packages/eslint-plugin' },
+            { text: 'Codemod', link: '/packages/codemod' },
+          ],
+        },
+        {
+          text: 'Frameworks',
+          items: [
+            { text: 'React and Preact', link: '/adapters/react' },
+            { text: 'Vue', link: '/adapters/vue' },
+            { text: 'Svelte', link: '/adapters/svelte' },
           ],
         },
       ],
@@ -115,12 +164,14 @@ export default defineConfig({
         },
       ],
     },
-    socialLinks: [{ icon: 'github', link: 'https://github.com/Kontsedal/olas' }],
+    socialLinks: [{ icon: 'github', link: GITHUB }],
     editLink: {
-      pattern: 'https://github.com/Kontsedal/olas/edit/main/docs/:path',
+      pattern: `${GITHUB}/edit/main/docs/:path`,
       text: 'Edit this page on GitHub',
     },
+    footer: { message: 'Released under the MIT License.' },
     search: { provider: 'local' },
-    outline: [2, 3],
+    outline: { level: [2, 3], label: 'On this page' },
+    docFooter: { prev: 'Previous', next: 'Next' },
   },
 })

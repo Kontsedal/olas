@@ -9,6 +9,7 @@ covers:
   - examples/reader-ssr/src/styles.css
   - examples/virtualized-table/src/styles.css
   - packages/devtools/src/styles.ts
+  - docs/.vitepress/theme/style.css
 edges:
   - { type: documented-in, target: ../../CLAUDE.md }
   - { type: related, target: prose-rules.md }
@@ -255,6 +256,7 @@ skin.
 | `examples/virtualized-table` | sea teal | it hosts the devtools panel, and a second hue would show as a seam |
 | `examples/stock-ticker` | gold, hue 88 | a ticker's colour budget is spent on the price ramp, so the accent lives outside it |
 | `examples/reader-ssr` | warm red, hue 17 | a serif reading column — the one app that already had an opinion |
+| the docs site | sea teal | the front door carries the brand. It is a reading surface, so it takes the palette and not the density, and it ships a webfont (`docs-site.md`) |
 
 *Olas* means waves, which is where the teal comes from.
 
