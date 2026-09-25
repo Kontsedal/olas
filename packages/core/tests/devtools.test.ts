@@ -1,4 +1,5 @@
 import { describe, expect, test, vi } from 'vitest'
+import { createField, createRoot, defineController, effect, signal } from '../src'
 import { type DebugEvent, DevtoolsEmitter } from '../src/devtools'
 
 describe('DevtoolsEmitter', () => {
@@ -93,5 +94,49 @@ describe('DevtoolsEmitter', () => {
     expect(bus.hasSubscribers).toBe(true)
     off()
     expect(bus.hasSubscribers).toBe(false)
+  })
+})
+
+describe('DevtoolsEmitter — subscribers run untracked', () => {
+  test('a subscriber that reads a signal adds no dependency to the effect that emitted', () => {
+    const bus = new DevtoolsEmitter()
+    const other = signal(0)
+    bus.subscribe(() => {
+      void other.value
+    })
+    let runs = 0
+    const stop = effect(() => {
+      runs++
+      bus.emit({ type: 'cache:gc', queryKey: ['x'] })
+    })
+    other.set(1)
+    expect(runs).toBe(1)
+    stop()
+  })
+
+  test("a field:validated subscriber does not become the field validator's dependency", () => {
+    const other = signal(0)
+    let calls = 0
+    const root = createRoot(
+      defineController((ctx) => ({
+        f: createField<string>(ctx, 'x', {
+          validators: [
+            () => {
+              calls++
+              return null
+            },
+          ],
+        }),
+      })),
+      { deps: {} },
+    )
+    root.debug.subscribe((e) => {
+      if (e.type === 'field:validated') void other.value
+    })
+    root.api.f.set('y')
+    const before = calls
+    other.set(1)
+    expect(calls).toBe(before)
+    root.dispose()
   })
 })

@@ -99,6 +99,9 @@ describe('a value that looks like an envelope', () => {
     ['a marker with a version that is not a number', { $olas: 1, v: 'x', d: 'y' }],
     ['a `d` that is not a string', { v: 1, d: 1 }],
     ['a `d` with no version', { d: 'y' }],
+    // The shapes that stand for `undefined`.
+    ['the marker alone', { $olas: 1 }],
+    ['the marker with a version', { $olas: 1, v: 2 }],
   ]
 
   test.each(lookalikes)('%s reads back as itself without version', (_label, value) => {

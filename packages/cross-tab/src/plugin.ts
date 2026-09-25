@@ -1,9 +1,31 @@
-import type { InvalidateEvent, OlasPlugin, WriteEvent } from '@kontsedal/olas-core'
+import {
+  batch,
+  type InvalidateEvent,
+  type OlasPlugin,
+  type Snapshot,
+  type WriteEvent,
+} from '@kontsedal/olas-core'
 import { type ChannelLike, defaultChannelFactory } from './channel'
-import { type Message, PROTOCOL_VERSION } from './protocol'
+import { type Message, PROTOCOL_VERSION, type RelayedSource, type SetDataMessage } from './protocol'
 
 /** The plugin's name — and the `origin` stamped on writes it applies from peers. */
 export const CROSS_TAB_PLUGIN_NAME = 'olas-cross-tab'
+
+/**
+ * How long a peer's guess stays shown here without a word from that peer
+ * about the entry. A tab that closes with an optimistic write live never
+ * sends the rollback or commit that would settle it, and a guess left live
+ * holds back this tab's refetches of the entry and its `hasPendingMutations`.
+ */
+const MIRROR_TTL_MS = 30_000
+
+const RELAYED: ReadonlySet<unknown> = new Set<RelayedSource>([
+  'write',
+  'replace',
+  'optimistic',
+  'rollback',
+  'commit',
+])
 
 /**
  * Options accepted by `crossTabPlugin(...)`. SPEC §13.2.
@@ -37,9 +59,13 @@ export type CrossTabOptions = {
   maxPayloadBytes?: number
   /**
    * Also mirror optimistic writes (`setData`) and their rollbacks, so peers
-   * show a pending edit before the server confirms it. Default `true`. With
-   * `false`, only canonical writes (`write`, `replace`) and invalidations
-   * cross tabs.
+   * show a pending edit before the server confirms it. Default `true`. A
+   * peer's guess is shown as a guess: it does not restart the stale clock,
+   * a persister does not store it, and the peer's rollback or commit settles
+   * it. A guess whose tab never settles it is dropped after 30 seconds. With
+   * `false`, only canonical writes (`write`, `replace`), commits and
+   * invalidations cross tabs, and a canonical write made under a guess sends
+   * the data beneath the guess.
    */
   optimistic?: boolean
   /**
@@ -203,6 +229,85 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         return outcome
       }
 
+      /**
+       * The guesses of peers this tab shows, one per peer and entry: the
+       * `Snapshot` of the optimistic write that shows it, and the timer that
+       * drops it when the peer goes quiet (`MIRROR_TTL_MS`).
+       */
+      const guesses = new Map<
+        string,
+        { snapshot: Snapshot; expiry: ReturnType<typeof setTimeout> }
+      >()
+      const guessKey = (peer: string, queryId: string, keyArgs: readonly unknown[]): string =>
+        `${peer}\u0000${queryId}\u0000${queries.hashKey(keyArgs)}`
+      const pageOptions = (pageParams: readonly unknown[] | undefined) =>
+        pageParams !== undefined ? { pageParams } : undefined
+
+      /** Stop showing a peer's guess: roll back the write that shows it. */
+      const unguess = (slot: string): void => {
+        const shown = guesses.get(slot)
+        if (shown === undefined) return
+        guesses.delete(slot)
+        clearTimeout(shown.expiry)
+        shown.snapshot.rollback()
+      }
+      /** Show a peer's guess as a guess of this tab's own. */
+      const guess = (
+        slot: string,
+        queryId: string,
+        keyArgs: readonly unknown[],
+        data: unknown,
+        pageParams: readonly unknown[] | undefined,
+      ): void => {
+        const snapshot = queries.setData(queryId, keyArgs, () => data, pageOptions(pageParams))
+        if (snapshot === undefined) return
+        guesses.set(slot, { snapshot, expiry: setTimeout(() => unguess(slot), MIRROR_TTL_MS) })
+      }
+
+      /**
+       * Apply a peer's write as what its source says it is (`SetDataMessage`).
+       * Any guess this tab shows for the peer is dropped first: every message
+       * about the entry says what the peer shows now.
+       */
+      const apply = (
+        peer: string,
+        queryId: string,
+        keyArgs: readonly unknown[],
+        source: RelayedSource,
+        data: unknown,
+        pageParams: readonly unknown[] | undefined,
+        server: SetDataMessage['server'],
+      ): void => {
+        const slot = guessKey(peer, queryId, keyArgs)
+        unguess(slot)
+        if (source === 'optimistic') {
+          guess(slot, queryId, keyArgs, data, pageParams)
+          return
+        }
+        if (source === 'rollback') {
+          // The peer still shows other guesses.
+          if (server !== undefined) guess(slot, queryId, keyArgs, data, pageParams)
+          return
+        }
+        if (source === 'commit') {
+          // A commit, as the peer's was: the data becomes this tab's, and the
+          // stale clock stays where the server left it (SPEC §5.9).
+          queries.setData(queryId, keyArgs, () => data, pageOptions(pageParams))?.finalize()
+          return
+        }
+        // Canonical: the server truth, beneath the peer's guesses when it
+        // shows any. A replace supersedes a fetch this tab has in flight, as
+        // a replace does here (SPEC §6.4).
+        const truth = server ?? { data, pageParams }
+        if (source === 'replace') {
+          queries.replace(queryId, keyArgs, truth.data, pageOptions(truth.pageParams))
+        } else {
+          queries.write(queryId, keyArgs, () => truth.data, pageOptions(truth.pageParams))
+        }
+        if (server !== undefined && mirrorOptimistic)
+          guess(slot, queryId, keyArgs, data, pageParams)
+      }
+
       /** Check and apply one message a peer sent. Returns what became of it. */
       const receive = (msg: Partial<Message>): Received => {
         // Layer 3 — out-of-order / duplicate drop.
@@ -225,25 +330,46 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         }
         if (!accepts(msg.queryId)) return 'ignored'
         if (msg.type === 'setData') {
-          // Stamped with this plugin's name as `origin`, which is what keeps
-          // the write from being mirrored straight back.
-          const { data, pageParams } = msg as { data?: unknown; pageParams?: unknown }
+          const { data, pageParams, server } = msg as Partial<SetDataMessage>
+          // A message from a version before 1.0 carries no source: a write.
+          const source = (msg as { source?: unknown }).source ?? 'write'
+          if (!RELAYED.has(source)) {
+            onWarn(`[olas/cross-tab] malformed setData message: unknown source ${String(source)}`)
+            return 'malformed'
+          }
           if (pageParams !== undefined && !Array.isArray(pageParams)) {
             onWarn('[olas/cross-tab] malformed setData message: pageParams is not an array')
             return 'malformed'
           }
-          if (validate !== undefined && !safely(() => validate(msg.queryId as string, data))) {
+          if (
+            server !== undefined &&
+            (server === null ||
+              typeof server !== 'object' ||
+              (server.pageParams !== undefined && !Array.isArray(server.pageParams)))
+          ) {
+            onWarn('[olas/cross-tab] malformed setData message: server is not a server state')
+            return 'malformed'
+          }
+          if (!mirrorOptimistic && (source === 'optimistic' || source === 'rollback')) {
+            return 'ignored'
+          }
+          if (
+            validate !== undefined &&
+            (!safely(() => validate(msg.queryId as string, data)) ||
+              (server !== undefined && !safely(() => validate(msg.queryId as string, server.data))))
+          ) {
             onWarn('[olas/cross-tab] setData message rejected by validate')
             return 'rejected'
           }
-          // An infinite query's pages arrive with their params, so this tab can
-          // keep paging from them.
+          // Every write below is stamped with this plugin's name as `origin`,
+          // which keeps it from being mirrored straight back. An infinite
+          // query's pages arrive with their params, so this tab keeps paging
+          // from them.
+          const queryId = msg.queryId
+          const keyArgs = msg.keyArgs as unknown[]
           return commit(peer, msgId, () =>
-            queries.write(
-              msg.queryId as string,
-              msg.keyArgs as unknown[],
-              () => data,
-              pageParams ? { pageParams } : undefined,
+            batch(() =>
+              apply(peer, queryId, keyArgs, source as RelayedSource, data, pageParams, server),
             ),
           )
         }
@@ -273,6 +399,9 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
           host.debug({
             kind: 'receive',
             type: msg.type,
+            ...(msg.type === 'setData'
+              ? { source: (msg as { source?: unknown }).source ?? 'write' }
+              : {}),
             queryId: msg.queryId,
             outcome,
             from: msg.sourceId,
@@ -316,6 +445,7 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
           host.debug({
             kind: 'send',
             type: msg.type,
+            ...(msg.type === 'setData' ? { source: msg.source } : {}),
             queryId: msg.queryId,
             outcome: posted ? 'posted' : 'not-cloneable',
             from: sourceId,
@@ -335,10 +465,17 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
       return {
         onWrite(event) {
           if (!mirrors(event)) return
-          if (event.source === 'fetch' || event.source === 'hydrate') return
-          if (!mirrorOptimistic && (event.source === 'optimistic' || event.source === 'rollback')) {
-            return
-          }
+          const source = event.source
+          if (source === 'fetch' || source === 'hydrate') return
+          if (!mirrorOptimistic && (source === 'optimistic' || source === 'rollback')) return
+          // The truth beneath the guesses `data` holds, when this tab shows any.
+          const server = event.server
+          const guessed = server !== undefined && !Object.is(server.data, event.data)
+          // Without mirrored guesses a peer gets server truth alone. A commit
+          // never holds a guess.
+          const sendsTruth = guessed && !mirrorOptimistic
+          const data = sendsTruth ? server.data : event.data
+          const pageParams = sendsTruth ? server.pageParams : event.pageParams
           send({
             v: PROTOCOL_VERSION,
             type: 'setData',
@@ -346,8 +483,17 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
             msgId: ++msgIdCounter,
             queryId: event.query.id,
             keyArgs: event.key,
-            data: event.data,
-            ...(event.pageParams !== undefined ? { pageParams: event.pageParams } : {}),
+            data,
+            ...(pageParams !== undefined ? { pageParams } : {}),
+            source,
+            ...(guessed && mirrorOptimistic && source !== 'optimistic'
+              ? {
+                  server: {
+                    data: server.data,
+                    ...(server.pageParams !== undefined ? { pageParams: server.pageParams } : {}),
+                  },
+                }
+              : {}),
           })
         },
 
@@ -367,6 +513,9 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
           channel.removeEventListener('message', listener)
           channel.close()
           seenByPeer.clear()
+          // The root disposes the entries the guesses sit on.
+          for (const shown of guesses.values()) clearTimeout(shown.expiry)
+          guesses.clear()
         },
       }
     },

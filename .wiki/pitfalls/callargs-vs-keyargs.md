@@ -3,8 +3,8 @@ name: callargs-vs-keyargs
 description: Two arg arrays inside ClientEntry. One goes to the fetcher; one goes to the hash. They are not the same.
 type: pitfall
 covers:
-  - packages/core/src/query/client.ts:304-388
-  - packages/core/src/query/client.ts:1469-1692
+  - packages/core/src/query/client.ts:328-412
+  - packages/core/src/query/client.ts:1537-1764
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/query-client.md }
@@ -46,7 +46,7 @@ this.entry = new Entry<T>({
 
 Test `defineQuery + ctx.use > subscribing fetches; data lands on success` failed because the fetcher received `['user', 'u1']` instead of `['u1']`.
 
-Fix: separate both args arrays explicitly on `ClientEntry` (`client.ts:304-388`):
+Fix: separate both args arrays explicitly on `ClientEntry` (`client.ts:328-412`):
 
 ```ts
 constructor(
@@ -68,7 +68,7 @@ constructor(
 }
 ```
 
-`bindEntry` (`client.ts:1479-1480`), `dropEntry` (`client.ts:1559`), `invalidate` (`client.ts:1625-1626`), `cancel` and `peekData` (`client.ts:1660`, `client.ts:1690`) all hash `keyArgs` with `stableHash(...)`. `invalidateAll` walks the map without hashing.
+`bindEntry`, `dropEntry`, `invalidate`, `cancel` and `peekData` all hash `keyArgs` with `stableHash` (`client.ts:1547-1548`, `client.ts:1631`, `client.ts:1697-1698`, `client.ts:1732`, `client.ts:1762`). `invalidateAll` walks the map without hashing.
 
 ## Why have both?
 

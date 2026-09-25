@@ -208,6 +208,27 @@ const defineOwn = (out: object, key: string, value: unknown): void => {
 }
 
 /**
+ * A shallow copy of `record` with its prototype: a class instance stays an
+ * instance, and a null-prototype object stays one. `{ ...record }` returns a
+ * plain object. Own enumerable string keys are copied through `defineOwn`,
+ * so an own `__proto__` key stays data (`.wiki/pitfalls/proto-key-assignment.md`).
+ * Private fields and non-enumerable properties are not copied.
+ */
+const copyRecord = (record: object): Record<string, unknown> => {
+  const out = Object.create(Object.getPrototypeOf(record)) as Record<string, unknown>
+  for (const key of Object.keys(record))
+    defineOwn(out, key, (record as Record<string, unknown>)[key])
+  return out
+}
+
+/** `{ ...current, ...patch }` that keeps `current`'s prototype. */
+const shallowMerge = (current: object, patch: object): object => {
+  const out = copyRecord(current)
+  for (const key of Object.keys(patch)) defineOwn(out, key, (patch as Record<string, unknown>)[key])
+  return out
+}
+
+/**
  * Recursive merge for `entities.update(..., { merge: 'deep' })`. Plain
  * objects merge key-by-key; arrays REPLACE (no deep-array merge — see
  * lodash debate); non-plain values replace. Returns a new top-level object.
@@ -218,7 +239,7 @@ const defineOwn = (out: object, key: string, value: unknown): void => {
  */
 const deepMerge = (current: object, patch: object): object => {
   if (!isPlainObject(current) || !isPlainObject(patch)) return patch
-  const out: Record<string, unknown> = { ...current }
+  const out = copyRecord(current)
   for (const key of Object.keys(patch)) {
     // Own properties only, read and written: `current['__proto__']` reads the
     // prototype, and `out['__proto__'] = v` replaces it. A patch parsed from
@@ -288,9 +309,15 @@ export type EntityStore = {
    * Each query entry the reverse index lists gets one canonical write that
    * replaces every node `idOf` claims with this id, found in the entry's
    * current data, so a patch lands on an entity that moved since the entry
-   * was last walked. An entry that no longer holds the entity gets no
-   * write. Writes are wrapped in `batch(...)` so a single update produces
-   * one round of subscriber notifications, even when N queries are affected.
+   * was last walked. The write is a patch of the entity as that entry holds
+   * it, not the store's value: the engine re-runs it on each optimistic
+   * baseline (SPEC §6.4), so a guess pending on one query never reaches
+   * another query, or the value a rollback restores. An updater `patch`
+   * therefore runs once per entry and once per baseline, and must be pure.
+   * Every object the patch rebuilds keeps its prototype. An entry that no
+   * longer holds the entity gets no write. Writes are wrapped in
+   * `batch(...)` so a single update produces one round of subscriber
+   * notifications, even when N queries are affected.
    *
    * When the entity isn't in the store, `update` is a no-op. A
    * `console.warn` fires in dev builds — production builds silently bail.
@@ -798,32 +825,78 @@ function createEntityStore(
   }
 
   /**
-   * `root` with every node that `def` claims as `id` replaced by `value`, plus
-   * how many distinct nodes matched. It reads the data as it is now, so a
-   * patch lands on an entity that moved after the entry was last walked, and
-   * never on whatever took its old place.
+   * The first node in `root` that `def` claims as `id` and `isCanonical`
+   * accepts, found by the traversal `walk` uses. `undefined` when `root`
+   * holds only stubs of the entity, or none.
+   */
+  const canonicalIn = (root: unknown, def: EntityDef<unknown>, id: string): unknown => {
+    const seen = new Set<object>()
+    const find = (node: unknown): unknown => {
+      if (node === null || typeof node !== 'object' || seen.has(node)) return undefined
+      seen.add(node)
+      if (def.idOf(node) === id && (def.isCanonical === undefined || def.isCanonical(node))) {
+        return node
+      }
+      const children = Array.isArray(node) ? node : Object.values(node as Record<string, unknown>)
+      for (const child of children) {
+        const found = find(child)
+        if (found !== undefined) return found
+      }
+      return undefined
+    }
+    return find(root)
+  }
+
+  /**
+   * `root` with every node that `def` claims as `id` replaced by one patched
+   * record, plus how many distinct nodes matched. It reads the data it is
+   * given, so a patch lands on an entity that moved after the entry was last
+   * walked, and never on whatever took its old place.
+   *
+   * The record is `patch` of the entity as this data holds it: its first
+   * canonical copy, or `fallback` when the data holds only stubs. The engine
+   * re-runs a canonical write on each optimistic baseline (SPEC §6.4), and a
+   * baseline holds the entity without the guess, so each baseline gets its
+   * own patched record. Every copy in one data, a stub included, gets the
+   * same one.
    *
    * The rebuild is immutable and structural. An unchanged subtree keeps its
    * reference, which is what the signal-equality dedup relies on to end the
    * post-`update` walk, and `root` itself comes back when nothing changed.
-   * A shared subtree is rebuilt once and stays shared, so the cost is one
-   * `idOf` call per reachable object, however many paths lead to it. A cycle
-   * back to an ancestor keeps pointing at the original object. The traversal
-   * matches `walk`: arrays, and objects by `Object.keys`.
+   * A rebuilt object keeps its prototype (`copyRecord`). A shared subtree is
+   * rebuilt once and stays shared, so the cost is one `idOf` call per
+   * reachable object, however many paths lead to it. A cycle back to an
+   * ancestor keeps pointing at the original object. The traversal matches
+   * `walk`: arrays, and objects by `Object.keys`.
    */
   const replaceEntity = (
     root: unknown,
     def: EntityDef<unknown>,
     id: string,
-    value: unknown,
+    patch: (record: unknown) => unknown,
+    fallback: unknown,
   ): { data: unknown; matched: number } => {
     const done = new Map<object, unknown>()
     let matched = 0
+    let patched: { value: unknown } | undefined
+    // `visit` meets the copies in `canonicalIn`'s order, so a first match that
+    // is canonical is the first canonical copy, and the search is skipped.
+    const record = (first: object): unknown => {
+      if (patched === undefined) {
+        const canonical =
+          def.isCanonical === undefined || def.isCanonical(first)
+            ? first
+            : canonicalIn(root, def, id)
+        patched = { value: patch(canonical !== undefined ? canonical : fallback) }
+      }
+      return patched.value
+    }
     const visit = (node: unknown): unknown => {
       if (node === null || typeof node !== 'object') return node
       if (done.has(node)) return done.get(node)
       if (def.idOf(node) === id) {
         matched += 1
+        const value = record(node)
         done.set(node, value)
         return value
       }
@@ -842,7 +915,7 @@ function createEntityStore(
         for (const k of Object.keys(record)) {
           const child = visit(record[k])
           if (Object.is(child, record[k])) continue
-          out ??= { ...record }
+          out ??= copyRecord(record)
           defineOwn(out, k, child)
         }
       }
@@ -957,14 +1030,19 @@ function createEntityStore(
       // We have an existing slot — LRU-touch it now via getSlot so this
       // update counts as a recent use against `maxSlots`.
       const slot = getSlot(part, entity.name, id)
-      let next: T
-      if (typeof patch === 'function') {
-        next = (patch as (prev: T) => T)(current)
-      } else if (options?.merge === 'deep') {
-        next = deepMerge(current as object, patch as object) as T
-      } else {
-        next = { ...(current as object), ...(patch as object) } as T
+      // The patch as a function of one copy of the entity. It runs on each
+      // copy a query holds, not once on the store's: the store follows the
+      // data on screen, guesses included, and a canonical write built from it
+      // would carry a pending guess into every query and every baseline.
+      const apply = (record: unknown): unknown => {
+        if (typeof patch === 'function') return (patch as (prev: T) => T)(record as T)
+        if (record === null || typeof record !== 'object') return patch
+        return options?.merge === 'deep'
+          ? deepMerge(record, patch as object)
+          : shallowMerge(record, patch as object)
       }
+      const next = apply(current) as T
+      const def = entity as EntityDef<unknown>
       const bindingsMap = reverseIndex.get(entity.name)?.get(id)
       // Snapshot the bindings before the loop: another plugin reacting to a
       // backprop write can re-enter this store synchronously and reshape the
@@ -989,7 +1067,7 @@ function createEntityStore(
           // backprop write), and a recorded path would miss the entity or
           // land on what took its place.
           const prev = queries.peek(queryId, keyArgs)
-          const { data, matched } = replaceEntity(prev, entity, id, next)
+          const { data, matched } = replaceEntity(prev, def, id, apply, next)
           if (matched === 0) {
             // The entry no longer holds the entity. Nothing to patch; the
             // re-walk drops the binding.
@@ -999,9 +1077,14 @@ function createEntityStore(
           }
           // An updater that returned the stored value changes nothing.
           if (data === prev) continue
-          // Stamped with this plugin's name as `origin`, so its own `onWrite`
-          // skips it; the re-walk below stands in for that walk.
-          queries.write(queryId, keyArgs, () => data)
+          // A patch, not a whole value: the engine re-runs it on each live
+          // optimistic baseline (SPEC §6.4), where it patches the entity as
+          // that baseline holds it. The data on screen reuses the result
+          // computed above. Stamped with this plugin's name as `origin`, so
+          // its own `onWrite` skips it; the re-walk below stands in for that walk.
+          queries.write(queryId, keyArgs, (base) =>
+            base === prev ? data : replaceEntity(base, def, id, apply, next).data,
+          )
           if (__DEV__) reached.push(queryId)
           // Re-walk the entry: a nested entity the patch brought in (a new
           // author, say) is normalized, and the entry's bindings follow the

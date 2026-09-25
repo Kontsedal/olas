@@ -23,12 +23,15 @@ export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
  * Actions:
  * - `refetch()` — force a fetch; resolves with the result.
  * - `reset()` — clear `error` + `status` without re-fetching.
- * - `cancel()` — abort the in-flight fetch, if any.
+ * - `cancel()` — abort the in-flight fetch, if any, and drop one parked for
+ *   the network.
  * - `firstValue()` — resolves at once when data for the current key is already
  *   there, even while a background refetch runs or after one failed. Otherwise
  *   it resolves on the first success and rejects on the first failure. The
  *   previous key's data that `keepPreviousData` keeps on screen does not
- *   count. It is the promise to hand to Suspense or React 19's `use(...)`.
+ *   count. It is the promise to hand to Suspense or React 19's `use(...)`. It
+ *   never waits on nothing: on an idle entry with no fetch coming, as after a
+ *   cancelled first load, it starts one.
  *
  * `status` reads `'pending'` during every fetch, a background refetch
  * included, while `data` stays. Test `data !== undefined` for "something to
@@ -64,8 +67,9 @@ export type AsyncState<T> = {
   reset: () => void
   /**
    * Abort the in-flight fetch, if any; `isFetching` drops and the data stays.
-   * The canonical optimistic update cancels first, so an older response
-   * cannot land over the optimistic value. See `Query.cancel`.
+   * A fetch parked for the network is dropped too, so the reconnect does not
+   * run it. The canonical optimistic update cancels first, so an older
+   * response cannot land over the optimistic value. See `Query.cancel`.
    */
   cancel: () => void
   firstValue: () => Promise<T>
@@ -79,8 +83,10 @@ export type AsyncState<T> = {
  *   "pending mutation" flag on the entry if no other snapshots are live).
  * - `finalize()` commits the snapshot as the new truth — no rollback,
  *   `hasPendingMutations` clears once all live snapshots on the entry
- *   are finalized or rolled back. The mutation runner calls this on
- *   success; user code rarely needs to.
+ *   are finalized or rolled back. The snapshots still live below it keep
+ *   the commit: a later rollback of one restores its baseline with the
+ *   committed change in it. The mutation runner calls this on success;
+ *   user code rarely needs to.
  *
  * Both are idempotent and mutually exclusive (calling one disables the
  * other). Safe to call after the owning entry has been disposed.
@@ -413,8 +419,9 @@ export type Query<Args extends unknown[], T> = {
    * cross-tab and entity plugins mirror it as canonical data. Guard with `peek(...)` when patching an absent key would produce
    * nonsense (a merge over `undefined` usually does).
    *
-   * It rebases live optimistic snapshots onto the written value, so a mutation
-   * rolling back afterwards restores this rather than an older baseline.
+   * It patches each live optimistic snapshot's baseline with the same updater,
+   * so a mutation rolling back afterwards restores the server value with this
+   * patch in it, not an older baseline and not the guess on screen.
    *
    * **It does NOT supersede a fetch already in flight.** An updater reading `prev`
    * describes the fields it touches and says nothing about the rest, so a response
@@ -463,7 +470,8 @@ export type Query<Args extends unknown[], T> = {
   /**
    * Cancel the in-flight fetch for a specific key (if any). Aborts + supersedes
    * it, restores a settled status (`'success'` if data exists, else `'idle'`),
-   * and does NOT touch data. Use before an optimistic `setData` so an
+   * and does NOT touch data. A fetch parked for the network is dropped too, so
+   * the reconnect cannot land it over a later optimistic write (spec §5.5). Use before an optimistic `setData` so an
    * outgoing refetch's stale response can't clobber it (spec §5, §6.4) —
    * including when nothing invalidates the query, since a stale entry refetches
    * by itself when a subscription acquires or resumes.

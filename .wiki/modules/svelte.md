@@ -11,6 +11,7 @@ edges:
   - { type: tested-by, target: ../../packages/integration/tests/adapter-parity/svelte.test.ts }
   - { type: uses, target: signals.md }
   - { type: related, target: ../decisions/framework-adapters.md }
+  - { type: related, target: ../pitfalls/bind-mutates-in-place.md }
 last_verified: 2026-09-25
 confidence: medium
 ---
@@ -28,6 +29,12 @@ Svelte's contract is `subscribe(run)` that calls `run` with the current value at
 `fieldStore` also has `set`, so Svelte treats it as writable too. For `bind:value={$state.value}`, Svelte 4 and 5 compile the write the same way: assign `value` on the object the store last handed the component, then call `store.set(thatObject)`. Two things went wrong before the 1.0 review. `set` passed the whole state object to `field.set`, so typing "ab" left the field holding `{ value: 'ab', errors: [], … }`. And the object Svelte assigned into was the core `computed`'s cached value.
 
 `fieldStore` now replaces the store's `subscribe`. Each call hands the subscriber a shallow copy of the state and records the copy in a `WeakSet`. `set` writes `copy.value` when its argument is a recorded copy, and passes anything else to `field.set` unchanged. A copy is never a valid field value, so the check cannot misread a field whose value is itself an object with a `value` key. `peek()` and `value` still return the `computed`'s own object. `FieldStore.set` keeps its `(value: T) => void` type, since only Svelte passes the state object.
+
+## A nested bind on an object value (2026-09-25 review)
+
+`bind:value={$person.value.first}` goes one level deeper: Svelte assigns `first` on `copy.value` and then calls `set(copy)`. The state copy was shallow, so `copy.value` was the field's own value object, which is also its `initial` until the first write. The assignment edited both in place, and `field.set(sameObject)` was no change to the signal: no validator ran, `isDirty` stayed `false`, and `reset()` returned the edited value. `copyValue` (`packages/svelte/src/index.ts:180-194`) now puts a shallow copy of a plain-object or array value into each state copy, so the assignment lands on the copy and `set` writes a new value. A null-prototype object keeps its prototype, and anything else, such as a `Date`, goes out as it is. A member two levels down lands on the field's own value object. Since 1.0 the field still hears it, because core counts a `set` of the held object as a change, and its baseline is a copy of its own (`forms.md`, "An object value edited in place"). The same holds for a raw `Field` bound as `bind:value={$person.first}`.
+
+A raw `Field` bound as `bind:value={$person.first}` keeps the old behavior. Svelte calls the field's own `subscribe` and `set` there, with no adapter code in between, so the fix would belong in core (`../pitfalls/bind-mutates-in-place.md`). SPEC §16.3 tells the app to bind an object's members through `fieldStore`.
 
 ## Public surface
 
@@ -57,6 +64,6 @@ The first run found no type errors and one warning, twice: `state_referenced_loc
 
 ## Tests
 
-- `packages/svelte/tests/svelte.test.ts` covers the store contract in a real component, the missing-root error, unsubscribe on unmount, `bind:value` on a field, each store's actions, and `mutate` swallowing the rejection. "bind:value on a fieldStore member writes the value, not the state object" types into `FieldMember.svelte`. "a member write leaves the store’s own state object untouched" replays Svelte's assign-then-`set` by hand.
+- `packages/svelte/tests/svelte.test.ts` covers the store contract in a real component, the missing-root error, unsubscribe on unmount, `bind:value` on a field, each store's actions, and `mutate` swallowing the rejection. "bind:value on a fieldStore member writes the value, not the state object" types into `FieldMember.svelte`. "a member write leaves the store’s own state object untouched" replays Svelte's assign-then-`set` by hand. "a nested bind on an object-valued fieldStore writes a new value and leaves initial alone" types into `FieldObject.svelte`.
 - `packages/svelte/tests/register.test-d.ts` pins the `Register` augmentation.
-- `packages/integration/tests/adapter-parity/svelte.test.ts` runs the shared scenarios.
+- `packages/integration/tests/adapter-parity/svelte.test.ts` runs the shared scenarios. It declares `lacks: ['equal']`: a signal is a Svelte store as it is, with no `isEqual` to pass, so the `isEqual` scenario is skipped for Svelte.

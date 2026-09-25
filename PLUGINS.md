@@ -37,7 +37,7 @@ createRoot(app, { deps, queries: queryEngine(), plugins: [logger] })
 | `onDispose(fn)` | Teardown, after the `dispose` hook. |
 | `track(promise)` | Making `root.waitForIdle()` wait for the plugin's own work: a restore, a replay. |
 | `network` | `isOnline()`, `onReconnect(fn)` and `onFocus(fn)`, shared with the query engine. |
-| `queries` | Cache access by query `id` and entry `key`: `get`, `keys`, `peek`, `write`, `replace`, `invalidate`, `hydrate`, `dehydrate`, `hashKey`. `get(id)` returns the `QueryRef` of a query this root has used: its `id`, `kind` and `meta`. `write` and `replace` skip a key this root holds no entry for. `null` without a query engine. |
+| `queries` | Cache access by query `id` and entry `key`: `get`, `keys`, `peek`, `write`, `replace`, `setData`, `invalidate`, `hydrate`, `dehydrate`, `hashKey`. `get(id)` returns the `QueryRef` of a query this root has used: its `id`, `kind` and `meta`. `write` and `replace` are canonical. `setData` is an optimistic write, as in `onMutate`: it returns the `Snapshot` the plugin settles with `rollback()` or `finalize()`, and leaves the stale clock alone. `write`, `replace` and `setData` skip a key this root holds no entry for, and `setData` then returns `undefined`. `null` without a query engine. |
 | `mutations` | `has(id)`, `get(id)` and `run(id, variables)` for mutations registered with `defineMutation`. `get(id)` returns the definition's `id` and `meta`. `run` goes through the core runner: retry, `deps`, devtools, `waitForIdle`. `null` without a query engine. |
 | `debug(payload)` | A development-only payload on the plugin's devtools lane. |
 
@@ -45,7 +45,7 @@ createRoot(app, { deps, queries: queryEngine(), plugins: [logger] })
 
 | Hook | Fires when |
 |---|---|
-| `onWrite(e)` | A cache entry's data changed. `e.source` is `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'` or `'replace'`. `e.origin` names the plugin or tagged handle that wrote it, and is `undefined` for the app and the engine's own fetches. An infinite query's write carries `e.pageParams`. |
+| `onWrite(e)` | A cache entry's data changed. `e.source` is `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'commit'`, `'write'` or `'replace'`. `e.origin` names the plugin or tagged handle that wrote it, and is `undefined` for the app and the engine's own fetches. An infinite query's write carries `e.pageParams`. `e.server` is the entry's server truth, as `dehydrate()` ships it: the data beneath any live optimistic write, and when the server last said it. |
 | `onInvalidate(e)` | An entry was invalidated. |
 | `onRemove(e)` | The cache garbage-collected an entry. |
 | `onActivate(e)` / `onDeactivate(e)` | An entry gained its first subscriber, or lost its last. |
@@ -98,14 +98,14 @@ export const tracing = definePlugin({
 })
 ```
 
-**A relay** carries cache state across a boundary and writes it into the cache on the other side. `@kontsedal/olas-cross-tab` relays between tabs and writes through `host.queries`. The streaming hydrator relays from server to client: its plugin records the server root's writes, and the client applies them with `root.hydrate`. The writes a relay makes through `host.queries` reach its own `onWrite` with its name as `origin`, so it must skip them there, or it echoes them back.
+**A relay** carries cache state across a boundary and writes it into the cache on the other side. `@kontsedal/olas-cross-tab` relays between tabs and writes through `host.queries`. The streaming hydrator relays from server to client: its plugin records the server root's writes, and the client applies them with `root.hydrate`. The writes a relay makes through `host.queries` reach its own `onWrite` with its name as `origin`, so it must skip them there, or it echoes them back. A relay applies each write as what it was. A `replace` stays a `replace`, which supersedes a fetch in flight. A guess goes through `setData`, and the other side's rollback or commit settles it.
 
 ## Checklist
 
 1. **Keep per-root state inside `setup`.** A `let` at module level is shared by every root, and the tests of two roots will interfere.
 2. **Handle `host.queries === null`.** A root without a query engine has no cache. A plugin that cannot work without one throws from `setup` with the fix, as cross-tab, entities and the mutation queue do. A plugin that can do without warns in development and returns no hooks, as the query-cache persister does.
 3. **Skip your own writes.** Check `event.origin === YOUR_NAME` in `onWrite` and `onInvalidate`.
-4. **Persist or relay only canonical writes.** `'optimistic'` and `'rollback'` are guesses the server has not confirmed.
+4. **Persist server truth, and relay a guess as a guess.** While an optimistic write is live, `e.data` holds the guess, whatever `e.source` says. A `'write'` made under a guess carries it too. A plugin that keeps server truth stores `e.server`, which never holds a guess, as the query-cache persister does. `'commit'` is canonical: the engine reports it once no optimistic layer on the entry is live, so its `data` is committed truth. A relay that shows a guess on the other side writes it with `setData`, so it stays a guess there, as cross-tab does.
 5. **Carry `pageParams` with an infinite query's pages** (`e.pageParams`, and `{ pageParams }` on `write` and `replace`), or the receiving entry's cursors drift.
 6. **`track` asynchronous startup work,** so `waitForIdle` and SSR wait for it.
 7. **Release what you subscribe to.** The host releases the `network.onReconnect` and `onFocus` listeners when the plugin disposes, and the unsubscribe each returns stops one sooner. Close anything the plugin opens itself, such as a `BroadcastChannel`, in `dispose` or `onDispose`.

@@ -60,8 +60,8 @@ const count = useValue(api.count)
 | Export | Purpose |
 |---|---|
 | `olasPlugin(root)` | The Vue plugin for `app.use`. It provides the root to the whole app. |
-| `useRoot<Api>()` | The root's api. `Register` types it; a type argument is an unchecked cast. Throws when no plugin provided a root. |
-| `useValue(signal, { isEqual? })` | A read-only ref over any `ReadSignal`: a `signal`, a `computed`, a `Field`, a `Form` or a `FieldArray`. |
+| `useRoot<Api>()` | The root's api. `Register` types it; a type argument is an unchecked cast. Throws when no plugin provided a root, and when called outside a component's `setup()`. |
+| `useValue(signal, { isEqual? })` | A read-only ref over any `ReadSignal`: a `signal`, a `computed`, a `Field`, a `Form` or a `FieldArray`. While `isEqual` calls a new value equal to the one the ref last returned, the ref keeps returning that one, as React's `useValue` does. |
 | `useQuery(subscription)` | One ref per `AsyncState` signal (`data`, `status`, `isLoading`, `isFetching` and the rest), plus `refetch`, `reset` and `cancel`. |
 | `useInfiniteQuery(subscription)` | `useQuery`'s refs, plus `pages`, `flat`, the paging flags, `fetchNextPage` and `fetchPreviousPage`. |
 | `useField(field)` | A writable `value` ref for `v-model`, refs for the validation state, and the field's actions. |
@@ -77,6 +77,7 @@ const count = useValue(api.count)
 - **A server render does not subscribe.** Vue never stops a component's effect scope on the server, so a subscription made there would outlive the request. During `renderToString`, a hook's refs read each signal's current value and subscribe to nothing.
 - **`mutate` is fire-and-forget.** It returns nothing, and a failure lands on `error` and `status`. The adapter catches the rejection, so it does not become an unhandled one. `run` returns the promise, and the caller owns its rejection.
 - **The refs are read-only.** `useValue` ignores an assignment. Write through the signal, or through `useField`'s `value`, which calls `field.set`.
+- **`v-model` binds a field's whole value.** `v-model="value"` assigns the ref, which calls `field.set`. On an object-valued field, `v-model="value.name"` assigns `name` on the field's own value object instead: nothing calls `field.set` and no validator runs. The field keeps its baseline as a copy of its own, so `reset()` still restores. Bind a writable `computed` that sets a new object, `computed({ get: () => value.value.name, set: (name) => set({ ...value.value, name }) })`, or bind a `Form`'s leaf field.
 
 ## Testing
 

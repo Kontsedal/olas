@@ -1201,9 +1201,10 @@ describe('regression: T2.8 minor batch (R-L2.8)', () => {
 // ---------------------------------------------------------------------------
 // R-Q3.1 (T3.1) — out-of-order rollback of parallel optimistic writes must not
 // resurrect an earlier layer's delta. Chain-splice: rolling back a NON-top
-// snapshot leaves the currently-displayed value untouched and threads that
-// layer's captured baseline down onto the next layer, so once every layer has
-// rolled back — in ANY order — data returns to the original pre-mutation value.
+// snapshot threads that layer's captured baseline onto the next layer, so once
+// every layer has rolled back — in ANY order — data returns to the original
+// pre-mutation value. Since the 1.0 fourth pass the layers above are replayed
+// over that baseline at once, so the failed delta also leaves the screen.
 // Before the fix, rollback blindly wrote `record.prev`; with A then B applied
 // and A rolling back first, B's later rollback restored the post-A value and
 // resurrected A's delta. Only LIFO order was pinned (mutation.test.ts:362-409).
@@ -1218,11 +1219,11 @@ describe('regression: out-of-order optimistic rollback returns to baseline (R-Q3
     const b = entry.setData((p) => (p ?? 0) + 10) // data 11
     expect(entry.data.peek()).toBe(11)
 
-    // A fails FIRST — it is NOT the top of the stack. Chain-splice keeps the
-    // currently-displayed value (both optimistic deltas still visible) and
-    // rebases B's baseline down to A's pre-write value.
+    // A fails FIRST — it is NOT the top of the stack. Chain-splice rebases B's
+    // baseline down to A's pre-write value, and B is replayed over it: A's
+    // delta leaves the screen, B's stays.
     a.rollback()
-    expect(entry.data.peek()).toBe(11)
+    expect(entry.data.peek()).toBe(10)
 
     // B fails — now the top layer. Restores the (spliced) baseline 0, NOT 1.
     b.rollback()
@@ -1258,8 +1259,8 @@ describe('regression: out-of-order optimistic rollback returns to baseline (R-Q3
     const b = entry.setData((p) => [(p?.[0] ?? 0) + 10]) // pages [11]
     expect(entry.pages.peek()).toEqual([11])
 
-    a.rollback() // non-top → pages untouched, B's baseline spliced to [0]
-    expect(entry.pages.peek()).toEqual([11])
+    a.rollback() // non-top → B's baseline spliced to [0], and B replayed over it
+    expect(entry.pages.peek()).toEqual([10])
 
     b.rollback() // top → restores the spliced baseline [0], not [1]
     expect(entry.pages.peek()).toEqual([0])

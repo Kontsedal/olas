@@ -193,7 +193,7 @@ describe('createPersisted', () => {
     root.dispose()
   })
 
-  test('crossTab onChange with rawValue=null mirrors as undefined to source', async () => {
+  test('crossTab onChange with rawValue=null puts back the value from before the load', async () => {
     const store = memoryStorage({ k: JSON.stringify('keep me') })
     const def = defineController((ctx) => {
       const s = signal<string | undefined>('initial')
@@ -205,8 +205,9 @@ describe('createPersisted', () => {
     expect(root.api.s.value).toBe('keep me')
 
     // Another tab calls localStorage.removeItem → onChange fires with null.
+    // A reload would find no value and keep 'initial', so the tab shows it.
     store.emitChange('k', null)
-    expect(root.api.s.value).toBeUndefined()
+    expect(root.api.s.value).toBe('initial')
     root.dispose()
   })
 
@@ -269,6 +270,39 @@ describe('localStorageAdapter', () => {
     } finally {
       if (originalLS) (globalThis as { localStorage?: Storage }).localStorage = originalLS
       if (originalWin) (globalThis as { window?: Window }).window = originalWin
+    }
+  })
+
+  // A sandboxed iframe, or a browser with site data blocked: reading the
+  // `localStorage` global throws a SecurityError, and `typeof` does not guard it.
+  test('a localStorage whose access throws counts as absent', async () => {
+    const { localStorageAdapter } = await import('../src')
+    const original = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+    Object.defineProperty(globalThis, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('The operation is insecure.', 'SecurityError')
+      },
+    })
+    try {
+      const adapter = localStorageAdapter()
+      expect(adapter.get('x')).toBeNull()
+      adapter.set('x', '1')
+      adapter.delete('x')
+      expect(adapter.keys?.()).toEqual([])
+      const def = defineController((ctx) => {
+        const s = signal<string>('default')
+        const p = createPersisted(ctx, 'k', s)
+        return { s, ready: p.ready }
+      })
+      const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+      expect(root.api.ready.value).toBe(true)
+      root.api.s.set('typed')
+      expect(root.api.s.value).toBe('typed')
+      root.dispose()
+    } finally {
+      if (original !== undefined) Object.defineProperty(globalThis, 'localStorage', original)
+      else delete (globalThis as { localStorage?: unknown }).localStorage
     }
   })
 })
@@ -554,6 +588,39 @@ describe('createPersisted — onError routing', () => {
     expect(ops).toContain('load')
     expect(root.api.ready.value).toBe(true) // still settles ready
     expect(root.api.s.value).toBe('default')
+    root.dispose()
+  })
+
+  // A synchronous `get` that throws, as `localStorage` does in a sandboxed
+  // iframe, used to escape `createPersisted` and abort the controller factory.
+  test('a synchronous storage.get throw routes onError("load") like a rejected one', () => {
+    const blocked = new DOMException('The operation is insecure.', 'SecurityError')
+    const errors: Array<[unknown, string]> = []
+    const written: string[] = []
+    const adapter: StorageAdapter = {
+      get: () => {
+        throw blocked
+      },
+      set(_k, v) {
+        written.push(v)
+      },
+      delete() {},
+    }
+    const def = defineController((ctx) => {
+      const s = signal<string>('default')
+      const p = createPersisted(ctx, 'k', s, {
+        storage: adapter,
+        onError: (e, op) => errors.push([e, op]),
+      })
+      return { s, ready: p.ready }
+    })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(errors).toEqual([[blocked, 'load']])
+    expect(root.api.ready.value).toBe(true)
+    expect(root.api.s.value).toBe('default')
+    // Later writes still go to storage.
+    root.api.s.set('typed')
+    expect(written).toEqual([JSON.stringify('typed')])
     root.dispose()
   })
 })

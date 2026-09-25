@@ -20,7 +20,7 @@ confidence: high
 ## Why both standalone and ctx-bound
 
 - `createEmitter<T>()` — handlers persist until explicitly unsubscribed or the emitter is disposed. Use in `deps` for cross-tree busses (the "blessed escape hatch" — spec §10.2).
-- `ctx.emitter<T>()` — wraps `createEmitter` and registers `dispose` as a controller cleanup. Auto-cleans with the controller. A handler throw reaches the root's `onError` as `kind: 'emitter'`. Since 1.0 the returned `dispose` also unlinks that cleanup, so an emitter disposed early leaves no entry on the controller (`packages/core/src/controller/instance.ts:642-650`). Pinned by `controller-regressions.test.ts`, "primitives disposed early release their controller registration".
+- `ctx.emitter<T>()` — wraps `createEmitter` and registers `dispose` as a controller cleanup. Auto-cleans with the controller. A handler throw reaches the root's `onError` as `kind: 'emitter'`. Since 1.0 the returned `dispose` also unlinks that cleanup, so an emitter disposed early leaves no entry on the controller (`packages/core/src/controller/instance.ts:656-664`). Pinned by `controller-regressions.test.ts`, "primitives disposed early release their controller registration".
 
 Either form has the same shape.
 

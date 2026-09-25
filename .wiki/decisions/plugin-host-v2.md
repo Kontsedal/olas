@@ -58,6 +58,9 @@ The old plugin was a stateful object with `init(api)` and six hooks, installed b
 - `'hydrate'`
 - `'optimistic'`
 - `'rollback'`
+- `'commit'`, added in the 1.0 fourth pass: a finalized optimistic layer, reported once no layer on the entry is live
+
+The source says what produced a write, not whether its `data` holds a guess: a `'write'` made under a live layer carries the guess on screen. So every `WriteEvent` also carries `server`, the entry's server truth as `dehydrate()` ships it (third 1.0 review). A plugin that keeps server truth reads that. `host.queries.setData`, from the same review, lets a plugin make a guess of its own and settle it, which is how cross-tab mirrors a peer's guess without making it canonical. Both are in `../flows/plugin-lifecycle.md`.
 - `'write'`
 - `'replace'`
 

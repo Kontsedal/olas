@@ -9,7 +9,9 @@ import Name from './svelte/Name.svelte'
 import Save from './svelte/Save.svelte'
 import User from './svelte/User.svelte'
 
-const VIEWS: Record<ViewName, Component> = {
+// A signal is a Svelte store as it is, with no `isEqual` to pass: the adapter
+// has no `equal` view.
+const VIEWS: Record<Exclude<ViewName, 'equal'>, Component> = {
   counter: Counter,
   user: User,
   feed: Feed,
@@ -22,7 +24,9 @@ let container: HTMLElement | undefined
 
 runParity({
   name: 'svelte',
+  lacks: ['equal'],
   mount(view, root) {
+    if (view === 'equal') throw new Error('the Svelte adapter has no isEqual option')
     container = document.createElement('div')
     document.body.appendChild(container)
     app = mount(App, { target: container, props: { root, view: VIEWS[view] } })

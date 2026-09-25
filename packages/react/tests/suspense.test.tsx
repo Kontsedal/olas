@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 
 import {
+  type AsyncState,
   createQuery,
   createRoot,
   defineController,
+  defineInfiniteQuery,
   defineQuery,
   queryEngine,
   signal,
@@ -11,7 +13,7 @@ import {
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { Component, type ErrorInfo, type ReactNode, Suspense } from 'react'
 import { afterEach, describe, expect, test } from 'vitest'
-import { OlasProvider, useQuery } from '../src'
+import { OlasProvider, useInfiniteQuery, useQuery, useSuspenseQuery } from '../src'
 
 afterEach(() => {
   cleanup()
@@ -373,5 +375,153 @@ describe('useQuery({ suspense: true }) on a disabled query', () => {
     } finally {
       console.warn = prevWarn
     }
+  })
+})
+
+// A subscription can settle on `undefined`: a `select` that reads an optional
+// field, a fetcher that resolves nothing, an infinite query replaced with no
+// pages. `firstValue()` resolves at once then, so suspending on
+// `data === undefined` alone made React retry, suspend again and retry,
+// without end: 2,001 renders, and an event loop starved in the process.
+describe('suspense on a subscription that settled on undefined', () => {
+  /** More renders than this means the hook re-suspends forever; stop it with an error. */
+  const RENDER_CAP = 50
+
+  function mountCapped(
+    sub: () => AsyncState<unknown>,
+    read = (s: AsyncState<unknown>) => useSuspenseQuery(s).data,
+  ) {
+    let renders = 0
+    function View() {
+      renders += 1
+      if (renders > RENDER_CAP) throw new Error('re-suspended forever')
+      const data = read(sub())
+      return (
+        <span data-testid="view">{data === undefined ? '(undefined)' : JSON.stringify(data)}</span>
+      )
+    }
+    const restore = silenceConsoleError()
+    render(
+      <ErrorBoundary
+        fallback={(err) => <span data-testid="view">{String((err as Error).message)}</span>}
+      >
+        <Suspense fallback={<span data-testid="view">loading</span>}>
+          <View />
+        </Suspense>
+      </ErrorBoundary>,
+    )
+    return { renders: () => renders, restore }
+  }
+
+  test('a select that reads a missing optional field renders undefined', async () => {
+    type Profile = { name: string; nickname?: string }
+    const profile = defineQuery({
+      id: 'suspense-test/select-undefined',
+      key: () => [],
+      fetcher: async (): Promise<Profile> => ({ name: 'Ada' }),
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({
+        nickname: createQuery(ctx, profile, { select: (p: Profile) => p.nickname }),
+      })),
+      { queries: queryEngine(), deps: {} },
+    )
+    const view = mountCapped(() => root.api.nickname)
+    await act(async () => {
+      await root.waitForIdle()
+    })
+    view.restore()
+    expect(screen.getByTestId('view').textContent).toBe('(undefined)')
+    expect(view.renders()).toBeLessThan(5)
+    root.dispose()
+  })
+
+  test('a fetcher that resolves undefined renders, and a refetch does not suspend again', async () => {
+    let fetches = 0
+    const nothing = defineQuery({
+      id: 'suspense-test/fetch-undefined',
+      key: () => [],
+      fetcher: async (): Promise<string | undefined> => {
+        fetches += 1
+        return undefined
+      },
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ nothing: createQuery(ctx, nothing) })),
+      { queries: queryEngine(), deps: {} },
+    )
+    const view = mountCapped(() => root.api.nothing)
+    await act(async () => {
+      await root.waitForIdle()
+    })
+    expect(screen.getByTestId('view').textContent).toBe('(undefined)')
+    // A background refetch reads `pending` with no data again; it is not a first load.
+    await act(async () => {
+      void root.api.nothing.refetch()
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('view').textContent).toBe('(undefined)')
+    await act(async () => {
+      await root.waitForIdle()
+    })
+    view.restore()
+    expect(fetches).toBe(2)
+    expect(screen.getByTestId('view').textContent).toBe('(undefined)')
+    expect(view.renders()).toBeLessThan(8)
+    root.dispose()
+  })
+
+  test('an infinite query replaced with no pages renders them', async () => {
+    const feed = defineInfiniteQuery({
+      id: 'suspense-test/infinite-empty',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => [pageParam],
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ feed: createQuery(ctx, feed) })),
+      { queries: queryEngine(), deps: {} },
+    )
+    await root.waitForIdle()
+    feed.replace([])
+    const view = mountCapped(
+      () => root.api.feed,
+      () => useInfiniteQuery(root.api.feed, { suspense: true }).pages,
+    )
+    await act(async () => {})
+    view.restore()
+    expect(screen.getByTestId('view').textContent).toBe('[]')
+    expect(view.renders()).toBeLessThan(5)
+    root.dispose()
+  })
+
+  test('a first load still suspends, and a first-load error still reaches the ErrorBoundary', async () => {
+    let fail!: (err: Error) => void
+    const failing = defineQuery({
+      id: 'suspense-test/first-load-error',
+      key: () => [],
+      fetcher: () =>
+        new Promise<string>((_resolve, reject) => {
+          fail = reject
+        }),
+      retry: false,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ failing: createQuery(ctx, failing) })),
+      { queries: queryEngine(), deps: {}, onError: () => {} },
+    )
+    const view = mountCapped(() => root.api.failing)
+    expect(screen.getByTestId('view').textContent).toBe('loading')
+    await act(async () => {
+      fail(new Error('first load failed'))
+      await Promise.resolve()
+    })
+    view.restore()
+    expect(screen.getByTestId('view').textContent).toBe('first load failed')
+    root.dispose()
   })
 })

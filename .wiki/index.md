@@ -17,6 +17,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [modules/forms.md](modules/forms.md) — `Field`, `Form`, `FieldArray`, stdlib validators
 - [modules/emitter.md](modules/emitter.md) — standalone + controller-bound emitters
 - [modules/timing.md](modules/timing.md) — `debounced` and `throttled` signal projections
+- [modules/selection.md](modules/selection.md) — `createSelection`: the selected set, the shift-click anchor and range, cached `isSelected` signals
 - [modules/devtools.md](modules/devtools.md) — `DebugEvent` bus behind `root.debug`
 - [modules/errors.md](modules/errors.md) — `ErrorContext`, `dispatchError`
 - [modules/zod.md](modules/zod.md) — `@kontsedal/olas-zod`: `zodValidator`, `createZodForm`
@@ -78,7 +79,7 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [decisions/required-id-and-meta.md](decisions/required-id-and-meta.md) — why every shared query and defined mutation needs a hand-written `id`, and why plugin settings live in a typed `meta`
 - [decisions/plugin-host-v2.md](decisions/plugin-host-v2.md) — plugins as per-root `setup(host)` definitions: the host, the write vocabulary and origins, middleware, services via scopes, and what the old `QueryClientPlugin` got wrong
 - [decisions/prose-rules.md](decisions/prose-rules.md) — the writing rules every `.md` follows, what `pnpm prose:lint` enforces, and what it flags that we leave alone
-- [decisions/docs-site.md](decisions/docs-site.md) — the VitePress site: guides written in `docs/`, the repo docs synced in with their links rewritten, the api-documenter reference, the checked-in API reports, and why deploying is manual
+- [decisions/docs-site.md](decisions/docs-site.md) — the VitePress site: guides written in `docs/`, the repo docs synced in with their links rewritten, the api-documenter reference, the theme and its framework picker, the checked-in API reports, and why deploying is manual
 - [decisions/zod-schema-rules.md](decisions/zod-schema-rules.md) — why createZodForm enforces object and array rules with one whole-schema validator that drops what a leaf already shows, installed only when the schema has such a rule
 - [decisions/typechecked-doc-snippets.md](decisions/typechecked-doc-snippets.md) — why every ts/tsx block in the user-facing docs compiles in CI, one program per doc, and the `snippet-prelude` / `file=` / `nocheck` annotations
 - [decisions/toolchain.md](decisions/toolchain.md) — the dev toolchain: TypeScript 7 beside the 6.0 API, Node 22.22 to build and 20.19 to consume, pnpm 12's install policies, the vitest 5 migration
@@ -95,15 +96,24 @@ The schema and the wiki conventions live in `../CLAUDE.md`. The pattern itself i
 - [pitfalls/preact-signals-overload-return.md](pitfalls/preact-signals-overload-return.md) — `ReturnType<typeof signal<T>>` is wrong
 - [pitfalls/fieldarray-factory-uses-initial.md](pitfalls/fieldarray-factory-uses-initial.md) — `add(x)` only works if factory uses it
 - [pitfalls/suspended-effects-lose-deps.md](pitfalls/suspended-effects-lose-deps.md) — an effect that early-returns before its tracked reads goes inert
+- [pitfalls/batched-effect-not-run-yet.md](pitfalls/batched-effect-not-run-yet.md) — inside `batch()` or an effect body, a write's dependent effects run later; code that writes a trigger and then peeks at their state reads the old state
 - [pitfalls/raf-unbound-illegal-invocation.md](pitfalls/raf-unbound-illegal-invocation.md) — native `requestAnimationFrame` assigned unbound throws "Illegal invocation" in real browsers (jsdom hides it)
 - [pitfalls/dispose-order-is-registration-order.md](pitfalls/dispose-order-is-registration-order.md) — teardown is one reverse-registration pass, not phased; an `onDispose` hook reaches an effect only if the effect was created first
 - [pitfalls/no-invalidator-still-refetches.md](pitfalls/no-invalidator-still-refetches.md) — "nothing invalidates this query" is not grounds to skip `cancel()` before an optimistic `setData`: a stale entry refetches on subscribe and `resume()` with no invalidator anywhere
 - [pitfalls/proto-key-assignment.md](pitfalls/proto-key-assignment.md) — rebuilding an object with `out[key] = value` swaps its prototype when the key is `__proto__`, and `JSON.parse` can put one in a payload
-- [pitfalls/stream-chunks-split-tags.md](pitfalls/stream-chunks-split-tags.md) — a server-rendered stream's chunks can end inside a tag or attribute; anything written between two chunks has to check where it lands
+- [pitfalls/stream-chunks-split-tags.md](pitfalls/stream-chunks-split-tags.md) — a server-rendered stream's chunks can end inside a tag, an attribute or a text node, and React hydrates almost everything around them; a batch goes only where hydration never looks
 - [pitfalls/node-localstorage-shadows-jsdom.md](pitfalls/node-localstorage-shadows-jsdom.md) — on Node 25+, Node's own `localStorage` global (undefined without a flag) hides jsdom's, so jsdom tests silently skip storage
 - [pitfalls/persisted-state-breaks-hydration.md](pitfalls/persisted-state-breaks-hydration.md) — `createPersisted` reads localStorage during construction, so a returning visitor's first client render disagrees with the server HTML
+- [pitfalls/shared-storage-whole-writes.md](pitfalls/shared-storage-whole-writes.md) — writing a whole in-memory map over one storage key deletes what other tabs wrote since; read and merge before each write
+- [pitfalls/json-stringify-undefined.md](pitfalls/json-stringify-undefined.md) — `JSON.stringify(undefined)` returns `undefined`, not a string, and drops the key inside an object, whatever the `string` return type says
+- [pitfalls/browser-storage-handles-fail.md](pitfalls/browser-storage-handles-fail.md) — reading `localStorage` throws in a sandboxed iframe, and the browser can close an IndexedDB connection the page cached
+- [pitfalls/success-drops-a-rewritten-entry.md](pitfalls/success-drops-a-rewritten-entry.md) — an older send's success must not delete a durable entry a newer write rewrote; compare a stamp written with each rewrite
 - [pitfalls/dts-export-context.md](pitfalls/dts-export-context.md) — a bundled `.d.ts` with no export list exports every top-level declaration; rolldown-plugin-dts 0.28.2+ drops the list, so entities appends `export {}`
 - [pitfalls/render-phase-root-leak.md](pitfalls/render-phase-root-leak.md) — a root built in render and disposed in an effect leaks when React discards the render (a child suspends before the first commit); `HydrationBoundary` reuses it on retry and sweeps it once idle
+- [pitfalls/effect-cleanup-not-unmount.md](pitfalls/effect-cleanup-not-unmount.md) — React runs effect cleanups on an unmount, an `<Activity>` hide and StrictMode's replay alike; `HydrationBoundary` suspends its root there and disposes it a minute later
+- [pitfalls/suspend-on-undefined-data.md](pitfalls/suspend-on-undefined-data.md) — suspending on `data === undefined` loops forever when a load settles on `undefined`; suspend until the first load settles
+- [pitfalls/bind-mutates-in-place.md](pitfalls/bind-mutates-in-place.md) — Svelte's nested bind and Vue's `v-model` on a member edit the value object in place; on a `Field`'s own value that edits `initial`, and the `set` after it is no change to a signal
+- [pitfalls/visible-data-is-not-a-baseline.md](pitfalls/visible-data-is-not-a-baseline.md) — under live optimistic layers the data on screen holds the guesses: a canonical write re-runs its patch on each baseline, and a commit folds into the baselines below it
 
 ## Candidates (not authoritative)
 

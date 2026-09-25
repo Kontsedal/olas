@@ -2,6 +2,7 @@ import {
   type AmbientDeps,
   type ControllerDef,
   createRoot,
+  type DehydratedEntry,
   type Root,
   type RootOptions,
 } from '@kontsedal/olas-core'
@@ -16,7 +17,7 @@ import {
   useReducer,
   useRef,
 } from 'react'
-import { installStreamingIntake } from './streaming'
+import { catchUp, connectIntake, readStreamed, type StreamCursor } from './streaming'
 
 // Claim a root in the commit, before the browser paints; plain effect on the
 // server, where useLayoutEffect warns (and no effect runs anyway).
@@ -145,11 +146,12 @@ export type HydrationBoundaryProps<Api> = {
    */
   options: RootOptions<AmbientDeps>
   /**
-   * When `true` (default), installs the streaming intake on mount so
-   * `<script>` tags written by `createStreamingHydrator().flush()` on
-   * the server route into this root. Set `false` if you're using
-   * `HydrationBoundary` purely for a one-shot `options.hydrate` and
-   * don't want the global `__OLAS_HYDRATION__` listener.
+   * When `true` (default), the `<script>` tags written by
+   * `createStreamingHydrator().flush()` on the server route into this root:
+   * the batches already on the page go into its `hydrate`, and later ones
+   * arrive through the streaming intake, installed on mount. Set `false` if
+   * you're using `HydrationBoundary` purely for a one-shot `options.hydrate`
+   * and don't want the global `__OLAS_HYDRATION__` listener.
    */
   streaming?: boolean
   children: ReactNode
@@ -181,6 +183,65 @@ function warnServerBoundary(): void {
 const ORPHAN_GRACE_MS = 10_000
 /** An unclaimed root that never goes idle, such as one with a hung fetch, is disposed after this anyway. */
 const ORPHAN_MAX_MS = 60_000
+/**
+ * How long a committed root stays suspended after the boundary's effects are
+ * cleaned up, before it is disposed. React cleans them up on an unmount and
+ * when an `<Activity>` above hides the boundary, and gives no way to tell the
+ * two apart: a hide that ends within this keeps the root and its state.
+ */
+const RELEASE_GRACE_MS = 60_000
+
+/**
+ * The cursor of each root the boundary built to take the streamed batches.
+ * A root built for a new `def` has none: the stream described the first
+ * root's tree, so it takes no streamed rows, earlier or later.
+ */
+const streamCursors = new WeakMap<Root<unknown>, StreamCursor>()
+
+/**
+ * `hydrate` with the streamed rows added. A payload of an unknown version is
+ * left alone, since core drops it with a warning: the rows then reach the
+ * root through the intake, from the start of the queue.
+ */
+function withRows(
+  options: RootOptions<AmbientDeps>,
+  rows: DehydratedEntry[],
+  cursor: StreamCursor,
+): RootOptions<AmbientDeps> {
+  if (rows.length === 0) return options
+  const own = options.hydrate
+  if (own === undefined) return { ...options, hydrate: { version: 1, entries: rows } }
+  if (own.version !== 1 || !Array.isArray(own.entries)) {
+    cursor.n = 0
+    return options
+  }
+  return { ...options, hydrate: { version: 1, entries: [...own.entries, ...rows] } }
+}
+
+/**
+ * Build a root. One that takes the stream gets a cursor, and with `fold`, the
+ * batches already on the page go into its `hydrate`, so they are in the cache
+ * before any controller binds its key and the first render reads them. Applied
+ * after `createRoot`, they would arrive once each controller had started the
+ * fetch the server already made, and the hydrating render would miss them.
+ */
+function buildRoot<Api>(
+  def: ControllerDef<void, Api>,
+  options: RootOptions<AmbientDeps>,
+  stream: boolean,
+  fold: boolean,
+): Root<Api> {
+  if (!stream) return createRoot(def, options) as Root<Api>
+  if (!fold) {
+    const root = createRoot(def, options) as Root<Api>
+    streamCursors.set(root as Root<unknown>, { q: null, n: 0 })
+    return root
+  }
+  const { rows, cursor } = readStreamed()
+  const root = createRoot(def, withRows(options, rows, cursor)) as Root<Api>
+  streamCursors.set(root as Root<unknown>, cursor)
+  return root
+}
 
 /**
  * A root `HydrationBoundary` built during a render that has not committed.
@@ -195,6 +256,8 @@ type Uncommitted = {
   key: object
   def: ControllerDef<void, unknown>
   options: RootOptions<AmbientDeps>
+  /** Whether it takes the streamed batches. */
+  stream: boolean
   /** Bumped on each touch and on claim, so a stale sweep stands down. */
   generation: number
   timer: ReturnType<typeof setTimeout> | undefined
@@ -237,12 +300,17 @@ function sameDeps(a: object, b: object): boolean {
 function findReusable(
   def: ControllerDef<void, unknown>,
   options: RootOptions<AmbientDeps>,
+  stream: boolean,
 ): { reusable: Uncommitted | undefined; sameDef: boolean } {
   let sameDef = false
   for (const entry of uncommitted.values()) {
     if (entry.def !== def) continue
     sameDef = true
-    if (entry.options.hydrate === options.hydrate && sameDeps(entry.options.deps, options.deps)) {
+    if (
+      entry.stream === stream &&
+      entry.options.hydrate === options.hydrate &&
+      sameDeps(entry.options.deps, options.deps)
+    ) {
       return { reusable: entry, sameDef }
     }
   }
@@ -252,29 +320,35 @@ function findReusable(
 /**
  * The root for a render with no committed root to use: the uncommitted one
  * this element, or an equal one, built on an earlier attempt, or a new one.
+ * A reused root that takes the stream first catches up on the batches that
+ * arrived since it was built, before this render reads its cache.
  */
 function acquireRoot<Api>(
   key: object,
   def: ControllerDef<void, Api>,
   options: RootOptions<AmbientDeps>,
+  stream: boolean,
+  fold: boolean,
 ): Root<Api> {
   // The server never commits, so nothing there could claim a root, and an
   // element hoisted to module scope would hand one request's root to the
   // next. Each server render builds its own; the dev warning names the fix.
   if (typeof window === 'undefined') return createRoot(def, options) as Root<Api>
+  const reuse = (entry: Uncommitted): Root<Api> => {
+    armSweep(entry)
+    const cursor = streamCursors.get(entry.root)
+    if (fold && cursor !== undefined) catchUp(entry.root, cursor)
+    return entry.root as Root<Api>
+  }
   const earlier = uncommittedByProps.get(key)
   // A root is reusable only while unclaimed: once a boundary commits it, a
   // second fiber rendering the same element builds its own.
-  if (earlier !== undefined && uncommitted.get(earlier.root) === earlier) {
-    armSweep(earlier)
-    return earlier.root as Root<Api>
-  }
-  const { reusable, sameDef } = findReusable(def as ControllerDef<void, unknown>, options)
+  if (earlier !== undefined && uncommitted.get(earlier.root) === earlier) return reuse(earlier)
+  const { reusable, sameDef } = findReusable(def as ControllerDef<void, unknown>, options, stream)
   if (reusable !== undefined) {
     reusable.key = key
     uncommittedByProps.set(key, reusable)
-    armSweep(reusable)
-    return reusable.root as Root<Api>
+    return reuse(reusable)
   }
   if (__DEV__ && sameDef && !warnedRebuild) {
     warnedRebuild = true
@@ -288,12 +362,13 @@ function acquireRoot<Api>(
         'with different options also see this once, harmlessly.',
     )
   }
-  const root = createRoot(def, options) as Root<Api>
+  const root = buildRoot(def, options, stream, fold)
   const entry: Uncommitted = {
     root,
     key,
     def: def as ControllerDef<void, unknown>,
     options,
+    stream,
     generation: 0,
     timer: undefined,
     deadline: undefined,
@@ -354,6 +429,40 @@ type Owned<Api> = {
   root: Root<Api>
   def: ControllerDef<void, Api>
   options: RootOptions<AmbientDeps>
+  /** Set while the root is suspended after a cleanup: the pending dispose. */
+  release: ReturnType<typeof setTimeout> | undefined
+  /** The release ran out and disposed the root. */
+  expired: boolean
+}
+
+/**
+ * The boundary's effects were cleaned up: an unmount, or an `<Activity>` above
+ * hiding it. Suspend the root, and dispose it unless the effects come back
+ * within `RELEASE_GRACE_MS`.
+ */
+function releaseOwned<Api>(owned: Owned<Api>): void {
+  if (owned.release !== undefined || owned.expired) return
+  owned.root.suspend()
+  owned.release = setTimeout(() => {
+    owned.release = undefined
+    owned.expired = true
+    owned.root.dispose()
+  }, RELEASE_GRACE_MS)
+}
+
+/** The effects came back in time: a StrictMode remount, or the `<Activity>` showing again. */
+function reclaimOwned<Api>(owned: Owned<Api>): void {
+  if (owned.release === undefined) return
+  clearTimeout(owned.release)
+  owned.release = undefined
+  owned.root.resume()
+}
+
+/** Dispose a root the boundary no longer uses. */
+function disposeOwned<Api>(owned: Owned<Api>): void {
+  clearTimeout(owned.release)
+  owned.release = undefined
+  owned.root.dispose()
 }
 
 /**
@@ -380,12 +489,24 @@ type Owned<Api> = {
  * ```
  *
  * The boundary **owns** the root: it is built during the first render, so the
- * children can read hydrated data in that render, and **disposed on unmount**.
- * `options` is read **once** on mount — a new inline `options={{...}}` on a
- * parent re-render is intentionally ignored (so the example above doesn't
- * discard cache state every render). The root is recreated only when the `def`
- * identity changes; to swap it on navigation, pass a different `def` (or
- * re-key the component).
+ * children can read hydrated data in that render. `options` is read **once**
+ * on mount — a new inline `options={{...}}` on a parent re-render is
+ * intentionally ignored (so the example above doesn't discard cache state
+ * every render). The root is recreated only when the `def` identity changes;
+ * to swap it on navigation, pass a different `def` (or re-key the component).
+ *
+ * **Streaming.** The batches `createStreamingHydrator` wrote into the page
+ * before the boundary built its root go into that root's `hydrate`, so the
+ * hydrating render reads them and no fetch starts for them. Later batches
+ * arrive through the intake. A root built for a new `def` takes none of them:
+ * the stream described the first root's tree.
+ *
+ * **Unmount, and a hidden `<Activity>`.** React cleans up the boundary's
+ * effects on an unmount and when an `<Activity>` above hides it, and gives no
+ * way to tell the two apart. So a cleanup suspends the root, and disposes it
+ * a minute later unless the boundary's effects run again first, as they do
+ * when the `<Activity>` shows. A hide shorter than that keeps the root and its
+ * state; after a longer one the boundary builds a fresh root from `options`.
  *
  * **A render that never commits.** A child that suspends or throws before the
  * boundary's first commit makes React discard the render, and the root with
@@ -430,49 +551,61 @@ export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): Reac
     root = owned.root
     rootOptions = owned.options
   } else {
-    // For a new `def`, the server payload in `options.hydrate` described the
-    // FIRST root's tree: the replacement starts from its own fetches rather
-    // than re-applying stale server state. (A StrictMode remount of the same
-    // `def` still hydrates.)
-    rootOptions = owned === null ? optionsRef.current : { ...owned.options, hydrate: undefined }
-    root = acquireRoot(props, def, rootOptions)
+    // For a new `def`, the server payload in `options.hydrate` and the
+    // streamed batches described the FIRST root's tree: the replacement
+    // starts from its own fetches rather than re-applying stale server state.
+    // (A StrictMode remount of the same `def` keeps its root.)
+    const first = owned === null
+    rootOptions = first ? optionsRef.current : { ...owned.options, hydrate: undefined }
+    root = acquireRoot(props, def, rootOptions, first, streaming)
   }
 
   // The commit claims this render's root and disposes the one it replaces.
-  // When the root is no longer claimable, the boundary builds another and
-  // renders again before paint, or the Provider would hand descendants a
-  // disposed root. StrictMode takes that path: it simulates unmount→remount
-  // without re-rendering between them, and the unmount disposed the root. A
-  // dev-only double-construct is acceptable (matches TanStack).
+  // When the root is no longer claimable (swept, or claimed by another fiber
+  // rendering the same element), or its release ran out while the boundary
+  // was hidden, the boundary builds another and renders again before paint,
+  // or the Provider would hand descendants a disposed root.
   useIsomorphicLayoutEffect(() => {
     const current = ownedRef.current
-    if (current !== null && current.root === root) return
-    const next = claimRoot(root) ? root : (createRoot(def, rootOptions) as Root<Api>)
-    current?.root.dispose()
-    ownedRef.current = { root: next, def, options: rootOptions }
+    if (current !== null && current.root === root && !current.expired) return
+    const stream = streamCursors.has(root as Root<unknown>)
+    const next =
+      current?.root !== root && claimRoot(root)
+        ? root
+        : buildRoot(def, rootOptions, stream, streaming)
+    if (current !== null && current.root !== next) disposeOwned(current)
+    ownedRef.current = { root: next, def, options: rootOptions, release: undefined, expired: false }
     if (next !== root) forceRender()
   }, [root])
 
-  // Dispose on unmount. A passive effect: React runs layout-effect cleanups
-  // when a Suspense boundary above hides content it already showed, and a
-  // hide is not an unmount. Kept apart from the claim, whose cleanup would
-  // also run when `root` changes.
-  useEffect(
-    () => () => {
-      ownedRef.current?.root.dispose()
-      ownedRef.current = null
-    },
-    [],
-  )
+  // Release on cleanup, take back on (re)run. A passive effect: React runs
+  // layout-effect cleanups when a Suspense boundary above hides content it
+  // already showed, and that hide keeps the root running. An unmount and an
+  // `<Activity>` hide both run this cleanup; `releaseOwned` suspends the root
+  // and disposes it if the effect does not run again within the grace period.
+  // StrictMode's simulated unmount and remount take the root back at once.
+  // Kept apart from the claim, whose cleanup would also run when `root`
+  // changes.
+  useEffect(() => {
+    const current = ownedRef.current
+    if (current !== null) reclaimOwned(current)
+    return () => {
+      const last = ownedRef.current
+      if (last !== null) releaseOwned(last)
+    }
+  }, [])
 
-  // Drain the streaming intake queue + install a live forwarder on the owned
-  // root. Read `ownedRef.current` (not the rendered `root`) so a rebuilt root
-  // gets the intake, never a disposed one.
+  // Connect the owned root to the stream: the batches past its cursor, then
+  // each new one. Read `ownedRef.current` (not the rendered `root`) so a
+  // rebuilt root gets the intake, never a disposed one. A root without a
+  // cursor was built for a new `def` and takes no streamed rows.
   useEffect(() => {
     if (!streaming) return undefined
     const active = ownedRef.current?.root
     if (active === undefined) return undefined
-    return installStreamingIntake(active)
+    const cursor = streamCursors.get(active as Root<unknown>)
+    if (cursor === undefined) return undefined
+    return connectIntake(active, cursor)
   }, [root, streaming])
 
   return createElement(OlasContext.Provider, { value: root }, children)

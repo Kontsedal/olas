@@ -178,9 +178,33 @@ export type FieldStore<T> = ReadSignal<FieldState<T>> & {
 }
 
 /**
+ * A shallow copy of a plain object or an array, and anything else as it is.
+ * A spread copies an own `__proto__` key as data, so it cannot swap the copy's
+ * prototype.
+ */
+function copyValue<T>(value: T): T {
+  if (Array.isArray(value)) return value.slice() as T
+  if (typeof value !== 'object' || value === null) return value
+  const proto = Object.getPrototypeOf(value)
+  if (proto === Object.prototype) return { ...value }
+  if (proto === null) return Object.assign(Object.create(null), value)
+  return value
+}
+
+/**
  * One store over a field's value and validation state, for an input that also
  * shows its errors: `bind:value={$state.value}`. For the value alone, bind the
  * field directly: `bind:value={$field}`.
+ *
+ * An object-valued field binds one level down through the store:
+ * `bind:value={$person.value.first}`. Svelte writes that by assigning `first`
+ * on the value object it was handed and passing the state back to `set`, as a
+ * Svelte store treats an object as changed whenever it is set. Each
+ * subscriber gets its own shallow copy of a plain-object or array value, so
+ * the assignment lands on the copy, and `set` writes the copy to the field as
+ * a new value: validators run, `isDirty` follows, and the field's `initial`
+ * stays as it was. A member two levels down is still shared with the field's
+ * own value; bind that through a `Form`'s leaf field.
  */
 export function fieldStore<T>(field: Field<T>): FieldStore<T> {
   const state = computed(() => ({
@@ -194,7 +218,8 @@ export function fieldStore<T>(field: Field<T>): FieldStore<T> {
   // Svelte writes `bind:value={$state.value}` by assigning `value` on the
   // object `subscribe` handed it, then passing that object to `set`. So each
   // subscriber gets a copy, which keeps the computed's own object intact, and
-  // `set` writes a copy's `value`.
+  // `set` writes a copy's `value`. `bind:value={$state.value.first}` assigns
+  // on the value instead, so the value is copied too.
   const copies = new WeakSet<object>()
   const store = withActions(state, {
     set: (next: T) => field.set(copies.has(next as object) ? (next as FieldState<T>).value : next),
@@ -206,7 +231,7 @@ export function fieldStore<T>(field: Field<T>): FieldStore<T> {
   })
   store.subscribe = (run) =>
     state.subscribe((s) => {
-      const copy = { ...s }
+      const copy = { ...s, value: copyValue(s.value) }
       copies.add(copy)
       run(copy)
     })

@@ -3,7 +3,14 @@ import { __currentCauseId, type DevtoolsEmitter } from '../devtools'
 import { dispatchError, type ErrorHandler } from '../errors'
 import { scheduleExpiry } from '../expiry-timer'
 import type { PluginEngine, PluginSet } from '../plugin/host'
-import type { FetchContext, MutationHost, QueryHost, QueryRef, WriteSource } from '../plugin/types'
+import type {
+  FetchContext,
+  MutationHost,
+  QueryHost,
+  QueryRef,
+  WriteEvent,
+  WriteSource,
+} from '../plugin/types'
 import { type Signal, signal } from '../signals'
 import { isAbortError } from '../utils'
 import { createInfiniteQueryActions, createQueryActions } from './actions'
@@ -112,6 +119,24 @@ type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
  * both `id` (an arbitrary user-written string) and `hash` are unbounded.
  */
 const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
+
+/** An entry, as `emitWrite` reads its server truth. */
+type ServerSource =
+  | Pick<Entry<unknown>, 'serverState'>
+  | Pick<InfiniteEntry<unknown, unknown, unknown>, 'serverState'>
+
+/**
+ * A write event's `server` (§13.1): what `dehydrate()` would ship for the
+ * entry, the data beneath any live optimistic write. `undefined` when the
+ * entry holds neither data nor a server answer.
+ */
+function serverOf(from: ServerSource): WriteEvent['server'] {
+  const row = from.serverState()
+  if (row === null) return undefined
+  return 'pages' in row
+    ? { data: row.pages, updatedAt: row.updatedAt, pageParams: row.pageParams }
+    : { data: row.data, updatedAt: row.updatedAt }
+}
 
 /**
  * Whether two binds passed the same call arg, for the dev warning in
@@ -916,6 +941,11 @@ export class QueryClient implements PluginEngine {
     this.byId.set(query.__id, query)
   }
 
+  /**
+   * Report a write to the plugins. `from` is the entry written: its
+   * `serverState()` is the event's `server`, the truth beneath any live guess
+   * (§13.1). Read only when a plugin listens.
+   */
   private emitWrite(
     query: AnyQuery | AnyInfiniteQuery,
     key: readonly unknown[],
@@ -923,10 +953,12 @@ export class QueryClient implements PluginEngine {
     updatedAt: number | undefined,
     source: WriteSource,
     origin: string | undefined,
-    pageParams?: readonly unknown[],
+    pageParams: readonly unknown[] | undefined,
+    from: ServerSource,
   ): void {
     const plugins = this.plugins
     if (plugins === null || !plugins.listens('onWrite')) return
+    const server = serverOf(from)
     plugins.emit('onWrite', {
       query: this.refOf(query),
       key,
@@ -935,24 +967,30 @@ export class QueryClient implements PluginEngine {
       source,
       origin,
       ...(pageParams !== undefined ? { pageParams } : {}),
+      ...(server !== undefined ? { server } : {}),
     })
   }
 
-  /** `emitWrite` for an infinite entry: the pages, with their params. */
+  /**
+   * `emitWrite` for an infinite entry: the pages, with their params. `updatedAt`
+   * defaults to the entry's `lastUpdatedAt`.
+   */
   private emitInfiniteWrite(
     entry: InfiniteClientEntry<unknown, unknown, unknown>,
     source: WriteSource,
     origin: string | undefined,
+    updatedAt: number | undefined = entry.entry.lastUpdatedAt.peek(),
   ): void {
     const pages = entry.entry.pages.peek()
     this.emitWrite(
       entry.query,
       entry.keyArgs,
       pages,
-      entry.entry.lastUpdatedAt.peek(),
+      updatedAt,
       source,
       origin,
       entry.entry.pageParams.peek(),
+      entry.entry,
     )
     if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, pages, source)
   }
@@ -1031,6 +1069,18 @@ export class QueryClient implements PluginEngine {
         this.writeByKey(id, key, updater, 'write', origin, options?.pageParams),
       replace: (id, key, value, options) =>
         this.writeByKey(id, key, () => value, 'replace', origin, options?.pageParams),
+      setData: (id, key, updater, options) => {
+        const found = this.entryByKey(id, key)
+        if (found === undefined) return undefined
+        return found.kind === 'query'
+          ? this.optimisticWrite(found.entry, updater, origin)
+          : this.optimisticInfiniteWrite(
+              found.entry,
+              updater as (prev: unknown[] | undefined) => unknown[],
+              origin,
+              options?.pageParams,
+            )
+      },
       invalidate: (id, key) => {
         const found = this.entryByKey(id, key)
         if (found === undefined) return Promise.resolve()
@@ -1130,7 +1180,10 @@ export class QueryClient implements PluginEngine {
     if (found === undefined) return
     if (found.kind === 'query') {
       const { entry } = found
-      entry.entry.setData(updater as (prev: unknown) => never, { track: false })
+      entry.entry.setData(updater as (prev: unknown) => never, {
+        track: false,
+        whole: source === 'replace',
+      })
       const data = entry.entry.data.peek()
       if (source === 'replace' && data !== undefined) {
         entry.entry.supersedeByWrite()
@@ -1142,6 +1195,8 @@ export class QueryClient implements PluginEngine {
         entry.entry.lastUpdatedAt.peek(),
         source,
         origin,
+        undefined,
+        entry.entry,
       )
       if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, source)
       return
@@ -1149,6 +1204,7 @@ export class QueryClient implements PluginEngine {
     const { entry } = found
     entry.entry.setData(updater as (prev: unknown[] | undefined) => unknown[], {
       track: false,
+      whole: source === 'replace',
       pageParams,
     })
     if (source === 'replace' && entry.entry.data.peek() !== undefined) {
@@ -1221,7 +1277,16 @@ export class QueryClient implements PluginEngine {
         // A row older than the entry's data is skipped, and reports nothing.
         if (!entry.entry.applyHydration(data, lastUpdatedAt)) return
         const at = entry.entry.lastUpdatedAt.peek()
-        this.emitWrite(entry.query, entry.keyArgs, data, at, 'hydrate', origin)
+        this.emitWrite(
+          entry.query,
+          entry.keyArgs,
+          data,
+          at,
+          'hydrate',
+          origin,
+          undefined,
+          entry.entry,
+        )
         if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'hydrate')
         return
       }
@@ -1348,33 +1413,37 @@ export class QueryClient implements PluginEngine {
   }
 
   /**
-   * Every entry that holds data, with the time that data was written. `status`
-   * alone is not the test: it reads `'pending'` over the data during a
-   * background refetch, and `'error'` over it after a failed one (§5.3, §15).
+   * Every entry's server truth, stamped with the time the server last said it
+   * (`Entry.serverState`). `status` alone is not the test: it reads `'pending'`
+   * over the data during a background refetch, and `'error'` over it after a
+   * failed one (§5.3, §15). Under a live optimistic write the row carries the
+   * data beneath it, so a guess never ships as server truth, and the stamp is
+   * never moved by a guess.
    */
   dehydrate(): DehydratedState {
     const entries: DehydratedState['entries'] = []
     for (const [query, map] of this.maps) {
       for (const ce of map.values()) {
-        const data = ce.entry.data.peek()
-        if (data === undefined && ce.entry.status.peek() !== 'success') continue
+        const row = ce.entry.serverState()
+        if (row === null) continue
         entries.push({
           id: query.__id,
           key: ce.keyArgs,
-          data,
-          lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
+          data: row.data,
+          lastUpdatedAt: row.updatedAt,
         })
       }
     }
     for (const [query, map] of this.infiniteMaps) {
       for (const ce of map.values()) {
-        if (ce.entry.pages.peek().length === 0 && ce.entry.status.peek() !== 'success') continue
+        const row = ce.entry.serverState()
+        if (row === null) continue
         entries.push({
           id: query.__id,
           key: ce.keyArgs,
-          data: ce.entry.pages.peek(),
-          pageParams: ce.entry.pageParams.peek(),
-          lastUpdatedAt: ce.entry.lastUpdatedAt.peek() ?? Date.now(),
+          data: row.pages,
+          pageParams: row.pageParams,
+          lastUpdatedAt: row.updatedAt,
         })
       }
     }
@@ -1495,6 +1564,8 @@ export class QueryClient implements PluginEngine {
           created.entry.lastUpdatedAt.peek(),
           'fetch',
           undefined,
+          undefined,
+          created.entry,
         )
       const created: ClientEntry<T> = new ClientEntry<T>(
         this,
@@ -1523,6 +1594,8 @@ export class QueryClient implements PluginEngine {
           created.entry.lastUpdatedAt.peek(),
           'hydrate',
           hydrated.origin,
+          undefined,
+          created.entry,
         )
         if (__DEV__) this.emitDevtoolsSetData(internal, keyArgs, hydrated.data, 'hydrate')
       }
@@ -1741,6 +1814,8 @@ export class QueryClient implements PluginEngine {
       entry.entry.lastUpdatedAt.peek(),
       'write',
       origin,
+      undefined,
+      entry.entry,
     )
     if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'write')
   }
@@ -1772,7 +1847,7 @@ export class QueryClient implements PluginEngine {
     origin?: string,
   ): void {
     const entry = this.bindEntry(query, args)
-    entry.entry.setData(() => value, { track: false })
+    entry.entry.setData(() => value, { track: false, whole: true })
     if (value !== undefined) entry.entry.supersedeByWrite()
     const data = entry.entry.data.peek()
     this.emitWrite(
@@ -1782,6 +1857,8 @@ export class QueryClient implements PluginEngine {
       entry.entry.lastUpdatedAt.peek(),
       'replace',
       origin,
+      undefined,
+      entry.entry,
     )
     if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'replace')
   }
@@ -1792,7 +1869,18 @@ export class QueryClient implements PluginEngine {
     updater: (prev: T | undefined) => T,
     origin?: string,
   ): Snapshot {
-    const entry = this.bindEntry(query, args)
+    return this.optimisticWrite(this.bindEntry(query, args), updater, origin)
+  }
+
+  /**
+   * An optimistic write of one entry, and the `Snapshot` that settles it:
+   * `setData`'s body, shared with a plugin's `host.queries.setData`.
+   */
+  private optimisticWrite<T>(
+    entry: ClientEntry<T>,
+    updater: (prev: T | undefined) => T,
+    origin: string | undefined,
+  ): Snapshot {
     const snapshot = entry.entry.setData(updater)
     // Report the post-update value — plugins want the new state, not the
     // updater function (which would be uncloneable across BroadcastChannel).
@@ -1804,17 +1892,23 @@ export class QueryClient implements PluginEngine {
       entry.entry.lastUpdatedAt.peek(),
       'optimistic',
       origin,
+      undefined,
+      entry.entry,
     )
     if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'optimistic')
     // Report the rollback too, so plugins that mirrored the optimistic value
-    // (cross-tab, entities) drop it (T3.6). Only when data actually changed:
-    // a non-top chain-splice rollback (§6.4) leaves current data untouched.
+    // (cross-tab, entities) drop it (T3.6). Only when data actually changed: a
+    // rollback below the top replays the layers above it (§6.4), and a replay
+    // that changes nothing keeps the data's reference.
+    // A settle that leaves no live layer after a commit reports `'commit'`
+    // instead (`Entry.settleReport`, §13.1).
     return {
       rollback: () => {
         const before = entry.entry.data.peek()
-        snapshot.rollback()
+        const report = snapshot.rollback()
         const after = entry.entry.data.peek()
-        if (!Object.is(before, after)) {
+        if (report === 'commit') this.emitCommit(entry, origin)
+        else if (!Object.is(before, after)) {
           this.emitWrite(
             entry.query,
             entry.keyArgs,
@@ -1822,12 +1916,36 @@ export class QueryClient implements PluginEngine {
             entry.entry.lastUpdatedAt.peek(),
             'rollback',
             origin,
+            undefined,
+            entry.entry,
           )
           if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, after, 'rollback')
         }
       },
-      finalize: () => snapshot.finalize(),
+      finalize: () => {
+        if (snapshot.finalize() === 'commit') this.emitCommit(entry, origin)
+      },
     }
+  }
+
+  /**
+   * Report committed data as `'commit'`: the data on screen once no optimistic
+   * layer is live, stamped with the server clock, which a commit does not move
+   * (§5.9, §13.1). `0` when the server never answered.
+   */
+  private emitCommit<T>(entry: ClientEntry<T>, origin: string | undefined): void {
+    const data = entry.entry.data.peek()
+    this.emitWrite(
+      entry.query,
+      entry.keyArgs,
+      data,
+      entry.entry.serverStamp() ?? 0,
+      'commit',
+      origin,
+      undefined,
+      entry.entry,
+    )
+    if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'commit')
   }
 
   bindInfiniteEntry<Args extends unknown[], TPage, TItem>(
@@ -1873,6 +1991,7 @@ export class QueryClient implements PluginEngine {
           'fetch',
           undefined,
           created.entry.pageParams.peek(),
+          created.entry,
         )
       const created: InfiniteClientEntry<TPage, TItem, unknown> = new InfiniteClientEntry<
         TPage,
@@ -2002,7 +2121,7 @@ export class QueryClient implements PluginEngine {
     origin?: string,
   ): void {
     const entry = this.bindInfiniteEntry(query, args)
-    entry.entry.setData(() => value, { track: false })
+    entry.entry.setData(() => value, { track: false, whole: true })
     if (entry.entry.data.peek() !== undefined) entry.entry.supersedeByWrite()
     this.emitInfiniteWrite(
       entry as InfiniteClientEntry<unknown, unknown, unknown>,
@@ -2017,21 +2136,47 @@ export class QueryClient implements PluginEngine {
     updater: (prev: TPage[] | undefined) => TPage[],
     origin?: string,
   ): Snapshot {
-    const entry = this.bindInfiniteEntry(query, args)
-    const snapshot = entry.entry.setData(updater)
-    const any = entry as InfiniteClientEntry<unknown, unknown, unknown>
+    return this.optimisticInfiniteWrite(
+      this.bindInfiniteEntry(query, args) as InfiniteClientEntry<unknown, unknown, unknown>,
+      updater as (prev: unknown[] | undefined) => unknown[],
+      origin,
+      undefined,
+    )
+  }
+
+  /**
+   * An optimistic write of one infinite entry, and the `Snapshot` that settles
+   * it: `setInfiniteData`'s body, shared with `host.queries.setData`.
+   */
+  private optimisticInfiniteWrite(
+    entry: InfiniteClientEntry<unknown, unknown, unknown>,
+    updater: (prev: unknown[] | undefined) => unknown[],
+    origin: string | undefined,
+    pageParams: readonly unknown[] | undefined,
+  ): Snapshot {
+    const snapshot = entry.entry.setData(
+      updater,
+      pageParams !== undefined ? { pageParams } : undefined,
+    )
+    const any = entry
     this.emitInfiniteWrite(any, 'optimistic', origin)
     // Report the rollback so plugins mirroring the optimistic pages drop them
-    // (T3.6); only on an actual change (a non-top chain-splice is a no-op).
+    // (T3.6); only on an actual change, as `optimisticWrite` does. A commit
+    // reports as `setData` does.
+    const commit = (): void =>
+      this.emitInfiniteWrite(any, 'commit', origin, entry.entry.serverStamp() ?? 0)
     return {
       rollback: () => {
         const before = entry.entry.pages.peek()
-        snapshot.rollback()
-        if (!Object.is(before, entry.entry.pages.peek())) {
+        const report = snapshot.rollback()
+        if (report === 'commit') commit()
+        else if (!Object.is(before, entry.entry.pages.peek())) {
           this.emitInfiniteWrite(any, 'rollback', origin)
         }
       },
-      finalize: () => snapshot.finalize(),
+      finalize: () => {
+        if (snapshot.finalize() === 'commit') commit()
+      },
     }
   }
 

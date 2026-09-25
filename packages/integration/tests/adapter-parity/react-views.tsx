@@ -12,7 +12,16 @@ import {
   useValue,
 } from '@kontsedal/olas-react'
 import type { ReactElement } from 'react'
-import type { CounterApi, FeedApi, NameApi, SaveApi, UserApi, ViewName } from './scenarios'
+import {
+  type CounterApi,
+  type EqualApi,
+  type FeedApi,
+  type NameApi,
+  type SaveApi,
+  sameId,
+  type UserApi,
+  type ViewName,
+} from './scenarios'
 
 function Counter() {
   const api = useRoot<CounterApi>()
@@ -78,12 +87,20 @@ function Save() {
   )
 }
 
+function Equal() {
+  const { user, tick } = useRoot<EqualApi>()
+  const u = useValue(user, { isEqual: sameId })
+  const t = useValue(tick)
+  return <p data-testid="equal">{`${u.name}:${t}`}</p>
+}
+
 const VIEWS: Record<ViewName, () => ReactElement> = {
   counter: Counter,
   user: User,
   feed: Feed,
   name: Name,
   save: Save,
+  equal: Equal,
 }
 
 export function App({ view, root }: { view: ViewName; root: Root<unknown> }) {

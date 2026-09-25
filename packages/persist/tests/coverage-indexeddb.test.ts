@@ -96,8 +96,10 @@ class FakeTransaction {
 }
 
 class FakeDatabase {
+  /** The spec's close pending flag: set by `close()` and by a lost connection. */
   closed = false
   onversionchange: (() => void) | null = null
+  onclose: (() => void) | null = null
   readonly stores = new Map<string, Map<unknown, unknown>>()
   readonly objectStoreNames = { contains: (name: string) => this.stores.has(name) }
   constructor(private readonly outcome: (op: Op, key: string | undefined) => Outcome) {}
@@ -105,7 +107,8 @@ class FakeDatabase {
     this.stores.set(name, new Map())
   }
   transaction(name: string): FakeTransaction {
-    if (this.closed) throw new Error('InvalidStateError: the connection is closed')
+    if (this.closed)
+      throw new DOMException('The database connection is closing.', 'InvalidStateError')
     const map = this.stores.get(name)
     if (map === undefined) throw new Error(`no store ${name}`)
     return new FakeTransaction(map, this.outcome)
@@ -113,11 +116,21 @@ class FakeDatabase {
   close(): void {
     this.closed = true
   }
+  /**
+   * The browser closes the connection abnormally, as WebKit does when its
+   * IndexedDB server goes away: the close pending flag is set at once, and
+   * the `close` event fires on a later task.
+   */
+  lose(): void {
+    this.closed = true
+    setTimeout(() => this.onclose?.(), 0)
+  }
 }
 
 const makeFakeIdb = (options: FakeOptions = {}) => {
   const outcome = options.outcome ?? (() => 'ok' as const)
   let failuresLeft = options.failOpens ?? 0
+  let lostOnOpen = false
   const connections: FakeDatabase[] = []
   /** One backing map per store name, shared by every connection. */
   const data = new Map<string, Map<unknown, unknown>>()
@@ -138,6 +151,7 @@ const makeFakeIdb = (options: FakeOptions = {}) => {
         req.onupgradeneeded?.()
         for (const [name, map] of db.stores) data.set(name, map)
         connections.push(db)
+        if (lostOnOpen) db.lose()
         req.onsuccess?.()
       })
       return req
@@ -147,6 +161,10 @@ const makeFakeIdb = (options: FakeOptions = {}) => {
     factory: factory as unknown as IDBFactory,
     connections,
     store: (name = 'kv') => data.get(name),
+    /** Every connection opened from now on is lost before the adapter uses it. */
+    loseEveryOpen: () => {
+      lostOnOpen = true
+    },
   }
 }
 
@@ -193,6 +211,45 @@ describe('indexedDbAdapter — opening the database', () => {
     await adapter.set('k', 'global')
     expect(await adapter.get('k')).toBe('global')
     expect(idb.store()?.get('k')).toBe('global')
+  })
+})
+
+describe('indexedDbAdapter — a connection the browser closed', () => {
+  // WebKit closes a connection when its IndexedDB server goes away. From then
+  // on `transaction()` throws InvalidStateError. The adapter cached the
+  // connection and reset it only on `versionchange`, so every later call
+  // failed, and the query-cache plugin, which holds its writes until a read
+  // lands, never wrote again.
+  test('after the close event, the next call opens a new connection', async () => {
+    const idb = makeFakeIdb()
+    const adapter = indexedDbAdapter({ indexedDB: idb.factory, channelName: null })
+    await adapter.set('k', 'v1')
+    ;(idb.connections[0] as FakeDatabase).lose()
+    await new Promise((r) => setTimeout(r, 0)) // the close event
+    expect(await adapter.get('k')).toBe('v1')
+    await adapter.set('k', 'v2')
+    expect(await adapter.get('k')).toBe('v2')
+    expect(idb.connections).toHaveLength(2)
+  })
+
+  test('before the close event, a call that meets the closed connection retries once on a new one', async () => {
+    const idb = makeFakeIdb()
+    const adapter = indexedDbAdapter({ indexedDB: idb.factory, channelName: null })
+    await adapter.set('k', 'v1')
+    ;(idb.connections[0] as FakeDatabase).lose()
+    expect(await adapter.get('k')).toBe('v1')
+    expect(await adapter.keys?.()).toEqual(['k'])
+    expect(idb.connections).toHaveLength(2)
+  })
+
+  test('a new connection that is closed too rejects, after one retry', async () => {
+    const idb = makeFakeIdb()
+    const adapter = indexedDbAdapter({ indexedDB: idb.factory, channelName: null })
+    await adapter.set('k', 'v1')
+    idb.loseEveryOpen()
+    ;(idb.connections[0] as FakeDatabase).lose()
+    await expect(adapter.get('k')).rejects.toMatchObject({ name: 'InvalidStateError' })
+    expect(idb.connections).toHaveLength(2)
   })
 })
 

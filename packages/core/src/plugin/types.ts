@@ -1,6 +1,6 @@
 import type { AmbientDeps } from '../controller/types'
 import type { MutationMeta } from '../query/mutation'
-import type { DehydratedState, QueryMeta } from '../query/types'
+import type { DehydratedState, QueryMeta, Snapshot } from '../query/types'
 import type { Scope } from '../scope'
 
 /**
@@ -143,6 +143,22 @@ export type QueryHost = {
    */
   replace(id: string, key: readonly unknown[], value: unknown, options?: WriteOptions): void
   /**
+   * An optimistic write of an existing entry, as `setData` in a mutation's
+   * `onMutate` (spec §6.4): a guess the plugin settles through the returned
+   * `Snapshot`, with `rollback()` when it fails and `finalize()` when it
+   * commits. It pushes an optimistic layer, reports `'optimistic'`, and
+   * leaves the stale clock and an in-flight fetch alone (§5.9). The settle
+   * reports `'rollback'` or `'commit'` as an app's does. A plugin that
+   * mirrors another tab's guess uses it, so the guess stays a guess here.
+   * `undefined` when this root holds no entry for the key.
+   */
+  setData(
+    id: string,
+    key: readonly unknown[],
+    updater: (prev: unknown) => unknown,
+    options?: WriteOptions,
+  ): Snapshot | undefined
+  /**
    * Mark an entry stale; it refetches now if it has subscribers, else on the
    * next subscribe (spec §5.7). Resolves when that refetch settles.
    */
@@ -192,10 +208,25 @@ export type MutationHost = {
  * - `'hydrate'` — dehydrated data reached the entry (SSR, a warm start)
  * - `'optimistic'` — `setData`, a guess a mutation may roll back
  * - `'rollback'` — an optimistic layer was undone
+ * - `'commit'` — an optimistic layer was committed as server truth: its
+ *   snapshot was finalized, as a successful mutation does. It is reported once
+ *   no optimistic layer on the entry is live, so `data` holds no pending guess.
+ *   A commit made while another layer is live is reported by the settle that
+ *   clears the last one, even when that settle is a rollback, and then in
+ *   place of the `'rollback'`. `updatedAt` is when the server last answered
+ *   (fetch, hydrated row or canonical write), since a commit does not restart
+ *   the stale clock, or `0` when it never did.
  * - `'write'` — `write`, a canonical patch
  * - `'replace'` — `replace`, a canonical whole record
  */
-export type WriteSource = 'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'write' | 'replace'
+export type WriteSource =
+  | 'fetch'
+  | 'hydrate'
+  | 'optimistic'
+  | 'rollback'
+  | 'commit'
+  | 'write'
+  | 'replace'
 
 /** A cache entry's data changed. */
 export type WriteEvent = {
@@ -221,9 +252,27 @@ export type WriteEvent = {
    * plugin that persists or relays infinite state needs both to restore it.
    */
   readonly pageParams?: readonly unknown[]
+  /**
+   * The entry's server truth after the write, as `dehydrate()` ships it: the
+   * data beneath every live optimistic write, with canonical writes and
+   * commits folded in, and when the server last said it (`0` when it never
+   * did). With no optimistic write live, `data` is the same value. A plugin
+   * that keeps server truth, such as a persister, stores this instead of
+   * `data`, which holds any pending guess. `undefined` when the entry holds
+   * neither data nor a server answer, such as an optimistic create into an
+   * entry nothing has fetched.
+   */
+  readonly server?: {
+    readonly data: unknown
+    readonly updatedAt: number
+    /**
+     * For an infinite query, the params of the server pages.
+     */
+    readonly pageParams?: readonly unknown[]
+  }
 }
 
-/** Options for `QueryHost.write` and `replace`. */
+/** Options for `QueryHost.write`, `replace` and `setData`. */
 export type WriteOptions = {
   /**
    * For an infinite query: the params of the new pages, one per page. Without

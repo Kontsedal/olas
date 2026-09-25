@@ -664,7 +664,7 @@ export async function handle(request: Request): Promise<Response> {
 
 Three details keep the stream safe (§22):
 
-- **The transform writes only between elements.** React writes its stream in fixed-size chunks, so a chunk can end inside a tag or an attribute value. A `<script>` written there breaks the markup, and query data can inject attributes. The transform holds each batch until the HTML so far ends between elements.
+- **The transform writes only where hydration never looks.** React writes its stream in fixed-size chunks, so a chunk can end inside a tag, an attribute value or a text node. A `<script>` written there breaks the markup, query data can inject attributes, and a script inside an element React hydrates breaks hydration. The transform writes each batch directly inside `<body>`, or at the top level of a fragment, right after a tag, and holds it until the stream reaches such a point.
 - **The payload goes through `serializeForScript`**, as in the one-shot render.
 - **The `nonce` goes on every script.** The hydrator puts it on its own `<script>` tags, and `renderToReadableStream` puts it on React's, so a `script-src 'nonce-…'` policy admits both.
 

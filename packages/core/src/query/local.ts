@@ -1,6 +1,7 @@
 import { effect, untracked } from '../signals'
 import type { ReadSignal } from '../signals/types'
 import { Entry } from './entry'
+import { stableHash } from './keys'
 import type { FetchCtx, LocalCache, Snapshot } from './types'
 
 /** Options for `createCache(ctx, fetcher, options?)`. Spec §5.1. */
@@ -27,9 +28,9 @@ class LocalCacheImpl<T> implements LocalCache<T> {
   private keyEffectDispose: (() => void) | null = null
   private disposed = false
   private readonly keepPreviousData: boolean
-  private lastSucceededFor: unknown[] | null = null
+  private lastSucceededFor: KeyIdentity | null = null
   /** The key of the key effect's latest run. */
-  private currentKey: unknown[] | null = null
+  private currentKey: KeyIdentity | null = null
   /**
    * True from a key change until a fetch lands for the new key, while the data
    * on hand is the previous key's (`keepPreviousData`). `firstValue()` then
@@ -63,25 +64,26 @@ class LocalCacheImpl<T> implements LocalCache<T> {
         // Track keys.
         const keyArgs = keyFn() as unknown[]
         untracked(() => {
+          const key = identify(keyArgs)
           const previousKey = this.currentKey
-          this.currentKey = keyArgs
+          // The thunk re-ran to an equal key, such as the same id read from a
+          // new object: nothing changed, so nothing refetches or aborts. Keys
+          // compare as `createQuery`'s do, by hash (§5.4).
+          if (previousKey !== null && sameKey(previousKey, key)) return
+          this.currentKey = key
           if (!this.keepPreviousData) {
             // Reset data on key change so consumers see "loading" rather than
             // the previous key's stale value.
-            if (this.lastSucceededFor != null && !arraysEqual(this.lastSucceededFor, keyArgs)) {
+            if (this.lastSucceededFor != null && !sameKey(this.lastSucceededFor, key)) {
               this.entry.data.set(undefined)
             }
           }
-          if (
-            previousKey !== null &&
-            !arraysEqual(previousKey, keyArgs) &&
-            this.entry.data.peek() !== undefined
-          ) {
+          if (previousKey !== null && this.entry.data.peek() !== undefined) {
             this.previousKeyData = true
           }
           this.entry.startFetch().then(
             () => {
-              this.lastSucceededFor = [...keyArgs]
+              this.lastSucceededFor = key
             },
             () => {
               /* error already captured on entry */
@@ -148,7 +150,7 @@ class LocalCacheImpl<T> implements LocalCache<T> {
     this.entry.setData(updater, { track: false })
   }
   replace = (value: T): void => {
-    this.entry.setData(() => value, { track: false })
+    this.entry.setData(() => value, { track: false, whole: true })
     if (value !== undefined) this.entry.supersedeByWrite()
   }
 
@@ -167,6 +169,26 @@ export function createLocalCache<T>(
   deps?: FetchCtx['deps'],
 ): LocalCache<T> {
   return new LocalCacheImpl(fetcher, options ?? {}, deps ?? {})
+}
+
+/** A key and its hash, or `null` for a key `stableHash` cannot encode. */
+type KeyIdentity = { readonly args: readonly unknown[]; readonly hash: string | null }
+
+function identify(args: readonly unknown[]): KeyIdentity {
+  let hash: string | null
+  try {
+    hash = stableHash(args)
+  } catch {
+    // A class instance, a function or a cycle: those compare by identity.
+    hash = null
+  }
+  return { args: [...args], hash }
+}
+
+/** Equal by hash, as `createQuery` keys are; by element when either has none. */
+function sameKey(a: KeyIdentity, b: KeyIdentity): boolean {
+  if (a.hash !== null && b.hash !== null) return a.hash === b.hash
+  return arraysEqual(a.args, b.args)
 }
 
 function arraysEqual(a: readonly unknown[], b: readonly unknown[]): boolean {

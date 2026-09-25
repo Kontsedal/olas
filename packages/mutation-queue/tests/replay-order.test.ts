@@ -11,7 +11,7 @@ import {
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { mutationQueuePlugin, PROTOCOL_VERSION, type QueueEntry } from '../src'
+import { MutationQueue, mutationQueuePlugin, PROTOCOL_VERSION, type QueueEntry } from '../src'
 
 // Replay order within one mutation id. `seq` is seeded from `Date.now()`, so
 // two tabs that start in the same millisecond mint the same `seq` for
@@ -172,6 +172,75 @@ describe('replay order — a seq two tabs share', () => {
 
     const ran = await replayOrder(id, copy(adapter, true), prefix)
     expect(ran).toEqual(['tab 2, first', 'tab 1, first', 'tab 1, second', 'tab 2, second'])
+  })
+})
+
+describe('replay order — an entry that stays for a retry', () => {
+  // A pass replays each mutation id's entries in `seq` order. A failure worth
+  // a retry kept its entry and the pass went on to the next one, so a later
+  // draft reached the server first. The next pass sent the older draft, and
+  // the server ended on it.
+  test('a transient failure ends its group for the pass, and the next pass keeps the order', async () => {
+    const id = 'order/transient'
+    const other = 'order/transient-other'
+    const prefix = 'order/transient'
+    _unregisterMutationById(id)
+    _unregisterMutationById(other)
+    const adapter = memoryAdapter()
+    const put = (mutationId: string, runId: string, variables: string, seq: number) =>
+      adapter.store.set(
+        `${prefix}/${mutationId}/${runId}`,
+        JSON.stringify({
+          v: PROTOCOL_VERSION,
+          mutationId,
+          runId,
+          variables,
+          attempts: 0,
+          enqueuedAt: Date.now(),
+          seq,
+        } satisfies QueueEntry),
+      )
+    put(id, 'r1', 'draft v1', 1)
+    put(id, 'r2', 'draft v2', 2)
+    put(other, 'o1', 'unrelated', 1)
+
+    const server: string[] = []
+    let outages = 1
+    defineMutation({
+      id,
+      mutate: async (draft: string) => {
+        if (draft === 'draft v1' && outages-- > 0) throw new Error('503')
+        server.push(draft)
+      },
+      meta: { persist: true },
+    })
+    defineMutation({
+      id: other,
+      mutate: async (vars: string) => {
+        server.push(vars)
+      },
+      meta: { persist: true },
+    })
+    const root = createRoot(
+      defineController(() => ({})),
+      {
+        queries: queryEngine(),
+        deps: {},
+        onError: () => {},
+        plugins: [
+          mutationQueuePlugin({ storage: adapter, keyPrefix: prefix, onReplayError: () => {} }),
+        ],
+      },
+    )
+    await root.waitForIdle()
+    // v1 stays for a retry, so v2 waits behind it. Another id is not held up.
+    expect(server).toEqual(['unrelated'])
+    expect(stored(adapter).map((e) => e.variables)).toEqual(['draft v1', 'draft v2'])
+
+    await root.inject(MutationQueue).replayNow()
+    expect(server).toEqual(['unrelated', 'draft v1', 'draft v2'])
+    expect(adapter.store.size).toBe(0)
+    root.dispose()
   })
 })
 

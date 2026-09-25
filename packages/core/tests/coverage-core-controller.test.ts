@@ -249,7 +249,7 @@ describe('ctx.collection', () => {
     }
   })
 
-  test('a keyOf that throws reaches onError and leaves the items as they were', () => {
+  test('a keyOf that throws reaches onError as construction and skips only that item', () => {
     const onError = vi.fn()
     const source = signal<Row[]>([{ id: 'a' }])
     const root = createRoot(
@@ -266,9 +266,9 @@ describe('ctx.collection', () => {
       })),
       { deps: {}, onError },
     )
-    source.set([{ id: 'a' }, { id: 'boom' }])
-    expect(root.api.list.items.value.map((i) => i.key)).toEqual(['a'])
-    expect(summarize(onError)).toEqual([['keyOf boom', 'effect']])
+    source.set([{ id: 'a' }, { id: 'boom' }, { id: 'c' }])
+    expect(root.api.list.items.value.map((i) => i.key)).toEqual(['a', 'c'])
+    expect(summarize(onError)).toEqual([['keyOf boom', 'construction']])
     root.dispose()
   })
 

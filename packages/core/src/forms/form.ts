@@ -1,14 +1,18 @@
 import type { Field } from '../controller/types'
 import { batch, computed, effect, type Signal, signal, untracked } from '../signals'
+import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
-import { abandonAsyncResults, isAbortError } from '../utils'
+import { abandonAsyncResults } from '../utils'
 import {
   asyncValidatorFlags,
   bindFieldDevtoolsOwner,
   bindFieldValidatorErrorReporter,
   callValidators,
+  copyPlainData,
   RoutedErrors,
+  rejectionMessage,
   runDisposeHooks,
+  thrownMessage,
   type ValidatorErrorReporter,
 } from './field'
 import type {
@@ -37,8 +41,28 @@ const brand = (node: object, key: symbol): void => {
   ;(node as Record<symbol, unknown>)[key] = true
 }
 
-const messageOf = (reason: unknown): string =>
-  reason instanceof Error ? reason.message : String(reason)
+/**
+ * Messages `setErrors` pinned on a form or field array itself, with the value
+ * the node held then. They show while the node still holds that value, so the
+ * next change anywhere in it clears them, as a field's next `set()` clears its
+ * own. A form's value and an array's value are computeds that build a new
+ * object on every change, so "the same value" means the same object.
+ */
+type PinnedErrors = { errors: string[]; against: unknown }
+
+/** The pinned messages that still apply to a node now holding `value`. */
+function pinnedFor(pinned: PinnedErrors | null, value: () => unknown): string[] {
+  if (pinned === null) return []
+  return value() === pinned.against ? pinned.errors : []
+}
+
+/** `own`, then each non-empty list after it, keeping `own` when nothing adds. */
+function mergeErrors(own: string[], ...more: string[][]): string[] {
+  const extra = more.filter((list) => list.length > 0)
+  if (extra.length === 0) return own
+  if (own.length === 0 && extra.length === 1) return extra[0] as string[]
+  return [...own, ...extra.flat()]
+}
 
 /**
  * `isValid` for an aggregate node: the live answer when nothing below it is
@@ -150,10 +174,7 @@ function runLevelValidators<V>(
     },
     (err) => {
       report(err)
-      issues.push({
-        path: [],
-        message: __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
-      })
+      issues.push({ path: [], message: thrownMessage(err) })
     },
   )
   return { issues, failed, pending }
@@ -211,11 +232,10 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   readonly isValidating: ReadSignal<boolean>
   readonly flatErrors: ReadSignal<Array<{ path: string; errors: string[] }>>
   /**
-   * Dotted paths of every leaf whose `isDirty` is `true`. Recomputes when
-   * any child's dirty state flips; ordered by depth-first traversal so two
-   * snapshots of a stable tree compare with `===`-friendly references on
-   * unchanged subsets. Useful for partial-update PATCH payloads and
-   * "highlight the changed inputs" UIs.
+   * Dotted paths of every leaf whose `isDirty` is `true`, and of every field
+   * array changed structurally (see `collectDirtyFields`). Recomputes when
+   * any child's dirty state flips; ordered by depth-first traversal. Useful
+   * for partial-update PATCH payloads and "highlight the changed inputs" UIs.
    */
   readonly dirtyFields: ReadSignal<string[]>
 
@@ -228,29 +248,39 @@ class FormImpl<S extends FormSchema> implements Form<S> {
    * source". Each list is owned by its router (T5.2) — see `setFormErrors`.
    */
   private readonly parentFormErrors = new RoutedErrors()
-  readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
-    const own = this.topLevelErrors$.value
-    const parent = this.parentFormErrors.merged.value
-    if (parent.length === 0) return own
-    if (own.length === 0) return parent
-    return [...own, ...parent]
-  })
+  /** `setErrors` messages on this form itself — see `PinnedErrors`. */
+  private readonly serverErrors$: Signal<PinnedErrors | null> = signal(null)
+  readonly topLevelErrors: ReadSignal<string[]> = computed(() =>
+    mergeErrors(
+      this.topLevelErrors$.value,
+      pinnedFor(this.serverErrors$.value, () => this.value$.value),
+      this.parentFormErrors.merged.value,
+    ),
+  )
   private readonly topLevelValidating$: Signal<boolean> = signal(false)
   /** Targets written by the last form-level run — cleared next run if absent. */
   private lastFormErrorTargets: Set<FormErrorTarget> = new Set()
 
-  // Submission lifecycle.
+  // Submission lifecycle. The public members are read-only views, so a cast
+  // of the `ReadSignal` type cannot reach `set` (§8.6).
   private readonly isSubmitting$: Signal<boolean> = signal(false)
   private readonly submitCount$: Signal<number> = signal(0)
   private readonly submitError$: Signal<unknown> = signal(undefined)
-  readonly isSubmitting: ReadSignal<boolean> = this.isSubmitting$
-  readonly submitCount: ReadSignal<number> = this.submitCount$
-  readonly submitError: ReadSignal<unknown> = this.submitError$
+  readonly isSubmitting: ReadSignal<boolean> = readOnly(this.isSubmitting$)
+  readonly submitCount: ReadSignal<number> = readOnly(this.submitCount$)
+  readonly submitError: ReadSignal<unknown> = readOnly(this.submitError$)
 
   private readonly validators: ReadonlyArray<FormValidator<S>>
   /** Which top-level validators count as async — see `asyncValidatorFlags`. */
   private readonly asyncValidators: boolean[]
   private readonly options: FormOptions<S> | undefined
+  /**
+   * The form's own copy of a fixed `initial` object, which `reset()` re-seats
+   * from. The fields hold the caller's objects after construction, and a
+   * Svelte nested bind on one edits it in place; the copy keeps `reset()`
+   * whole (spec §16.3).
+   */
+  private readonly staticInitial: DeepPartial<FormValue<S>> | undefined
   private validatorDispose: (() => void) | null = null
   private validityDispose: (() => void) | null = null
   private initialDispose: (() => void) | null = null
@@ -291,7 +321,9 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     // shape from spec §8.4. For the function form, wrap in an effect so a
     // change to any tracked signal re-seats the form (subject to the dirty
     // guard from `resetOnInitialChange`).
-    if (options?.initial !== undefined) {
+    // `null` is no initial, like `undefined`: a form cannot hold `null`, and a
+    // field-array factory passes an item's `null` straight through (§8.3).
+    if (options?.initial != null) {
       if (typeof options.initial === 'function') {
         const initialFn = options.initial
         const mode = options.resetOnInitialChange ?? 'when-clean'
@@ -308,31 +340,41 @@ class FormImpl<S extends FormSchema> implements Form<S> {
             this.reportError(err)
             return
           }
-          if (ini === undefined) return
+          // `null` means no record yet, as `undefined` does.
+          if (ini == null) return
           // The dirty guard MUST run untracked — otherwise `isDirty` would
           // become a dep and re-seating on user input would cascade.
           untracked(() => {
             if (this.disposed) return
             const partial = ini as DeepPartial<FormValue<S>>
-            if (!this.initialSeated) {
-              // The first defined value fills what the user has not edited.
-              // An edit made while the data loaded keeps its value, and only
-              // its baseline moves (spec §8.4). A form-wide guard here left
-              // every other field at its empty seed, for a save to write back.
-              this.initialSeated = true
-              if (mode === 'always') this.applyPartial(partial, true)
-              else this.seatKeepingEdits(partial)
-              return
+            // Seating runs item factories and writes every field. A throw
+            // there reaches `onError` too, not the write that re-ran the thunk
+            // (§8.4). A field array builds its new items before it drops the
+            // old ones, so a throw leaves it whole.
+            try {
+              if (!this.initialSeated) {
+                // The first defined value fills what the user has not edited.
+                // An edit made while the data loaded keeps its value, and only
+                // its baseline moves (spec §8.4). A form-wide guard here left
+                // every other field at its empty seed, for a save to write back.
+                this.initialSeated = true
+                if (mode === 'always') this.applyPartial(partial, true)
+                else this.seatKeepingEdits(partial)
+                return
+              }
+              if (mode === 'never') return
+              // `computeBool` rather than `isDirty`, which the constructor
+              // builds only after this effect's first run.
+              if (mode !== 'always' && this.computeBool('isDirty')) return
+              this.applyPartial(partial, true)
+            } catch (err) {
+              this.reportError(err)
             }
-            if (mode === 'never') return
-            // `computeBool` rather than `isDirty`, which the constructor
-            // builds only after this effect's first run.
-            if (mode !== 'always' && this.computeBool('isDirty')) return
-            this.applyPartial(partial, true)
           })
         })
       } else {
         this.applyPartial(options.initial as DeepPartial<FormValue<S>>, true)
+        this.staticInitial = copyPlainData(options.initial as DeepPartial<FormValue<S>>)
       }
     }
 
@@ -436,6 +478,8 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   }
 
   private applyPartial(partial: DeepPartial<FormValue<S>>, asInitial: boolean): void {
+    // A missing record leaves the form alone (§8.3).
+    if (partial == null) return
     for (const [k, val] of Object.entries(partial)) {
       // Own keys only: `fields` is a plain object, so `__proto__`, `constructor`
       // or `toString` in a partial (parsed JSON can carry them) would otherwise
@@ -459,7 +503,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
 
   setAsInitial(partial: DeepPartial<FormValue<S>>): void {
     if (this.disposed) return
-    batch(() => this.applyPartial(partial, true))
+    batch(() => {
+      // A new baseline makes the last server response moot, as on a field.
+      this.serverErrors$.set(null)
+      this.applyPartial(partial, true)
+    })
   }
 
   /**
@@ -504,6 +552,8 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       // owning submit() flow can flip it back.
       this.submitCount$.set(0)
       this.submitError$.set(undefined)
+      // `setErrors` messages go, as a field's server errors do on reset.
+      this.serverErrors$.set(null)
       // Re-apply initial (as initial, no dirty bump) INSIDE the batch — a
       // separate pass would fire a second notification and briefly expose the
       // "reset to construction seed, then re-seat to current initial" tearing
@@ -524,9 +574,13 @@ class FormImpl<S extends FormSchema> implements Form<S> {
    */
   private readInitial(): DeepPartial<FormValue<S>> | undefined {
     const initial = this.options?.initial
-    if (typeof initial !== 'function') return initial
+    // A fixed object: a fresh copy of the form's own, so the fields never hold
+    // the baseline itself.
+    if (typeof initial !== 'function') {
+      return this.staticInitial === undefined ? undefined : copyPlainData(this.staticInitial)
+    }
     try {
-      return untracked(initial)
+      return untracked(initial) ?? undefined
     } catch (err) {
       this.reportError(err)
       return undefined
@@ -647,17 +701,40 @@ class FormImpl<S extends FormSchema> implements Form<S> {
    * array indices). Errors land in the field's `serverErrors` channel and
    * clear automatically on the next user write to that field. Passing an
    * empty array for a path clears that field's server errors immediately.
+   * A path naming a nested form or field array, or `''` for this form, pins
+   * the messages on that node's `topLevelErrors` (see `PinnedErrors`).
    */
   setErrors(errors: Record<string, ReadonlyArray<string>>): void {
     if (this.disposed) return
     batch(() => {
       for (const [path, msgs] of Object.entries(errors)) {
-        const target = this.resolvePath(path)
-        if (target === undefined) continue
+        // `''` names this form, as it does in `flatErrors`.
+        const target = path === '' ? this : this.resolvePath(path)
+        if (target === undefined || target === null) continue
+        // A nested form or field array takes the messages on its own
+        // `topLevelErrors`. Its `setErrors`, where it has one, takes a record
+        // of paths, and a list read as one split into stray paths.
+        if (isForm(target) || isFieldArray(target)) {
+          ;(target as { setServerErrors?: (e: ReadonlyArray<string>) => void }).setServerErrors?.(
+            msgs,
+          )
+          continue
+        }
         if ((target as { setErrors?: unknown }).setErrors === undefined) continue
         ;(target as { setErrors: (e: ReadonlyArray<string>) => void }).setErrors(msgs)
       }
     })
+  }
+
+  /**
+   * Internal — pin `setErrors` messages on this form's own `topLevelErrors`
+   * until its value next changes. An empty list clears them.
+   */
+  setServerErrors(errors: ReadonlyArray<string>): void {
+    if (this.disposed) return
+    this.serverErrors$.set(
+      errors.length === 0 ? null : { errors: [...errors], against: this.value$.peek() },
+    )
   }
 
   /**
@@ -818,8 +895,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       const issues: FormIssue[] = []
       for (const r of results) {
         if (r.status === 'fulfilled') appendIssues(issues, r.value)
-        // A rejected check is an error on this node, as it is on a field.
-        else if (!isAbortError(r.reason)) issues.push({ path: [], message: messageOf(r.reason) })
+        else {
+          // A rejected check is an error on this node, as it is on a field.
+          const message = rejectionMessage(r.reason, (err) => this.reportError(err))
+          if (message !== null) issues.push({ path: [], message })
+        }
       }
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(
@@ -872,12 +952,22 @@ function splitPath(path: string): string[] | null {
   return out
 }
 
+/**
+ * The dirty paths under `fields`, depth first. A field array that `add`,
+ * `insert`, `remove`, `move` or `clear` changed lists its own path and none
+ * below it: its indices no longer line up with the baseline, so a PATCH has
+ * to send the whole array. `isDirty` counts that change the same way.
+ */
 function collectDirtyFields(fields: FormSchema, prefix: string, out: string[]): void {
   for (const [k, child] of Object.entries(fields)) {
     const path = prefix ? `${prefix}.${k}` : k
     if (isForm(child)) {
       collectDirtyFields(child.fields, path, out)
     } else if (isFieldArray(child)) {
+      if ((child as { structurallyDirty?: boolean }).structurallyDirty === true) {
+        out.push(path)
+        continue
+      }
       const items = child.items.value
       items.forEach((item, idx) => {
         const itemPath = `${path}[${idx}]`
@@ -950,18 +1040,25 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
    *  list per ancestor — merged into `topLevelErrors` beside the array's own
    *  validator output. */
   private readonly parentFormErrors = new RoutedErrors()
-  readonly topLevelErrors: ReadSignal<string[]> = computed(() => {
-    const own = this.topLevelErrors$.value
-    const parent = this.parentFormErrors.merged.value
-    if (parent.length === 0) return own
-    if (own.length === 0) return parent
-    return [...own, ...parent]
-  })
+  /** `setErrors` messages on this array itself — see `PinnedErrors`. */
+  private readonly serverErrors$: Signal<PinnedErrors | null> = signal(null)
+  readonly topLevelErrors: ReadSignal<string[]> = computed(() =>
+    mergeErrors(
+      this.topLevelErrors$.value,
+      pinnedFor(this.serverErrors$.value, () => this.value$.value),
+      this.parentFormErrors.merged.value,
+    ),
+  )
   private readonly topLevelValidating$: Signal<boolean> = signal(false)
   /** Targets written by the last array-level run — cleared next run if absent. */
   private lastFormErrorTargets: Set<FormErrorTarget> = new Set()
 
   private readonly itemFactory: (initial?: ItemInitial<I>) => I
+  /**
+   * The rows `reset()` rebuilds from: the array's own `copyPlainData` copy, so
+   * an item edited in place, as a Svelte nested bind edits it, cannot reach
+   * it. `reset()` hands the factory a fresh copy of it.
+   */
   private initialItems: Array<ItemInitial<I>> = []
   private readonly validators: ReadonlyArray<FieldArrayValidator<I>>
   /** Which array-level validators count as async — see `asyncValidatorFlags`. */
@@ -991,7 +1088,7 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
     this.onValidatorError = internalOptions?.onValidatorError ?? null
     this.items$ = signal<I[]>([])
     if (options?.initial) {
-      this.initialItems = options.initial
+      this.initialItems = copyPlainData(options.initial)
       for (const ini of options.initial) {
         this.items$.peek().push(itemFactory(ini))
       }
@@ -999,7 +1096,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       this.items$.set([...this.items$.peek()])
     }
 
-    this.items = this.items$
+    // A read-only view: writing the backing list would skip item disposal.
+    this.items = readOnly(this.items$)
     this.size = computed(() => this.items$.value.length)
     // Every item — Field or Form — is a ReadSignal of its value.
     this.value$ = computed(
@@ -1068,6 +1166,26 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   at(index: number): I | undefined {
     return this.items$.peek()[index]
+  }
+
+  /**
+   * Internal — `true` after `add`, `insert`, `remove`, `move` or `clear`,
+   * until `reset()` or `setAsInitial()`. A tracked read. `dirtyFields` lists
+   * such an array by its own path.
+   */
+  get structurallyDirty(): boolean {
+    return this.structurallyDirty$.value
+  }
+
+  /**
+   * Internal — pin `setErrors` messages on this array's own `topLevelErrors`
+   * until its value next changes, a row added or removed included.
+   */
+  setServerErrors(errors: ReadonlyArray<string>): void {
+    if (this.disposed) return
+    this.serverErrors$.set(
+      errors.length === 0 ? null : { errors: [...errors], against: this.value$.peek() },
+    )
   }
 
   /**
@@ -1146,15 +1264,32 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
 
   setAsInitial(values: ReadonlyArray<ItemInitial<I>>): void {
     if (this.disposed) return
+    // Rebuild the items wholesale and re-anchor them as the initial, so a
+    // later `reset()` returns here rather than to the construction initials.
+    this.replaceItems(values)
+    this.initialItems = copyPlainData([...values])
+  }
+
+  /**
+   * Swap every item for one built from `values`, on the clean baseline: not
+   * structurally dirty (T5.1), and with no `setErrors` messages. The new items
+   * are built before the old ones go. A factory that throws disposes the
+   * items built so far and leaves the array as it was, and the throw
+   * propagates.
+   */
+  private replaceItems(values: ReadonlyArray<ItemInitial<I>>): void {
+    const next: I[] = []
+    try {
+      for (const v of values) next.push(this.itemFactory(v))
+    } catch (err) {
+      for (const item of next) (item as { dispose?: () => void }).dispose?.()
+      throw err
+    }
     batch(() => {
-      // Rebuild the items wholesale and re-anchor them as the initial, so a
-      // later `reset()` returns here rather than to the construction initials.
-      this.clear()
-      for (const v of values) this.add(v)
-      this.initialItems = [...values]
-      // This is the new clean baseline: the clear()/add() that drove it must
-      // not leave the array structurally dirty (T5.1).
+      for (const item of this.items$.peek()) (item as { dispose?: () => void }).dispose?.()
+      this.items$.set(next)
       this.structurallyDirty$.set(false)
+      this.serverErrors$.set(null)
     })
   }
 
@@ -1166,23 +1301,16 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
    */
   rebaseInitial(values: ReadonlyArray<ItemInitial<I>>): void {
     if (this.disposed) return
-    this.initialItems = [...values]
+    this.initialItems = copyPlainData([...values])
     this.structurallyDirty$.set(true)
   }
 
   reset(): void {
     if (this.disposed) return
-    batch(() => {
-      this.clear()
-      for (const ini of this.initialItems) {
-        this.add(ini)
-      }
-      // The error channels stay with their validators, as in `FormImpl.reset`.
-      // Rebuilt items give the array a new value, so both re-run anyway.
-      // clear()/add() above flipped structural dirt; reset() lands on the
-      // clean initial baseline (T5.1).
-      this.structurallyDirty$.set(false)
-    })
+    // The validator error channels stay with their validators, as in
+    // `FormImpl.reset`. Rebuilt items give the array a new value, so both
+    // re-run anyway.
+    this.replaceItems(copyPlainData(this.initialItems))
   }
 
   markAllTouched(): void {
@@ -1305,8 +1433,11 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       const issues: FormIssue[] = []
       for (const r of results) {
         if (r.status === 'fulfilled') appendIssues(issues, r.value)
-        // A rejected check is an error on this node, as it is on a field.
-        else if (!isAbortError(r.reason)) issues.push({ path: [], message: messageOf(r.reason) })
+        else {
+          // A rejected check is an error on this node, as it is on a field.
+          const message = rejectionMessage(r.reason, (err) => this.onValidatorError?.(err))
+          if (message !== null) issues.push({ path: [], message })
+        }
       }
       batch(() => {
         this.lastFormErrorTargets = routeFormIssues(

@@ -5,8 +5,8 @@ type: flow
 covers:
   - packages/core/src/devtools.ts
   - packages/core/src/query/mutation.ts:539-717
-  - packages/core/src/query/client.ts:219-271
-  - packages/core/src/query/client.ts:1174-1195
+  - packages/core/src/query/client.ts:243-295
+  - packages/core/src/query/client.ts:1229-1250
   - packages/devtools/src/store.ts
   - packages/devtools/src/DevtoolsPanel.tsx
   - packages/devtools/src/diff.ts
@@ -53,9 +53,9 @@ core sets a **dev-only ambient cause**:
 
 - `MutationImpl` wraps `onMutate` in `__runWithCause(runId, () => onMutate())` and wraps
   the snapshot's `rollback`/`finalize` bodies the same way (`mutation.ts` `wrapSnapshot`).
-- The QueryClient's devtools emit closures — `emitDevtoolsSetData` (`client.ts:1174-1195`)
+- The QueryClient's devtools emit closures — `emitDevtoolsSetData` (`client.ts:1229-1250`)
   and the `onSnapshotPush/Rollback/Finalize` hooks in the `EntryEvents` bundle that
-  `devtoolsEntryEvents` builds for every entry (`client.ts:219-271`) — read
+  `devtoolsEntryEvents` builds for every entry (`client.ts:243-295`) — read
   `__currentCauseId()` **at emit time**.
 
 Because `onMutate` and the rollback run synchronously on the stack while the ambient is

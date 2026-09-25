@@ -11,6 +11,14 @@
  * `fc.commands` on purpose: nothing awaits between two ops, so a microtask
  * continuation only runs at an explicit `flush`. That keeps "settle, then
  * supersede before the continuation runs" reachable and the model exact.
+ *
+ * Writes come in two shapes: a whole value, and a patch that reads `prev`. A
+ * canonical patch is re-run on every live baseline, and a committed layer is
+ * re-run on the baselines below it unless a server read landed since it was
+ * pushed (SPEC §6.4). A rollback below the top replays the layers above it
+ * over the baseline it restored. A patch adds a large, distinct amount, so
+ * every value the orders of application could produce stays apart from a
+ * fetch's value.
  */
 import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
@@ -35,8 +43,8 @@ type Op =
   | { t: 'flush' }
   | { t: 'cancel' }
   | { t: 'reset' }
-  | { t: 'setTracked' }
-  | { t: 'setCanonical' }
+  | { t: 'setTracked'; patch: boolean }
+  | { t: 'setCanonical'; patch: boolean; whole: boolean }
   | { t: 'rollback'; pick: number }
   | { t: 'finalize'; pick: number }
   | { t: 'hydrate' }
@@ -70,8 +78,18 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
   { weight: 4, arbitrary: fc.constant({ t: 'flush' as const }) },
   { weight: 1, arbitrary: fc.constant({ t: 'cancel' as const }) },
   { weight: 1, arbitrary: fc.constant({ t: 'reset' as const }) },
-  { weight: 3, arbitrary: fc.constant({ t: 'setTracked' as const }) },
-  { weight: 2, arbitrary: fc.constant({ t: 'setCanonical' as const }) },
+  {
+    weight: 3,
+    arbitrary: fc.record({ t: fc.constant('setTracked' as const), patch: fc.boolean() }),
+  },
+  {
+    weight: 2,
+    arbitrary: fc.record({
+      t: fc.constant('setCanonical' as const),
+      patch: fc.boolean(),
+      whole: fc.boolean(),
+    }),
+  },
   { weight: 2, arbitrary: fc.record({ t: fc.constant('rollback' as const), pick: fc.nat() }) },
   { weight: 1, arbitrary: fc.record({ t: fc.constant('finalize' as const), pick: fc.nat() }) },
   { weight: 1, arbitrary: fc.constant({ t: 'hydrate' as const }) },
@@ -98,8 +116,13 @@ type FetchRec = {
   promise: Tracked<number>
 }
 
-/** One live optimistic layer, as SPEC §6.4 describes it: a baseline, not a delta. */
-type Layer = { snap: Snapshot; baseline: number | undefined }
+type Updater = (prev: number | undefined) => number
+
+/**
+ * One live optimistic layer, as SPEC §6.4 describes it: a baseline, not a delta,
+ * plus the updater a commit re-runs and the server reads it was pushed after.
+ */
+type Layer = { snap: Snapshot; baseline: number | undefined; updater: Updater; epoch: number }
 
 type Model = {
   data: number | undefined
@@ -108,6 +131,8 @@ type Model = {
   isLoading: boolean
   current: FetchRec | null
   layers: Layer[]
+  /** Server reads (fetch successes, hydrated rows) so far. */
+  epoch: number
 }
 
 type Options = {
@@ -139,6 +164,7 @@ async function runScenario(
     isLoading: false,
     current: null,
     layers: [],
+    epoch: 0,
   }
   const fetches: FetchRec[] = []
   const snaps: Layer[] = []
@@ -162,11 +188,39 @@ async function runScenario(
     if (i === model.layers.length - 1) model.data = layer.baseline
     else (model.layers[i + 1] as Layer).baseline = layer.baseline
     model.layers.splice(i, 1)
+    if (i < model.layers.length) replay(i)
+  }
+
+  /**
+   * The layers from `from` up lost a layer under them (§6.4): each baseline is
+   * the one below with that layer's updater applied, and the data is the top's
+   * result. A layer a server read replaced passes its baseline through.
+   */
+  const replay = (from: number): void => {
+    let v = (model.layers[from] as Layer).baseline
+    for (let j = from; j < model.layers.length; j++) {
+      const l = model.layers[j] as Layer
+      if (j > from) l.baseline = v
+      if (l.epoch === model.epoch) v = l.updater(v)
+    }
+    model.data = v
   }
 
   const modelFinalize = (layer: Layer): void => {
     const i = model.layers.indexOf(layer)
-    if (i !== -1) model.layers.splice(i, 1)
+    if (i === -1) return
+    // A commit folds into the baselines below it, unless a server read landed
+    // since the layer was pushed (§6.4).
+    if (layer.epoch === model.epoch) {
+      for (const l of model.layers.slice(0, i)) l.baseline = layer.updater(l.baseline)
+    }
+    model.layers.splice(i, 1)
+  }
+
+  /** A write's updater: a whole value, or a patch that adds to `prev`. */
+  const writer = (base: number, patch: boolean): Updater => {
+    const v = base + seq++
+    return patch ? (prev) => (prev ?? 0) + v * 10 : () => v
   }
 
   const settle = (f: FetchRec, outcome: Outcome): void => {
@@ -191,6 +245,7 @@ async function runScenario(
         model.status = 'success'
         // Fetch success rebases every live snapshot onto server truth (§6.4).
         for (const l of model.layers) l.baseline = s.value
+        model.epoch += 1
       } else {
         model.error = s.error
         model.status = 'error'
@@ -278,21 +333,31 @@ async function runScenario(
         model.status = settledStatus()
         break
       case 'setTracked': {
-        const v = 1_000_000 + seq++
-        const layer: Layer = { snap: { rollback() {}, finalize() {} }, baseline: model.data }
-        layer.snap = entry.setData(() => v)
+        const updater = writer(1_000_000, op.patch)
+        const layer: Layer = {
+          snap: { rollback() {}, finalize() {} },
+          baseline: model.data,
+          updater,
+          epoch: model.epoch,
+        }
+        layer.snap = entry.setData(updater)
         model.layers.push(layer)
         snaps.push(layer)
-        model.data = v
+        model.data = updater(model.data)
         writeStatus()
         break
       }
       case 'setCanonical': {
-        const v = 2_000_000 + seq++
-        entry.setData(() => v, { track: false })
-        model.data = v
-        // A canonical write rebases live snapshots onto itself (entry.ts setData).
-        for (const l of model.layers) l.baseline = v
+        const updater = writer(2_000_000, op.patch)
+        // `whole` is how a `replace` writes: its value becomes every baseline.
+        // Only an updater that ignores `prev` can be one.
+        const whole = op.whole && !op.patch
+        entry.setData(updater, { track: false, whole })
+        const next = updater(model.data)
+        model.data = next
+        // A canonical write patches every live baseline (§6.4); a whole value
+        // becomes each one.
+        for (const l of model.layers) l.baseline = whole ? next : updater(l.baseline)
         writeStatus()
         break
       }
@@ -323,6 +388,7 @@ async function runScenario(
         model.status = 'success'
         model.isLoading = false
         for (const l of model.layers) l.baseline = v
+        model.epoch += 1
         break
       }
     }

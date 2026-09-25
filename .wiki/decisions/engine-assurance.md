@@ -19,7 +19,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/property/entry.property.test.ts }
   - { type: related, target: ../entities/entry.md }
   - { type: related, target: canonical-vs-optimistic-writes.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -32,16 +32,17 @@ Example tests pin the cases someone thought of. 1.0 adds three checks for the ca
 Each file drives an engine object through a random sequence of operations and checks it against a small model after every step, 1,000 runs per property (`NUM_RUNS` in `helpers.ts`).
 
 - **`Entry`:**
-  - **Ops:** start, refetch, invalidate, cancel, reset, tracked and canonical `setData`, rollback and finalize of a random snapshot, `applyHydration`, and settling a random fetch out of order. A settle can deliver a value, an error, or a self-abort.
-  - **Asserts:** a superseded fetch never writes; nothing stays `isFetching` or `'pending'`; `hasPendingMutations` is true exactly while a snapshot is live; and rolling every snapshot back in random order restores the canonical value.
+  - **Ops:** start, refetch, invalidate, cancel, reset, tracked and canonical `setData`, rollback and finalize of a random snapshot, `applyHydration`, and settling a random fetch out of order. A settle can deliver a value, an error, or a self-abort. Each write is a whole value or a patch that reads `prev`, and a canonical whole value can be a `replace` (`whole`).
+  - **Asserts:** a superseded fetch never writes; nothing stays `isFetching` or `'pending'`; `hasPendingMutations` is true exactly while a snapshot is live; and rolling every snapshot back in random order restores the bottom layer's baseline.
+  - **Baselines:** the model keeps them by SPEC §6.4 as the 1.0 fourth pass states it. A canonical patch re-runs on each live baseline, and a whole value becomes each one. A commit re-runs its layer's updater on the baselines below it, unless a fetch or a hydrated row landed after the layer was pushed. A rollback below the top replays the layers above it over the baseline it restored, passing a layer a read replaced through. Until that pass the model mirrored the code, which set every baseline to the value on screen and let a commit leave the lower baselines alone; `../pitfalls/visible-data-is-not-a-baseline.md` has the two bugs.
 - **`InfiniteEntry`:**
-  - **Ops:** the same, plus next and previous pages, writes that change the page count, and multi-page refetches.
+  - **Ops:** the same, plus next and previous pages, writes that change the page count, and multi-page refetches. A patch write re-derives each baseline's pages, and the model re-aligns their params as `alignParams` does.
   - **Asserts:** `pages` and `pageParams` stay aligned; a superseded page request never writes; and each paging flag is true exactly while its direction owns the entry.
 - **Mutations:**
   - **Modes and ops:** one property per concurrency mode, through the public API, with an optimistic `setData` and a recording plugin. The ops include microtask ticks, so an abort can land just after `mutate` finishes.
   - **Asserts:** every `run()` settles; `isPending` ends false; `waitForIdle()` resolves and does not answer early; plugins see exactly one start and one outcome per run; `serial` never overlaps two `mutate` calls; and `latest-wins` rolls back before the next `onMutate`.
 
-The op sequences are plain arrays with an explicit `flush` op, not `fc.commands`. `fc.commands` awaits between steps, which lets engine callbacks run at points the model cannot control. The plain loop keeps "settle a fetch, then supersede it before its callback runs" reachable. Each model was deliberately broken once to confirm its property fails.
+The op sequences are plain arrays with an explicit `flush` op, not `fc.commands`. `fc.commands` awaits between steps, which lets engine callbacks run at points the model cannot control. The plain loop keeps "settle a fetch, then supersede it before its callback runs" reachable. Each model was deliberately broken once to confirm its property fails. The fourth pass broke each baseline rule three ways, in both entry classes: no fold on commit, a patch that sets each baseline to the visible value, and a fold across a server read. Its follow-up broke the replay twice: no replay, and a replay of layers a read replaced. Each broken copy failed its property.
 
 ## Coverage gates (`vitest.config.ts`)
 

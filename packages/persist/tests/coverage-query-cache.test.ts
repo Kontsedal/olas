@@ -287,11 +287,16 @@ describe('persistQueryCachePlugin — an async restore that lands after a fetch'
   test('the fetched entry is kept, both in the cache and in what is written next', async () => {
     const store = new Map<string, string>()
     let finishRead: (raw: string) => void = () => {}
+    let reads = 0
     const storage: StorageAdapter = {
-      get: () =>
-        new Promise<string | null>((resolve) => {
-          finishRead = resolve
-        }),
+      // The startup read waits for the test. A flush reads again before it
+      // writes, and that read answers at once.
+      get: (k) =>
+        reads++ > 0
+          ? Promise.resolve(store.get(k) ?? null)
+          : new Promise<string | null>((resolve) => {
+              finishRead = resolve
+            }),
       set: (k, v) => {
         store.set(k, v)
       },
@@ -318,7 +323,8 @@ describe('persistQueryCachePlugin — an async restore that lands after a fetch'
     await vi.advanceTimersByTimeAsync(0)
     expect(root.api.q.data.value).toBe('fresh') // not hydrated over the bound entry
 
-    root.dispose() // flushes the pending write
+    root.dispose() // flushes the pending write, after one more read
+    await vi.advanceTimersByTimeAsync(0)
     const written = JSON.parse(store.get(KEY) as string) as {
       entries: Array<{ id: string; data: unknown }>
     }

@@ -1,4 +1,18 @@
 import { scheduleExpiry } from './expiry-timer'
+
+/**
+ * True iff `value` has a callable `then`, the test `Promise.resolve` applies.
+ * Internal: `ctx.lazyChild` and `debouncedValidator` check what a user callback
+ * returned before they chain on it.
+ */
+export function isThenable(value: unknown): value is PromiseLike<unknown> {
+  return (
+    value !== null &&
+    (typeof value === 'object' || typeof value === 'function') &&
+    typeof (value as { then?: unknown }).then === 'function'
+  )
+}
+
 /**
  * True iff `err` looks like an AbortError. Matches the standard `DOMException`
  * shape thrown by `AbortController` AND any object whose `name === 'AbortError'`

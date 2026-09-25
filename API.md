@@ -1132,7 +1132,7 @@ type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
   readonly isDirty: ReadSignal<boolean>
   readonly touched: ReadSignal<boolean>
   readonly isValidating: ReadSignal<boolean>
-  readonly dirtyFields: ReadSignal<string[]>      // dotted paths of every dirty leaf
+  readonly dirtyFields: ReadSignal<string[]>      // dotted paths of every dirty leaf; a reshaped array by its own path
   readonly isSubmitting: ReadSignal<boolean>
   readonly submitCount: ReadSignal<number>
   readonly submitError: ReadSignal<unknown>
@@ -1154,7 +1154,7 @@ type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
 - `setAsInitial(partial)` loads `partial` as the form's new baseline. Every leaf it names takes the value as its initial, `isDirty` stays false, and a later `reset()` returns there. Use it for "load this from the server as the new baseline."
 - `clearSubtree(path)` resets a named subtree to its initial, by dotted path. `''` resets the whole form.
 - `validate()` runs every leaf's validators and resolves with `true` iff all leaves are valid.
-- `setErrors({ 'address.city': ['Unknown city'] })` pins server errors on fields by dotted path, with numeric segments for array items. They clear on the field's next write.
+- `setErrors({ 'address.city': ['Unknown city'] })` pins server errors on fields by dotted path, with numeric segments for array items. They clear on the field's next write. A path that names a nested form or field array, or `''` for the form, pins them on that node's `topLevelErrors` until its value next changes.
 
 ### `form.submit(handler, options?): Promise<SubmitResult<R>>`
 
@@ -1522,13 +1522,13 @@ type WriteEvent = {
   readonly key: readonly unknown[]
   readonly data: unknown                 // after the write; an infinite query's pages
   readonly updatedAt: number
-  readonly source: WriteSource           // 'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'write' | 'replace'
+  readonly source: WriteSource           // 'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'commit' | 'write' | 'replace'
   readonly origin: string | undefined    // a plugin name or bindQuery origin; undefined for the app and fetches
   readonly pageParams?: readonly unknown[]
 }
 ```
 
-`'optimistic'` and `'rollback'` are guesses the server has not confirmed, so a plugin that persists or relays state skips them. `packages/core/src/plugin/types.ts` has every field of `FetchContext`, `MutateContext` and `MutationEvent`.
+`'optimistic'` and `'rollback'` are guesses the server has not confirmed, so a plugin that persists or relays state skips them. `'commit'` reports a finalized optimistic layer as server truth, once no optimistic layer on the entry is live, so its `data` holds no pending guess (SPEC §13.1). `packages/core/src/plugin/types.ts` has every field of `FetchContext`, `MutateContext` and `MutationEvent`.
 
 ### `QueryMeta` and `MutationMeta`
 
@@ -2269,7 +2269,7 @@ export async function handle(nonce: string): Promise<Response> {
 
 - Install `plugin` on the root that renders. On a separate root it captures nothing.
 - On the server, build one root per request and render it through `OlasProvider`. A `HydrationBoundary` builds its root during render and disposes it in an effect, and a server render runs no effects, so that root would never be disposed. A development build warns once when a `HydrationBoundary` renders on the server. Dispose the root, and call the hydrator's `dispose()`, once the response has finished.
-- Pipe the render through `createStreamingTransform(flush)`. A stream chunk can end inside a tag or an attribute, so the transform writes a batch only where the HTML so far ends between elements. It drains once more when the stream closes. With Node's `renderToPipeableStream`, render with `renderToReadableStream` instead, or write `flush()` only after the stream has ended. See [`.wiki/pitfalls/stream-chunks-split-tags.md`](.wiki/pitfalls/stream-chunks-split-tags.md).
+- Pipe the render through `createStreamingTransform(flush)`. A stream chunk can end inside a tag, an attribute or a text node, so the transform writes a batch only where React's hydration never sees it: directly inside `<body>`, or at the top level of a fragment, outside every `<Suspense>` boundary. It drains once more when the stream closes. With Node's `renderToPipeableStream`, render with `renderToReadableStream` instead, or write `flush()` only after the stream has ended. See [`.wiki/pitfalls/stream-chunks-split-tags.md`](.wiki/pitfalls/stream-chunks-split-tags.md).
 - `nonce` puts a Content-Security-Policy nonce on the emitted tags. Pass the same nonce to React for its own scripts.
 - `OLAS_BOOTSTRAP_SCRIPT` primes the client's intake before hydration runs. Pass it as `bootstrapScriptContent`.
 - The payload is serialized with `serializeForScript`, so query data cannot end the script or form markup.

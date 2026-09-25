@@ -1,33 +1,49 @@
 // @vitest-environment jsdom
 
 import {
+  createField,
   createQuery,
   defineController,
   defineQuery,
+  type Field,
   queryEngine,
   type ReadSignal,
   signal,
 } from '@kontsedal/olas-core'
-import { act, cleanup, render } from '@testing-library/react'
-import { StrictMode, Suspense, startTransition, useState } from 'react'
+import { act, cleanup, fireEvent, render } from '@testing-library/react'
+import { Activity, StrictMode, Suspense, startTransition, useLayoutEffect, useState } from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { HydrationBoundary, useRoot, useSuspenseQuery, useValue } from '../src'
+import {
+  HydrationBoundary,
+  STREAMING_GLOBAL,
+  useFieldInput,
+  useRoot,
+  useSuspenseQuery,
+  useValue,
+} from '../src'
 
 afterEach(() => {
   cleanup()
   vi.useRealTimers()
+  delete (globalThis as Record<string, unknown>)[STREAMING_GLOBAL]
 })
+
+/** How long a boundary keeps its root suspended after its effects are cleaned up. */
+const RELEASE_MS = 60_000
 
 // R4.1 (T4.1) — HydrationBoundary must NOT build the root in useMemo (side-
 // effectful; StrictMode double-invokes it → orphaned live root). It must own
 // the root with ref+effect lifecycle: dispose on unmount, read `options` once,
 // recreate only on `def` identity change.
 describe('HydrationBoundary lifecycle (R4.1)', () => {
-  test('(a) unmount disposes the root', () => {
+  test('(a) unmount suspends the root, and disposes it once the grace period ends', async () => {
+    vi.useFakeTimers()
     const warn = vi.spyOn(console, 'warn')
     const disposed = vi.fn()
+    const suspended = vi.fn()
     const def = defineController((ctx) => {
       ctx.onDispose(disposed)
+      ctx.onSuspend(suspended)
       return { label: 'x' }
     })
     const { unmount } = render(
@@ -37,6 +53,11 @@ describe('HydrationBoundary lifecycle (R4.1)', () => {
     )
     expect(disposed).not.toHaveBeenCalled()
     act(() => unmount())
+    // React cleans up an unmount and an <Activity> hide the same way, so the
+    // root waits, suspended, in case the boundary's effects run again.
+    expect(suspended).toHaveBeenCalledTimes(1)
+    expect(disposed).not.toHaveBeenCalled()
+    await act(() => vi.advanceTimersByTimeAsync(RELEASE_MS))
     expect(disposed).toHaveBeenCalledTimes(1)
     // In the browser the effect cleanup owns disposal, so the server-render
     // warning stays quiet.
@@ -188,6 +209,128 @@ describe('HydrationBoundary lifecycle (R4.1)', () => {
     expect(fetcher).toHaveBeenCalledTimes(1)
     await vi.waitFor(() => expect(getByTestId('g').textContent).toBe('fresh'))
   })
+
+  test('(e2) the root built for a new def takes no streamed rows, earlier or later', async () => {
+    const fetcher = vi.fn(async () => 'fresh')
+    const greeting = defineQuery({
+      id: 'hydration-boundary/restream',
+      key: () => [],
+      fetcher,
+      staleTime: 60_000,
+    })
+    const defA = defineController((ctx) => ({ greeting: createQuery(ctx, greeting) }))
+    const defB = defineController((ctx) => ({ greeting: createQuery(ctx, greeting) }))
+    const row = (data: string) => [
+      { queryId: 'hydration-boundary/restream', key: [], data, lastUpdatedAt: Date.now() },
+    ]
+    // What the bootstrap and one flushed batch leave on the page.
+    ;(globalThis as Record<string, unknown>)[STREAMING_GLOBAL] = {
+      q: [row('server')],
+      push(b: unknown) {
+        ;(this as { q: unknown[] }).q.push(b)
+      },
+    }
+    function Show() {
+      const api = useRoot<{ greeting: { data: ReadSignal<string | undefined> } }>()
+      return <span data-testid="g">{useValue(api.greeting.data) ?? 'none'}</span>
+    }
+    const options = { deps: {}, queries: queryEngine() }
+    function Parent({ which }: { which: typeof defA }) {
+      return (
+        <HydrationBoundary def={which} options={options}>
+          <Show />
+        </HydrationBoundary>
+      )
+    }
+    const { rerender, getByTestId } = render(<Parent which={defA} />)
+    expect(getByTestId('g').textContent).toBe('server')
+    expect(fetcher).not.toHaveBeenCalled()
+    await act(async () => {
+      rerender(<Parent which={defB} />)
+      await Promise.resolve()
+    })
+    expect(fetcher).toHaveBeenCalledTimes(1)
+    await vi.waitFor(() => expect(getByTestId('g').textContent).toBe('fresh'))
+    // A batch still streaming in was meant for the first root.
+    const intake = (globalThis as Record<string, unknown>)[STREAMING_GLOBAL] as {
+      push: (b: unknown) => void
+    }
+    act(() => intake.push(row('late')))
+    expect(getByTestId('g').textContent).toBe('fresh')
+  })
+})
+
+// React 19.2's <Activity> runs a hidden subtree's effect cleanups, layout and
+// passive, and runs the effects again when it shows. An unmount runs the same
+// cleanups, so the boundary cannot tell the two apart when they happen.
+describe('HydrationBoundary under <Activity>', () => {
+  function formDef() {
+    const constructs = vi.fn()
+    const disposes = vi.fn()
+    const suspends = vi.fn()
+    const resumes = vi.fn()
+    const def = defineController((ctx) => {
+      constructs()
+      ctx.onDispose(disposes)
+      ctx.onSuspend(suspends)
+      ctx.onResume(resumes)
+      return { name: createField<string>(ctx, '') }
+    })
+    function Input() {
+      const api = useRoot<{ name: Field<string> }>()
+      return <input data-testid="name" {...useFieldInput(api.name)} />
+    }
+    function App({ mode }: { mode: 'visible' | 'hidden' }) {
+      return (
+        <Activity mode={mode}>
+          <HydrationBoundary def={def} options={{ deps: {} }}>
+            <Input />
+          </HydrationBoundary>
+        </Activity>
+      )
+    }
+    return { App, constructs, disposes, suspends, resumes }
+  }
+
+  test('hiding and showing keeps the root, and what the user typed', async () => {
+    vi.useFakeTimers()
+    const { App, constructs, disposes, suspends, resumes } = formDef()
+    const { rerender, getByTestId } = render(<App mode="visible" />)
+    fireEvent.change(getByTestId('name'), { target: { value: 'Ada' } })
+    expect((getByTestId('name') as HTMLInputElement).value).toBe('Ada')
+
+    act(() => rerender(<App mode="hidden" />))
+    // Hidden, the root is suspended, not gone.
+    expect(suspends).toHaveBeenCalledTimes(1)
+    await act(() => vi.advanceTimersByTimeAsync(RELEASE_MS / 2))
+    act(() => rerender(<App mode="visible" />))
+
+    expect(resumes).toHaveBeenCalledTimes(1)
+    expect(constructs).toHaveBeenCalledTimes(1)
+    expect(disposes).not.toHaveBeenCalled()
+    expect((getByTestId('name') as HTMLInputElement).value).toBe('Ada')
+    // The released root's dispose was called off.
+    await act(() => vi.advanceTimersByTimeAsync(RELEASE_MS * 2))
+    expect(disposes).not.toHaveBeenCalled()
+  })
+
+  test('a hide longer than the grace period disposes the root, and showing builds a fresh one', async () => {
+    vi.useFakeTimers()
+    const { App, constructs, disposes } = formDef()
+    const { rerender, getByTestId } = render(<App mode="visible" />)
+    fireEvent.change(getByTestId('name'), { target: { value: 'Ada' } })
+    act(() => rerender(<App mode="hidden" />))
+    await act(() => vi.advanceTimersByTimeAsync(RELEASE_MS))
+    expect(disposes).toHaveBeenCalledTimes(1)
+
+    act(() => rerender(<App mode="visible" />))
+    // A live root again, never the disposed one, with the field back at its start.
+    expect(constructs).toHaveBeenCalledTimes(2)
+    expect(disposes).toHaveBeenCalledTimes(1)
+    expect((getByTestId('name') as HTMLInputElement).value).toBe('')
+    fireEvent.change(getByTestId('name'), { target: { value: 'Grace' } })
+    expect((getByTestId('name') as HTMLInputElement).value).toBe('Grace')
+  })
 })
 
 // A child that suspends or throws before the boundary's first commit makes
@@ -273,6 +416,7 @@ describe('HydrationBoundary renders that never commit', () => {
     await act(() => vi.advanceTimersByTimeAsync(GRACE_MS * 2))
     expect(disposes).not.toHaveBeenCalled()
     act(() => unmount())
+    await act(() => vi.advanceTimersByTimeAsync(RELEASE_MS))
     expect(live()).toBe(0)
   })
 
@@ -526,6 +670,69 @@ describe('HydrationBoundary renders that never commit', () => {
     expect(rebuilds).toHaveLength(1)
     expect(String(rebuilds[0]?.[0])).toMatch(/<Suspense> inside the boundary/)
     warn.mockRestore()
+  })
+
+  test('(q) a retry first applies the batches that streamed in since its root was built', async () => {
+    const greeting = defineQuery({
+      id: 'hydration-boundary/retry-stream',
+      key: () => [],
+      fetcher: () => new Promise<string>(() => {}),
+    })
+    const constructs = vi.fn()
+    const def = defineController((ctx) => {
+      constructs()
+      return { greeting: createQuery(ctx, greeting) }
+    })
+    ;(globalThis as Record<string, unknown>)[STREAMING_GLOBAL] = {
+      q: [],
+      push(b: unknown) {
+        ;(this as { q: unknown[] }).q.push(b)
+      },
+    }
+    const committed: string[] = []
+    function Show() {
+      const api = useRoot<{ greeting: { data: ReadSignal<string | undefined> } }>()
+      const value = useValue(api.greeting.data) ?? 'none'
+      useLayoutEffect(() => {
+        committed.push(value)
+      })
+      return <span>{value}</span>
+    }
+    let release!: () => void
+    let released = false
+    const gate = new Promise<void>((r) => {
+      release = () => {
+        released = true
+        r()
+      }
+    })
+    function Gate(): null {
+      if (!released) throw gate
+      return null
+    }
+    render(
+      <Suspense fallback={<span>loading</span>}>
+        <HydrationBoundary def={def} options={{ deps: {}, queries: queryEngine() }}>
+          <Show />
+          <Gate />
+        </HydrationBoundary>
+      </Suspense>,
+    )
+    await act(async () => {})
+    // The render was thrown away; a batch arrives before the retry.
+    const intake = (globalThis as Record<string, unknown>)[STREAMING_GLOBAL] as {
+      push: (b: unknown) => void
+    }
+    intake.push([
+      { queryId: 'hydration-boundary/retry-stream', key: [], data: 'streamed', lastUpdatedAt: 1 },
+    ])
+    await act(async () => {
+      release()
+      await gate
+    })
+    expect(constructs).toHaveBeenCalledTimes(1)
+    // The first commit already read the batch: a hydrating render would match.
+    expect(committed[0]).toBe('streamed')
   })
 
   test('(k) one element rendered twice gets two independent roots', () => {

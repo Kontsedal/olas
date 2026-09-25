@@ -4,6 +4,7 @@ import {
   type AsyncState,
   createQuery,
   createRoot,
+  type DehydratedState,
   defineController,
   defineQuery,
   queryEngine,
@@ -85,6 +86,48 @@ describe('HydrationBoundary streaming prop', () => {
       ])
     })
     expect(screen.getByTestId('data').textContent).toBe('(none)')
+    act(() => unmount())
+  })
+
+  test('streamed rows join options.hydrate for the first render', () => {
+    seedBootstrapQueue('streamed')
+    const other = defineQuery({
+      id: 'cov-context/own-hydrate',
+      key: () => [],
+      fetcher: () => new Promise<string>(() => {}),
+    })
+    const both = defineController((ctx) => ({
+      v: createQuery(ctx, q),
+      own: createQuery(ctx, other),
+    }))
+    function Both() {
+      const api = useRoot<Api & { own: AsyncState<string> }>()
+      return <span data-testid="data">{`${useQuery(api.v).data}|${useQuery(api.own).data}`}</span>
+    }
+    const hydrate = {
+      version: 1 as const,
+      entries: [{ id: 'cov-context/own-hydrate', key: [], data: 'own', lastUpdatedAt: 1 }],
+    }
+    const { unmount } = render(
+      <HydrationBoundary def={both} options={{ queries: queryEngine(), deps: {}, hydrate }}>
+        <Both />
+      </HydrationBoundary>,
+    )
+    expect(screen.getByTestId('data').textContent).toBe('streamed|own')
+    act(() => unmount())
+  })
+
+  test('beside a hydrate payload of another version, the streamed rows arrive through the intake', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    seedBootstrapQueue('streamed')
+    const hydrate = { version: 2, entries: [] } as unknown as DehydratedState
+    const { unmount } = render(
+      <HydrationBoundary def={def} options={{ queries: queryEngine(), deps: {}, hydrate }}>
+        <View />
+      </HydrationBoundary>,
+    )
+    expect(warn.mock.calls.some((c) => /unsupported state\.version/.test(String(c[0])))).toBe(true)
+    expect(screen.getByTestId('data').textContent).toBe('streamed')
     act(() => unmount())
   })
 

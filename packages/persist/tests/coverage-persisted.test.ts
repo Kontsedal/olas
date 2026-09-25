@@ -122,7 +122,7 @@ describe('createPersisted — a throttled write and a newer cross-tab change', (
     const root = createRoot(def, { queries: queryEngine(), deps: {} })
     root.api.s.set('a')
     storage.emitChange('k', null)
-    expect(root.api.s.value).toBeUndefined()
+    expect(root.api.s.value).toBe('') // the value from before the load
     root.dispose() // dispose flushes a pending write; there is none
     expect(storage.store.has('k')).toBe(false)
   })

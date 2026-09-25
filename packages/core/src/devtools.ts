@@ -1,3 +1,5 @@
+import { untracked } from './signals'
+
 /**
  * Correlation fields stamped onto — or shared across — every {@link DebugEvent}.
  * All optional: consumers building events by hand (and the devtools store's
@@ -92,8 +94,8 @@ export type DebugEventBody =
    * A value was written to a cache entry. `data` is the post-write value —
    * carried so the devtools cache inspector and timeline diff show *current*
    * data without polling. `source` is the plugins' `WriteSource` vocabulary:
-   * `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'`,
-   * `'replace'`.
+   * `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'commit'`,
+   * `'write'`, `'replace'`.
    */
   | {
       type: 'cache:set-data'
@@ -242,7 +244,15 @@ export class DevtoolsEmitter {
     // after it. A consumer building a tree must not assume a parent arrives
     // first. The replayed handler gets the same event shape it would have seen
     // live, `seq`/`t`-stamped so it sorts (before any subsequent live event) in
-    // the subscriber's timeline.
+    // the subscriber's timeline. Handlers run untracked, as they do on emit.
+    untracked(() => this.replay(handler))
+    this.handlers.add(handler)
+    return () => {
+      this.handlers.delete(handler)
+    }
+  }
+
+  private replay(handler: (event: DebugEvent) => void): void {
     for (const entry of this.liveControllers.values()) {
       try {
         handler(
@@ -260,10 +270,6 @@ export class DevtoolsEmitter {
         // Devtools handlers must not break replay for other handlers.
       }
     }
-    this.handlers.add(handler)
-    return () => {
-      this.handlers.delete(handler)
-    }
   }
 
   emit(event: DebugEvent): void {
@@ -275,13 +281,18 @@ export class DevtoolsEmitter {
     const stamped = this.stamp(event)
     // Snapshot — handlers may unsubscribe.
     const snapshot = Array.from(this.handlers)
-    for (const handler of snapshot) {
-      try {
-        handler(stamped)
-      } catch {
-        // Devtools handlers must not break the program.
+    // Untracked: many events are sent from inside an effect, such as a field's
+    // validator pass. A handler that reads a signal would otherwise make it a
+    // dependency of that effect, and a write to it would re-run the pass.
+    untracked(() => {
+      for (const handler of snapshot) {
+        try {
+          handler(stamped)
+        } catch {
+          // Devtools handlers must not break the program.
+        }
       }
-    }
+    })
   }
 
   /**

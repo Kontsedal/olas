@@ -185,9 +185,12 @@ export type MutationQueueOptions = {
  *  - A `dedupeBy` entry holds the newest write. Once the run that wrote it
  *    has settled, it holds the variables of the newest run collapsed onto
  *    it, so a superseded run leaves its successor's variables for a replay.
- *  - A replay pass SKIPS entries whose run is executing in this tab right
- *    now, so an `online` event inside the enqueue→settle window can't fire
- *    a live request a second time.
+ *    A success, a live run's or a replay's, drops the entry only when no
+ *    newer run's variables ride on it.
+ *  - A replay pass SKIPS entries whose run is executing right now, in this
+ *    tab or in another, so an `online` event inside the enqueue→settle
+ *    window can't fire a live request a second time. Another tab's run is
+ *    seen through a Web Lock, or a `localStorage` lease without Web Locks.
  *
  * At startup (plugin setup):
  *  - List all keys under `keyPrefix`, parse each as a `QueueEntry`.
@@ -196,7 +199,9 @@ export type MutationQueueOptions = {
  *    not imported yet), call `onReplayError(err, entry)` and leave it in
  *    storage. If present, run it through `host.mutations.run` — the engine's
  *    runner, so the definition's `retry` applies and `mutate` gets the root's
- *    `deps` — serially per mutation id.
+ *    `deps` — serially per mutation id. An entry that stays on disk (a
+ *    failure worth a retry, or a run executing it) ends its group's pass,
+ *    and the group's later entries wait for the next pass.
  *
  * **Idempotency** is the consumer's responsibility — include an
  * `idempotencyKey` in your variables and have the server dedupe by it.
@@ -312,7 +317,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
        * durable entry backing it (its own, or the owner it collapsed onto).
        * A replay pass skips these: an `online` event or a `replayNow()` inside
        * the enqueue→settle window would otherwise fire the same request twice.
-       * Cross-tab overlap is a separate problem, handled by `withReplayLock`.
+       * Another tab's replay skips them through `marks`.
        */
       const inFlightRuns = new Map<string, string>()
 
@@ -321,6 +326,113 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           if (owner === runId) return true
         }
         return false
+      }
+
+      /** This tab's name in a run lease, so a replay tells its own lease from a peer's. */
+      const tabId = Math.random().toString(36).slice(2, 12)
+
+      /**
+       * The entries a run executing in this tab rides on, marked as this
+       * tab's while one does, by the entry's `runId`. The mark is a Web Lock
+       * named for the entry, or, without Web Locks, a lease in `localStorage`
+       * that a heartbeat refreshes. A replay in another tab skips a marked
+       * entry. The browser drops a closed tab's locks, and a lease its tab
+       * stops refreshing expires, so a dead tab's entries replay.
+       */
+      const marks = new Map<string, { name: string; lease: Storage | undefined; release(): void }>()
+      // The leases among `marks`, and the heartbeat that refreshes them.
+      let leases = 0
+      let leaseHeartbeat: ReturnType<typeof setInterval> | null = null
+
+      const markEntry = (mutationId: string, entryRunId: string): void => {
+        if (marks.has(entryRunId)) return
+        const name = runMarkName(entryKey(mutationId, entryRunId))
+        const locks = getWebLocks()
+        if (locks !== undefined) {
+          // Not awaited: the run goes out without waiting for the grant. A
+          // mark released before its grant lands is let go at once.
+          const released = new Promise<void>((release) => {
+            marks.set(entryRunId, { name, lease: undefined, release })
+          })
+          locks.request(name, {}, () => released).catch(ignore)
+          return
+        }
+        const ls = getLeaseStorage()
+        if (ls === undefined) return
+        try {
+          ls.setItem(name, `${Date.now()}:${tabId}`)
+        } catch {
+          return // a lease is best-effort, like the replay lease
+        }
+        marks.set(entryRunId, {
+          name,
+          lease: ls,
+          release: () => {
+            try {
+              if (ls.getItem(name)?.endsWith(`:${tabId}`)) ls.removeItem(name)
+            } catch {
+              /* best-effort */
+            }
+          },
+        })
+        leases += 1
+        leaseHeartbeat ??= setInterval(() => {
+          for (const mark of marks.values()) {
+            try {
+              mark.lease?.setItem(mark.name, `${Date.now()}:${tabId}`)
+            } catch {
+              /* lease refresh is best-effort */
+            }
+          }
+        }, LEASE_TTL_MS / 2)
+      }
+
+      const unmarkEntry = (entryRunId: string): void => {
+        const mark = marks.get(entryRunId)
+        if (mark === undefined) return
+        marks.delete(entryRunId)
+        mark.release()
+        if (mark.lease !== undefined && --leases === 0 && leaseHeartbeat !== null) {
+          clearInterval(leaseHeartbeat)
+          leaseHeartbeat = null
+        }
+      }
+
+      /**
+       * Whether a run executing in another tab has marked the entry. A lease
+       * older than the TTL belongs to a tab that stopped refreshing it: it is
+       * removed, and the entry replays. A mark that cannot be read counts as
+       * none, as a replay lease that cannot be read does.
+       */
+      const markedElsewhere = async (entry: QueueEntry): Promise<boolean> => {
+        const name = runMarkName(entryKey(entry.mutationId, entry.runId))
+        const locks = getWebLocks()
+        if (locks !== undefined) {
+          let free = false
+          try {
+            await locks.request(name, { ifAvailable: true }, async (lock) => {
+              free = lock !== null
+            })
+          } catch {
+            return false
+          }
+          return !free
+        }
+        const ls = getLeaseStorage()
+        if (ls === undefined) return false
+        try {
+          const raw = ls.getItem(name)
+          if (raw === null) return false
+          const at = raw.indexOf(':')
+          const owner = raw.slice(at + 1)
+          if (owner === tabId) return false
+          const ts = Number(raw.slice(0, at))
+          if (leaseIsFresh(ts, Date.now())) return true
+          ls.removeItem(name)
+          return false
+        } catch {
+          return false
+        }
       }
 
       /**
@@ -506,6 +618,12 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
        */
       const passToRider = (mutationId: string, ownerRunId: string): void => {
         if (inFlightRuns.get(ownerRunId) === ownerRunId) return
+        const newest = newestRider(ownerRunId)
+        if (newest !== undefined) void holdFor(mutationId, ownerRunId, newest)
+      }
+
+      /** The newest run executing in this tab that rides on `ownerRunId`'s entry. */
+      const newestRider = (ownerRunId: string): { variables: unknown; seq: number } | undefined => {
         let newest: { variables: unknown; seq: number } | undefined
         for (const [runId, owner] of inFlightRuns) {
           if (owner !== ownerRunId || runId === ownerRunId) continue
@@ -514,7 +632,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             newest = rider
           }
         }
-        if (newest !== undefined) void holdFor(mutationId, ownerRunId, newest)
+        return newest
       }
 
       /**
@@ -647,10 +765,14 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       /**
        * Replay one entry against its registered handler. Returns once the
        * mutate has settled (success or final error) — the per-mutationId
-       * serial-queue driver awaits this.
+       * serial-queue driver awaits this. Resolves `false` when the entry
+       * stays on disk ahead of the rest of its group: a run is executing it,
+       * here or in another tab, or it failed in a way worth a retry. The
+       * driver then leaves the group's later entries for the next pass, so
+       * none of them reaches the server before it.
        */
-      const replayEntry = async (entry: QueueEntry): Promise<void> => {
-        if (disposed) return
+      const replayEntry = async (entry: QueueEntry): Promise<boolean> => {
+        if (disposed) return false
         const { mutationId, runId } = entry
         if (isEntryInFlight(runId)) {
           // The run backing this entry is executing in this tab right now. Its
@@ -665,13 +787,29 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
               reason: 'in-flight',
             } satisfies LaneEvent)
           }
-          return
+          return false
         }
+        if (await markedElsewhere(entry)) {
+          // A run executing in another tab rides on this entry. The replay
+          // lock covers replays only, so without the mark this pass would
+          // send a request that tab has out already.
+          if (__DEV__) {
+            host.debug({
+              kind: 'replay:skipped',
+              mutationId,
+              runId,
+              reason: 'in-other-tab',
+            } satisfies LaneEvent)
+          }
+          return false
+        }
+        if (disposed) return false
         const definition = mutations.get(mutationId)
         if (definition === undefined) {
           // Module hasn't been imported — leave entry in place and surface so
           // the user knows it's stuck. They can either import the module to
-          // unstick it or delete the entry from storage.
+          // unstick it or delete the entry from storage. Every entry of the
+          // group shares the id, so the rest are reported the same way.
           if (__DEV__) {
             host.debug({
               kind: 'replay:skipped',
@@ -687,7 +825,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             ),
             entry,
           )
-          return
+          return true
         }
         if (definition.meta.persist !== true) {
           // Stored data named a mutation that never opted in to the queue. The
@@ -709,7 +847,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             ),
             entry,
           )
-          return
+          return true
         }
         if (entry.attempts >= maxAttempts) {
           // Already exhausted on a previous load; drop and surface.
@@ -728,7 +866,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             ),
             entry,
           )
-          return
+          return true
         }
         // Bump the attempts counter durably BEFORE running so a hard crash
         // during the mutate doesn't loop forever on the same entry.
@@ -738,14 +876,31 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         if (__DEV__) {
           host.debug({ kind: 'replay:attempt', mutationId, runId, attempt } satisfies LaneEvent)
         }
+        // A run that collapses onto the entry while the replay is out rewrites
+        // it with its own, newer variables (`holdFor`), under the `seq` that
+        // run took. Those have not been sent, so the replay's outcome must not
+        // drop them. A rewrite in this tab shows in `current`, before its
+        // write lands. The tab whose key it is may be another tab, and its
+        // rewrite shows only in storage, as a different `seq`.
+        const rewritten = async (): Promise<boolean> => {
+          const now = current.get(runId)
+          if (now !== undefined && now !== next) return true
+          try {
+            const stored = parseEntry(await adapter.get(entryKey(mutationId, runId)))
+            return stored !== null && stored.entry.seq !== next.seq
+          } catch {
+            return false
+          }
+        }
         try {
           // Through the engine's runner: the definition's `retry` applies, `mutate`
           // gets the root's `deps`, the run counts toward `waitForIdle()`, and its
           // `onMutation` events carry this plugin's name — so `onMutation` below
           // does not persist its own replay a second time.
           const result = await mutations.run(mutationId, entry.variables)
-          // Success — drop the entry.
-          await dropEntry(mutationId, runId)
+          // Success — drop the entry, unless it holds newer variables now.
+          const kept = await rewritten()
+          if (!kept) await dropEntry(mutationId, runId)
           if (__DEV__) {
             host.debug({
               kind: 'replay:result',
@@ -764,6 +919,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
               onWarn('[olas/mutation-queue] onReplaySettle threw', cause)
             }
           }
+          return !kept
         } catch (err) {
           // The root disposing mid-run cancels it; that is not a failed attempt.
           // The bumped counter is already on disk, and the next load replays.
@@ -777,7 +933,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
                 result: 'aborted',
               } satisfies LaneEvent)
             }
-            return
+            return false
           }
           // Single replay attempt failed. If this was the last allowed
           // attempt, or the failure is one no retry can fix, drop and
@@ -797,15 +953,22 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             } satisfies LaneEvent)
           }
           if (!retry) {
-            await dropEntry(mutationId, runId)
+            // The replayed variables are given up on. Newer ones a collapse
+            // wrote meanwhile belong to a run still executing, which settles
+            // the entry itself.
+            const kept = await rewritten()
+            if (!kept) await dropEntry(mutationId, runId)
             onReplayError(err, next)
-          } else if (onReplayAttempt !== undefined) {
+            return !kept
+          }
+          if (onReplayAttempt !== undefined) {
             try {
               onReplayAttempt(err, next)
             } catch {
               /* don't let a buggy onReplayAttempt break replay */
             }
           }
+          return false
         }
       }
 
@@ -898,7 +1061,9 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
       /**
        * Replay all pending entries on init, serialized per mutationId so an
        * `order/create` followed by an `order/cancel` for the same id runs in
-       * order. Different mutationIds run in parallel.
+       * order. Different mutationIds run in parallel. An entry that stays on
+       * disk ends its group's pass, and the group's later entries wait for
+       * the next pass, behind it.
        *
        * Blocks until the tab is online before issuing any mutate calls — see
        * `waitForOnline`.
@@ -956,7 +1121,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           bucket.sort(compareEntries)
           tasks.push(
             (async () => {
-              for (const entry of bucket) {
+              for (const [i, entry] of bucket.entries()) {
                 if (disposed) return
                 // Exponential backoff against the entry's *prior* attempts.
                 // First-ever replay (attempts === 0) runs immediately; the
@@ -967,7 +1132,20 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
                   await sleep(delay)
                   if (disposed) return
                 }
-                await replayEntry(entry)
+                if (await replayEntry(entry)) continue
+                // The entry stays ahead of the rest of its group. Sending
+                // them now would put a later write on the server first.
+                if (__DEV__ && !disposed) {
+                  for (const rest of bucket.slice(i + 1)) {
+                    host.debug({
+                      kind: 'replay:skipped',
+                      mutationId: rest.mutationId,
+                      runId: rest.runId,
+                      reason: 'waiting',
+                    } satisfies LaneEvent)
+                  }
+                }
+                return
               }
             })(),
           )
@@ -1058,6 +1236,7 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
             // The alias makes this run's settle act on the owner's entry.
             runAlias.set(event.runId, existingRunId)
             inFlightRuns.set(event.runId, existingRunId)
+            markEntry(mutationId, existingRunId)
             seqCounter += 1
             const rider = { variables: event.variables, seq: seqCounter }
             riders.set(event.runId, rider)
@@ -1073,6 +1252,9 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
           activeKeys.set(fullKey, event.runId)
         }
         inFlightRuns.set(event.runId, event.runId)
+        // Marked before the entry is written, so another tab that lists the
+        // entry finds the mark too. A Web Lock is granted a moment later.
+        markEntry(mutationId, event.runId)
         seqCounter += 1
         return {
           v: PROTOCOL_VERSION,
@@ -1129,15 +1311,28 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
         runIdentity.delete(event.runId)
         riders.delete(event.runId)
         inFlightRuns.delete(event.runId)
+        // No run of this tab rides on the entry any more: a replay in another
+        // tab may take it.
+        if (!isEntryInFlight(ownerRunId)) unmarkEntry(ownerRunId)
         switch (event.phase) {
-          case 'success':
-            void dropEntry(mutationId, ownerRunId)
+          case 'success': {
+            // A newer run of the operation still rides on the entry, a
+            // `dedupeBy` collapse with variables that have not landed. The
+            // entry stays for it and takes its variables. Otherwise this run
+            // was the newest write, and the operation is done.
+            const newer = newestRider(ownerRunId)
+            if (newer !== undefined && newer.seq > (rider?.seq ?? Number.NEGATIVE_INFINITY)) {
+              void holdFor(mutationId, ownerRunId, newer)
+            } else {
+              void dropEntry(mutationId, ownerRunId)
+            }
             // This run is the manual retry of whatever failed before it: the
             // server has accepted the write, so the entries those earlier runs
             // left for replay describe a write that already happened. Drop them,
             // or the next page load submits the operation twice.
             dropSuperseded(mutationId, identity, ownerRunId)
             return
+          }
           case 'error': {
             if (neverStarted) {
               // A queued run whose `onMutate` threw: `mutate` never ran, and the
@@ -1254,6 +1449,9 @@ export function mutationQueuePlugin(options: MutationQueueOptions): OlasPlugin {
 
         dispose() {
           disposed = true
+          // The root aborts this tab's runs. Their entries stay for a replay,
+          // so another tab may take them now.
+          for (const entryRunId of [...marks.keys()]) unmarkEntry(entryRunId)
           knownRuns.clear()
           runAlias.clear()
           runIdentity.clear()
@@ -1318,7 +1516,14 @@ type LaneEvent =
       kind: 'replay:skipped'
       mutationId: string
       runId: string
-      reason: 'in-flight' | 'not-registered' | 'not-persisted' | 'max-attempts' | 'ttl-expired'
+      reason:
+        | 'in-flight'
+        | 'in-other-tab'
+        | 'waiting'
+        | 'not-registered'
+        | 'not-persisted'
+        | 'max-attempts'
+        | 'ttl-expired'
     }
 
 /**
@@ -1347,6 +1552,15 @@ function defaultReplayError(err: unknown, entry: QueueEntry): void {
 
 const LEASE_TTL_MS = 30_000
 
+/**
+ * Whether a lease's timestamp is younger than the TTL. Storage is state other
+ * same-origin code can write, so a timestamp further in the future than the
+ * TTL is no lease: it would otherwise stay fresh, and hold its entry, forever.
+ */
+function leaseIsFresh(ts: number, now: number): boolean {
+  return Number.isFinite(ts) && Math.abs(now - ts) < LEASE_TTL_MS
+}
+
 type LockManagerLike = {
   request(
     name: string,
@@ -1360,6 +1574,18 @@ function getWebLocks(): LockManagerLike | undefined {
   const locks = (navigator as unknown as { locks?: LockManagerLike }).locks
   return locks !== undefined && typeof locks.request === 'function' ? locks : undefined
 }
+
+/**
+ * The name of the mark a live run puts on its entry: a Web Lock name, or a
+ * `localStorage` key. It sits outside `<keyPrefix>/`, so a replay never lists
+ * a lease as an entry.
+ */
+function runMarkName(entryKey: string): string {
+  return `olas-mq-run:${entryKey}`
+}
+
+/** A failed Web Locks request for a run's mark: the run goes on unmarked. */
+function ignore(): void {}
 
 function getLeaseStorage(): Storage | undefined {
   try {
@@ -1389,7 +1615,7 @@ function acquireLease(
     const raw = ls.getItem(leaseKey)
     if (raw !== null) {
       const ts = Number(raw.slice(0, raw.indexOf(':')))
-      if (Number.isFinite(ts) && now - ts < LEASE_TTL_MS) {
+      if (leaseIsFresh(ts, now)) {
         return false // a fresh lease is held by another tab
       }
     }

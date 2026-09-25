@@ -440,7 +440,7 @@ describe('Form.setErrors and clearSubtree paths', () => {
     root.dispose()
   })
 
-  test('paths that do not resolve to a field are ignored', () => {
+  test('paths that resolve to no node are ignored; the form and the array take their own', () => {
     const root = withTags()
     const form = root.api.form
     form.setErrors({
@@ -457,8 +457,13 @@ describe('Form.setErrors and clearSubtree paths', () => {
       'tags[x]': ['non-numeric bracket'],
       'tags]': ['stray bracket'],
     })
-    expect(form.flatErrors.value).toEqual([])
-    expect(form.isValid.value).toBe(true)
+    // `''` names the form and `tags` names the array: each lands on that
+    // node's `topLevelErrors`. Every other path resolves to nothing.
+    expect(form.flatErrors.value).toEqual([
+      { path: '', errors: ['empty path'] },
+      { path: 'tags', errors: ['the array itself'] },
+    ])
+    expect(form.isValid.value).toBe(false)
     root.dispose()
   })
 

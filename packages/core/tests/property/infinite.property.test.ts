@@ -16,10 +16,12 @@
  * - `isFetching` is true exactly while an op is current.
  * - `pages.length === pageParams.length`, after every op.
  * - Rolling back every live snapshot, in any order, restores the pages and
- *   params the bottom layer captured. `InfiniteEntry` does not rebase snapshots
- *   on a page fetch (BACKLOG, "Rebase infinite-query optimistic snapshots"), so
- *   that check is made only in stretches where no fetch success or hydration
- *   landed over live snapshots.
+ *   params the bottom layer captured. A canonical patch is re-run on every
+ *   live baseline, a `replace` (`whole`) becomes each one, and a committed
+ *   layer is re-run on the baselines below it unless a server read landed
+ *   since it was pushed (SPEC §6.4). A page fetch's rebase is not modelled, so
+ *   the check is made only in stretches where no fetch success landed over
+ *   live snapshots.
  */
 import fc from 'fast-check'
 import { describe, expect, test } from 'vitest'
@@ -53,7 +55,7 @@ type Op =
   | { t: 'flush' }
   | { t: 'cancel' }
   | { t: 'reset' }
-  | { t: 'set'; tracked: boolean; shape: Shape; params: ParamsMode }
+  | { t: 'set'; tracked: boolean; shape: Shape; params: ParamsMode; patch: boolean; whole: boolean }
   | { t: 'rollback'; pick: number }
   | { t: 'finalize'; pick: number }
   | { t: 'hydrate'; count: number }
@@ -109,6 +111,10 @@ const opArb: fc.Arbitrary<Op> = fc.oneof(
         'replace2',
       ),
       params: fc.constantFrom<ParamsMode>('none', 'match', 'mismatch'),
+      // An updater that reads `prev`, or the pages built up front.
+      patch: fc.boolean(),
+      // A canonical whole-record write, as `replace` makes one.
+      whole: fc.boolean(),
     }),
   },
   { weight: 2, arbitrary: fc.record({ t: fc.constant('rollback' as const), pick: fc.nat() }) },
@@ -143,7 +149,30 @@ type OpRec = {
 }
 
 type Baseline = { pages: Page[]; params: number[] }
-type Layer = { snap: Snapshot; baseline: Baseline }
+type Updater = (prev: Page[] | undefined) => Page[]
+type Layer = {
+  snap: Snapshot
+  baseline: Baseline
+  updater: Updater
+  /** The params the write was given, which a replay applies as the write did. */
+  given: number[] | undefined
+  epoch: number
+}
+
+/** The engine's param alignment (`alignParams` in `infinite.ts`), `initialPageParam` 0. */
+const align = (params: number[], length: number, given: number[] | undefined): number[] => {
+  if (given !== undefined && given.length === length) return [...given]
+  if (length === params.length) return params
+  if (length < params.length) return params.slice(0, length)
+  const pad = params.length > 0 ? (params[params.length - 1] as number) : 0
+  return [...params, ...Array.from({ length: length - params.length }, () => pad)]
+}
+
+/** `updater` over one baseline, as the engine re-derives it. */
+const derive = (b: Baseline, updater: Updater, given: number[] | undefined): Baseline => {
+  const pages = updater(b.pages.length === 0 ? undefined : b.pages)
+  return { pages, params: align(b.params, pages.length, given) }
+}
 
 type Options = {
   /**
@@ -209,6 +238,8 @@ async function runScenario(
   const callPromises: Tracked<unknown>[] = []
   /** False once a write whose rebase semantics are not settled landed over live snapshots. */
   let exact = true
+  /** Server reads (refetch successes, hydrated rows) so far. */
+  let epoch = 0
 
   const tainted = (): Set<number> => {
     const out = new Set<number>()
@@ -264,9 +295,10 @@ async function runScenario(
     if (op !== null && op.promise.state !== 'pending') {
       op.done = true
       current = null
-      // A page fetch does not rebase live snapshots (documented open item),
-      // so the rollback check is off until the stack empties.
+      // A page fetch's rebase is not modelled, so the rollback check is off
+      // until the stack empties.
       if (op.promise.state === 'fulfilled' && layers.length > 0) exact = false
+      if (op.promise.state === 'fulfilled' && op.kind === 'refetch') epoch += 1
     }
   }
 
@@ -285,9 +317,11 @@ async function runScenario(
     current = op
   }
 
-  const makePages = (prev: Page[] | undefined, shape: Shape): Page[] => {
+  /** Pages for `shape` over `prev`. New pages take `v0` and `v0 + 1`, so a re-run gives the same pages. */
+  const makePages = (prev: Page[] | undefined, shape: Shape, v0: number): Page[] => {
     const ps = prev ?? []
-    const v = (): number => 1_000_000 + seq++
+    let k = 0
+    const v = (): number => v0 + k++
     switch (shape) {
       case 'append':
         return [...ps, { p: (ps[ps.length - 1]?.p ?? -1) + 1, v: v() }]
@@ -317,11 +351,20 @@ async function runScenario(
     }
     if (i === layers.length - 1) {
       if (exact) expect(observe(), `${where}: top rollback`).toEqual(layer.baseline)
+      layers.splice(i, 1)
     } else {
-      expect(observe(), `${where}: non-top rollback touched pages`).toEqual(before)
+      // A rollback below the top replays the layers above it over the
+      // baseline it restored (§6.4).
       ;(layers[i + 1] as Layer).baseline = layer.baseline
+      layers.splice(i, 1)
+      let b = (layers[i] as Layer).baseline
+      for (let j = i; j < layers.length; j++) {
+        const l = layers[j] as Layer
+        if (j > i) l.baseline = b
+        if (l.epoch === epoch) b = derive(b, l.updater, l.given)
+      }
+      if (exact) expect(observe(), `${where}: non-top rollback replays the layers above`).toEqual(b)
     }
-    layers.splice(i, 1)
     if (layers.length === 0) exact = true
   }
 
@@ -368,26 +411,36 @@ async function runScenario(
         break
       case 'set': {
         const baseline = observe()
+        const v0 = 1_000_000 + seq
+        seq += 2
         // Build the pages up front so matching params can go in alongside
         // them; `mismatch` hands in a wrong-length list, which the entry
         // must ignore in favour of trimming or padding.
         const written = makePages(
           baseline.pages.length === 0 ? undefined : baseline.pages,
           op.shape,
+          v0,
         )
-        const opts: { track: boolean; pageParams?: number[] } = { track: op.tracked }
+        const updater: Updater = op.patch ? (prev) => makePages(prev, op.shape, v0) : () => written
+        const whole = !op.tracked && op.whole && !op.patch
+        const opts: { track: boolean; whole?: boolean; pageParams?: number[] } = {
+          track: op.tracked,
+          whole,
+        }
         if (op.params === 'match') opts.pageParams = written.map((pg) => pg.p)
         if (op.params === 'mismatch') {
           opts.pageParams = Array.from({ length: written.length + 1 }, () => 42)
         }
-        const snap = entry.setData(() => written, opts)
+        const snap = entry.setData(updater, opts)
         if (op.tracked) {
-          const layer: Layer = { snap, baseline }
+          const layer: Layer = { snap, baseline, updater, given: opts.pageParams, epoch }
           layers.push(layer)
           snaps.push(layer)
         } else if (layers.length > 0) {
           if (options.canonicalRebases) {
-            for (const l of layers) l.baseline = observe()
+            for (const l of layers) {
+              l.baseline = whole ? observe() : derive(l.baseline, updater, opts.pageParams)
+            }
           } else {
             exact = false
           }
@@ -404,7 +457,15 @@ async function runScenario(
         if (layer === undefined) break
         layer.snap.finalize()
         const i = layers.indexOf(layer)
-        if (i !== -1) layers.splice(i, 1)
+        if (i !== -1) {
+          // A commit folds into the baselines below it, unless a server read
+          // landed since the layer was pushed.
+          if (layer.epoch === epoch) {
+            for (const l of layers.slice(0, i))
+              l.baseline = derive(l.baseline, layer.updater, layer.given)
+          }
+          layers.splice(i, 1)
+        }
         if (layers.length === 0) exact = true
         break
       }
@@ -421,6 +482,7 @@ async function runScenario(
           if (options.canonicalRebases) for (const l of layers) l.baseline = observe()
           else exact = false
         }
+        epoch += 1
         break
       }
     }

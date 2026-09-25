@@ -3,7 +3,7 @@ name: dispose-order-is-registration-order
 description: Teardown is one reverse-registration pass over all entry kinds, not the phased children-then-effects-then-onDispose order SPEC used to state; whether an onDispose hook can still reach an effect depends on which was created first.
 type: pitfall
 covers:
-  - packages/core/src/controller/instance.ts:300-349
+  - packages/core/src/controller/instance.ts:313-363
   - packages/core/src/timing/debounced.ts:140-159
 edges:
   - { type: uses, target: ../entities/controller-instance.md }
@@ -20,7 +20,7 @@ confidence: high
 
 `SPEC.md` §4 described dispose as *"Cleanup runs bottom-up: children → caches/effects → `onDispose` hooks"* from bootstrap until 2026-09-03. That reads like three phases with hooks last. There are no phases.
 
-`ControllerInstance.dispose()` walks **one** list — every `ctx.*` primitive, every child, every hook, in creation order — backwards, dispatching on `entry.kind` (`instance.ts:300-349`). Nothing groups by kind. So the relative order of an effect and an `onDispose` hook is decided entirely by which was created first:
+`ControllerInstance.dispose()` walks **one** list — every `ctx.*` primitive, every child, every hook, in creation order — backwards, dispatching on `entry.kind` (`instance.ts:313-363`). Nothing groups by kind. So the relative order of an effect and an `onDispose` hook is decided entirely by which was created first:
 
 ```ts
 ctx.effect(...)                     // registered first

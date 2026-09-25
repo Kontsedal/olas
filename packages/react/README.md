@@ -73,7 +73,7 @@ Every export, grouped by what it is for.
 | `useRoot()` | Resolve the provider's root api. `Register` types it; `useRoot<Api>()` is an unchecked cast. Throws outside a provider. |
 | `Register` / `RegisteredApi` | The interface an app augments once with `root: typeof root`, and the api type it yields. |
 | `createOlasContext<Api>(name?)` | Mint an independent Provider + `useRoot` bound to one api type. Use it for two roots in one tree, where one `Register` cannot name both. |
-| `<HydrationBoundary def options streaming?>` | The client half of SSR: React owns this root, building it from a controller def plus `options.hydrate` and disposing it on unmount. `options` is read once. It installs the streaming intake unless `streaming={false}`. Put a `<Suspense>` inside it, around what suspends, so the boundary commits before a child suspends. Rendered on the server, it builds a root nothing disposes, and a development build warns once. |
+| `<HydrationBoundary def options streaming?>` | The client half of SSR: React owns this root, building it from a controller def plus `options.hydrate` and the batches already streamed into the page. `options` is read once. It connects the streaming intake unless `streaming={false}`. An unmount, like an `<Activity>` hide, suspends the root, and the boundary disposes it a minute later unless it shows again first. Put a `<Suspense>` inside it, around what suspends, so the boundary commits before a child suspends. Rendered on the server, it builds a root nothing disposes, and a development build warns once. |
 
 **Reading state**
 
@@ -81,7 +81,7 @@ Every export, grouped by what it is for.
 |---|---|
 | `useValue(signal, options?)` | Subscribe a component to one `ReadSignal<T>`: a `signal`, a `computed`, a `Field`, a `Form` or a `FieldArray`. `{ select, isEqual }` subscribes to a slice. |
 | `useQuery(subscription, options?)` | Every field of an `AsyncState<T>` as a plain value, plus `refetch`, `reset` and `cancel`. The component re-renders only for the fields it reads. `{ suspense: true }` throws the in-flight promise on the initial load instead. |
-| `useSuspenseQuery(subscription)` | `useQuery(subscription, { suspense: true })` without the options bag; `data` is `T`, never `undefined`. |
+| `useSuspenseQuery(subscription)` | `useQuery(subscription, { suspense: true })` without the options bag. It suspends until the first load settles, and `data` is `T`: `undefined` only when the load settled on it, as a `select` over an optional field can. |
 | `useInfiniteQuery(subscription, options?)` | `useQuery`'s fields, plus `pages`, `flat`, the four paging flags, `fetchNextPage` and `fetchPreviousPage`. Fine-grained the same way. |
 | `useMutation(mutation, callbacks?)` | Subscribe to a `Mutation`'s signals and get `mutate`, `run` and `reset`. The callbacks fire from the React layer — put cache work on the mutation's own hooks. |
 
@@ -104,7 +104,7 @@ Every export, grouped by what it is for.
 | Export | Purpose |
 |---|---|
 | `createStreamingHydrator(options?)` | Server side: `{ plugin, flush, dispose }`. `flush()` returns a script tag for every cache entry written since the last call. `{ nonce }` puts a CSP nonce on each tag. |
-| `createStreamingTransform(flush)` | A `TransformStream` that writes those flushes into an HTML stream, only where the HTML so far sits between elements. |
+| `createStreamingTransform(flush)` | A `TransformStream` that writes those flushes into an HTML stream, only where React's hydration never sees them. |
 | `installStreamingIntake(root)` | Client side: drains the bootstrap queue and applies later chunks to a live root. `HydrationBoundary` installs it for you. |
 | `OLAS_BOOTSTRAP_SCRIPT` / `STREAMING_GLOBAL` | The inline bootstrap for React's `bootstrapScriptContent`, and the global name it defines. |
 
@@ -236,9 +236,9 @@ export async function renderPage(nonce: string): Promise<Response> {
 }
 ```
 
-On the client, `<HydrationBoundary def={appController} options={{ deps, queries: queryEngine() }}>` installs the intake, and each batch lands in the live root as it arrives. Dispose the server root, and call the hydrator's `dispose()`, once the response has finished.
+On the client, `<HydrationBoundary def={appController} options={{ deps, queries: queryEngine() }}>` builds its root with the batches already on the page, so the hydrating render reads them, and each later batch lands in the live root as it arrives. Dispose the server root, and call the hydrator's `dispose()`, once the response has finished.
 
-**Let the transform place the tags.** React writes its stream in fixed-size chunks, and a chunk can end inside a tag or an attribute value. A `<script>` written there breaks the markup, and the payload's quotes can close the attribute and add new ones. The transform tracks the markup it passes through and holds a batch until a chunk ends between elements. So do not write `flush()` after each chunk yourself, for example from a Node `Transform`. With Node's `renderToPipeableStream`, render with `renderToReadableStream` instead, or write `flush()` only after the stream has ended.
+**Let the transform place the tags.** React writes its stream in fixed-size chunks, and a chunk can end inside a tag, an attribute value or a text node. A `<script>` written there breaks the markup, and the payload's quotes can close the attribute and add new ones. React also hydrates every element it rendered, so a script inside one breaks hydration. The transform tracks the markup it passes through, and writes a batch only directly inside `<body>`, or at the top level of a fragment, outside every `<Suspense>` boundary and right after a tag. Pipe React's own stream through it, and put your HTML template around its output. So do not write `flush()` after each chunk yourself, for example from a Node `Transform`. With Node's `renderToPipeableStream`, render with `renderToReadableStream` instead, or write `flush()` only after the stream has ended.
 
 Each payload goes through core's `serializeForScript`, so query data cannot end the script or turn a `__proto__` key into a prototype on the client. The trust model is SPEC §22.
 

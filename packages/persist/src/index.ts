@@ -1,5 +1,5 @@
 import type { Ctx, ReadSignal } from '@kontsedal/olas-core'
-import { signal } from '@kontsedal/olas-core'
+import { signal, untracked } from '@kontsedal/olas-core'
 import { LOCAL_STORAGE, type StorageAdapter } from './storage'
 
 export {
@@ -191,10 +191,16 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
     }
   }
 
+  // Forget a connection, so the next call opens a new one. Only the promise
+  // it came from is dropped: a newer connection stays.
+  const forget = (pending: Promise<IDBDatabase>): void => {
+    if (dbPromise === pending) dbPromise = null
+  }
+
   const openDb = (): Promise<IDBDatabase> | null => {
     if (idbFactory === undefined) return null
     if (dbPromise !== null) return dbPromise
-    dbPromise = new Promise<IDBDatabase>((resolve, reject) => {
+    const pending = new Promise<IDBDatabase>((resolve, reject) => {
       const req = idbFactory.open(dbName, 1)
       req.onupgradeneeded = () => {
         const db = req.result
@@ -211,26 +217,51 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
         // instead of no-oping forever (T6.1).
         db.onversionchange = () => {
           db.close()
-          dbPromise = null
+          forget(pending)
         }
+        // The browser closed the connection abnormally: WebKit's "connection
+        // lost", or the user clearing site data. Every `transaction()` on it
+        // throws from then on, so the next call opens a new one.
+        db.onclose = () => forget(pending)
         resolve(db)
       }
       req.onerror = () => reject(req.error ?? new Error('[olas-persist] IDB open failed'))
     })
+    dbPromise = pending
     // Lazy connection — if the open fails, future calls retry rather than
     // staying stuck on a poisoned promise.
-    dbPromise.catch(() => {
-      dbPromise = null
-    })
-    return dbPromise
+    pending.catch(() => forget(pending))
+    return pending
+  }
+
+  /**
+   * Start a transaction on the cached connection. A connection the browser
+   * closed throws InvalidStateError before its `close` event arrives, so on
+   * that error the connection is dropped and the call tries once more, on a
+   * new one.
+   */
+  const transaction = async (mode: IDBTransactionMode): Promise<IDBTransaction | null> => {
+    for (let attempt = 0; ; attempt++) {
+      const pending = openDb()
+      if (pending === null) return null
+      const db = await pending
+      try {
+        return db.transaction(storeName, mode)
+      } catch (err) {
+        if (attempt > 0 || (err as { name?: unknown } | null)?.name !== 'InvalidStateError') {
+          throw err
+        }
+        forget(pending)
+      }
+    }
   }
 
   const runRequest = async <T>(
     mode: IDBTransactionMode,
     build: (store: IDBObjectStore) => IDBRequest<T>,
   ): Promise<T | undefined> => {
-    const db = await openDb()
-    if (db === null) return undefined
+    const tx = await transaction(mode)
+    if (tx === null) return undefined
     return new Promise<T | undefined>((resolve, reject) => {
       let settled = false
       const fail = (err: unknown): void => {
@@ -238,7 +269,6 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
         settled = true
         reject(err ?? new Error('[olas-persist] IDB request failed'))
       }
-      const tx = db.transaction(storeName, mode)
       const store = tx.objectStore(storeName)
       const req = build(store)
       let result: T | undefined
@@ -337,17 +367,28 @@ function getGlobalBroadcastChannel(): typeof BroadcastChannel | undefined {
  * `undefined` for a raw payload. `marked` is true for the
  * `{"$olas":1, v?, d}` shape 1.0 writes: the `$olas` key is the marker. An
  * unmarked `{v, d}` is the shape earlier versions wrote, and a user value can
- * have it too. The reader and the writer both ask this function, so they
- * agree on what an envelope is. A string that does not start with `{` or
- * never names a `"d"` key is not one, which spares most writes a parse.
+ * have it too. A marked envelope with no `d`, and no key but `$olas` and
+ * `v`, is the envelope of `undefined`, which has no serialized form: its
+ * payload is `undefined`. The reader and the writer both ask this function,
+ * so they agree on what an envelope is. A string that does not start with
+ * `{`, or names neither a `"d"` nor a `"$olas"` key, is not one, which spares
+ * most writes a parse.
  */
-function envelopeOf(raw: string): [string, number | undefined, boolean] | undefined {
-  if (raw[0] === '{' && raw.includes('"d"')) {
+function envelopeOf(raw: string): [string | undefined, number | undefined, boolean] | undefined {
+  if (raw[0] === '{' && (raw.includes('"d"') || raw.includes('"$olas"'))) {
     try {
-      const { d, v, $olas: mark } = JSON.parse(raw)
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      const { d, v, $olas: mark } = parsed
       const marked = mark === 1
       if (typeof d === 'string' && (typeof v === 'number' || (marked && v === undefined))) {
-        return [d, v, marked]
+        return [d, v as number | undefined, marked]
+      }
+      if (
+        marked &&
+        (v === undefined || typeof v === 'number') &&
+        Object.keys(parsed).every((k) => k === '$olas' || k === 'v')
+      ) {
+        return [undefined, v as number | undefined, true]
       }
     } catch {
       /* not JSON, so a raw payload */
@@ -388,6 +429,9 @@ export function createPersisted<T>(
   }
 
   const ready$ = signal(false)
+  // The source's value before the load: what a reload finds when storage has
+  // no value, and what a peer's delete puts back.
+  const unloaded = untracked(() => source.value)
   let writingFromLoad = false
   // Ready-gate race bookkeeping (T6.1). A source write or a cross-tab change
   // that lands BEFORE the initial async load settles must not be lost or
@@ -406,10 +450,18 @@ export function createPersisted<T>(
    * reads back as itself. Migration takes the inner string and the version it
    * was written under (`undefined` for a raw payload), so the consumer's
    * migrator can replay arbitrary historical formats.
+   *
+   * `undefined` is the marked envelope with no `d`: `{"$olas":1}`, or
+   * `{"$olas":1,"v":N}` with `version`. `serialize` is not called for it,
+   * because `JSON.stringify(undefined)` returns no string at all.
    */
   const encodeForStorage = (value: T): string => {
-    const inner = serialize(value)
     // `JSON.stringify` drops `v` when `version` is undefined.
+    if (value === undefined) return JSON.stringify({ $olas: 1, v: version })
+    const inner = serialize(value)
+    if (typeof inner !== 'string') {
+      throw new TypeError(`[olas/persist] serialize returned ${typeof inner}, not a string`)
+    }
     return version === undefined && envelopeOf(inner) === undefined
       ? inner
       : JSON.stringify({ $olas: 1, v: version, d: inner })
@@ -421,9 +473,9 @@ export function createPersisted<T>(
    * without `version` reads a value a newer build wrote with one. An unmarked
    * `{v, d}` is an envelope only to a reader with `version`: to one without,
    * it is a value stored before 1.0 that happens to have that shape, and it
-   * stays whole.
+   * stays whole. The payload is `undefined` for the envelope of `undefined`.
    */
-  const decode = (raw: string): [payload: string, from: number | undefined] => {
+  const decode = (raw: string): [payload: string | undefined, from: number | undefined] => {
     const env = envelopeOf(raw)
     return env !== undefined && (env[2] || version !== undefined)
       ? [env[0], env[1]]
@@ -510,8 +562,10 @@ export function createPersisted<T>(
     dropPendingWrite()
   }
 
-  // Apply a cross-tab raw value to the source: a null is a delete, mirrored
-  // as `undefined`. Anything else is read as the load path reads it, so a
+  // Apply a cross-tab raw value to the source, so the source holds what a
+  // reload would load. A null is a delete, and a reload of a missing key
+  // keeps the source's value from before the load, so a delete puts that
+  // value back. Anything else is read as the load path reads it, so a
   // payload of another version, or a raw one from a build before versioning,
   // goes through `migrate`, and without a migrator it is dropped. A migrated
   // peer value is not written back: the build that wrote it still reads that
@@ -520,10 +574,15 @@ export function createPersisted<T>(
   const applyRemote = (rawValue: string | null): void => {
     const change = ++lastChange
     if (rawValue == null) {
-      setFromRemote(undefined as T)
+      setFromRemote(unloaded)
       return
     }
     const [payload, from] = decode(rawValue)
+    if (payload === undefined) {
+      // The envelope of `undefined`, which has no shape to migrate.
+      if (!isNewer(from)) setFromRemote(undefined as T)
+      return
+    }
     if (
       version === undefined ||
       from === version ||
@@ -575,8 +634,6 @@ export function createPersisted<T>(
     }
   }
 
-  // Load initial value.
-  const loaded = storage.get(key)
   const applyLoaded = async (raw: string | null): Promise<void> => {
     // A local write already raced the load — it wins; don't apply storage.
     // `settleReady` flushes the user's value.
@@ -592,7 +649,15 @@ export function createPersisted<T>(
     let needsRewrite = false
     try {
       const [payload, from] = decode(raw)
-      if (
+      if (payload === undefined) {
+        // The envelope of `undefined`, which has no shape to migrate. A newer
+        // build's is dropped like any newer payload.
+        if (isNewer(from)) {
+          settleReady()
+          return
+        }
+        value = undefined
+      } else if (
         version === undefined ||
         from === version ||
         (from === undefined && migrate === undefined)
@@ -665,15 +730,24 @@ export function createPersisted<T>(
     }
   }
 
+  // Load the initial value. A read that fails, by throwing or by rejecting,
+  // is reported, and the source keeps its value. `ready` still settles, so
+  // later writes persist.
+  const loadFailed = (err: unknown): void => {
+    reportError(err, 'load')
+    settleReady()
+  }
+  let loaded: string | null | Promise<string | null> = null
+  let readThrew = false
+  try {
+    loaded = storage.get(key)
+  } catch (err) {
+    readThrew = true
+    loadFailed(err)
+  }
   if (loaded instanceof Promise) {
-    loaded.then(
-      (raw) => applyLoaded(raw),
-      (err) => {
-        reportError(err, 'load')
-        settleReady()
-      },
-    )
-  } else {
+    loaded.then((raw) => applyLoaded(raw), loadFailed)
+  } else if (!readThrew) {
     applyLoaded(loaded)
   }
 

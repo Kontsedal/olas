@@ -5,11 +5,15 @@ import type { ReadSignal } from '../signals/types'
 import { abortableSleep, isAbortError } from '../utils'
 import {
   type EntryEvents,
+  type EntrySnapshot,
   type FetchFailure,
   failureContext,
   followRedirects,
+  NO_SNAPSHOT,
   nextFetchCauseId,
   notInFuture,
+  type SettleReport,
+  warnBaselineThrow,
 } from './entry'
 import { subscribeReconnect } from './focus-online'
 import { structuralShare } from './structural-share'
@@ -166,6 +170,57 @@ export type InfiniteQuerySubscription<TPage, TItem> = AsyncState<TPage[]> & {
   fetchPreviousPage: () => Promise<void>
 }
 
+/** One live optimistic layer on an infinite entry. See `Entry`'s snapshot record. */
+type InfiniteSnapshotRecord<TPage, PageParam> = {
+  id: number
+  /** The layer's baseline, pages and params kept aligned. */
+  prev: TPage[]
+  prevParams: PageParam[]
+  /**
+   * What the layer applied. A commit re-runs it on the baselines below (§6.4).
+   * Stored at `unknown` to keep `InfiniteEntry` covariant in `TPage`.
+   */
+  updater: (prev: unknown) => unknown
+  /** The params the write was given, if any; a replay applies them as it did. */
+  given: readonly PageParam[] | undefined
+  /** `serverEpoch` when the layer was pushed. */
+  epoch: number
+  live: boolean
+}
+
+type ParkedRequest = {
+  direction: 'initial' | 'next' | 'prev'
+  /** An `'initial'` waiter gets the first page, as `startFetch` resolves. */
+  resolve: (value?: unknown) => void
+  reject: (err: unknown) => void
+}
+
+/** Whether two param lists hold the same params, by `Object.is`. */
+function sameParams<P>(a: readonly P[], b: readonly P[]): boolean {
+  return a.length === b.length && a.every((p, i) => Object.is(p, b[i]))
+}
+
+/**
+ * The params for `length` pages written over pages that had `params`: `given`
+ * when it has that length, else `params` trimmed or padded with its last param.
+ * With no param to pad from, the first page's param is `initialPageParam`, the
+ * one a first load would use: a refetch starts from `params[0]`.
+ */
+function alignParams<P>(
+  params: readonly P[],
+  length: number,
+  given: readonly P[] | undefined,
+  initialPageParam: P,
+): P[] {
+  if (given !== undefined && given.length === length) return [...given]
+  if (length === params.length) return params as P[]
+  if (length < params.length) return params.slice(0, length)
+  const pad = params.length > 0 ? (params[params.length - 1] as P) : initialPageParam
+  const out = params.slice()
+  for (let i = params.length; i < length; i++) out.push(pad)
+  return out
+}
+
 /**
  * Holds an array of pages plus their pageParams. Supports fetchNextPage /
  * fetchPreviousPage / invalidate (re-fetches every loaded page). Race-protected.
@@ -218,13 +273,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private fetchHeldBack = false
   /** See `EntryOptions.hasSubscribers`. */
   private readonly hasSubscribers: () => boolean
-  private snapshots: Array<{
-    id: number
-    prev: TPage[]
-    prevParams: PageParam[]
-    live: boolean
-  }> = []
+  private snapshots: Array<InfiniteSnapshotRecord<TPage, PageParam>> = []
   private nextSnapshotId = 0
+  /** Bumped by every refetch and hydrated row. See `Entry.serverEpoch`. */
+  private serverEpoch = 0
+  /** A commit not reported yet. See `Entry.commitPending`. */
+  private commitPending = false
+  /** `firstValue()` promises waiting for the first page. */
+  private firstValueWaiters = 0
   private disposed = false
   /** Mirrors `Entry.pendingFirstValueRejects` — see that field for context. */
   private pendingFirstValueRejects: Array<(err: unknown) => void> = []
@@ -245,12 +301,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private readonly networkMode: NetworkMode
   private readonly structuralShareEnabled: boolean
   private reconnectUnsub: (() => void) | null = null
-  private deferredResolvers: Array<{
-    direction: 'initial' | 'next' | 'prev'
-    /** An `'initial'` waiter gets the first page, as `startFetch` resolves. */
-    resolve: (value?: unknown) => void
-    reject: (err: unknown) => void
-  }> = []
+  private deferredResolvers: ParkedRequest[] = []
   private readonly itemsOf?: (page: TPage) => TItem[]
   /**
    * Mirrors `Entry.onSuccessData`. Fires from every successful page batch
@@ -358,7 +409,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       // Supersede the request in flight before parking, as `Entry.startFetch`.
       let parked: Promise<unknown> | undefined
       batch(() => {
-        this.cancel()
+        this.cancelInFlight()
         parked = this.scheduleDeferredFetch('initial')
       })
       return parked as Promise<TPage>
@@ -369,6 +420,13 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.currentAbort = abort
 
     const previousPages = this.pages.peek()
+    // A refetch starts from the first loaded page's param, so pages loaded
+    // backwards are refetched as they are, not from `initialPageParam` (§5.11).
+    const loadedParams = this.pageParams.peek()
+    const startParam =
+      previousPages.length > 0 && loadedParams.length > 0
+        ? (loadedParams[0] as PageParam)
+        : this.initialPageParam
     batch(() => {
       this.status.set('pending')
       this.isFetching.set(true)
@@ -381,16 +439,24 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
     this.announceFetchStart()
 
-    return this.releaseOnSettle(
+    const work = this.releaseOnSettle(
       this.runRefetchAll(
         myId,
         abort.signal,
+        startParam,
         Math.max(1, previousPages.length),
         previousPages,
         this.staleEpoch,
       ),
       abort,
     )
+    // A park no `online` event ended: this request, made online, serves it,
+    // and the parked page requests run after it, as the drain runs them (§5.9).
+    if (this.deferredResolvers.length > 0) {
+      const pending = this.takePark()
+      this.settleParked(pending, this.runParked(pending, work))
+    }
+    return work
   }
 
   /**
@@ -410,8 +476,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }
 
   /**
-   * Fetch `targetCount` pages from `initialPageParam`, chaining each next param
-   * via `getNextPageParam` from the freshly-fetched pages. Applies the query's
+   * Fetch `targetCount` pages from `startParam`, the first loaded page's param
+   * (`initialPageParam` on a first load), chaining each next param via
+   * `getNextPageParam` from the freshly-fetched pages. Applies the query's
    * retry policy per page. Stops early if the dataset shrank (a page yields
    * `getNextPageParam === null`). Writes pages/params in ONE batch at the end;
    * a per-page failure keeps the existing pages and surfaces the error; a
@@ -421,13 +488,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private async runRefetchAll(
     myId: number,
     signal: AbortSignal,
+    startParam: PageParam,
     targetCount: number,
     previousPages: TPage[],
     staleEpoch: number,
   ): Promise<TPage> {
     const newPages: TPage[] = []
     const newParams: PageParam[] = []
-    let pageParam: PageParam = this.initialPageParam
+    let pageParam: PageParam = startParam
     try {
       for (let i = 0; i < targetCount; i++) {
         let attempt = 0
@@ -496,6 +564,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         s.prev = finalPages
         s.prevParams = newParams
       }
+      // A server read, as in `Entry.applySuccess`.
+      this.serverEpoch += 1
+      this.commitPending = false
       // Pages requested after the latest `markStale()` reconcile it; an older
       // refetch leaves it in force, and a held entry catches up (§5.7, as
       // `Entry.applySuccess`).
@@ -538,9 +609,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       return this.scheduleDeferredFetch('next') as Promise<void>
     }
     const ps = this.pages.peek()
-    if (ps.length === 0) {
-      return this.startFetch().then(() => {})
-    }
+    if (ps.length === 0) return this.joinFirstLoad()
     const nextParam = this.getNextPageParam(ps[ps.length - 1] as TPage, ps)
     if (nextParam === null) return Promise.resolve()
 
@@ -558,35 +627,38 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
     this.announceFetchStart()
 
-    return this.releaseOnSettle(
-      this.runFetch(
-        myId,
-        abort.signal,
-        nextParam,
-        (page, param) => {
-          if (myId !== this.currentFetchId || this.disposed) return
-          // The appended page is server truth each baseline lacks: add it, so
-          // a rollback keeps it and drops only the optimistic delta (§6.4).
-          for (const s of this.snapshots) {
-            s.prev = [...s.prev, page]
-            s.prevParams = [...s.prevParams, param]
-          }
-          batch(() => {
-            this.pages.set([...this.pages.peek(), page])
-            this.pageParams.set([...this.pageParams.peek(), param])
-            this.error.set(undefined)
-            // A successful page op owns the terminal status: restore 'success'
-            // so paging that superseded a mid-flight full refetch (which left
-            // status at 'pending') can't wedge the entry / Suspense (T3.3).
-            this.status.set('success')
-            this.isFetchingNextPage.set(false)
-            this.isFetching.set(false)
-            this.markServerWrite(Date.now())
-          })
-        },
-        'next',
-      ).then(() => {}),
-      abort,
+    return this.adoptParked(
+      'next',
+      this.releaseOnSettle(
+        this.runFetch(
+          myId,
+          abort.signal,
+          nextParam,
+          (page, param) => {
+            if (myId !== this.currentFetchId || this.disposed) return
+            // The appended page is server truth each baseline lacks: add it, so
+            // a rollback keeps it and drops only the optimistic delta (§6.4).
+            for (const s of this.snapshots) {
+              s.prev = [...s.prev, page]
+              s.prevParams = [...s.prevParams, param]
+            }
+            batch(() => {
+              this.pages.set([...this.pages.peek(), page])
+              this.pageParams.set([...this.pageParams.peek(), param])
+              this.error.set(undefined)
+              // A successful page op owns the terminal status: restore 'success'
+              // so paging that superseded a mid-flight full refetch (which left
+              // status at 'pending') can't wedge the entry / Suspense (T3.3).
+              this.status.set('success')
+              this.isFetchingNextPage.set(false)
+              this.isFetching.set(false)
+              this.markServerWrite(Date.now())
+            })
+          },
+          'next',
+        ).then(() => {}),
+        abort,
+      ),
     )
   }
 
@@ -598,9 +670,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       return this.scheduleDeferredFetch('prev') as Promise<void>
     }
     const ps = this.pages.peek()
-    if (ps.length === 0) {
-      return this.startFetch().then(() => {})
-    }
+    if (ps.length === 0) return this.joinFirstLoad()
     const prevParam = this.getPreviousPageParam(ps[0] as TPage, ps)
     if (prevParam === null) return Promise.resolve()
 
@@ -616,34 +686,72 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
     this.announceFetchStart()
 
-    return this.releaseOnSettle(
-      this.runFetch(
-        myId,
-        abort.signal,
-        prevParam,
-        (page, param) => {
-          if (myId !== this.currentFetchId || this.disposed) return
-          // Prepend the page to every baseline — see `fetchNextPage`.
-          for (const s of this.snapshots) {
-            s.prev = [page, ...s.prev]
-            s.prevParams = [param, ...s.prevParams]
-          }
-          batch(() => {
-            this.pages.set([page, ...this.pages.peek()])
-            this.pageParams.set([param, ...this.pageParams.peek()])
-            this.error.set(undefined)
-            // A successful page op owns the terminal status — see fetchNextPage
-            // (T3.3).
-            this.status.set('success')
-            this.isFetchingPreviousPage.set(false)
-            this.isFetching.set(false)
-            this.markServerWrite(Date.now())
-          })
-        },
-        'prev',
-      ).then(() => {}),
-      abort,
+    return this.adoptParked(
+      'prev',
+      this.releaseOnSettle(
+        this.runFetch(
+          myId,
+          abort.signal,
+          prevParam,
+          (page, param) => {
+            if (myId !== this.currentFetchId || this.disposed) return
+            // Prepend the page to every baseline — see `fetchNextPage`.
+            for (const s of this.snapshots) {
+              s.prev = [page, ...s.prev]
+              s.prevParams = [param, ...s.prevParams]
+            }
+            batch(() => {
+              this.pages.set([page, ...this.pages.peek()])
+              this.pageParams.set([param, ...this.pageParams.peek()])
+              this.error.set(undefined)
+              // A successful page op owns the terminal status — see fetchNextPage
+              // (T3.3).
+              this.status.set('success')
+              this.isFetchingPreviousPage.set(false)
+              this.isFetching.set(false)
+              this.markServerWrite(Date.now())
+            })
+          },
+          'prev',
+        ).then(() => {}),
+        abort,
+      ),
     )
+  }
+
+  /**
+   * `fetchNextPage()` / `fetchPreviousPage()` before a page has loaded. A first
+   * load in flight is joined: starting another would abort it and start over,
+   * one request per call. Otherwise it starts the first load.
+   */
+  private joinFirstLoad(): Promise<void> {
+    const loading = this.currentRequest
+    if (this.isFetching.peek() && loading !== null) return loading.then(() => {})
+    return this.startFetch().then(() => {})
+  }
+
+  /**
+   * A page request made online serves the requests of its own direction parked
+   * earlier, so a later `online` event does not fetch that page again (§5.9).
+   * The park ends when nothing else waits in it.
+   */
+  private adoptParked(direction: 'next' | 'prev', request: Promise<void>): Promise<void> {
+    if (!this.deferredResolvers.some((p) => p.direction === direction)) return request
+    const mine = this.deferredResolvers.filter((p) => p.direction === direction)
+    this.deferredResolvers = this.deferredResolvers.filter((p) => p.direction !== direction)
+    if (this.deferredResolvers.length === 0) {
+      this.takePark()
+      this.isPaused.set(false)
+    }
+    request.then(
+      () => {
+        for (const p of mine) p.resolve(undefined)
+      },
+      (err: unknown) => {
+        for (const p of mine) p.reject(err)
+      },
+    )
+    return request
   }
 
   private async runFetch(
@@ -776,7 +884,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     if (this.currentFetchId === this.catchUpFetchId) return
     const discarded = this.currentRequest
     batch(() => {
-      this.cancel()
+      this.cancelInFlight()
       this.catchUpIfStillStale(discarded)
     })
   }
@@ -810,10 +918,22 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   }
 
   /** Cancel an in-flight fetch (initial/refetch or paging) without touching
-   *  pages. Supersedes + aborts the current request, then restores a settled
-   *  status. No-op when idle. Mirrors `Entry.cancel` (spec §5, §6.4, T3.4). */
+   *  pages, and drop any request parked for the network. Supersedes + aborts
+   *  the current request, then restores a settled status. No-op when idle.
+   *  Mirrors `Entry.cancel` (spec §5.5, §6.4, T3.4). */
   cancel(): void {
-    if (this.disposed || !this.isFetching.peek()) return
+    const parked = this.deferredResolvers.length > 0 || this.isPaused.peek()
+    if (this.disposed || (!this.isFetching.peek() && !parked)) return
+    batch(() => {
+      this.cancelInFlight()
+      if (parked) this.dropPark()
+    })
+    this.recoverFirstValue()
+  }
+
+  /** The in-flight half of `cancel()`. A no-op when nothing is fetching. */
+  private cancelInFlight(): void {
+    if (!this.isFetching.peek()) return
     this.currentFetchId += 1
     this.currentAbort?.abort()
     this.currentAbort = null
@@ -826,18 +946,36 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
   }
 
+  /** See `Entry.recoverFirstValue`. */
+  private recoverFirstValue(): void {
+    if (this.firstValueWaiters === 0) return
+    queueMicrotask(() => {
+      if (this.disposed || this.firstValueWaiters === 0 || !this.idleWithoutPages()) return
+      this.startFetch().catch(() => {})
+    })
+  }
+
+  /** No page, no request in flight or parked, and none settled. */
+  private idleWithoutPages(): boolean {
+    return (
+      this.pages.peek().length === 0 &&
+      this.status.peek() === 'idle' &&
+      !this.isFetching.peek() &&
+      !this.isPaused.peek()
+    )
+  }
+
   /**
    * `pageParams`, when given with the same length as the new pages, replaces
    * the params outright. Otherwise the params are trimmed or padded to stay
-   * aligned with the pages.
+   * aligned with the pages (`alignParams`). `whole: true` marks a `replace`, as
+   * in `Entry.setData`: the pages and their params become every live baseline.
    */
   setData(
     updater: (prev: TPage[] | undefined) => TPage[],
-    opts?: { track?: boolean; pageParams?: readonly PageParam[] },
-  ): Snapshot {
-    if (this.disposed) {
-      return { rollback: () => {}, finalize: () => {} }
-    }
+    opts?: { track?: boolean; whole?: boolean; pageParams?: readonly PageParam[] },
+  ): EntrySnapshot {
+    if (this.disposed) return NO_SNAPSHOT
     const prev = this.pages.peek()
     const prevParams = this.pageParams.peek()
     const next = updater(prev.length === 0 ? undefined : prev)
@@ -846,46 +984,42 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     // `Entry.setData` for the full rationale. Default `true` keeps the
     // optimistic-update path (`query.setData` in `onMutate`).
     const track = opts?.track ?? true
+    // If the updater changed the page count, trim or pad pageParams so the
+    // two arrays stay length-aligned. The caller of `setData` should re-key
+    // via a real fetch if the new page needs a fresh param.
+    const nextParams = alignParams(prevParams, next.length, opts?.pageParams, this.initialPageParam)
+    // A canonical write patches every live layer's baseline with its own
+    // updater, as `Entry.setData` does: a later rollback must restore server
+    // truth, which now includes these pages, and not the guesses on screen.
+    if (!track && this.snapshots.length > 0) {
+      if (opts?.whole === true) {
+        for (const r of this.snapshots) {
+          r.prev = next
+          r.prevParams = nextParams
+        }
+      } else {
+        this.rebaseOnto(this.snapshots, updater as (prev: unknown) => unknown, opts?.pageParams)
+      }
+    }
     // Snapshot BOTH pages and pageParams so rollback restores a consistent
     // pair. Without `prevParams`, an optimistic insert would shift `pages`
     // permanently out of sync with `pageParams` on rollback — and any
     // subsequent `fetchNextPage`/`getNextPageParam` would operate on the
     // wrong head.
-    const record = track ? { id: this.nextSnapshotId++, prev, prevParams, live: true } : null
+    const record: InfiniteSnapshotRecord<TPage, PageParam> | null = track
+      ? {
+          id: this.nextSnapshotId++,
+          prev,
+          prevParams,
+          updater: updater as (prev: unknown) => unknown,
+          given: opts?.pageParams,
+          epoch: this.serverEpoch,
+          live: true,
+        }
+      : null
     if (record) {
       this.snapshots.push(record)
       this.announce(() => this.events.onSnapshotPush?.())
-    }
-
-    // If the updater changed the page count, trim or pad pageParams so the
-    // two arrays stay length-aligned. Padding uses the last known param,
-    // which is the safest neutral choice — the caller of `setData` should
-    // re-key via a real fetch (or use a future param-aware overload) if
-    // the new page needs a fresh param.
-    let nextParams: PageParam[] = prevParams
-    const given = opts?.pageParams
-    if (given !== undefined && given.length === next.length) {
-      nextParams = [...given]
-    } else if (next.length !== prevParams.length) {
-      if (next.length < prevParams.length) {
-        nextParams = prevParams.slice(0, next.length)
-      } else {
-        const pad = prevParams[prevParams.length - 1]
-        nextParams = prevParams.slice()
-        for (let i = prevParams.length; i < next.length; i++) {
-          nextParams.push(pad as PageParam)
-        }
-      }
-    }
-
-    // A canonical write rebases live optimistic snapshots onto itself, as
-    // `Entry.setData` does: a later rollback must restore these pages, not a
-    // baseline from before they arrived (spec §6.4).
-    if (!track) {
-      for (const sn of this.snapshots) {
-        sn.prev = next
-        sn.prevParams = nextParams
-      }
     }
     batch(() => {
       this.pages.set(next)
@@ -899,13 +1033,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       if (record) this.hasPendingMutations.set(true)
     })
 
-    if (!record) {
-      return { rollback: () => {}, finalize: () => {} }
-    }
-    const id = record.id
+    if (!record) return NO_SNAPSHOT
     return {
       rollback: () => {
-        if (!record.live || this.disposed) return
+        if (!record.live || this.disposed) return null
         record.live = false
         batch(() => {
           const i = this.snapshots.indexOf(record)
@@ -916,33 +1047,119 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
               this.pages.set(record.prev)
               this.pageParams.set(record.prevParams)
             } else {
-              // Not the top: leave current pages/params alone and thread this
-              // layer's baseline down onto the next layer, so a later
-              // top-rollback lands on the correct pre-everything pages instead
-              // of resurrecting this layer's delta (chain-splice — T3.1, spec
-              // §6.4). Mirrors `Entry.setData`.
-              const below = this.snapshots[i + 1] as (typeof this.snapshots)[number]
-              below.prev = record.prev
-              below.prevParams = record.prevParams
+              // Not the top: thread this layer's baseline pair onto the layer
+              // above it (chain-splice — T3.1, spec §6.4), then replay the
+              // layers above over it. Mirrors `Entry.setData`.
+              const above = this.snapshots[i + 1] as InfiniteSnapshotRecord<TPage, PageParam>
+              above.prev = record.prev
+              above.prevParams = record.prevParams
             }
             this.snapshots.splice(i, 1)
+            if (i < this.snapshots.length) this.replayFrom(i)
           }
-          this.hasPendingMutations.set(this.snapshots.some((s) => s.live))
+          this.hasPendingMutations.set(this.snapshots.length > 0)
         })
         this.announce(() => this.events.onSnapshotRollback?.())
+        const report = this.settleReport(false)
         this.runHeldBackFetch()
+        return report
       },
       finalize: () => {
-        if (!record.live || this.disposed) return
+        if (!record.live || this.disposed) return null
         record.live = false
-        this.snapshots = this.snapshots.filter((s) => s.id !== id)
-        if (!this.snapshots.some((s) => s.live)) {
-          this.hasPendingMutations.set(false)
+        // A live layer is on the stack. Fold it into the baselines below it,
+        // unless a refetch or hydrated row rebased them since it was pushed.
+        // See `Entry.setData`.
+        const i = this.snapshots.indexOf(record)
+        if (i > 0 && record.epoch === this.serverEpoch) {
+          this.rebaseOnto(this.snapshots.slice(0, i), record.updater, record.given)
         }
+        this.snapshots.splice(i, 1)
+        if (this.snapshots.length === 0) this.hasPendingMutations.set(false)
         this.announce(() => this.events.onSnapshotFinalize?.())
+        const report = this.settleReport(true)
         this.runHeldBackFetch()
+        return report
       },
     }
+  }
+
+  /**
+   * Re-derive each baseline in `records` with `updater`, its params re-aligned.
+   * A baseline the updater throws on keeps its value, and the entry reconciles.
+   * Mirrors `Entry.rebaseOnto`.
+   */
+  private rebaseOnto(
+    records: readonly InfiniteSnapshotRecord<TPage, PageParam>[],
+    updater: (prev: unknown) => unknown,
+    given: readonly PageParam[] | undefined,
+  ): void {
+    let failure: { err: unknown } | null = null
+    for (const r of records) {
+      try {
+        const pages = updater(r.prev.length === 0 ? undefined : r.prev) as TPage[]
+        r.prevParams = alignParams(r.prevParams, pages.length, given, this.initialPageParam)
+        r.prev = pages
+      } catch (err) {
+        failure = { err }
+      }
+    }
+    if (failure !== null) {
+      warnBaselineThrow(failure.err)
+      // See `Entry.reconcileLater`.
+      this.markStale()
+      this.fetchHeldBack = true
+    }
+  }
+
+  /**
+   * Rebuild the baselines from index `from` up, and the pages on screen, after
+   * a layer under them was removed. Each layer's params are re-aligned as its
+   * write aligned them. Mirrors `Entry.replayFrom`, structural sharing included.
+   */
+  private replayFrom(from: number): void {
+    const layers = this.snapshots
+    const base = layers[from] as InfiniteSnapshotRecord<TPage, PageParam>
+    let pages = base.prev
+    let params = base.prevParams
+    let exact = true
+    for (let j = from; j < layers.length; j++) {
+      const r = layers[j] as InfiniteSnapshotRecord<TPage, PageParam>
+      if (j > from) {
+        r.prev = pages
+        r.prevParams = params
+      }
+      if (r.epoch !== this.serverEpoch) continue
+      if (r.updater.length === 0) exact = false
+      try {
+        const next = r.updater(pages.length === 0 ? undefined : pages) as TPage[]
+        params = alignParams(params, next.length, r.given, this.initialPageParam)
+        pages = next
+      } catch (err) {
+        warnBaselineThrow(err)
+        this.markStale()
+        this.fetchHeldBack = true
+        return
+      }
+    }
+    const shown = this.pages.peek()
+    this.pages.set(this.structuralShareEnabled ? structuralShare(shown, pages) : pages)
+    if (!sameParams(this.pageParams.peek(), params)) this.pageParams.set(params)
+    if (!exact) {
+      this.markStale()
+      this.fetchHeldBack = true
+    }
+  }
+
+  /** What a settle reports. See `Entry.settleReport`. */
+  private settleReport(committed: boolean): SettleReport {
+    if (this.snapshots.length > 0) {
+      if (committed) this.commitPending = true
+      return null
+    }
+    const report: SettleReport = committed || this.commitPending ? 'commit' : null
+    this.commitPending = false
+    return report
   }
 
   /**
@@ -964,7 +1181,11 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
   }
 
-  /** Resolves at once when a page is loaded. Mirrors `Entry.firstValue`. */
+  /**
+   * Resolves at once when a page is loaded, and never waits on nothing: on an
+   * idle entry with no page and no request coming, it starts the first load.
+   * Mirrors `Entry.firstValue`.
+   */
   firstValue(): Promise<TPage[]> {
     if (this.disposed) {
       return Promise.reject(new DOMException('Entry disposed', 'AbortError'))
@@ -975,23 +1196,33 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     if (this.status.peek() === 'error') {
       return Promise.reject(this.error.peek())
     }
-    return new Promise<TPage[]>((resolve, reject) => {
-      const tracked = (err: unknown): void => {
+    const fetchNow = this.idleWithoutPages()
+    const waiting = new Promise<TPage[]>((resolve, reject) => {
+      this.firstValueWaiters += 1
+      let unsub = (): void => {}
+      // Settling unsubscribes and drops the dispose hook, so it runs once.
+      const leave = (): void => {
+        unsub()
+        this.firstValueWaiters -= 1
         this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+      }
+      const tracked = (err: unknown): void => {
+        leave()
         reject(err)
       }
       this.pendingFirstValueRejects.push(tracked)
-      const unsub = this.status.subscribe((s) => {
+      // Called at once with `'idle'` or `'pending'`: success and error returned above.
+      unsub = this.status.subscribe((s) => {
         if (s === 'success') {
-          unsub()
-          this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+          leave()
           resolve(this.pages.peek())
         } else if (s === 'error') {
-          unsub()
           tracked(this.error.peek())
         }
       })
     })
+    if (fetchNow) this.startFetch().catch(() => {})
+    return waiting
   }
 
   /**
@@ -1056,6 +1287,25 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private isServerStale(): boolean {
     const at = this.serverUpdatedAt
     return at === undefined || Date.now() - at >= this.staleTime
+  }
+
+  /** When the server last said what the pages hold. See `Entry.serverStamp`. */
+  serverStamp(): number | undefined {
+    return this.serverUpdatedAt
+  }
+
+  /**
+   * What `dehydrate()` ships: the pages and params under any live optimistic
+   * layer, stamped with `serverStamp()` or `0`. `null` with no page and no
+   * server answer. See `Entry.serverState`.
+   */
+  serverState(): { pages: TPage[]; pageParams: PageParam[]; updatedAt: number } | null {
+    const bottom = this.snapshots[0]
+    const pages = bottom !== undefined ? bottom.prev : this.pages.peek()
+    const pageParams = bottom !== undefined ? bottom.prevParams : this.pageParams.peek()
+    const at = this.serverUpdatedAt
+    if (pages.length === 0 && at === undefined) return null
+    return { pages, pageParams, updatedAt: at ?? 0 }
   }
 
   /**
@@ -1127,48 +1377,73 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private drainDeferred(): void {
     if (this.deferredResolvers.length === 0) return
     if (this.disposed) return
+    const pending = this.takePark()
+    // `runParked` starts its first request synchronously. Clearing `isPaused` in
+    // the same batch means no observer sees the entry idle and unpaused before it.
+    let running: Promise<TPage | undefined> | undefined
+    batch(() => {
+      this.isPaused.set(false)
+      running = this.runParked(pending, null)
+    })
+    this.settleParked(pending, running as Promise<TPage | undefined>)
+  }
+
+  /** Take the parked requests, and stop listening for reconnect. */
+  private takePark(): ParkedRequest[] {
     const pending = this.deferredResolvers
     this.deferredResolvers = []
     if (this.reconnectUnsub !== null) {
       this.reconnectUnsub()
       this.reconnectUnsub = null
     }
-    // Collapse multiple deferrals of the same direction into one real fetch.
-    // Order matters: initial first (it may produce data the others need),
-    // then prev / next.
-    const seen = new Set<'initial' | 'next' | 'prev'>()
-    const order: Array<'initial' | 'next' | 'prev'> = ['initial', 'prev', 'next']
-    for (const d of pending) {
-      seen.add(d.direction)
-    }
-    // Resolves with the first page when an `'initial'` request ran: a parked
-    // `startFetch` (and the `prefetch` behind it) resolves with it, as one
-    // made online does (§5.7).
-    const run = async (): Promise<TPage | undefined> => {
-      let firstPage: TPage | undefined
-      for (const dir of order) {
-        if (!seen.has(dir)) continue
-        if (dir === 'initial') firstPage = await this.startFetch()
-        else if (dir === 'next') await this.fetchNextPage()
-        else await this.fetchPreviousPage()
-      }
-      return firstPage
-    }
-    // `run` starts its first request synchronously. Clearing `isPaused` in the
-    // same batch means no observer sees the entry idle and unpaused before it.
-    let running: Promise<TPage | undefined> | undefined
-    batch(() => {
-      this.isPaused.set(false)
-      running = run()
-    })
-    ;(running as Promise<TPage | undefined>).then(
+    return pending
+  }
+
+  /**
+   * Run the parked requests, one real request per direction, and resolve with
+   * the first page when a refetch ran. `initial` is a refetch already started
+   * online, which stands in for a parked one. Order matters: the refetch first
+   * (it may produce data the others need), then prev, then next.
+   */
+  private async runParked(
+    pending: readonly ParkedRequest[],
+    initial: Promise<TPage> | null,
+  ): Promise<TPage | undefined> {
+    const wants = (d: ParkedRequest['direction']): boolean => pending.some((p) => p.direction === d)
+    let firstPage: TPage | undefined
+    if (initial !== null) firstPage = await initial
+    else if (wants('initial')) firstPage = await this.startFetch()
+    if (wants('prev')) await this.fetchPreviousPage()
+    if (wants('next')) await this.fetchNextPage()
+    return firstPage
+  }
+
+  /**
+   * Settle the parked requests with `running`. A parked `startFetch` (and the
+   * `prefetch` behind it) resolves with the first page, as one made online does
+   * (§5.7).
+   */
+  private settleParked(
+    pending: readonly ParkedRequest[],
+    running: Promise<TPage | undefined>,
+  ): void {
+    running.then(
       (firstPage) => {
         for (const p of pending) p.resolve(p.direction === 'initial' ? firstPage : undefined)
       },
-      (err) => {
+      (err: unknown) => {
         for (const p of pending) p.reject(err)
       },
     )
+  }
+
+  /** End the park without running it, for `cancel()`. See `Entry.dropPark`. */
+  private dropPark(): void {
+    const pending = this.takePark()
+    this.isPaused.set(false)
+    if (pending.length === 0) return
+    const cancelled = new DOMException('Cancelled', 'AbortError')
+    for (const p of pending) p.reject(cancelled)
   }
 
   /**
@@ -1191,6 +1466,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       sn.prev = pages
       sn.prevParams = pageParams
     }
+    // A server read, as in `Entry.applyHydration`.
+    this.serverEpoch += 1
+    this.commitPending = false
     // A row stamped at or after the latest `markStale()` reconciles it; an
     // older one leaves it in force (§5.7, as `Entry.applyHydration`).
     if (lastUpdatedAt >= this.staleSince) this.forcedStale = false

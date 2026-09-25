@@ -2293,3 +2293,139 @@ Two core budgets were raised to 17.5 KB and 23.5 KB.
 - Vite 8.3 warned on config files its future native loader cannot read, so the root package is `"type": "module"` and the example configs import `aliases.ts` with its extension.
 
 **Verified locally** on Node 26.8.1 and pnpm 12.6.0: build, typecheck, lint, `check:peer-ranges`, `check:peer-bumps`, `check:doc-snippets`, `test:coverage` (2,558 tests in 188 files, every gate met), the examples' tests and builds, publint, attw, `smoke:dist`, `check:public-types`, `api:check`, size, `docs:build`, `pnpm bench` and a Stryker dry run. The workflows themselves have not run yet; the publish path's `~/.npmrc` auth was checked with a fake token against `pnpm whoami`.
+
+## [2026-09-25 20:11] ingest | core outside the query engine: fifteen review findings
+
+A review pass reported fifteen bugs in controllers, forms, selection and the devtools bus, each with a failing repro. Each is fixed here with a regression test that fails on the old code. The pages that changed are `modules/controller.md`, `entities/controller-instance.md`, `flows/construction-rollback.md`, `modules/forms.md`, `modules/errors.md`, `modules/devtools.md`, `entities/scope.md`, `entities/ctx.md`, `pitfalls/fieldarray-factory-uses-initial.md` and `decisions/forms-are-read-signals.md`. Two pages are new: `modules/selection.md`, and `pitfalls/batched-effect-not-run-yet.md` for the C2 footgun.
+
+**Controllers** (`dynamic-children.test.ts`, `controller-regressions.test.ts`):
+- C1. One collection item whose `keyOf`, `propsOf` or `factory` throws is skipped with `kind: 'construction'`, and the reconcile lands. A kept key whose factory throws keeps its child. `coverage-core-controller.test.ts` pinned the old `'effect'` kind for `keyOf` and now expects `'construction'`.
+- C7. A disposed `lazyChild` handle reads `'idle'` with no `api`, mid-load too, and a loader that throws or returns no promise sets `'error'`, reports, and rejects. A collection whose owner disposed lists nothing.
+- C8. The rollback marks the controller disposed before its teardown, as `dispose()` does.
+- C9. `ctx.inject` and `root.inject` answer after dispose; `dispose()` keeps the scope maps.
+- C10. `root.suspend({ maxIdleTime })` after dispose arms nothing.
+- C13. A collection key rebuilt for a new type keeps `suspendItem`.
+- C15b. `construct` marks a factory throw, and `dispatchError` reports a marked error as `'construction'` wherever it is caught.
+
+**Forms** (`form-regressions.test.ts`):
+- C2. `revalidate()` waits a microtask when its trigger bump ran no pass, which is the case inside `batch()` or an effect.
+- C3. `debouncedValidator` rejects on a sync throw or a no-promise return, and the rejection is reported as a validator bug.
+- C4. `dirtyFields` lists a structurally dirty array by its own path and none of its items.
+- C6. A form reads `initial: null` as none, the reactive seat catches a throw, and a field array builds new rows before it drops the old ones.
+- C12. `setErrors` with a path that names a nested form or array, or `''`, pins the messages on that node's `topLevelErrors` until its value changes. `coverage-core-form.test.ts` pinned `''` and `tags` as ignored and now expects them to land.
+- C14. A no-op `reset()` re-runs the sync validators. The async ones stay out: `form-regressions.test.ts` pins a no-op reset dropping an async result, and a re-run would send a request for a value the user did not change.
+- C15a. `field.touched`, `isDirty`, `isValidating`, `form.isSubmitting`, `submitCount`, `submitError` and `array.items` are `readOnly` views.
+
+**Elsewhere.** C5: a shift-click with a `Map` ranges by index value (`selection.test.ts`). The meta-click that deselects the anchor keeps it, and `deselect()` clears it, now documented in `modules/selection.md` and SPEC §16.5. C11: `DevtoolsEmitter` calls handlers untracked (`devtools.test.ts`).
+
+**Spec.** §4, §4.3, §8.1, §8.2, §8.3, §8.5, §8.6, §11.1, §12.1, §14, §16.5 and §20.7 describe the new behaviour. No public signature changed; TSDoc on `Collection`, `LazyChild`, `Ctx.collection`, `Ctx.lazyChild`, `Root.inject`, `Root.suspend`, `Form.dirtyFields` and `Form.setErrors` did. Wiki citations into the edited files were shifted by the diff's line map.
+
+## [2026-09-25 20:17] ingest | persist and the mutation queue: seven review findings
+
+A review of `@kontsedal/olas-persist` and `@kontsedal/olas-mutation-queue` found seven bugs, each with a repro. Each fix has a regression test that failed on the old code.
+
+**Persist.** P1: `persistQueryCachePlugin` wrote the tab's whole map over the shared key, so a flush deleted what other tabs wrote since startup, and put an older restored copy over a peer's fetch. Every flush now reads storage and merges, newer `lastUpdatedAt` wins, and a gc leaves a timed tombstone (four tests under "two tabs on one storage", `query-cache.test.ts`; new pitfall `shared-storage-whole-writes.md`). P4: a synchronous `storage.get` that throws escaped `createPersisted`; it now reports `'load'`, and `localStorageAdapter` treats a `localStorage` getter that throws as missing (`persist.test.ts`). P5: `set(undefined)` stored `{"$olas":1,"v":N}` or failed as `'serialize'`. It is now the marked envelope with no `d`, and a peer's delete puts back the pre-load value, so a peer reads what a reload reads (`undefined-value.test.ts`; new pitfall `json-stringify-undefined.md`). P8: `indexedDbAdapter` never reopened after the browser closed its connection; it now drops the connection on `close` and retries once on `InvalidStateError` (`coverage-indexeddb.test.ts`; new pitfall `browser-storage-handles-fail.md`).
+
+**Mutation queue.** P2: a retryable replay failure let later entries of its id overtake it; a kept entry now ends its group's pass (`replay-order.test.ts`). P3: a replay's success, and a live owner's, deleted an entry a `dedupeBy` collapse had rewritten; the replay compares the stored `seq`, and the live success hands the entry to a newer rider (`deliberate-cancel.test.ts`; new pitfall `success-drops-a-rewritten-entry.md`). P9: a replay pass sent an entry another tab's live run still had out; live runs now mark their entry with a Web Lock, or a `localStorage` lease with a heartbeat (`coverage-replay-lock.test.ts`). Writing that lease found R5: a lease dated in the future held the replay lock forever (`decisions/trust-model.md`).
+
+**Decisions recorded.** A peer's delete maps to the pre-load value, not `undefined` (`modules/persist.md`). Web Locks per entry over an owner field in the stored entry, which would need a format change and a rewrite on settle (`modules/mutation-queue.md`). A missing definition does not stop its group, since every entry of the group shares the id. Four older tests changed with the behaviour, each named in the module pages. `modules/mutation-queue.md` goes to `medium`, since its new sections were written in the session that wrote the code.
+
+**Left open.** A collapse during a replay of its entry sends beside the replay (`BACKLOG.md`). SPEC §13.3 and §13.4 and both package READMEs describe the new behaviour, including the query cache across tabs. No public signature changed.
+
+## [2026-09-25 20:25] ingest | the framework adapters and the devtools panel: nine review findings
+
+A review of the React, Vue and Svelte adapters and the devtools panel found nine bugs, each with a repro. Each fix has a regression test that failed on the old code.
+
+**Streaming SSR** (`streaming-hydration.test.tsx`, new, over React 19.3's browser and Node server builds; `streaming-security.test.tsx`). A1: `createStreamingTransform` wrote a batch at any chunk end in text, so a shell larger than a chunk put it inside a list item, and a large `<Suspense>` segment put it inside `<div hidden id="S:0">`, which React's reveal moves into the boundary. `HtmlBoundary` now reads bytes and keeps a stack of open elements and boundary comments. A batch goes directly inside `<body>` for a document, or at the top level of a fragment, outside every boundary, right after a tag or a comment, at the first such point in a chunk. The close-time drain skips a stream that ended inside markup. A2: `HydrationBoundary` folds the batches already on the page into the root's `hydrate` as it builds it, so the hydrating render reads them and no fetch starts; a reused uncommitted root catches up in render, and a `StreamCursor` per root keeps a re-run effect from applying a batch twice. A5: a root built for a new `def` gets no cursor and takes no streamed batch. `pitfalls/stream-chunks-split-tags.md` claimed the mid-text placement was handled; it now describes the real rule, and corrects the view size to 2,048 bytes in the browser build and 4,096 in the Node and edge builds.
+
+**`HydrationBoundary` and `<Activity>`** (`hydration-boundary.test.tsx`). A4: an `<Activity>` hide ran the passive cleanup that disposed the root. React gives no signal that tells a hide from an unmount, so the cleanup now suspends the root and disposes it after `RELEASE_GRACE_MS`, a minute, unless the effect runs again. StrictMode keeps one root, suspended and resumed. Test (a) pinned an immediate dispose and now advances the grace period; (g) does the same. New pitfall `effect-cleanup-not-unmount.md`; `render-phase-root-leak.md` rule 5 and its citations updated.
+
+**Suspense** (`suspense.test.tsx`). A3: `suspendUntilData` suspended on `data === undefined`, which looped on a load that settled on `undefined`. It now suspends only until a success, data or a `lastUpdatedAt`. New pitfall `suspend-on-undefined-data.md`. Vue and Svelte have no Suspense hook.
+
+**Vue** (`vue.test.ts`). A7: `useRoot()` outside `setup()` threw a raw `TypeError`; it checks `hasInjectionContext()` first. A8: `useValue`'s getter ignored `isEqual`; it now returns the value it last returned while `isEqual` holds, as React does. The adapter-parity suite gained that scenario, with a `lacks` list on `Harness`: Svelte skips it, having no `isEqual`.
+
+**Svelte** (`svelte.test.ts`, fixture `FieldObject.svelte`). A6: a nested bind on an object-valued `fieldStore` edited the field's value and `initial` in place and set the same object back. Each subscriber now gets a shallow copy of a plain-object or array value. A raw `Field` bound the same way needs a core change, recorded in `BACKLOG.md` and SPEC §16.3; Vue's `v-model` on a member has the same shape and is documented in §16.2. New pitfall `bind-mutates-in-place.md`.
+
+**Devtools** (`store-reattach.test.tsx`, new). A9: StrictMode's re-attach logged the bus's replay again. `attach` marks the replay, and a replayed construct or suspend that repeats the tree updates it without a timeline row. A cell's new `constructed` flag tells a controller from a bare ancestor the replay created first.
+
+**Spec.** §16.1, §16.2, §16.3, §16.4 and §22 describe the new behaviour. `docs/guide/ssr.md`, `RECIPES.md`, `API.md` and the three adapter READMEs too. No public signature changed; `installStreamingIntake` keeps its signature, and the cursor functions stay internal to `streaming.ts`. Three `[idea]` entries went to `BACKLOG.md`: the raw-`Field` core change, a Vue write-through for `v-model` on a member, and a configurable release grace.
+
+**Core's new `'commit'` write source.** The streaming hydrator captures it beside `'fetch'`, `'write'` and `'replace'`: it is the data the server rendered once no optimistic guess is left, and skipping it would ship the value from before the mutation (`coverage-streaming.test.tsx`). The devtools panel shows every source as plain text, so a commit row reads `source: commit` with no new mapping (`coverage-panel-timeline.test.tsx`). The satellites typecheck against core's built `dist`, which lacks `'commit'` until the next build, so `pnpm --filter @kontsedal/olas-react typecheck` and the devtools one report TS2367 and TS2322 there; against core's source both are clean.
+
+**Size.** The budgets in `.size-limit.json` went to 5.2 KB for react and 0.97 KB for vue and svelte, from esbuild-and-brotli estimates, since this pass ran no build (`decisions/esm-only-build.md`). To keep react small, `HtmlBoundary` became the closure `htmlBoundary()` and dropped its void-element list: React writes `<br/>`, and an element left open closes with its parent.
+
+## [2026-09-25 20:30] ingest | the query engine: twelve review findings
+
+A review of the query engine found twelve bugs, each with a repro. Each fix has a regression test that failed on the old code: every fix was switched off once and its tests failed.
+
+**Optimistic layers** (`optimistic-layers.test.ts`, new). Q1: a canonical `write` set each live baseline to the value on screen, so a rollback kept the guess; the write now re-runs its patch on each baseline, and a `replace` value still becomes each one. Q2: `finalize()` left the baselines below it alone, so an older layer's rollback lost a newer commit; the committed layer's updater now runs on each of them. The fold is skipped when a fetch or a hydrated row landed while the layer was live, because re-running a toggle over a read that holds it would flip it back. An updater that throws on a baseline makes the entry mark itself stale and refetch once the layers settle. New pitfall `visible-data-is-not-a-baseline.md`. The property models in `tests/property/` now drive whole-value and patch writes and model both rules; each rule was broken three ways to confirm the models fail.
+
+**The `'commit'` source** (`plugin-host.test.ts`, "onWrite — commit"). Q6: `finalize()` reported nothing to plugins. `WriteSource` gains `'commit'`, reported once no layer on the entry is live, with the data on screen and the server clock as `updatedAt`. A commit made under another layer is reported by the settle that clears the last one, a rollback included, in place of its `'rollback'`. The rule keeps a canonical-only plugin from taking a pending guess and from missing the committed value.
+
+**Parks** (`query-focus-online.test.ts`). Q3: `cancel()` now drops a fetch parked for the network, its callers rejecting with an `AbortError`. Q5: a fetch made online adopts the park, so a parked `invalidate()` settles and a late `online` event fetches nothing. An infinite refetch runs the parked page requests after it, and an online page request serves the parked ones of its direction.
+
+**Infinite paging** (`infinite-edges.test.ts`). Q4: a refetch starts from `pageParams[0]`, where it started at `initialPageParam`; SPEC §5.11 said both, and now says the first. Pages written into an entry with no params pad with `initialPageParam`, not `undefined`. Q8: paging before the first page joins the first load.
+
+**SSR** (`ssr.test.ts`). Q9: a buffered row with `undefined` data gives `status: 'success'`, as a live one does. Q10: `dehydrate()` ships `Entry.serverState()`, the data beneath any live guess, stamped with `serverUpdatedAt`, or `0` when the server never answered.
+
+**Subscriptions** (`use-edges.test.ts`, `select.test.ts`, `cache.test.ts`). Q12: `firstValue()` never waits on nothing. On an idle entry with nothing coming it starts a fetch, and a cancel while it waits makes the entry fetch again one microtask later, unless data arrived. It never rejects for a cancel, so a Suspense boundary loads again. It stays compatible with the React hook's new rule, which suspends until a success, data or a `lastUpdatedAt`. Q11: `firstValue()` and `refetch()` skip `select` for `undefined`. Q7: a local cache compares keys by `stableHash`, and an equal key does nothing.
+
+**Spec, docs and wiki.** SPEC §5.2, §5.3, §5.5, §5.9, §5.11, §6.4, §13.1, §15 and §21.9 describe the new behaviour; `PLUGINS.md`, `API.md`, `docs/guide/queries.md` and the glossary too. `entities/entry.md` was rewritten for the new sections; `modules/query.md`, `decisions/canonical-vs-optimistic-writes.md`, `decisions/engine-assurance.md`, `decisions/infinite-query-parity.md`, `decisions/plugin-host-v2.md`, `flows/ssr.md`, `flows/plugin-lifecycle.md` and `entities/query-client.md` were updated. Wiki citations into the engine files were shifted by the diff's line map.
+
+**Public surface.** `WriteSource` gains `'commit'`, the only signature change. TSDoc on `AsyncState`, `Snapshot`, `Query.write` and `Query.cancel` changed. `BACKLOG.md` gained one `[idea]`: a `'write'` event under a live optimistic write carries the guess, which a canonical-only plugin stores.
+
+## [2026-09-25 21:05] ingest | a set of the held object is a change; form baselines are copies
+
+A follow-up from the adapters agent. Svelte writes `bind:value={$person.first}` on a raw `Field` as an in-place assignment on the field's value object, then `set` with that same object. The field heard no change, and its `initial` was that object, so `reset()` returned the edit. `FieldImpl` now boxes its value (`Held<T>`), and `set` of the held object writes a new box: subscribers hear it, validators run, `isDirty` is recomputed. A primitive equal by `Object.is` is still no change, and `setAsInitial` and `reset` leave the same object alone, so a structurally shared refetch through a reactive `initial()` re-validates nothing. The first attempt wrote a stand-in and then the value inside the `batch`. `@preact/signals-core` reconciles such a pair as no change, which `modules/signals.md` now records.
+
+Every baseline is a `copyPlainData` copy: plain objects and arrays at every depth, anything else by reference, which is the part `isStructurallyEqual` compares by content. The field copies in its constructor, `setAsInitial` and `rebaseInitial`, and `reset()` writes a fresh copy unless the value already matches. A `Form` keeps a fixed `initial` as `staticInitial`, and a `FieldArray` its `initialItems`; both reset from a fresh copy. A thunk `initial` is not copied, so a nested bind on a field seated from query data still edits the cache, which SPEC §16.3 says.
+
+Pinned by `form-regressions.test.ts`, "an object value edited in place and set back, as a Svelte nested bind does" and "copyPlainData, the baseline copy". Pages: `modules/forms.md`, `modules/signals.md`, `modules/svelte.md`, `modules/vue.md`, `pitfalls/bind-mutates-in-place.md`. SPEC §8.1, §16.2 and §16.3, the svelte and vue READMEs, and the BACKLOG entry (removed) follow.
+
+## [2026-09-25 20:57] ingest | cross-tab, entities and the 'commit' source: four findings and the guess-carrying write event
+
+The second phase of the persist and queue review. Each fix has a regression test that failed on the old code.
+
+**Core, small.** `WriteEvent.server` is the entry's server truth, what `dehydrate()` ships, read from `serverState()` at every emission site (`flows/plugin-lifecycle.md`). `host.queries.setData` is a plugin-owned optimistic write that returns its `Snapshot`. Both are pinned in `plugin-host.test.ts`. The core agent's BACKLOG idea, "a canonical write event under a live optimistic write carries the guess", is fixed by `server` and removed. `devtools.ts` lists `'commit'`.
+
+**P6, entities.** `update` wrote a whole value built from the store, which shows a guess, so core set every baseline to it and a failed like stayed everywhere. The backprop now patches each entry's own copy, and core re-runs the patch per baseline. The store keeps walking every source, so it shows a live guess and holds settled data once the layers settle (`optimistic-backprop.test.ts`). **P11:** the rebuild keeps prototypes through `copyRecord`.
+
+**P7 and P10, cross-tab.** A peer's guess arrived as a canonical write, and a peer's `replace` as a patch. Messages now carry `source`, plus `server` for a write made under a guess. The receiver shows a guess through `host.queries.setData`, settles it on the peer's rollback or commit, and drops it after 30 seconds of silence. It applies a replace as a replace (`optimistic-relay.test.ts`, and `packages/integration/tests/optimistic-cross-tab.test.ts` with the persister and entities).
+
+**'commit' consumers.** The persister stores `server` for every source, so a guess is never stored and a commit is. A commit stamped `0` is skipped, and the `<=` tie rule is what lets a commit replace its fetch's row. Cross-tab relays commits with `optimistic` on and off, and entities walks them.
+
+**Found, left to core.** A commit above a rolled-back layer keeps that layer's guess on screen and reports it as `'commit'` (`BACKLOG.md`). The fix is in `Entry.finalize`, outside this phase's edit area.
+
+**Housekeeping.** Every `client.ts` citation in the wiki was re-pinned through a line diff of this phase's edits. `modules/cross-tab.md` goes to `medium` for its new sections. SPEC §13.1, §13.2, §13.4 and §18.1, PLUGINS.md and the cross-tab, entities and persist READMEs describe the behaviour. Public surface: core's `QueryHost.setData` and `WriteEvent.server`, and cross-tab's `SetDataMessage.source`, `SetDataMessage.server` and new `RelayedSource` type (`api:update` needed).
+
+## [2026-09-25 21:15] ingest | an out-of-order rollback replays the layers above it
+
+**The bug.** The phase-2 agent found it while wiring the plugins onto the query-engine fixes, and filed it in BACKLOG. A rollback of a layer below the top threaded its baseline onto the layer above and left the rest. The layers above, and the data on screen, still held its delta. Layer A sets `a`, layer B sets `b`, A fails: the screen kept `{ a: true, b: true }`, and B's commit reported that as `'commit'`, which the persister stored and cross-tab relayed.
+
+**The fix** (`entry.ts`, `infinite.ts`, `replayFrom`). The rollback now replays the layers above the removed one over the baseline it restored: each baseline is the one below with that layer's updater applied, and the screen takes the top's result, structurally shared so an unchanged replay reports no write. A layer a fetch or hydrated row replaced passes through, as in the commit fold. A plain value (a zero-parameter updater, such as cross-tab's mirrored `() => data`) and an updater that throws cannot be replayed exactly; the entry then reconciles, stale plus a refetch once the last layer settles. The replay runs at the rollback itself rather than at the next settle, as the coordinator's note put it: the deferral in SPEC §6.4 existed only because nothing could replay, and replaying at once also gives the `'rollback'` event and `WriteEvent.server` the corrected value. `InfiniteEntry` records now keep the `pageParams` their write was given, so the replay and the commit fold align params as the write did.
+
+**Tests.** `optimistic-layers.test.ts`, "an out-of-order rollback leaves no guess behind" (seven tests, the reproduction first). R-Q3.1 in `regressions.test.ts` pinned the failed delta staying on screen and now expects the replayed value. Both property models replay; the replay was switched off, and then made to replay layers a read replaced, and both models failed each time.
+
+**Spec, BACKLOG and wiki.** SPEC §6.4's non-top bullet and the "not full rebasing" paragraph now describe the replay. BACKLOG loses the phase-2 entry and the `[dropped]` "Full updater-replay rebasing" item, which this lands: the updater closures it said rebasing would keep alive are kept since the commit fold. `entities/entry.md`, `pitfalls/visible-data-is-not-a-baseline.md` (a third case), `decisions/engine-assurance.md`, `modules/query.md`, `entities/query-client.md` and the glossary were updated; citations into `entry.ts` and `infinite.ts` were re-pointed. No public signature changed.
+
+## [2026-09-25 22:40] ingest | the docs site gets its own theme and a shorter path in
+
+The site was stock VitePress: an indigo accent from the default kit, an empty right half in the hero and six identical feature cards. The ask was "simple, easy to understand and pretty".
+
+**Theme** (`docs/.vitepress/theme/`). The house palette from `tokens.css`, sea teal and cool neutrals, in both themes, and the favicon moved off indigo. Atkinson Hyperlegible Next and Mono, self-hosted through two new root devDependencies. A home hero of its own, `HomeHero.vue`, with `TwoTrees.vue`, the two-trees diagram, as its figure; the same component replaces the ASCII tree in Concepts. Tables lost their stripes, code blocks took an edge, and the paragraph under a page title became a lead.
+
+**Content.** The home page is three sections: one feature in three files (controller, view, test), what the core does, and the package list. A new page, `guide/what-is-olas.md`, says what the library is, the problem, the idea, one controller and when it fits. Getting started puts install and render behind `<FrameworkPicker />`, and each framework's tab now carries its own `Register` augmentation, so root.ts is framework-free. The sidebar is regrouped for a new reader, and the nav has four items.
+
+**Reference.** `docs-sync.mjs` promotes each api-documenter title to an H1, renames the "Home" crumb, and writes the index from each `package.json` `description` instead of api-documenter's empty table.
+
+**Checked.** `check:doc-snippets` on the four changed pages (22 snippets, 0 errors), `prose:lint` clean on the new and edited pages, biome on the theme and the sync script, and `vitepress build` with its dead-link check. The pages were screenshotted at 1440px and 390px in both themes; the picker was driven by keyboard and click, and its choice survived a page change. `decisions/docs-site.md` has the theme section, the reference section and two pitfalls: a bare `display: grid` widened the phone layout, and headless Chrome's minimum window width fakes an overflow. `decisions/ui-rules.md` lists the docs site as a surface.
+
+Not deployed. The site still goes live only by pushing the built output to `gh-pages` (BACKLOG, Release).
+
+## [2026-09-25 20:10] external | the 1.0 release published once before its version PR
+
+**What happened.** PR #3 (`release/1.0`) merged at 19:46 UTC, and the Version workflow opened PR #4. The Publish workflow ran at 19:47, before #4 merged, so `main` still carried the pre-release versions. Ten packages were already on npm at 0.8.0 and were skipped. The four never published before, codemod, eslint-plugin, svelte and vue, sat at `0.0.0` and went to npm at that version, with `@0.0.0` git tags. PR #4 then merged, and a second Publish run released 1.0.0 for all fourteen; `latest` points at 1.0.0 everywhere. The push that merged #4 failed the Version workflow: `changeset version` exits 1 with "No unreleased changesets found", and `changesets/action/version` runs it regardless.
+
+**Fixes.** `publish.yml` now refuses to run while a changeset is on `main`, since `changeset version` deletes the ones it applies; `main` held 110 at the first run. `version.yml` counts pending changesets and skips its remaining steps at zero. CLAUDE.md's Releasing section says both.
+
+**Left open.** The four `0.0.0` versions and their tags are still published. The working tree's uncommitted fixes, with 25 patch and minor changesets, were not on `main`, so 1.0.0 shipped without them; they release as core 1.1.0 and 1.0.x patches once committed.

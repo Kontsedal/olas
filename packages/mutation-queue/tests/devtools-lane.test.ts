@@ -113,27 +113,21 @@ describe('mutation queue — devtools lane', () => {
       }),
     )
     await root.waitForIdle()
-    seed(adapter, id, { mutationId: id, runId: 'a', variables: { status: 503 }, seq: 1 })
-    seed(adapter, id, { mutationId: id, runId: 'b', variables: { status: 422 }, seq: 2 })
+    // An entry the queue gives up on lets its group go on; one it keeps for a
+    // retry ends the group's pass, so that one is last.
+    seed(adapter, id, { mutationId: id, runId: 'b', variables: { status: 422 }, seq: 1 })
     seed(adapter, id, {
       mutationId: id,
       runId: 'c',
       variables: { status: 503 },
-      seq: 3,
+      seq: 2,
       attempts: 2,
     })
+    seed(adapter, id, { mutationId: id, runId: 'a', variables: { status: 503 }, seq: 3 })
     await replay()
 
     const results = lane.filter((p) => (p as { kind: string }).kind === 'replay:result')
     expect(results).toEqual([
-      {
-        kind: 'replay:result',
-        mutationId: id,
-        runId: 'a',
-        attempt: 1,
-        result: 'retry-later',
-        error: outage,
-      },
       {
         kind: 'replay:result',
         mutationId: id,
@@ -150,7 +144,47 @@ describe('mutation queue — devtools lane', () => {
         result: 'max-attempts',
         error: outage,
       },
+      {
+        kind: 'replay:result',
+        mutationId: id,
+        runId: 'a',
+        attempt: 1,
+        result: 'retry-later',
+        error: outage,
+      },
     ])
+    root.dispose()
+  })
+
+  test('an entry kept for a retry reports the entries behind it as waiting', async () => {
+    const id = 'lane/waiting'
+    const outage = new Error('HTTP 503')
+    registered(id, async () => {
+      throw outage
+    })
+    const adapter = memoryAdapter()
+    const { root, lane, replay } = laneRoot(
+      mutationQueuePlugin({ storage: adapter, keyPrefix: id, onReplayError: () => {} }),
+    )
+    await root.waitForIdle()
+    seed(adapter, id, { mutationId: id, runId: 'a', seq: 1 })
+    seed(adapter, id, { mutationId: id, runId: 'b', seq: 2 })
+    seed(adapter, id, { mutationId: id, runId: 'c', seq: 3 })
+    await replay()
+
+    expect(lane.filter((p) => (p as { kind: string }).kind !== 'replay:attempt')).toEqual([
+      {
+        kind: 'replay:result',
+        mutationId: id,
+        runId: 'a',
+        attempt: 1,
+        result: 'retry-later',
+        error: outage,
+      },
+      { kind: 'replay:skipped', mutationId: id, runId: 'b', reason: 'waiting' },
+      { kind: 'replay:skipped', mutationId: id, runId: 'c', reason: 'waiting' },
+    ])
+    expect(adapter.store.size).toBe(3)
     root.dispose()
   })
 

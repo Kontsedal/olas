@@ -30,6 +30,10 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 
 [from W14] The site is live at https://kontsedal.github.io/olas/, served from the `gh-pages` branch ("Deploy from a branch"). `docs.yml` could not deploy it: GitHub dispatches only workflows that exist on the default branch, and the `github-pages` environment allows only `main`. Once `docs.yml` is on `main`, switch Pages to GitHub Actions (`gh api -X PUT repos/Kontsedal/olas/pages -f build_type=workflow`), run the Docs workflow with `deploy` ticked, and delete the `gh-pages` branch. Until then, a docs change goes live only by rebuilding the site and pushing it to `gh-pages` by hand.
 
+### [idea] Put the framework picker on the other guides' view code
+
+The home page and Getting started show React, Vue or Svelte through `<FrameworkPicker />` and `<ForFramework>` (`.wiki/decisions/docs-site.md`). Mutations, Forms and Testing each show one React view block, and send Vue and Svelte readers to the adapter pages. Each of those blocks could gain its Vue and Svelte versions behind the same picker.
+
 ## Toolchain
 
 ### [planned] Take vitest 5.0.2 and size-limit 14.0.1 once pnpm's release-age window passes
@@ -61,6 +65,22 @@ vitest 5 warns that the benchmarks read core's exports through module-runner get
 ### [idea] A `refetchInterval` tick can land over a live optimistic write
 
 A subscriber, focus, reconnect or `prefetch` that wants a fetch while an optimistic write is live now waits for the write to settle (SPEC §5.9). An interval tick does not: it skips only while fetching, paused or hidden, never consults staleness, so its response can overwrite the guess on screen, and a later rollback restores that response. Holding the tick back the same way would close it, at the cost of a polled query going quiet for the length of a slow mutation (`packages/core/src/query/client.ts`, the interval handler).
+
+### [idea] A mutation-queue collapse during a replay of its entry sends beside the replay
+
+A `dedupeBy` run that collapses onto an entry while a replay of that entry is out goes to the server at once, beside the replay. The two requests can land in either order, so an autosave can end on the older draft. The entry itself is safe: the replay's success keeps the rewrite (`.wiki/pitfalls/success-drops-a-rewritten-entry.md`). Making the collapse wait for the replay would close it, through the entry's Web Lock in the tab that replays and some signal the tab that holds the key can see. That adds a wait before a live request and a second cross-tab channel (`packages/mutation-queue/src/plugin.ts`, `record` and `replayEntry`).
+
+### [idea] `ctx.provide` after dispose writes into the dead controller
+
+`ctx.provide` has no `assertLive` guard. After dispose it creates or updates the dead instance's scope map and bumps the root-wide `scopesVersion`, which invalidates every live `inject` memo for nothing. §4 lists the factories that throw after dispose and the reads that do not. `provide` is a write that is neither, so a guard would be a small API decision (`packages/core/src/controller/instance.ts`, `provide`).
+
+### [idea] `v-model` on a member of an object-valued field in Vue
+
+`useField(field).value` returns the field's value object, so `v-model="value.name"` assigns on it in place and nothing calls `field.set`. A proxy on the ref's value whose `set` trap writes a copy through `field.set` would make it work, at the cost of the value's identity for every reader, and it would need care for arrays and nesting. SPEC §16.2 names the workaround, a writable `computed` (`packages/vue/src/index.ts`, `useField`).
+
+### [idea] Make `HydrationBoundary`'s release grace configurable
+
+A cleanup suspends the boundary's root and disposes it after `RELEASE_GRACE_MS`, one minute, because React runs the same cleanups for an unmount and an `<Activity>` hide. An app that keeps a hidden `<Activity>` for longer loses the root on show, and an app that remounts its boundary often keeps a suspended root, with its plugins, for that minute. A prop could set the grace, if an app needs another value (`packages/react/src/context.ts`, `.wiki/pitfalls/effect-cleanup-not-unmount.md`).
 
 ## Dropped
 
@@ -101,10 +121,6 @@ Entries replay in order within one mutation `id`, and different ids replay indep
 ### [dropped] A path-typed `form.fieldAt('a.b.c')` lookup
 
 Nested access (`form.fields.a.fields.b`) covers the cases. Template-literal path types slow the compiler on deep schemas, and they would give a second way to reach every field.
-
-### [dropped] Full updater-replay rebasing for concurrent optimistic rollback
-
-Rollback is snapshot-based, with chain-splice ordering. Rebasing would keep every updater closure alive for a snapshot's lifetime and require updaters to be pure. `concurrency: 'serial'` already avoids the case for conflicting writes.
 
 ### [dropped] A `defineController` generic for per-root deps
 
