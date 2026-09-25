@@ -219,7 +219,7 @@ export const profileEditor = defineController((ctx, props: { userId: string }) =
 })
 ```
 
-The form re-applies `initial()` when its signals change, but only while the form is clean (§8.4). A background refetch therefore cannot overwrite a user mid-edit. `resetOnInitialChange` changes the rule: `'never'` reads `initial()` once, and `'always'` re-seats a dirty form too. `reset()` re-reads `initial()` for the latest baseline.
+The form re-applies `initial()` when its signals change, but only while the form is clean (§8.4). A background refetch therefore cannot overwrite a user mid-edit. The rule covers the first value too, so data that loads after the user started typing leaves the edit in place. `resetOnInitialChange` changes the rule: `'never'` seats the first value once and ignores later ones, and `'always'` re-seats a dirty form too. `reset()` re-reads `initial()` for the latest baseline.
 
 ## Lists: `createFieldArray`
 

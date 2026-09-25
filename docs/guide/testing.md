@@ -182,7 +182,7 @@ export function setup() {
 
 Two other ways to wait, for narrower cases:
 
-- `state.firstValue()` resolves with a query's first success, or rejects on its first failure.
+- `state.firstValue()` resolves with a query's data at once when it has some. Otherwise it resolves with the first success, or rejects on the first failure.
 - A mutation's `run(vars)` returns a promise that settles with that run.
 
 A `createCache` local cache counts toward `waitForIdle()` too. Its entry lives in its controller rather than in the root's query cache, and the root tracks it all the same, with or without a query engine.

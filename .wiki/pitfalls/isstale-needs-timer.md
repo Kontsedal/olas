@@ -3,9 +3,9 @@ name: isstale-needs-timer
 description: Expiry cannot be a computed of Date.now() — its deps don't change as time passes. Use a Signal with a timer, and don't hand that timer a raw delay.
 type: pitfall
 covers:
-  - packages/core/src/query/entry.ts:140-247
-  - packages/core/src/query/entry.ts:489-497
-  - packages/core/src/query/entry.ts:786-791
+  - packages/core/src/query/entry.ts:152-269
+  - packages/core/src/query/entry.ts:532-540
+  - packages/core/src/query/entry.ts:898-903
   - packages/core/src/expiry-timer.ts
   - packages/core/src/utils.ts
   - packages/core/src/controller/root.ts

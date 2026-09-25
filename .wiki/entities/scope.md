@@ -4,10 +4,10 @@ description: Typed cross-tree data slot — defineScope + ctx.provide/inject for
 type: entity
 covers:
   - packages/core/src/scope.ts
-  - packages/core/src/controller/instance.ts:164
-  - packages/core/src/controller/instance.ts:186-229
-  - packages/core/src/controller/instance.ts:593-606
-  - packages/core/src/controller/types.ts:300-301
+  - packages/core/src/controller/instance.ts:165
+  - packages/core/src/controller/instance.ts:187-230
+  - packages/core/src/controller/instance.ts:637-650
+  - packages/core/src/controller/types.ts:302-303
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/scope.test.ts }

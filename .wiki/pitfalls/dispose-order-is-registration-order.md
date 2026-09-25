@@ -3,8 +3,8 @@ name: dispose-order-is-registration-order
 description: Teardown is one reverse-registration pass over all entry kinds, not the phased children-then-effects-then-onDispose order SPEC used to state; whether an onDispose hook can still reach an effect depends on which was created first.
 type: pitfall
 covers:
-  - packages/core/src/controller/instance.ts:290-339
-  - packages/core/src/timing/debounced.ts:112-135
+  - packages/core/src/controller/instance.ts:298-347
+  - packages/core/src/timing/debounced.ts:121-140
 edges:
   - { type: uses, target: ../entities/controller-instance.md }
   - { type: uses, target: ../modules/timing.md }
@@ -20,7 +20,7 @@ confidence: high
 
 `SPEC.md` §4 described dispose as *"Cleanup runs bottom-up: children → caches/effects → `onDispose` hooks"* from bootstrap until 2026-09-03. That reads like three phases with hooks last. There are no phases.
 
-`ControllerInstance.dispose()` walks **one** list — every `ctx.*` primitive, every child, every hook, in creation order — backwards, dispatching on `entry.kind` (`instance.ts:290-339`). Nothing groups by kind. So the relative order of an effect and an `onDispose` hook is decided entirely by which was created first:
+`ControllerInstance.dispose()` walks **one** list — every `ctx.*` primitive, every child, every hook, in creation order — backwards, dispatching on `entry.kind` (`instance.ts:298-347`). Nothing groups by kind. So the relative order of an effect and an `onDispose` hook is decided entirely by which was created first:
 
 ```ts
 ctx.effect(...)                     // registered first
@@ -34,7 +34,7 @@ The guarantee is LIFO — a thing is torn down before whatever it was built on t
 
 ## Why it matters
 
-It decides whether a hook can still use a collaborator. The live case is flushing a pending `debounced` write at unmount (§9). `TimingSignal.dispose()` calls `cancel()` and tears down the internal effect at `debounced.ts:132-135`, so it **drops** the pending value. Keeping the write means `flush()` first — and `flush()` only lands if the effect that consumes the debounced signal is still subscribed:
+It decides whether a hook can still use a collaborator. The live case is flushing a pending `debounced` write at unmount (§9). `TimingSignal.dispose()` calls `cancel()` and tears down the internal effect at `debounced.ts:137-140`, so it **drops** the pending value. Keeping the write means `flush()` first — and `flush()` only lands if the effect that consumes the debounced signal is still subscribed:
 
 ```ts
 const settled = debounced(width.signal, 500)

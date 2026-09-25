@@ -9,6 +9,7 @@ covers:
   - packages/persist/src/query-cache.ts
   - packages/persist/src/index.ts
   - packages/cross-tab/src/plugin.ts
+  - packages/cross-tab/src/channel.ts
   - packages/entities/src/index.ts
   - packages/core/src/forms/form.ts
   - packages/core/src/query/client.ts
@@ -16,6 +17,9 @@ edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/react/tests/streaming-security.test.tsx }
   - { type: tested-by, target: ../../packages/mutation-queue/tests/security.test.ts }
+  - { type: tested-by, target: ../../packages/cross-tab/tests/security.test.ts }
+  - { type: tested-by, target: ../../packages/cross-tab/tests/ssr.test.ts }
+  - { type: related, target: ../modules/cross-tab.md }
   - { type: related, target: ../pitfalls/stream-chunks-split-tags.md }
   - { type: related, target: ../pitfalls/proto-key-assignment.md }
 last_verified: 2026-09-25
@@ -55,9 +59,20 @@ It reproduced each finding against the built `dist` with probe scripts outside t
 | L3 | low | a deeply nested key or a `null` entry made `createRoot({ hydrate })` throw | per-entry guard in `QueryClient`; `entries` must be an array | core `regressions.test.ts` |
 | L4 | low | an async query-cache restore failure skipped `onError` | `.then(ok).catch(onError)` | `query-cache-security.test.ts` |
 | L5 | low | the entities deep merge let a `__proto__` key replace an entity's prototype | own-key reads, `defineProperty` writes | `merge-security.test.ts` |
-| L6 | low | a cross-tab message could throw out of the listener, or silence a peer with `msgId: Number.MAX_VALUE` | try/catch to `onWarn`; safe-integer `msgId`; `validate` option | `cross-tab/tests/security.test.ts` |
+| L6 | low | a cross-tab message could throw out of the listener, or silence a peer with `msgId: Number.MAX_VALUE` | try/catch to `onWarn`; safe-integer `msgId`; `validate` option. The `msgId` half was incomplete: see R2 below | `cross-tab/tests/security.test.ts` |
 | L7 | low | a crafted URL hash crashed an app mounting the devtools panel with `urlHashKey` | validate the parsed hash | devtools tests |
 | L8 | low | a page element with id `__OLAS_HYDRATION__` clobbered the streaming intake | the bootstrap and each batch check the global's shape | `streaming-security.test.tsx` |
+
+## Later findings (1.0 review)
+
+A second review pass reproduced two more cross-tab holes with probes. Each fix has a regression test that failed on the old code.
+
+| # | Severity | Finding | Fix | Test |
+|---|---|---|---|---|
+| R1 | high | the default channel factory opened a real `BroadcastChannel` on a server. Node (every supported version), Bun and Deno define one, and it reaches every root in the process, so per-request roots read each other's writes | `defaultChannelFactory` opens a channel only in a browser scope: a `document`, or a `WorkerGlobalScope` outside Deno and Bun | `cross-tab/tests/ssr.test.ts` |
+| R2 | low | `receive` moved a peer's cursor before validating, so one malformed `{ sourceId, msgId: Number.MAX_SAFE_INTEGER }` silenced that peer for good | the cursor moves only for an applied message; a `msgId` 64 or more below the cursor restarts it | `cross-tab/tests/security.test.ts` |
+
+R1 changes what "same-origin script" means on a server: there it is every request's root, and requests do not trust each other. The trust model above assumes one user per process, which a browser gives and a server does not. `../modules/cross-tab.md` has the detection rule and why it asks for a browser scope instead of a `BroadcastChannel` constructor.
 
 ## Reviewed and fine
 

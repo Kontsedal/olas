@@ -9,10 +9,12 @@ covers:
   - packages/core/src/forms/form-types.ts
   - packages/core/src/forms/validators.ts
   - packages/core/src/forms/index.ts
+  - packages/core/src/forms/bind.ts
 edges:
   - { type: related, target: ../decisions/trust-model.md }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/form-regressions.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/validators.test.ts }
   - { type: uses, target: signals.md }
   - { type: uses, target: ../decisions/brand-markers-not-classes.md }
@@ -32,12 +34,13 @@ Form primitives — `Field<T>`, `Form<S>`, `FieldArray<I>` — plus stdlib valid
 
 - **`types.ts`** — `Validator<T>`, plus `ValidatorResult` as `string | null | FormIssue[]` and `FormIssue` as `{ path: (string|number)[]; message }`. Validators may target descendant fields by path (T5.2).
 - **`validators.ts`** — stdlib functions + the Standard-Schema `validator()` adapter. Stdlib fns return `Validator<T>` and short-circuit on `null` and `undefined` so they compose with `required()`. `validator(schema)` returns **all** issues as `FormIssue[]` (each with its `path`) — `[]` on success.
-- **`field.ts`** — `FieldImpl<T>` class + `createField` factory + `debouncedValidator`. Field IS a `ReadSignal<T>`, delegating `.value`, `peek` and `subscribe` to an internal signal. It owns the validator runner. Three error channels merge into `errors`: `validatorErrors$` from its own validators, `serverErrors$` from `setErrors`, and `formErrors$` from parent-form-validator routing (T5.2).
+- **`field.ts`** — `FieldImpl<T>` class + `createField` factory + `debouncedValidator`. Field IS a `ReadSignal<T>`, delegating `.value`, `peek` and `subscribe` to an internal signal. It owns the validator runner. Three error channels merge into `errors`: `validatorErrors$` from its own validators, `serverErrors$` from `setErrors`, and `formErrors`, a `RoutedErrors` with one list per routing form (T5.2). It also holds the helpers the form runners share: `asyncValidatorFlags` and `callValidators` for the sync-first order, `RoutedErrors`, and `addNodeDisposeHook`.
+- **`bind.ts`** — the `ctx`-taking `createField`, `createForm` and `createFieldArray`. Each registers one `cleanup` entry and hands the unregister function to the node's dispose hook, so an item a `FieldArray` drops leaves no entry on the controller (1.0).
 - **`form-types.ts`** — heavy type machinery: `FormSchema`, `FormValue<S>`, `FormErrors<S>`, `FieldArrayValue<I>`, `Form<S>`, `FieldArray<I>`. Plus the brand symbols.
 - **`form.ts`** — `FormImpl` and `FieldArrayImpl` + factories + brand-based predicates + the form-issue router (`resolveNode` and `routeFormIssues`).
 - **`index.ts`** — re-exports validators + the `Validator`, `ValidatorResult` and `FormIssue` types.
 
-`form.ts` is the longest file (~450 lines). Read it side-by-side with `form-types.ts`.
+`form.ts` is the longest file (~1,400 lines). Read it side-by-side with `form-types.ts`.
 
 ## Brand markers
 
@@ -56,7 +59,7 @@ Used everywhere `Form`/`FieldArray`/`Field` are mixed in a child slot. We prefer
 
 `Form.value`, `errors`, `isValid`, `isDirty`, `touched`, `isValidating` are all `computed(() => ...)`. They iterate `Object.values(this.fields)`.
 
-- **`value`** reads `child.value` for every child with no branch. `Field`, `Form` and `FieldArray` are each a `ReadSignal` of their value (`form.ts:308-315`). See `../decisions/forms-are-read-signals.md`.
+- **`value`** reads `child.value` for every child with no branch. `Field`, `Form` and `FieldArray` are each a `ReadSignal` of their value (`form.ts:367-374`). See `../decisions/forms-are-read-signals.md`.
 - **`errors`, touched, validation and path resolution** branch on the child's brand, because the node kinds differ there: a `Form` has `fields`, a `FieldArray` has `items`, and a `Field` has neither.
 
 `applyPartial` (behind `set` and `setAsInitial`) calls the child's own `set` or `setAsInitial`, which all three kinds share.
@@ -67,17 +70,16 @@ Used everywhere `Form`/`FieldArray`/`Field` are mixed in a child slot. We prefer
 effect(() => {
   value = this.value$.value              # tracked
   revalidateTrigger$.value               # tracked — bump to force re-run
-  abort previous run
-  syncErrors[]   = []
-  asyncPromises[]= []
-  for v of validators:
-    r = v(value, abort.signal)
-    push to sync or async
-  if syncErrors.length: errors=sync, validating=false, return
-  if asyncPromises.length === 0: errors=[], validating=false, return
+  if locked: runId++, errors=[], return  # validateOn gate
+  abort previous run; myId = ++runId
+  round 1: call every validator not flagged async, in order
+           (a promise returned here flags it async and is held)
+  if round 1 failed: abandon held promises, errors=sync, return
+  round 2: call the async-flagged validators
+  if nothing pending: errors=[], validating=false, return
   validating=true; errors=[]
-  Promise.allSettled(asyncPromises).then(results => {
-    if myId !== currentRunId: return    # superseded
+  Promise.allSettled(pending).then(results => {
+    if myId !== runId || disposed: return   # superseded, reset or disposed
     errors = collect(results); validating=false
   })
 })
@@ -89,20 +91,26 @@ The whole body runs inside an `effect`, so any signal read inside any validator 
 
 **`isValid` stability (T5.3).** `isValid` reads live `errors` when settled, but **holds the last settled validity while `isValidating`**, through a `lastValid$` signal updated at every settle point. Without this, a `debouncedValidator` cleared `validatorErrors$` on each async start, `isValid` strobed to `false` on every keystroke, and a bound submit button flickered. A field with no prior settled run defaults to valid, so there is no false-invalid flash on mount. This replaced the older "treat-as-invalid-while-validating" rule (spec §8.2 updated).
 
-`debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` rather than the widened `Validator<T>`, so a direct caller storing the result in a `string | null` signal type-checks. It stays assignable wherever a `Validator<T>` is expected (`field.ts:578-586`).
+`debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` rather than the widened `Validator<T>`, so a direct caller storing the result in a `string | null` signal type-checks. It stays assignable wherever a `Validator<T>` is expected (`field.ts:703-711`).
 
-**A sync failure abandons the pass's async validators (1.0).** A pass runs every validator, sync and async together. When a sync one fails, the pass settles on its errors at once and does not wait for the async ones. `abandonAsyncResults` in `utils.ts` then aborts them and attaches a no-op handler to each promise. Without it, the rejection that the next pass or dispose caused was unhandled: clearing a field with `required` and a `debouncedValidator` logged an `AbortError`. The field, form and field-array runners share the helper. Pinned by `regressions.test.ts`, "an async validator abandoned by a failing sync one settles quietly".
+**Async validators start only after every sync one passes (1.0, spec §8.1).** `callValidators` in `field.ts` runs a pass in two rounds (`field.ts:51-82`). A pass cannot tell a sync validator from an async one before calling it, so `asyncValidatorFlags` keeps one flag per validator. A validator counts as async when it is declared `async`, detected with `Object.prototype.toString`, or once it has returned a promise, and the flag never clears. Round one calls the unflagged validators and collects every sync error. When one failed, the async validators are not called at all, so `[required(), checkUsername]` never sends `checkUsername('')`. Before this, a pass called every validator and only then looked at the results. One gap remains: a validator that returns a promise without being declared `async`. It runs in round one until its first promise, and a sync failure in that pass aborts it. The field, form and field-array runners share the helper, the last two through `runLevelValidators` in `form.ts`. Pinned by `form-regressions.test.ts`, "async validators start only after every sync validator passes".
+
+**An abandoned promise settles quietly (1.0).** A promise round one started is abandoned when the pass fails. `abandonAsyncResults` in `utils.ts` aborts it and attaches a no-op handler. Without it, the rejection that the abort caused was unhandled and logged an `AbortError`. Pinned by `regressions.test.ts`, "an async validator abandoned by a failing sync one settles quietly".
+
+**Dispose and reset end a check in flight (1.0).** `FieldImpl.dispose()` sets `validating$` to `false` (`field.ts:466-481`), and `FormImpl.dispose()` and `FieldArrayImpl.dispose()` do the same for `topLevelValidating$`. The settle callback returns early on a disposed node, so without this a `revalidate()`, `validate()` or `submit()` waiting on the pass never resolved. A row removed from a field array mid-submit left `isSubmitting` stuck at `true`, and every later `submit()` returned `busy`. `submit()` now resolves `{ ok: false, reason: 'disposed' }` for a form disposed while it validated. `reset()` and the locked branch of the runner bump `runId`, so a validator that ignores its `AbortSignal` cannot land its result on a reset field. Pinned by `form-regressions.test.ts`.
 
 ## Form-level validators that target fields (T5.2)
 
-A validator on `FormOptions.validators` or on `FieldArrayOptions.validators` may return a `FormIssue[]` instead of a `string`. `FormImpl.runTopLevelValidators` and `FieldArrayImpl.runTopLevelValidators` collect all results, sync and async, via `appendIssues`. They hand them to `routeFormIssues(this, issues, topLevelErrors$, lastTargets)` in `form.ts`:
+A validator on `FormOptions.validators` or on `FieldArrayOptions.validators` may return a `FormIssue[]` instead of a `string`. `FormImpl.runTopLevelValidators` and `FieldArrayImpl.runTopLevelValidators` collect all results, sync and async, via `appendIssues`. They hand them to `routeFormIssues(this, issues, topLevelErrors$, lastTargets)` in `form.ts`, which passes itself as the `source` of every write:
 
 - **empty-path** (and unresolvable) issues → the node's own `topLevelErrors$`.
-- **path** issues → `resolveNode(this, path)` walks keys on a Form and numeric indices on a FieldArray to reach the target node, then calls its `setFormErrors(msgs)`.
+- **path** issues → `resolveNode(this, path)` walks keys on a Form and numeric indices on a FieldArray to reach the target node, then calls its `setFormErrors(msgs, source)`, where `source` is the routing node.
 
-Each node type (`FieldImpl`, `FormImpl`, `FieldArrayImpl`) exposes `setFormErrors`. On a Field it feeds `formErrors$`, which merges into `errors`. On a Form or FieldArray it feeds `parentFormErrors$`, which merges into that node's **`topLevelErrors`** getter, now a `computed` over its own errors plus the parent-injected ones, and is factored into `isValid`. `routeFormIssues` clears any target written last run but not this one, tracked in `lastFormErrorTargets`, so a fixed rule removes its message.
+Each node type (`FieldImpl`, `FormImpl`, `FieldArrayImpl`) exposes `setFormErrors`. On a Field it feeds `formErrors`, which merges into `errors`. On a Form or FieldArray it feeds `parentFormErrors`, which merges into that node's **`topLevelErrors`** getter, now a `computed` over its own errors plus the parent-injected ones, and is factored into `isValid`. `routeFormIssues` clears any target written last run but not this one, tracked in `lastFormErrorTargets`, so a fixed rule removes its message.
 
-**The form-level run is the only writer of the routed channels (1.0).** `FieldImpl.reset()` and `setAsInitial()` leave `formErrors$`, and `FormImpl.reset()` and `FieldArrayImpl.reset()` leave `topLevelErrors$` and `parentFormErrors$`. A reset that changes the form's value re-runs the validator effect, which recomputes them. A reset that leaves the value unchanged does not re-run it, and clearing the channels there hid a rule that still failed: `form.isValid` read `true` until the next edit. Keeping the last result also keeps async runs sane, because a no-op reset starts no new run and cannot drop an in-flight one's result. Pinned by `form.test.ts`, "regression: a no-op reset keeps form-level errors visible". The router runs inside the validator `effect`, but only *reads* the tracked form `value` and *writes* error signals, peeking elsewhere. It therefore adds no spurious dependencies and cannot loop, because errors are not part of `value`. Pinned by `regressions.test.ts` under R-F5.2. The Standard-Schema path from `validator(schema)` to `FormIssue[]` is pinned by `standard-schema.test.ts`.
+**One list per router (1.0).** Both channels are a `RoutedErrors` from `field.ts`, which keeps one list per `source` and shows them merged in the order the routers first wrote (`field.ts:91-106`). An inner form's rule and an outer form's rule can target the same field. With one shared list, the outer rule's clear pass erased the inner rule's still-failing message, so the field read `errors: []` and `isValid: true`. Now each router replaces or clears only its own list. An empty write from a router with no list is a no-op, which keeps a whole-tree clear pass from waking subscribers. Pinned by `form-regressions.test.ts`, "form-level validators that target the same field".
+
+**The form-level run is the only writer of the routed channels (1.0).** `FieldImpl.reset()` and `setAsInitial()` leave `formErrors`, and `FormImpl.reset()` and `FieldArrayImpl.reset()` leave `topLevelErrors$` and `parentFormErrors`. A reset that changes the form's value re-runs the validator effect, which recomputes them. A reset that leaves the value unchanged does not re-run it, and clearing the channels there hid a rule that still failed: `form.isValid` read `true` until the next edit. Keeping the last result also keeps async runs sane, because a no-op reset starts no new run and cannot drop an in-flight one's result. Pinned by `form.test.ts`, "regression: a no-op reset keeps form-level errors visible". The router runs inside the validator `effect`, but only *reads* the tracked form `value` and *writes* error signals, peeking elsewhere. It therefore adds no spurious dependencies and cannot loop, because errors are not part of `value`. Pinned by `regressions.test.ts` under R-F5.2. The Standard-Schema path from `validator(schema)` to `FormIssue[]` is pinned by `standard-schema.test.ts`.
 
 ## `Form.set(partial)` — batched deep merge
 
@@ -127,13 +135,17 @@ See `../pitfalls/fieldarray-factory-uses-initial.md`.
 
 `remove(i)` calls `.dispose()` on the removed item (Field/Form/FieldArray all implement it). `clear()` disposes all items.
 
-**Structural dirtiness (T5.1).** `FieldArray.isDirty` is `structurallyDirty$ || anyItemDirty`. `add`, `insert`, `remove`, `move` and `clear` flip the `structurallyDirty$` signal, and `reset()` and the `replaceInitialItems()` re-anchor clear it. Item-level dirtiness alone missed add, remove and move. A reactive `initial: () => queryData` under the default `resetOnInitialChange: 'when-clean'` then re-seated the array on a background refetch and deleted rows the user had just added; the guard is in `FormImpl` construction at `form.ts:222-252`. Construction seeds items directly rather than through `add()`, so a fresh array is clean. Pinned by `regressions.test.ts` (R-F5.1).
+**A dropped item leaves nothing on the controller (1.0).** The documented factory `(i) => createField(ctx, i ?? '')` registers a controller `cleanup` entry per item. `remove`, `clear`, `set` and `reset` disposed the item but kept the entry. A hundred add and remove cycles left a hundred entries, and the root's dispose called each dropped field's `dispose` again. `CtxInternals.register` now returns an unregister function, and `bind.ts` passes it to the node through `addNodeDisposeHook`, so the node's own `dispose` releases its entry. `createForm` and `createFieldArray` register one entry each, and their dispose hook also stops the devtools binding. Pinned by `form-regressions.test.ts`, "field arrays release the lifecycle entries of the items they drop".
+
+**Structural dirtiness (T5.1).** `FieldArray.isDirty` is `structurallyDirty$ || anyItemDirty`. `add`, `insert`, `remove`, `move` and `clear` flip the `structurallyDirty$` signal, and `reset()` and the `replaceInitialItems()` re-anchor clear it. Item-level dirtiness alone missed add, remove and move. A reactive `initial: () => queryData` under the default `resetOnInitialChange: 'when-clean'` then re-seated the array on a background refetch and deleted rows the user had just added; the guard is in `FormImpl` construction at `form.ts:271-311`. Construction seeds items directly rather than through `add()`, so a fresh array is clean. Pinned by `regressions.test.ts` (R-F5.1).
 
 ## What's NOT implemented yet
 
 - `form.fieldAt('a.b.c')` path-typed lookup — spec §20.7 says this is "deferred to post-v1". Use `form.fields.a.fields.b.fields.c` chained access.
 
 Reactive `initial` **is** implemented. This page's prior "not reactive between resets" note was bootstrap-era drift. An `initial: () => …` thunk runs in a tracking scope and re-applies when its tracked signals change, gated by `resetOnInitialChange`, whose values are `'when-clean'` by default, `'always'` and `'never'`. The `'when-clean'` guard consults `isDirty`, which now includes the structural FieldArray edits described above. Spec §8.4, §8.5.
+
+**The guard covers the first value, and a throw is routed (1.0).** The effect is at `form.ts:276-306`. It used to seat the first defined value unconditionally, so data that loaded after the user started typing overwrote the edit even under `'when-clean'`. Now only `'always'` skips the dirty check. `'never'` seats once, from the first defined value that arrives while the form is clean. The first run happens before `this.isDirty` exists, so the check calls `computeBool('isDirty')` directly. A throw from `initialFn()` is caught and routed through the form's validator reporter to `onError` as `kind: 'effect'`. Uncaught, it escaped into whatever wrote the tracked signal, and a refetch whose data changed shape rejected with the form's `TypeError`. Pinned by `form-regressions.test.ts`, "a late first initial value respects the dirty guard" and "a throwing reactive initial()".
 
 ## Partials with prototype keys (1.0)
 

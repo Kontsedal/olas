@@ -6,11 +6,12 @@ covers:
   - packages/core/src/timing/debounced.ts
   - packages/core/src/timing/throttled.ts
   - packages/core/src/timing/index.ts
+  - packages/core/src/expiry-timer.ts
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/timing.test.ts }
   - { type: uses, target: signals.md }
-last_verified: 2026-07-25
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -33,6 +34,10 @@ Without either, the effect keeps `source` subscribed for the process lifetime (G
 - `leading: true` emits on the first change of a quiet window; `trailing: true` emits the coalesced latest value when the window settles. `{ leading: true, trailing: false }` = "leading edge only"; the reverse = "trailing edge only".
 - `{ leading: false, trailing: false }` never emits and **throws** at construction.
 - With `trailing: false`, no trailing timer is scheduled and nothing is left pending, so `flush()` emits nothing (it previously leaked a value the option said should never fire). Pinned by the `timing.test.ts` options matrix (T2.7).
+
+## Timers go through `scheduleExpiry`
+
+Both windows are scheduled with `scheduleExpiry` from `expiry-timer.ts`, like every user-supplied duration (spec §21.5). The handle holds its cancellation closure, and `null` means no timer is pending. A window of `Infinity` schedules nothing: `debounced` never fires on its own, `flush()` still emits, and a leading-edge cooldown never ends. A finite window past the 32-bit `setTimeout` limit is walked in chunks and waits its full length. Both used a raw `setTimeout` before, which fires a non-finite delay after about a millisecond and overflows a larger one into an immediate fire. `debounced` calls `scheduleExpiry` at `debounced.ts:111-117`, and `throttled` at `throttled.ts:84`. Pinned by `timing.test.ts`, "durations go through scheduleExpiry".
 
 ## Throttled semantics
 

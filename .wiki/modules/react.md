@@ -97,10 +97,12 @@ Both hooks go through `useTrackedSnapshot` and `trackedView` in `hooks.ts`. The 
 
 Three rules keep it safe:
 - **Until anything is read, every change notifies.** A consumer that has read nothing cannot have been shown a stale value, and `renderHook(() => useQuery(sub))` followed by `result.current.data` keeps working.
-- **A read after commit is live.** A `rendering` flag is set on each render and cleared in an isomorphic layout effect. A getter read outside render (an event handler, an effect, a test) returns `snapshot.peek()[key]`, not the rendered value, and starts tracking the field.
+- **A read after commit is live.** An isomorphic layout effect counts the component's commits in `state.commits`, and each render keeps the count it saw as `renderedAt` (`hooks.ts:197`). A getter reads the rendered snapshot while the two match, which covers the render itself and a child reading the result in the same pass. Once this component commits again, a getter returns `snapshot.peek()[key]` and starts tracking the field (`hooks.ts:226-229`, `read`). That covers an event handler, an effect, a test, and a stale closure over an older result.
 - **Suspense tracks `data` and `status` itself**, whatever the component reads, because the suspend decision reads them.
 
 Spreading the result (`{ ...useQuery(sub) }`) calls every getter, so it tracks every field. Pinned by `packages/react/tests/fine-grained.test.tsx`; against the pre-1.0 hooks, the tests for the new behaviour fail and the four pinning old behaviour pass.
+
+**Why a counter and not a flag (2026-09-25 review).** The first version set a `rendering` flag on each render and cleared it in the layout effect. A render React throws away runs no effect, as when a transition's sibling suspends. The flag stayed set, and the committed result's getters kept returning its rendered snapshot, so a field the component never read in render was read stale. A counter only moves on a commit, so a discarded render cannot hold it. This is a cousin of `../pitfalls/render-phase-root-leak.md`: state that a render sets and only a commit resets. Pinned by "a read after commit stays live when a later render is thrown away".
 
 `useInfiniteQuery` is the same hook over sixteen fields: `useQuery`'s ten plus `pages`, `flat` and the four paging flags. It takes `{ suspense: true }` with `useQuery`'s rules.
 
@@ -142,11 +144,13 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 - on React (re-)mount → `controller.resume()`
 - on React unmount → `controller.suspend()`
 
-**Refcounted across wrappers (T4.6).** A module-level `WeakMap<controller, count>` means `resume()` fires only when the FIRST wrapper on a controller mounts, and `suspend()` only when the LAST unmounts. During a cross-fade the entering screen mounts while the exiting one is still mounted. The controller therefore stays resumed regardless of effect order, and the exiting screen's unmount cannot suspend a controller the entering screen still uses. Uses an isomorphic `useLayoutEffect` so `resume()` runs before the first paint after a remount. Pinned by `keep-alive.test.tsx` (R4.6).
+**Refcounted across wrappers (T4.6).** A module-level `WeakMap<controller, Reasons>` counts the mounted wrappers in `held`, so `resume()` fires only when the FIRST wrapper on a controller mounts, and `suspend()` only when the LAST unmounts. During a cross-fade the entering screen mounts while the exiting one is still mounted. The controller therefore stays resumed regardless of effect order, and the exiting screen's unmount cannot suspend a controller the entering screen still uses. Uses an isomorphic `useLayoutEffect` so `resume()` runs before the first paint after a remount. Pinned by `keep-alive.test.tsx` (R4.6).
 
-`useSuspendOnHidden` is the same idea keyed off `document.visibilityState` (not refcounted — it's a single per-controller visibility hook). Guards `typeof document !== 'undefined'` so it's safe to import from SSR code (no-op on the server).
+`useSuspendOnHidden` is the same idea keyed off `document.visibilityState`. Guards `typeof document !== 'undefined'` so it's safe to import from SSR code (no-op on the server).
 
-**It undoes itself on cleanup (0.9 review).** The effect tracks whether the standing suspension is its own doing, and resumes on the way out if it is. Unmounting a subtree while the tab was hidden used to strand the controller: the hook had suspended it, and the `visibilitychange` listener that would have resumed it went with the same cleanup. Swapping the `controller` argument while hidden stranded the outgoing one the same way. A controller the hook never suspended is left alone, which keeps the existing "don't resume a visible tab on mount" rule intact. Three cases in `keep-alive.test.tsx`.
+**One record of reasons per controller (2026-09-25 review).** `reasonsFor` (`keep-alive.ts:31-38`) returns `{ held, released, hidden }`, shared by both helpers. `released` is set when the last wrapper unmounts and cleared when one mounts. `hidden` counts the hooks holding the controller suspended for a hidden tab. Each reason calls `suspend()` as it starts, and `resume()` runs only when none is left: a wrapper's first mount resumes only with `hidden` at zero, and a hook lets go with a resume only when `hidden` reaches zero and `released` is unset. Before, the two kept separate books. Unmounting a wrapped subtree on a hidden tab ran the wrapper's layout cleanup, which suspended, and then the hook's passive cleanup, which resumed. The unmounted screen's controller was left running. The end state no longer depends on which cleanup runs first. Pinned by the three cases in "SuspendOnUnmount with useSuspendOnHidden on the same controller".
+
+**It undoes itself on cleanup (0.9 review).** The effect tracks whether it holds the controller suspended (`suspendedHere`), and lets go on the way out if it does. Unmounting a subtree while the tab was hidden used to strand the controller: the hook had suspended it, and the `visibilitychange` listener that would have resumed it went with the same cleanup. Swapping the `controller` argument while hidden stranded the outgoing one the same way. A controller the hook never suspended is left alone, which keeps the existing "don't resume a visible tab on mount" rule intact. Three cases in `keep-alive.test.tsx`.
 
 ## `HydrationBoundary` — root ownership (T4.1)
 
@@ -176,7 +180,7 @@ The adapter imports only hooks, `createContext` and three types from `react`, an
 
 ## Fakes for UI tests
 
-`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` or `AsyncState<T>`, so a test can pass them straight into a component that calls `useField` or `useQuery` without building a real controller. See `packages/core/src/testing.ts:67-190`.
+`@kontsedal/olas-core/testing` exports `fakeField<T>(initial, overrides?)` and `fakeAsyncState<T>(overrides?)`. They produce shape-correct objects that satisfy `Field<T>` or `AsyncState<T>`, so a test can pass them straight into a component that calls `useField` or `useQuery` without building a real controller. See `packages/core/src/testing.ts:68-245`.
 
 ## Streaming SSR
 

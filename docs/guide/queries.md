@@ -75,7 +75,7 @@ export const userQuery = defineQuery({
 ```
 
 - **`id`** is required, and `defineQuery` throws without it. It names the query in SSR payloads, plugin events, devtools and error contexts. Write it by hand: a name derived from `fetcher.name` changes under minification, and the server and client bundles must agree on it (§5.2).
-- **`key(...args)`** turns the arguments into the cache key. The client hashes its output, and the same hash means the same entry.
+- **`key(...args)`** turns the arguments into the cache key. The client hashes its output, and the same hash means the same entry. The hash follows what JSON would carry, so the key survives an SSR payload (§5.4). An `undefined` member counts as absent, a Date as its ISO string, and `NaN` as `null`.
 - **`fetcher(ctx, ...args)`** receives the fetch context `{ signal, deps }` first, then the original arguments. Pass `signal` to your I/O so an aborted fetch stops the request. [`olas/honor-abort-signal`](https://github.com/Kontsedal/olas/blob/main/packages/eslint-plugin/docs/honor-abort-signal.md), in the lint plugin's `strict` config, reports a fetcher that does not.
 
 The fetcher gets the arguments you passed, not the output of `key`. Here it receives `'u1'`, while the hash is built from `['user', 'u1']`. The [callArgs vs keyArgs pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/callargs-vs-keyargs.md) records the bug that confusion caused once.
@@ -95,7 +95,7 @@ export const userCard = defineController((ctx, props: { userId: string }) => {
 
 The third argument is one thunk that returns the arguments as a tuple (§5.4). The thunk is tracked. When `selected` changes, the subscription releases the old entry and acquires the new one. The old entry stays cached for `gcTime` after its last subscriber leaves, so switching back shows its data at once. A query with no arguments needs no thunk: `createQuery(ctx, todosQuery)`.
 
-When the new key has nothing cached, `data` reads `undefined` until it loads. Set `keepPreviousData: true` on the query to keep showing the previous entry's data meanwhile. `isFetching` is then `true`, and `isLoading` stays `false`.
+When the new key has nothing cached, `data` reads `undefined` until it loads. Set `keepPreviousData: true` on the query to keep showing the previous entry's data meanwhile. `isFetching` is then `true`, and `isLoading` stays `false`. `keepPreviousData` covers key changes only. A subscription whose `enabled` gate is closed still reads `undefined`, unless it sets `keepDataWhileDisabled`.
 
 ## Read the state
 
@@ -105,7 +105,7 @@ A subscription is an [`AsyncState<T>`](/reference/olas-core.asyncstate). Every f
 |---|---|
 | `data` | The latest value, or `undefined` before the first success. |
 | `error` | The latest failure, or `undefined`. |
-| `status` | `'idle'`, `'pending'`, `'success'` or `'error'`. |
+| `status` | `'idle'`, `'pending'`, `'success'` or `'error'`. It reads `'pending'` during a background refetch too, while `data` stays. |
 | `isLoading` | A first load is in flight and there is no data yet. Gate spinners on it. |
 | `isFetching` | Any fetch is in flight, background refetches included. Gate progress bars on it. |
 | `isStale` | `staleTime` has passed since the last success. |
@@ -114,7 +114,7 @@ A subscription is an [`AsyncState<T>`](/reference/olas-core.asyncstate). Every f
 | `isPaused` | A fetch is parked until the network returns. |
 | `isEnabled` | `false` while the subscription's `enabled` gate is closed. |
 
-Four actions sit beside them. `refetch()` fetches regardless of staleness and resolves with the value. `reset()` clears `error` and settles `status` without fetching. `cancel()` aborts the fetch in flight and keeps `data`. `firstValue()` resolves on the first success, which makes it the promise for Suspense, React 19's `use(...)` and navigation guards.
+Four actions sit beside them. `refetch()` fetches regardless of staleness and resolves with the value. `reset()` clears `error` and settles `status` without fetching. `cancel()` aborts the fetch in flight and keeps `data`. `firstValue()` resolves with the data at once when there is some, and otherwise on the first success. That makes it the promise for Suspense, React 19's `use(...)` and navigation guards.
 
 In React, `useQuery(sub)` returns every field as a plain value and re-renders only for the fields the component read. See [the React adapter](/adapters/react#usequery-re-renders-for-what-the-component-reads). The [Vue](/adapters/vue) `useQuery` returns refs, and the [Svelte](/adapters/svelte) `queryStore` returns a store.
 
@@ -177,7 +177,7 @@ The projection runs per subscriber, and the cache keeps the raw value. It re-run
 | `refetchInterval` | off | A background refetch while subscribed: a fixed gap in ms, or a thunk over the latest data. |
 | `refetchOnWindowFocus` | `false` | Refetch a subscribed, stale entry when the window regains focus. |
 | `refetchOnReconnect` | `false` | Refetch a subscribed, stale entry when the browser comes back online. |
-| `retry` | `0` | Retries after a failure: a count, or `(attempt, error) => boolean`. |
+| `retry` | `0` | Retries after a failure: a count, `false` for none, or `(attempt, error) => boolean`. |
 | `retryDelay` | exponential | Backoff in ms. Without it, the delay doubles from 1 s and caps at 30 s. |
 
 The defaults are quieter than TanStack Query's, because surprise refetches are a common source of bugs (§5.9). `Infinity` is a valid `staleTime` or `gcTime`, and it means no expiry. A retried fetch counts as one fetch for `isFetching` and for race protection, and an abort cancels the whole retry chain. A `retry` or `retryDelay` callback that throws fails the fetch with its own error. When an invalidation reports that failure to the root's `onError`, the fetch error travels as `cause`.
@@ -251,7 +251,7 @@ A bound or unbound handle reaches an entry without subscribing:
 | `write(...args, updater)` | A canonical patch. It pushes no snapshot and leaves a fetch in flight alone. |
 | `replace(...args, value)` | A canonical whole value. It supersedes a fetch in flight for the key. |
 | `cancel(...args)`, `cancelAll()` | Abort fetches in flight and keep `data`. |
-| `prefetch(...args)` | Fetches into the cache without subscribing. |
+| `prefetch(...args)` | Fetches into the cache without subscribing. It joins a fetch in flight, and rejects with an `AbortError` when a `cancel()` leaves no data. |
 
 The three writes make different claims, so they behave differently (§6.4). `setData` is a guess that a mutation may undo. `write` is true about the fields it touches and silent about the rest, so a response already on its way may still carry newer values. `replace` asserts the whole record, so an earlier request has nothing left to add. The [canonical-vs-optimistic decision](https://github.com/Kontsedal/olas/blob/main/.wiki/decisions/canonical-vs-optimistic-writes.md) records how the split was reached.
 

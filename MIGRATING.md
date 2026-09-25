@@ -207,7 +207,7 @@ The pieces map like this:
 | `init(api)` | `setup(host)`, which returns the hooks |
 | `onSetData`, with `source: 'set' \| 'fetch' \| 'remote'` and `isRemote` | `onWrite`, with `source` one of `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'` and `'replace'`, and `origin`: the name of the plugin that wrote, or `undefined` for the app |
 | `onGc` | `onRemove` |
-| `onMutationEnqueue`, `onMutationSettle` (persisted mutations only) | `onMutation`, for every run: `start`, then one of `success`, `error` and `cancel` |
+| `onMutationEnqueue`, `onMutationSettle` (persisted mutations only) | `onMutation`, for every run: `queued` for a `serial` run that waits, `start`, then one of `success`, `error` and `cancel`. A `cancel` carries a `reason` |
 | `api.applyRemoteSetData`, `api.setEntryData` | `host.queries.write(id, key, updater)`, or `replace(id, key, value)` for a whole record |
 | `api.applyRemoteInvalidate` | `host.queries.invalidate(id, key)` |
 | `api.subscribedKeys(id)` | `host.queries.keys(id)`, every key the root holds for the query |
@@ -305,9 +305,9 @@ Inline the payload with `serializeForScript(root.dehydrate())` from core. It esc
 
 #### Cache keys and timers
 
-Cache keys encode every value with a type tag, so `undefined`, `NaN`, a `Date` and a `bigint` no longer collide with a string or an object. Rebuild any external index that stored a key hash: `host.queries.hashKey`'s output is not a persistence protocol. `-0` in a key is `0`. Cyclic keys throw a descriptive error.
+Cache keys encode every value with a type tag, so no string or object can impersonate `undefined`, `NaN` or a `bigint`. A key hashes as JSON round-trips it, so a dehydrated key is adopted on the client: an `undefined` member counts as absent, `undefined` in an array and `NaN` as `null`, and a `Date` as its ISO string. Rebuild any external index that stored a key hash: `host.queries.hashKey`'s output is not a persistence protocol. `-0` in a key is `0`. Cyclic keys throw a descriptive error.
 
-One scheduler runs every duration: staleness, gc, `refetchInterval`, the `retryDelay` backoff and `suspend({ maxIdleTime })`. `staleTime: Infinity` stays fresh until explicitly invalidated, with no expiry timer, and `gcTime: Infinity` keeps a released entry for the life of the root. Finite delays beyond the platform timer limit (2,147,483,647 ms) are scheduled in chunks instead of overflowing.
+One scheduler runs every duration: staleness, gc, `refetchInterval`, the `retryDelay` backoff, the `debounced` and `throttled` windows, and `suspend({ maxIdleTime })`. `staleTime: Infinity` stays fresh until explicitly invalidated, with no expiry timer, and `gcTime: Infinity` keeps a released entry for the life of the root. Finite delays beyond the platform timer limit (2,147,483,647 ms) are scheduled in chunks instead of overflowing.
 
 A `gcTime: Infinity` or a multi-week `gcTime` on 0.8 did the opposite of what it says. Platforms clamp an out-of-range `setTimeout` delay to 1 ms, so the entry was dropped almost immediately after its last subscriber left. Those entries now survive as intended. Expect higher steady-state cache retention, which is the documented behavior of the setting.
 

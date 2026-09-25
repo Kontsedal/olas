@@ -59,6 +59,7 @@ Walks a `z.object` schema and builds the corresponding `Form`, `FieldArray` and 
 
 - `z.object(...)` → `Form` (recurse). The root form gets `schemaRulesValidator(rootSchema)` only when the schema has a rule on an object or an array; see below.
 - `z.array(...)` → `FieldArray` (recurse on the element).
+- A `.default(...)` on an object or an array seeds that `Form` or `FieldArray` as a whole when the caller's `initial` has no value for the key, as `schema.parse({})` fills it. `buildLeaf` reads it through `zodDefault`, the lookup `defaultInitial` uses for leaves, so a default under `.optional()` or `.nullable()` counts too. Before this, only leaf defaults were read: `z.array(z.string()).default(['inbox'])` started as `[]`, and `z.object({ city }).default({ city: 'Kyiv' })` as `{ city: '' }`. Pinned by `zod.test.ts`, "a default on an array or an object seeds the FieldArray or the nested Form".
 - anything else → `Field` with `zodValidator(schema)`. A nested leaf can *look* like a zod schema, carrying a `def` or `_def`, and still fail every `instanceof` check. That is a **duplicate zod copy**, which cannot be introspected, so it degrades to a flat field. `createZodForm` warns through `isForeignZod` and `warnDuplicateZod` (T6.5). The warning fires once per module (`warnedDuplicateZod`, `packages/zod/src/index.ts:95-110`), however many foreign leaves and forms there are. Each test file gets its own module, and within one file the first foreign schema uses the warning up, so `coverage-zod-edges.test.ts` runs its no-warning test first.
 
 `unwrap(schema)` strips outer `ZodDefault`, `ZodOptional` and `ZodNullable` wrappers to a fixed point, one layer at a time through `unwrapOnce`, to find the inner type. The default initial is the Zod default when present, and otherwise the empty value for the type: `''` for string, `0` for number, `false` for boolean, `[]` for array and tuple, the first option for an enum, `0n` for bigint, `{}` for record, and `undefined` otherwise. **`ZodDate` maps to `undefined`** since T6.5. The old `null` flowed a non-Date into a `Date`-typed field. Pair it with `required()` for "must pick a date". A **`.transform()` and `.pipe()`** (`ZodPipe`) seeds from its INPUT schema's default via `def.in` — the field holds what the user edits, and the transform runs on parse; note the field TYPE still reflects `z.infer` (the output), a documented mismatch (T6.5).
@@ -67,7 +68,7 @@ Walks a `z.object` schema and builds the corresponding `Form`, `FieldArray` and 
 
 ## Rules on objects and arrays (1.0)
 
-A leaf's rules run in its own `zodValidator`. A rule on an object or an array is a non-empty `def.checks` on that schema or on an `.optional()`, `.nullable()` or `.default()` wrapper around it. `hasStructuralRules` (`packages/zod/src/index.ts:192-209`) looks for one, and only then does the root form get `schemaRulesValidator` (`:296-304`, installed at `:514`). It parses the whole schema through core's `validator`, and `unownedIssues` (`:259-280`) sorts each issue with `leafAlong` (`:218-246`):
+A leaf's rules run in its own `zodValidator`. A rule on an object or an array is a non-empty `def.checks` on that schema or on an `.optional()`, `.nullable()` or `.default()` wrapper around it. `hasStructuralRules` (`packages/zod/src/index.ts:192-209`) looks for one, and only then does the root form get `schemaRulesValidator` (`:296-304`, installed by `hasStructuralRules(rootSchema)` at `:528-529`). It parses the whole schema through core's `validator`, and `unownedIssues` (`:259-280`) sorts each issue with `leafAlong` (`:218-246`):
 
 | Issue path | Where it lands |
 |---|---|
@@ -79,7 +80,7 @@ A leaf's rules run in its own `zodValidator`. A rule on an object or an array is
 
 The leaf check re-runs the leaf's schema on the leaf's value, once for each issue the parse reported at that leaf. A root refine is async-safe: the parse goes through Standard Schema, which returns a promise for an async schema. The old `safeParse` threw `$ZodAsyncError` on one. The design, and the options rejected, are in `decisions/zod-schema-rules.md`.
 
-The routing is core's (`packages/core/src/forms/form.ts:114-143`): a routed message sits in a field's form-errors channel, or in a `Form`'s or `FieldArray`'s `parentFormErrors$`. A no-op `field.reset()` clears it until the next change, which is a core `BACKLOG.md` item.
+The routing is core's (`packages/core/src/forms/form.ts:159-188`): a routed message sits in a field's form-errors channel, or in a `Form`'s or `FieldArray`'s `parentFormErrors$`. A no-op `field.reset()` clears it until the next change, which is a core `BACKLOG.md` item.
 
 `zod.test.ts` pins each row, both documented examples, the recursive-schema walk, the async paths, and the cost. For the cost it spies on the root schema's `_zod.run`: a plain schema's is not called, and a refined one's runs once per change.
 

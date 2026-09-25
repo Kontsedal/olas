@@ -4,8 +4,8 @@ description: "\"Nothing invalidates this query\" does not mean \"no fetch is in 
 type: pitfall
 covers:
   - packages/core/src/query/use.ts
-  - packages/core/src/query/client.ts:1542-1717
-  - packages/core/src/query/types.ts:344-455
+  - packages/core/src/query/client.ts:1577-1752
+  - packages/core/src/query/types.ts:357-468
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: uses, target: ../entities/entry.md }
@@ -62,7 +62,7 @@ onMutate: (vars) => {
 
 The same reasoning error has a sibling: assuming a *canonical* write is safe from this race. A consumer app paid for it twice in a day: a result grid blanked a moment after its query finished, and a tab, split or panel-close undid itself.
 
-**`replace(...)` supersedes the in-flight fetch itself** (spec §6.4; pinned in `query.test.ts:1108`, "replace supersedes an in-flight fetch when the entry already holds data"). A whole value from the server is newer than any request issued before it. **`write(...)` does not.** It patches, and a patch has no claim on the fields it left alone, so a response that lands after it overwrites it. 0.7.2 moved the supersede from `write` to `replace` for that reason. A `write` that must survive an in-flight fetch still needs `cancel()` first, as `setData` does.
+**`replace(...)` supersedes the in-flight fetch itself** (spec §6.4; pinned in `query.test.ts:1126`, "replace supersedes an in-flight fetch when the entry already holds data"). A whole value from the server is newer than any request issued before it. **`write(...)` does not.** It patches, and a patch has no claim on the fields it left alone, so a response that lands after it overwrites it. 0.7.2 moved the supersede from `write` to `replace` for that reason. A `write` that must survive an in-flight fetch still needs `cancel()` first, as `setData` does.
 
 | | is it newer than an outstanding request? | so |
 |---|---|---|
@@ -70,7 +70,7 @@ The same reasoning error has a sibling: assuming a *canonical* write is safe fro
 | `write` | only for the fields it touched | a response may overwrite it; cancel first when that matters |
 | `setData` | no — it is a guess | a response may overrule it; cancel first |
 
-**The one thing `replace` will not do is cancel when the new value is `undefined`** (`replaceData`, `packages/core/src/query/client.ts:1646-1662`). A write flips an idle or pending entry to `status: 'success'` whatever it is handed. Replacing with `undefined` and cancelling as well would strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. So that fetch is left to produce the first value.
+**The one thing `replace` will not do is cancel when the new value is `undefined`** (`replaceData`, `packages/core/src/query/client.ts:1681-1697`). A write flips an idle or pending entry to `status: 'success'` whatever it is handed. Replacing with `undefined` and cancelling as well would strand the entry at `success` over no data, with nothing to refetch it until `staleTime` lapses. So that fetch is left to produce the first value.
 
 ## Where it's documented
 

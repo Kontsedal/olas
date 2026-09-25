@@ -11,7 +11,7 @@ edges:
   - { type: uses, target: ../entities/mutation.md }
   - { type: related, target: ../pitfalls/latest-wins-rollback-order.md }
   - { type: related, target: ../pitfalls/raceabort-for-misbehaving-mutate.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -35,7 +35,7 @@ New `run()` aborts every inflight + rolls back their snapshots **synchronously b
 ```
 run(vars):
   for handle of inflight:
-    handle.abort.abort()
+    cancel(handle, 'superseded')   # the reason plugins hear on its cancel
     handle.snapshot?.rollback()
     handle.snapshot = undefined   # prevent double-rollback in the old run's catch
   return executeRun(vars)
@@ -60,16 +60,23 @@ run(vars):
 
 enqueueSerial(vars):
   if active:
-    return new Promise((resolve, reject) =>
-      serialQueue.push({ vars, resolve, reject }))
+    runId = newRunId()                     # the id the run keeps when it starts
+    promise = new Promise((resolve, reject) =>
+      serialQueue.push({ vars, runId, resolve, reject }))
+    report(runId, vars, 'queued')          # plugins hear it before it starts
+    return promise
   active = true
   generation = serialGeneration            # the queue this chain speaks for
   return executeRun(vars).finally(() => advanceSerialQueue(generation))
 ```
 
-`advanceSerialQueue(generation)` shifts the next entry, calls `executeRun`, resolves/rejects the stored promise, recurses with the same `generation`. When the queue is empty, `active = false`.
+`advanceSerialQueue(generation)` shifts the next entry, calls `executeRun(vars, runId)` under the id it was queued with, resolves/rejects the stored promise, recurses with the same `generation`. When the queue is empty, `active = false`.
 
-`dispose()` aborts the current inflight AND rejects every queued entry with `AbortError`. `reset()` is similar but doesn't dispose.
+`dispose()` aborts the current inflight AND rejects every queued entry with `AbortError`. `reset()` is similar but doesn't dispose. Both go through `dropSerialQueue`, which reports a `'cancel'` for each rejected entry, with reason `'dispose'` or `'reset'`.
+
+### Why a waiting run reports `'queued'`
+
+A queued run used to report nothing until its turn came. When the run ahead of it hung or backed off, `@kontsedal/olas-mutation-queue` had stored only that first run, and a reload lost everything queued behind it. `'queued'` lets the queue persist each run when `run(...)` is called, with a `seq` that keeps the call order. A queued run that never starts still reports one outcome, so a plugin can undo what it did on `'queued'`. Pinned by `mutation-plugin-events.test.ts` and `mutation-queue/tests/serial-queue.test.ts`.
 
 ### `serialGeneration` — why the continuations are tagged
 

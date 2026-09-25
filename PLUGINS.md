@@ -49,7 +49,7 @@ createRoot(app, { deps, queries: queryEngine(), plugins: [logger] })
 | `onInvalidate(e)` | An entry was invalidated. |
 | `onRemove(e)` | The cache garbage-collected an entry. |
 | `onActivate(e)` / `onDeactivate(e)` | An entry gained its first subscriber, or lost its last. |
-| `onMutation(e)` | A mutation run moved a step: `'start'`, then exactly one of `'success'`, `'error'` or `'cancel'`. Every run, with or without an `id`. |
+| `onMutation(e)` | A mutation run moved a step: `'start'`, then exactly one of `'success'`, `'error'` or `'cancel'`. A `serial` run that has to wait reports `'queued'` first. A `'cancel'` carries a `reason`: `'superseded'`, `'reset'` or `'dispose'`. Every run, with or without an `id`. |
 | `wrapFetch(ctx, next)` | Around every fetch attempt. |
 | `wrapMutate(ctx, next)` | Around every `mutate` attempt. |
 | `dispose()` | Once, when the root disposes. |

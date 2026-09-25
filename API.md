@@ -1505,7 +1505,7 @@ type PluginHooks = {
   onRemove?(event: RemoveEvent): void            // { query, key, reason: 'gc' }
   onActivate?(event: ActivityEvent): void        // an entry gained its first subscriber
   onDeactivate?(event: ActivityEvent): void      // an entry lost its last subscriber
-  onMutation?(event: MutationEvent): void        // phase 'start', then 'success' | 'error' | 'cancel'
+  onMutation?(event: MutationEvent): void        // 'queued' (a waiting serial run), 'start', then 'success' | 'error' | 'cancel' (with reason)
   wrapFetch?(context: FetchContext, next: () => Promise<unknown>): Promise<unknown>
   wrapMutate?(context: MutateContext, next: () => Promise<unknown>): Promise<unknown>
   dispose?(): void
@@ -2658,7 +2658,7 @@ type CrossTabOptions = {
 - In a development build, each message the plugin posts and each one a peer sent reach its devtools lane, with the peer's `sourceId`, the message type and what became of it.
 - Fetches and hydration stay in their tab, because every tab runs its own fetcher.
 - `validate(queryId, data)` guards the receive side: any same-origin script can post on the channel. A `false` drops the message and reports it through `onWarn`.
-- Without `BroadcastChannel` and without a `channelFactory`, as on a server, the plugin installs no hooks.
+- Without a `channelFactory`, the plugin opens a channel only in a browser tab or a web worker. On a Node, Bun or Deno server, where `BroadcastChannel` reaches every root in the process, it installs no hooks. Where `BroadcastChannel` is not defined, it installs none either.
 - The conflict model is **last-delivery-wins per tab with no arbitration**. Simultaneous writes in two tabs can diverge; a server refetch (`invalidate`) re-converges them.
 
 ---

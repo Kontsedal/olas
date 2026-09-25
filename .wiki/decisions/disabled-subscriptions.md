@@ -5,7 +5,7 @@ type: decision
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/errors.ts
-  - packages/core/src/query/types.ts:7-64
+  - packages/core/src/query/types.ts:7-69
   - packages/react/src/hooks.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/use-edges.test.ts }
@@ -24,7 +24,7 @@ A subscription whose `enabled` returns `false` holds no entry (spec §5.2). Its 
 
 - **`AsyncState.isEnabled`** is a `ReadSignal<boolean>`, `false` while `enabled` returns `false`. The subscription effect sets it before it detaches or binds (`packages/core/src/query/use.ts`). It is always `true` for a `LocalCache`, which has no `enabled` switch. `useQuery` returns it too.
 - **`refetch()` on a disabled subscription rejects with `QueryDisabledError`** (`packages/core/src/query/errors.ts`), carrying `queryId`. Before, the rejection was an anonymous `Error('[olas] no active subscription')`. A "Retry" button wired to `refetch()` needed a blanket `.catch(() => {})` wherever `enabled` could be false. Now it can filter the named error, or disable itself on `isEnabled`. A disposed subscription rejects with an `AbortError` instead.
-- **`firstValue()` on a disabled subscription waits** for the next attach and then for that entry's first value. It rejects only when the subscription is disposed. While pending, it hands back the same promise (`FirstValueCache`), so a suspended render that asks again re-throws the promise React already holds.
+- **`firstValue()` on a disabled subscription waits** for the next attach and then for that entry's first value, which is at once when the entry already holds data. It rejects only when the subscription is disposed. While pending, it hands back the same promise (`FirstValueCache`), so a suspended render that asks again re-throws the promise React already holds.
 
 ## Why `firstValue` waits instead of rejecting
 

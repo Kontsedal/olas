@@ -147,14 +147,14 @@ they imply a library change.
 
 1. **Optimistic rollback on an ordinary error.** Resolved: a failed run rolls
    its snapshot back after the user's `onError(err, vars, snapshot)` returns
-   (`packages/core/src/query/mutation.ts:600-604`). The snapshot is
+   (`packages/core/src/query/mutation.ts:664-668`). The snapshot is
    single-consume, so an `onError` that already rolled back makes the
    automatic call a no-op. The kanban column-reorder `onError` rolls back
    explicitly on purpose, to show both styles
    (`examples/kanban/src/features/board/board.controller.ts:331-334`).
 2. **Infinite queries in `root.dehydrate()`.** Resolved in 1.0 (W10): an
    infinite entry dehydrates with its pages in `data` and its `pageParams`
-   (`packages/core/src/query/client.ts:1255-1266`). The kanban archive drawer
+   (`packages/core/src/query/client.ts:1290-1301`). The kanban archive drawer
    keeps cursor-paged history per tab and does not use SSR.
 3. **Array-level `.min(N)` rules in a `createZodForm` schema.** Resolved in
    1.0: an array rule lands in that `FieldArray`'s `topLevelErrors`, and a root

@@ -5,7 +5,7 @@ type: module
 covers:
   - packages/core/src/errors.ts
   - packages/core/src/plugin/host.ts:173-175
-  - packages/core/src/query/client.ts:1458-1501
+  - packages/core/src/query/client.ts:1493-1536
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/errors.test.ts }
@@ -37,10 +37,10 @@ confidence: high
 ## Where each kind comes from
 
 - **`'effect'`**: an effect body or its cleanup, a lifecycle hook, a teardown throw during dispose or rollback, and a throwing field validator (`controller/instance.ts`, `forms/bind.ts:41`).
-- **`'emitter'`**: a `ctx.emitter()` handler or a `ctx.on(...)` handler (`instance.ts:576-622`).
+- **`'emitter'`**: a `ctx.emitter()` handler or a `ctx.on(...)` handler (`instance.ts:620-666`).
 - **`'construction'`**: a `ctx.collection` item or a `ctx.lazyChild` that fails after the root is alive (spec §12.1).
-- **`'mutation'`**: a throwing `onError`, `onSuccess` or `onSettled` hook, through `MutationImpl.safeCall` (`query/mutation.ts:675-684`). A failed `mutate` goes to the mutation's `error` signal instead.
-- **`'cache'`**: the refetch an `invalidate` started failed, or the catch-up a `replace` started in its place. `invalidateEntry` reports it with `queryId` and `key` and resolves the caller's promise (`query/client.ts:1482-1496`). It adds `attempt` and `cause` from `entry.failureOf(err)`. Each entry records its latest failure, in `Entry.applyFailure` or `InfiniteEntry.settleFailure`, and `failureOf` returns the fields only when `err` is that failure. Pinned by `mutants-client.test.ts`, "a failing refetch an invalidate started reports a cache error naming the entry", and `retry-policy-throws.test.ts`, "ErrorContext.attempt and cause on an invalidation failure".
+- **`'mutation'`**: a throwing `onError`, `onSuccess` or `onSettled` hook, through `MutationImpl.safeCall` (`query/mutation.ts:743-752`). A failed `mutate` goes to the mutation's `error` signal instead.
+- **`'cache'`**: the refetch an `invalidate` started failed, or the catch-up a `replace` started in its place. `invalidateEntry` reports it with `queryId` and `key` and resolves the caller's promise (`query/client.ts:1517-1531`). It adds `attempt` and `cause` from `entry.failureOf(err)`. Each entry records its latest failure, in `Entry.applyFailure` or `InfiniteEntry.settleFailure`, and `failureOf` returns the fields only when `err` is that failure. Pinned by `mutants-client.test.ts`, "a failing refetch an invalidate started reports a cache error naming the entry", and `retry-policy-throws.test.ts`, "ErrorContext.attempt and cause on an invalidation failure".
 - **`'plugin'`**: a plugin hook threw, or a plugin called `host.reportError`. `PluginSet.report` adds `pluginName` and `controllerPath: []` (`plugin/host.ts:173-175`). Delivery isolates each hook, so the next plugin still runs. Pinned by `plugin-host.test.ts` and `coverage-core-plugins.test.ts`.
 
 ## `dispatchError`

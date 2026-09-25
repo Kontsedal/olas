@@ -2221,3 +2221,25 @@ Two core budgets were raised to 17.5 KB and 23.5 KB.
 **Pages:** `modules/react.md` (the `HydrationBoundary` section, rewritten), the new `pitfalls/render-phase-root-leak.md`, and moved citations in `flows/ssr.md` and `flows/use-root.md`. SPEC §16's SSR paragraph gained the contract. BACKLOG gained an `[idea]` for a dev warning on the retry loop that remains when the parent re-creates the element.
 
 **Size:** react's bundle went from 3,538 to 3,798 bytes brotli, against a 3,800-byte budget.
+
+## [2026-09-25 13:40] ingest | the 1.0 correctness pass: 41 review findings fixed
+
+**Review.** Three reviewers read core's query engine, the rest of core, and the adapters with the satellites. They reported 41 findings, and a probe reproduced 39. Five were high: a disposed field hung `submit()`, an older fetch erased an invalidation, dehydrated keys changed hash through JSON, the mutation queue replayed superseded runs, and cross-tab opened a channel on servers, where `BroadcastChannel` reaches every request in the process.
+
+**Fixes.** Five agents fixed them in parallel, one set of files each, with a failing regression test per finding first. The decisions worth knowing:
+- **Keys hash as JSON round-trips them** (`keys.ts`). An `undefined` member hashes as absent, a `Date` as its ISO string, and non-finite numbers and array holes as `null`. This reversed three tests that pinned the old identities (R-Q3.8 among them). SPEC §5.4.
+- **A stale epoch** decides whether a fetch's success clears an invalidation (`entry.ts`, `infinite.ts`). Hydration follows the same rule. SPEC §5.7.
+- **Live hydration skips a row older than the entry**, and a future timestamp reads as now. SPEC §15.
+- **`firstValue()` resolves at once when data is present.** `status` still goes `'pending'` during any fetch, which SPEC implies through `cancel()` and `reset()`; the guides said otherwise and were corrected.
+- **`MutationEvent` gained `'queued'`** (a waiting `serial` run) **and `reason` on `'cancel'`** (`'superseded'`, `'reset'`, `'dispose'`). The queue drops an entry on a deliberate cancel and keeps it on dispose. SPEC §13.1, §13.3.
+- **`RetryPolicy` accepts `false`**, as SPEC §5.2 always said.
+- **Async validators run only after every sync one passes.** A validator counts as async when declared `async`, or once it has returned a promise. SPEC §8.1.
+- **One error list per routing form** (`RoutedErrors`). SPEC §8.3.
+- **Child factories run untracked, and a child built under a suspended parent starts suspended.** SPEC §3.4, §4.1.
+- **Cross-tab's default factory opens a channel only with a DOM or a `WorkerGlobalScope`**, and never on Deno or Bun. SPEC §13.2.
+- **Entity handles follow their id** across `remove` and eviction, and a subscribed id is not evicted. SPEC §18.1.
+- **`useQuery`'s render detection is a commit counter**, and the two keep-alive helpers share one suspend-reason record. SPEC §16.1.
+
+**Numbers.** Tests went from 2,238 to 2,389 in 184 files. The public API changed in two places (`RetryPolicy`, `MutationEvent`). Nine size budgets were re-set to about 5% over the new sizes; `decisions/esm-only-build.md` records them.
+
+**BACKLOG** gained three follow-ups: a superseded run that still sends once behind a slow storage write, `indexedDbAdapter`'s channel on a server, and `Form.reset()` calling `initial()` unguarded.

@@ -3,8 +3,8 @@ name: suspended-effects-lose-deps
 description: An effect that early-returns before reading its tracked signals empties its dependency set and goes inert.
 type: pitfall
 covers:
-  - packages/core/src/query/use.ts:257-302
-  - packages/core/src/query/use.ts:560-599
+  - packages/core/src/query/use.ts:267-312
+  - packages/core/src/query/use.ts:579-618
 edges:
   - { type: related, target: ../flows/query-subscription.md }
   - { type: tested-by, target: ../../packages/core/tests/regressions.test.ts }

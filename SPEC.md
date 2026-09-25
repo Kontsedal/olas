@@ -251,10 +251,12 @@ const dynamicFormController = defineController((ctx) => {
 - Is idempotent — safe to call twice; second call is a no-op.
 - Doesn't affect the parent controller. Disposing one field doesn't disturb other fields, caches, mutations, or the controller's lifecycle.
 
-When the controller itself disposes, it disposes every primitive it owns (including the ones you already disposed — idempotent). So static factory primitives never need explicit `.dispose()` calls; only dynamically-created ones that need to come and go during the controller's life.
+When the controller itself disposes, it disposes every primitive it owns (including the ones you already disposed — idempotent). So static factory primitives never need explicit `.dispose()` calls; only dynamically-created ones that need to come and go during the controller's life. A `Field`, `Form` or `FieldArray` also drops its registration on the controller when it disposes. A controller that builds and drops them for its whole life therefore does not grow, and neither does one whose `FieldArray` churns rows (§8.5).
 
 Caveats:
 - Things created after construction count toward `path` and devtools events, but their `path` ends with an auto-generated slot index (no name).
+- A child controller's factory runs outside the caller's tracking scope. `ctx.child` or `ctx.attach` inside an effect adds nothing the child's factory reads to the effect's dependencies. A write to one of those signals therefore does not re-run the effect and rebuild the child.
+- A primitive's construction can end its owner, for example a child whose factory disposes the root. A child built that way is disposed with the parent rather than left in the dead parent's list. An effect whose first run disposes its controller is stopped, and one whose first run suspends it waits for the resume.
 - For *child controllers* that come and go, prefer `ctx.collection` and `ctx.attach` over hand-rolling Maps of `ctx.child` — those handle the diff and lifecycle for you. The Map-of-primitives pattern shown above is for non-controller primitives (fields, caches, mutations).
 
 ---
@@ -311,6 +313,8 @@ A subtree can also be suspended and resumed. This is for "definitely coming back
 
 **Explicit child suspension survives tree cascades.** A child suspended explicitly via `attach.suspend()` or `collection.suspendItem(key)` stays suspended through a whole-tree `suspend()` → `resume()` cycle (what `<SuspendOnUnmount>` performs, §16.1). Only its matching `attach.resume()` and `resumeItem(key)` wakes it — otherwise a virtualized list's scrolled-out rows would all resume on a single tree resume. The reverse is symmetric. `attach.resume()` and `resumeItem()` called while the parent is still suspended do not activate the child inside a frozen tree. They clear the explicit mark, and the child rejoins the parent's next resume cascade.
 
+**A child built under a suspended parent starts suspended.** A `ctx.on` handler can call `ctx.child` or `ctx.attach` while the parent is suspended, and a `lazyChild` load can settle then. The child's factory runs, so its effects run once, and then the child is suspended. The parent's next resume wakes it. The child is not explicitly suspended, so the whole-tree resume reaches it.
+
 ### 4.2 Suspend vs dispose — picking the right one
 
 Two states preserve a controller's identity past "not currently active." Pick deliberately, because they have very different memory profiles:
@@ -339,6 +343,7 @@ Semantics:
 - `resume()` cancels the timer.
 - If the timer fires, the root transitions directly from `suspended` → `disposed`.
 - Without `maxIdleTime` the root stays suspended until something resumes or disposes it. `Infinity` means the same, and a finite value above the platform timer limit is scheduled in chunks rather than overflowing (§21.5).
+- A second `suspend()` without `maxIdleTime` keeps an armed timer. A visibility hook that suspends a root already suspended with a bound therefore does not lift it. A second `suspend({ maxIdleTime })` restarts the timer with the new value.
 
 The name follows the duration rule in `.wiki/decisions/duration-naming.md`. Every duration is in milliseconds. Core's lifetime policies end in `Time`: `staleTime`, `gcTime`, `maxIdleTime`. Every other knob ends in `Ms`, such as `throttleMs` and `flushMs`.
 
@@ -395,7 +400,7 @@ export const userQuery = defineQuery({
 
 **Resetting.** `subscription.reset()` clears `error` and settles `status` without dropping `data`: `'success'` when data exists, else `'idle'` (useful to dismiss an error toast without forcing a refetch). `subscription.refetch()` re-fetches regardless of stale-state. To both clear and re-fetch: `reset(); refetch();`.
 
-When `keepPreviousData: true` and the key changes (e.g. id signal flips from `'a'` to `'b'`), the subscription keeps showing the previous entry's `data` until the new entry's first fetch resolves. `isFetching` is true, `isLoading` is false (we already have *some* data). Without this, key transitions briefly show `data === undefined`, causing UI flashes in tab and pagination UIs.
+When `keepPreviousData: true` and the key changes (e.g. id signal flips from `'a'` to `'b'`), the subscription keeps showing the previous entry's `data` until the new entry's first fetch resolves. `isFetching` is true, `isLoading` is false (we already have *some* data). Without this, key transitions briefly show `data === undefined`, causing UI flashes in tab and pagination UIs. `keepPreviousData` bridges key changes only: a disabled subscription still reads `data: undefined`, unless `keepDataWhileDisabled` is on (below). A re-enable on a new key bridges with the data the subscription showed when it was disabled.
 
 **Conditional and disabled queries.** Bootstrap flows often need "fetch X only once Y is available" (e.g. fetch the news feed once `session.currentUser` resolves). `createQuery` accepts an `enabled` thunk that runs in a tracking scope:
 
@@ -438,11 +443,15 @@ type QuerySubscription<T> = {
   refetch: () => Promise<T>
   reset: () => void                   // clear error, settle status, keep data; no fetch
   cancel: () => void                  // abort in-flight fetch; keep data; settle status
-  firstValue: () => Promise<T>        // resolves on first success — for SSR / navigation guards
+  firstValue: () => Promise<T>        // the data now if there is some, else the first success — for SSR / navigation guards
 }
 ```
 
 The `isLoading` vs `isFetching` split is intentional: spinners typically gate on `isLoading`, but progress indicators want `isFetching`.
+
+**`status` reads `'pending'` during every fetch, a background refetch included.** The data stays on screen while it runs, and a successful refetch returns `status` to `'success'`. So "is there something to show" is `data !== undefined`, not `status === 'success'`. `cancel()` and `reset()` settle `status` back to `'success'` over data (§5.2, §5.5).
+
+**`firstValue()` resolves at once when the entry holds data** (`!== undefined`, §6.4), even while a background refetch runs or after one failed. With no data it waits for the first success and rejects on the first failure. A disabled subscription's `firstValue()` waits until it is enabled and loaded (§5.2).
 
 **`hasPendingMutations`** is true while any `setData`-produced `Snapshot` is alive and unrolled-back for this entry. It flips back to `false` when the last outstanding mutation settles. On success `onSuccess` finalizes and the snapshot is discarded; on failure `snapshot.rollback()` restores the baseline. UI uses this to render "saving…" indicators on individual records without inventing a `pending: true` flag in the data shape.
 
@@ -479,6 +488,8 @@ createQuery<Args extends unknown[], T>(
 
 The thunk runs inside an auto-tracking scope. When any signal read inside changes, the subscription swaps to a different cache entry. Accepting "value or signal or function" makes the API ambiguous — always require the function form (no inline values).
 
+**A key is identified by the value JSON round-trips it to.** `dehydrate` ships raw key args, and the payload reaches the client through JSON (§15), as a persisted cache does (§13.4). A key that JSON rewrites would otherwise hash differently after the trip, and the client could never adopt its entry. So an object member holding `undefined` counts as absent, and `undefined` in an array counts as `null`. A Date counts as its ISO string, and an invalid Date as `null`. `NaN`, `Infinity` and `-Infinity` count as `null`, and `-0` counts as `0`. `{ q: undefined }` and `{}` therefore name one entry. Every other value keeps its type: `1` and `'1'` stay apart, as do `null` and `'null'`. A bigint keeps its own identity, and JSON has no form for one, so an entry keyed by a bigint cannot travel through JSON. Functions, symbols, `Map`, `Set`, class instances and cycles throw.
+
 ### 5.5 Cancellation
 
 Every fetcher receives an `AbortSignal` as `signal` on its first argument, the fetch context `{ signal, deps }` (§5.2). The cache aborts an in-flight fetch when:
@@ -498,7 +509,7 @@ Fetchers are responsible for passing the signal to their I/O (`fetch(url, { sign
 
 **Network mode & `isPaused`.** A query's `networkMode` (spec'd on `QuerySpec`) controls how fetches interact with `navigator.onLine`:
 
-- `online` (default) — a fetch requested while offline is **deferred**, not run; it resumes automatically on the next reconnect. The entry reports `isPaused: true` while deferred.
+- `online` (default) — a fetch requested while offline is **deferred**, not run; it resumes automatically on the next reconnect. The entry reports `isPaused: true` while deferred. The request supersedes a fetch already in flight, as a request made online does, so that older response never lands. On a local cache whose key changed offline, it would carry the old key's data.
 - `always` — never gate on connectivity; the fetcher runs whenever requested (localhost, IPC and service-worker sources that don't surface through `navigator.onLine`).
 - `offlineFirst` — start the fetch regardless. If it rejects **while offline** with a network-shaped error, park the entry at `isPaused: true` and retry on reconnect instead of surfacing the error. Network-shaped means a `fetch` `TypeError`, not an `AbortError`. The `status` stays `idle` and last-success. Otherwise the error surfaces normally.
 
@@ -531,6 +542,10 @@ userQuery.prefetch(id) // fire-and-forget warmup
 Internally these all dispatch to the root's query client. An unbound call works only while one root has touched the query; `bindQuery` selects a root explicitly (below, and §21.5).
 
 **Invalidate semantics.** `invalidate` and `invalidateAll` always mark the entry stale, but refetch **immediately only if the entry currently has subscribers**. A subscriber-less entry is marked stale and *not* refetched, and the next subscriber triggers the fetch. An entry is subscriber-less when `gcTime` kept it warm after its last subscriber left, or when `prefetch` created it. This matches TanStack and avoids waking data no subscriber is watching.
+
+**The stale mark holds until data requested after it lands.** A fetch that started after the invalidation clears it, and so does a hydrated row stamped at or after it (§15). A fetch that started before it does not. A released entry keeps its fetch running for the gc window, so its response can arrive after an invalidation. That response lands, and the entry stays stale, so the next subscriber still refetches. With `staleTime: Infinity`, clearing the mark there would have kept the pre-invalidation data for good.
+
+**Prefetch.** `prefetch` holds the entry until its fetch settles, so the entry is not gc'd mid-flight. A fresh entry resolves with its data at once. A fetch already in flight is joined, not restarted, and the prefetch settles with it, not with the stale data it replaces. A fetch that supersedes the prefetch's own takes over the wait. The prefetch rejects with the fetch's error, and with an `AbortError` when a `cancel()` leaves the entry without data, since nothing is coming to fill it. A cancel over data resolves with that data. `prefetch` on an infinite query does the same and resolves with the first page.
 
 Both return a `Promise<void>` that resolves when the refetches they trigger settle, or immediately for entries without subscribers (which are marked stale only). A `replace` that discards one of those refetches makes the entry fetch once more to reconcile, and the promise resolves when that catch-up settles (§6.4). Any other supersede, such as a newer refetch or a `cancel`, resolves it. Fetch failures are reported through the root's `onError` and the entry's `error` signal. Ambiguous unbound operations and operations on disposed bound roots reject. Use `bindQuery(ctx, query)` or `root.bindQuery(query)` to select a root (§21.5).
 
@@ -575,6 +590,8 @@ We deliberately don't bundle Immer — users who want it import it themselves, o
 - `refetchOnReconnect` — **off by default.** Same.
 
 The defaults are deliberately quieter than TanStack — surprise refetches are a common source of bugs.
+
+A focus, reconnect or interval refetch joins a fetch already in flight rather than restarting it. It also skips an entry whose fetch is parked for the network (§5.5). The reconnect drain runs that fetch, so one `online` event makes one request, and an interval ticking offline parks nothing new.
 
 #### `refetchInterval` — fixed or data-driven
 
@@ -726,7 +743,7 @@ const place = createMutation(ctx, createOrder, { onSuccess: () => ordersQuery.in
 
 - **`parallel`** *(default)* — every `run()` is independent. `isPending` is true if *any* run is in flight. Use for distinct operations that don't conflict (e.g. "save this item", "delete that one").
 - **`latest-wins`** — calling `run()` aborts the previous in-flight call via its `AbortSignal`. Use for typeahead-style mutations or anything debounced.
-- **`serial`** — calls are queued and executed one at a time in order. Use when ordering matters and you can't drop intermediates.
+- **`serial`** — calls are queued and executed one at a time in order. Use when ordering matters and you can't drop intermediates. Plugins hear a call that waits as `'queued'` at once (§13.1).
 
 **Promise semantics for `latest-wins`.** When a `run()` is superseded by a newer call, its returned promise rejects with a `DOMException` whose `name === 'AbortError'`. `mutation.error` is **not** populated with this error (it's reserved for genuine failures). Callers awaiting `run()` should swallow abort errors:
 
@@ -755,6 +772,8 @@ Each `mutate` receives an `AbortSignal` as `signal` in its context. It's trigger
 - Controller is disposed — **unless the mutation is `detached` (§6.5)**.
 - `mutation.reset()` is called.
 - `concurrency: 'latest-wins'` and a new `run()` supersedes this one.
+
+Plugins hear each of these as `'cancel'`, with a `reason` of `'dispose'`, `'reset'` or `'superseded'` (§13.1).
 
 **`run()` after dispose rejects with `MutationDisposedError`, and `mutate` is never called.** The write does not happen. That error is deliberately **not** an `AbortError`. `isAbortError(err)` is how callers filter cancellations, and a run that was never accepted is not a cancellation. It is a write the app asked for and silently did not get. Filtering it away would hide that. It carries `mutationId` (the mutation's `id`, when it has one) and `controllerPath` to say which one.
 
@@ -918,7 +937,9 @@ const confirm = createField(ctx, '', {
 // editing password re-runs confirm's validator
 ```
 
-Sync validators run first and short-circuit; async validators only run after all syncs pass.
+**Sync validators run first; async validators start only after every sync one passes.** A pass calls the sync validators in declared order and collects all their errors. If any failed, the pass settles on those errors and does not call the async validators at all, so `[required(), checkUsername]` never sends `checkUsername('')`. A pass cannot tell a sync validator from an async one before calling it. A validator therefore counts as async when it is declared `async`, or once it has returned a promise. One that returns a promise without being declared `async` is called with the sync ones until it has, and a sync failure in that pass aborts it. The same order holds for form-level and array-level validators (§8.3, §8.5).
+
+**A check in flight ends with its field.** `reset()` drops it: its result does not land, even from a validator that ignores its `AbortSignal`. `dispose()` ends it too. `isValidating` drops to `false`, and a `revalidate()`, `validate()` or `submit()` waiting on it resolves. A row removed from a field array mid-submit therefore does not hold the submission.
 
 **Built-in validators.** `required`, `minLength`, `maxLength`, `min`, `max`, `email`, `pattern`, and `mustBeTrue`, plus `validator(schema)`, which adapts any Standard Schema (Zod, Valibot, ArkType) into a `Validator`. `required` rejects the empty values `''`, `null`, `undefined` and `[]`. A boolean `false` is a legitimate value and **passes**. For a consent or terms checkbox that must be ticked, use `mustBeTrue(message?)`, which rejects anything that is not `true`.
 
@@ -1027,7 +1048,7 @@ form.fields.confirm.errors // ['Passwords must match'] — routed onto the field
 form.topLevelErrors        // [] — nothing landed at the top
 ```
 
-Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` and `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel**, beside a field's own validator output and `setErrors` server errors. They merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run**. Fixing the mismatch therefore removes them, while a field's own `set()` does not. The form-level run is their only writer: a field's `reset()` and `setAsInitial()` leave them, and so does a form's `reset()` for its `topLevelErrors`. A reset that changes the form's value re-runs the validators, and one that does not leaves their last result standing, so a rule that still fails stays on screen. An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
+Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` and `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel**, beside a field's own validator output and `setErrors` server errors. They merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run**. Fixing the mismatch therefore removes them, while a field's own `set()` does not. Each routing form keeps its own list on the target. When an inner form's rule and an outer form's rule both target one field, fixing one rule removes only its message, and the other rule's message stays. The form-level run is their only writer: a field's `reset()` and `setAsInitial()` leave them, and so does a form's `reset()` for its `topLevelErrors`. A reset that changes the form's value re-runs the validators, and one that does not leaves their last result standing, so a rule that still fails stays on screen. An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
 
 **Flat error summary.** For a11y "X errors at top of form" displays:
 
@@ -1059,7 +1080,10 @@ const form = createForm(ctx, {
 
 Semantics:
 
-- `initial()` runs in a tracking scope; when its tracked signals change, the form re-applies the new initial values **only if the form is not dirty**. Once the user touches anything — editing a field **or** a `FieldArray` add/remove/move (§8.5) — auto-sync stops to avoid clobbering edits. That is the default `resetOnInitialChange: 'when-clean'`; `'never'` runs `initial()` once at construction, and `'always'` re-seats even a dirty form, discarding its edits.
+- `initial()` runs in a tracking scope; when its tracked signals change, the form re-applies the new initial values **only if the form is not dirty**. Once the user touches anything — editing a field **or** a `FieldArray` add/remove/move (§8.5) — auto-sync stops to avoid clobbering edits. That is the default `resetOnInitialChange: 'when-clean'`, and `'always'` re-seats even a dirty form, discarding its edits.
+- The dirty guard covers the first value too. While `initial()` returns `undefined`, as it does while its data loads, the form keeps its construction seeds. A value that arrives after the user started typing leaves the edit in place. `reset()` still re-reads `initial()` and seats it.
+- `'never'` seats the form once, from the first defined value that arrives while the form is clean, and ignores every later change.
+- A throw from `initial()` reaches the root's `onError` as `kind: 'effect'`, as a validator throw does, and the form keeps its values. It does not escape into the write that re-ran the thunk, such as a refetch whose data changed shape. The signals read before the throw stay tracked, so a later good value re-seats as usual.
 - `form.reset()` always re-reads `initial()` to get the latest baseline.
 - Setting `initial` to a fixed object (not a function) is also accepted — equivalent to a one-shot constructor initial.
 
@@ -1098,7 +1122,7 @@ order.value
 // { customer: string; items: Array<{ sku: string; qty: number; price: number }> }
 ```
 
-The factory passed to `createFieldArray` runs once per `add()` and `insert()` to construct a fresh sub-form (or sub-field), and receives the value passed to them. Each item is owned by the array; removing it disposes the underlying form.
+The factory passed to `createFieldArray` runs once per `add()` and `insert()` to construct a fresh sub-form (or sub-field), and receives the value passed to them. Each item is owned by the array; removing it disposes the underlying form. A disposed item drops its registration on the controller (§3.4), so `remove`, `clear`, `set` and `reset` leave nothing behind however often they run.
 
 **Structural dirtiness.** `add`, `insert`, `remove`, `move`, and `clear` mark the array **dirty** — `isDirty` is `true` after any of them, not only after a per-item edit. This is what makes the reactive-`initial` guard (§8.4) safe. Once the user adds or removes a row, the default `resetOnInitialChange: 'when-clean'` stops re-seating. A background refetch of `initial: () => queryData` therefore cannot silently delete the rows the user just added. `reset()` — and an `initial`-driven re-seat — clears the structural dirt back to the clean baseline.
 
@@ -1147,7 +1171,7 @@ if (result.ok) {
 ```
 
 Semantics:
-- It validates first, unless `validateBeforeSubmit: false`. An invalid form marks every leaf touched, skips the handler and resolves `{ ok: false, reason: 'invalid' }`.
+- It validates first, unless `validateBeforeSubmit: false`. An invalid form marks every leaf touched, skips the handler and resolves `{ ok: false, reason: 'invalid' }`. A form disposed during that validation skips the handler and resolves `{ ok: false, reason: 'disposed' }`.
 - `isSubmitting` is `true` while a submission runs, and `submitCount` counts the submissions that started. `submitError` holds what the last handler threw, and each new submission clears it. A validation failure throws nothing, so it leaves `submitError` empty.
 - A handler that throws resolves `{ ok: false, reason: 'error', error }` by default (`onError: 'capture'`). `onError: 'rethrow'` rejects with the thrown value instead.
 - `resetOnSuccess: true` calls `reset()` after the handler resolves. The default is `false`.
@@ -1185,7 +1209,7 @@ form.value
 - `z.array(...)` → `FieldArray<...>` (recurses on element).
 - Anything else → `Field<...>` with `zodValidator(elementSchema)` attached.
 
-Each leaf field's initial is the Zod schema's default if present, otherwise an empty value for that type (`''` for string, `0` for number, etc.). The `initial` option overrides it, as a partial value or as a tracked function that re-seats a clean form (§8.4), with the same `resetOnInitialChange` choices. `extraValidators` adds validators to named fields beside the schema's own.
+Each leaf field's initial is the Zod schema's default if present, otherwise an empty value for that type (`''` for string, `0` for number, etc.). A default on an object or an array seeds that nested form or field array as a whole, as `schema.parse({})` fills the key. The `initial` option overrides it, as a partial value or as a tracked function that re-seats a clean form (§8.4), with the same `resetOnInitialChange` choices. `extraValidators` adds validators to named fields beside the schema's own.
 
 `createZodForm` enforces the schema's rules on objects and arrays, not only its leaf rules. Such a rule is a `.refine`, `.superRefine` or `.check` on an object or an array, or an array's `.min`, `.max`, `.length` or `.nonempty`. A rule on an `.optional()` or `.default()` wrapper around one counts too. When the schema has one, the root form gets a form-level validator that parses the whole schema, and each issue routes by its path (§8.3):
 
@@ -1213,6 +1237,8 @@ const throttledScroll = throttled(scrollY, 100)
 ```
 
 A `TimingSignal<T>` is a `ReadSignal<T>` with three more methods: `flush()` emits the pending value now, `cancel()` drops it, and `dispose()` releases the source. Both take `{ leading, trailing, signal }`: `debounced` defaults to the trailing edge, `throttled` to both edges. A timing signal holds a subscription to its source, so release it with `dispose()` or an aborting `options.signal`; in a controller, dispose it from `ctx.onDispose` (§4). Core ships no function-level `debounce`: debounce the signal a method reads instead.
+
+The window goes through the shared expiry scheduler, like every user-supplied duration (§21.5). A window of `Infinity` never fires on its own, and `flush()` still emits. A finite window past the platform timer limit waits its full length rather than firing at once.
 
 ---
 
@@ -1656,7 +1682,11 @@ A plugin that persists or relays state takes the canonical sources only. `'optim
 
 #### Mutation events
 
-`onMutation` fires for every run, with or without an `id`. Each run reports `'start'` after `onMutate` and before the first `mutate` call. Then it reports exactly one outcome: `'success'`, `'error'` once retries are exhausted, or `'cancel'` for a supersede, a `reset()` or the owner's disposal. A `MutationEvent` carries `mutation`, its `MutationRef`, and `runId`, `variables` on every phase, `result` on success, `error` on error, and `origin`. `origin` names the plugin that started the run through `host.mutations.run`, and is `undefined` otherwise.
+`onMutation` fires for every run, with or without an `id`. Each run reports `'start'` after `onMutate` and before the first `mutate` call. Then it reports exactly one outcome: `'success'`, `'error'` once retries are exhausted, or `'cancel'` for a supersede, a `reset()` or the owner's disposal. A `MutationEvent` carries `mutation`, its `MutationRef`, and `runId`, `variables` on every phase, `result` on success, `error` on error, `reason` on cancel, and `origin`. `origin` names the plugin that started the run through `host.mutations.run`, and is `undefined` otherwise.
+
+`reason` says why a run was cancelled. `'superseded'` means a newer `latest-wins` run replaced it (§6.1), and `'reset'` means `reset()` dropped it. Both are the app discarding the run on purpose. `'dispose'` means the controller that owned the run was disposed (§6.2). The screen is gone, and the write it asked for may still be wanted. A root's own disposal reports nothing, because plugin delivery closes first (see Lifecycle below).
+
+A `serial` run that has to wait behind another reports `'queued'` when `run(...)` is called (§6.1). It carries the `runId` the run keeps, and the run reports `'start'` when its turn comes. A plugin can therefore record a waiting run before the run ahead of it settles. A queued run that never starts still reports exactly one outcome: `'cancel'` when `reset()` or the owner's disposal drops it, or `'error'` when its `onMutate` throws. A run that did not wait reports nothing when its `onMutate` throws or is cancelled, since it reported nothing before.
 
 A run whose work completed reports `'success'` even when an abort beat its continuation (§6.2). A queue that read `'cancel'` as "replay this on the next load" would otherwise send a write the server already accepted.
 
@@ -1669,6 +1699,7 @@ A `FetchContext` carries `query`, `key`, the fetcher's `args`, `signal`, `attemp
 #### Lifecycle
 
 - **A `setup` throw aborts `createRoot`.** The plugins already set up are disposed first, in reverse order, and then the query client. The root factory never runs.
+- **A root factory throw tears down in the dispose order.** Delivery closes before the factory's partial state rolls back, so no plugin hears the rollback, such as an entry deactivating. Then the plugins dispose in reverse order, and the query client last.
 - **A hook's throw is isolated to its plugin.** It reaches `onError` as `{ kind: 'plugin', pluginName }`, and the next plugin's hook still runs. A throw from `dispose` or an `onDispose` function is reported the same way.
 - **No hook runs once the root starts disposing.** `root.dispose()` closes delivery first, so nothing the teardown itself causes, such as entries releasing or runs cancelling, reaches a plugin.
 - **Teardown order.** After delivery closes, the controller tree disposes. Then the plugins dispose in reverse `plugins` order: each plugin's `dispose` hook first, then its `onDispose` functions, last registered first. The query client disposes last.
@@ -1743,11 +1774,13 @@ createRoot(appController, {
 
 **Receiving.** A peer's write goes through `host.queries.write`, so it carries the plugin's name as `origin` and is never mirrored back. A tab applies it only to an entry it holds, and a key it has never loaded fetches for itself on first subscribe. A peer's invalidation refetches an entry only when that tab subscribes to it. `validate(queryId, data)` lets a tab reject a payload shape it did not expect; any same-origin script can post on the channel (§22).
 
-**Echo prevention is layered.** First, the plugin mirrors no write stamped with its own name. Second, messages carry a `sourceId`, and a root drops its own. Third, messages carry a monotonic `msgId`, and a receiver drops a duplicate or out-of-order message, and one whose `msgId` is not a safe non-negative integer.
+**Echo prevention is layered.** First, the plugin mirrors no write stamped with its own name. Second, messages carry a `sourceId`, and a root drops its own. Third, messages carry a monotonic `msgId`, and a receiver drops a duplicate or out-of-order message, and one whose `msgId` is not a safe non-negative integer. A receiver moves a peer's `msgId` cursor only for a message it applied. A `msgId` 64 or more below the cursor means a forged message pushed the cursor ahead: the receiver applies that message and restarts the cursor from it, so one planted message cannot silence a peer.
+
+**Servers.** Without a `channelFactory`, the plugin opens a channel only in a browser tab (a scope with a `document`) or a web worker. Node, Bun and Deno define `BroadcastChannel` too, but there it reaches every root in the process and across worker threads or isolates, so per-request server roots would read each other's writes. On those runtimes, and where `BroadcastChannel` is not defined, the plugin installs no hooks. A `channelFactory` opens a channel wherever it returns one.
 
 **Channel-name versioning.** Channel names are user-supplied. Receivers drop messages whose protocol `v` they don't understand; users who want clean cross-deploy isolation should include a version suffix in their `channelName` (e.g. `'my-app/cache/v2'`).
 
-**Non-cloneable values.** `BroadcastChannel` uses structured clone. Cache data carrying a function or a symbol cannot cross the boundary, and a class instance arrives as a plain object without its prototype. The plugin catches the `DataCloneError`, calls `onWarn(...)`, and drops the message; the sender's cache is unaffected. `maxPayloadBytes` (default 512 KB) warns about an oversized message and still posts it. Without `BroadcastChannel`, as during SSR, the plugin installs no hooks.
+**Non-cloneable values.** `BroadcastChannel` uses structured clone. Cache data carrying a function or a symbol cannot cross the boundary, and a class instance arrives as a plain object without its prototype. The plugin catches the `DataCloneError`, calls `onWarn(...)`, and drops the message; the sender's cache is unaffected. `maxPayloadBytes` (default 512 KB) warns about an oversized message and still posts it.
 
 **Devtools lane.** In a development build (§23) the plugin reports through `host.debug` each message it posts and each message a peer sent on this protocol version. A payload names the direction (`kind: 'send' | 'receive'`), the message `type`, the `queryId` and key, the sender's `sourceId` as `from`, the `msgId`, and an `outcome`. A send is `posted` or `not-cloneable`. A receive is `applied`, `duplicate`, `malformed`, `ignored` (a query this tab has not bound or opted in), `rejected` (by `validate`) or `failed` (applying it threw).
 
@@ -1779,7 +1812,11 @@ await ctx.inject(MutationQueue).replayNow()
 - On `'start'` the plugin records the run. Its `wrapMutate` writes the durable entry on the first attempt, before calling `next()`, so the entry is in storage before the request goes out.
 - `'success'` deletes the entry, and also the entries earlier failed runs of the same operation left.
 - `'error'` deletes the entry once `attempts` reaches `maxAttempts` (default 5), or when `isRetryable(err, entry)` returns `false`, and keeps it for the next load otherwise. A deleted entry is reported through `onReplayError`. A replay's failure goes through the same test.
-- `'cancel'` keeps the entry. A reload mid-run looks the same as a cancel from here, so the next start replays it.
+- `'cancel'` reads the event's `reason` (§13.1). On `'superseded'` or `'reset'` the plugin deletes the entry and its dedupe key, because the app discarded the run and a replay would send a write it replaced or withdrew. The entry stays while a run executing in the tab still rides on it through a `dedupeBy` collapse. On `'dispose'` the entry and its key stay, and a later replay sends the write.
+- A `serial` run waiting behind another reports `'queued'`, and the plugin writes its entry then, in call order. A reload while the run ahead hangs therefore loses nothing. A queued run whose `onMutate` throws never reaches `mutate`, and its entry is deleted.
+- A reload emits nothing. Plugin delivery closes before a root disposes, and an unload never reaches the plugin at all. Every entry of a run still in flight stays in storage, and the next start replays it.
+
+Every path that deletes an entry, a replay's included, also releases the entry's `dedupeBy` key. A key left pointing at a deleted entry would make the next run with that key collapse onto nothing and write no entry.
 
 **Replay.** At setup, and again on reconnect, the plugin lists the keys under `keyPrefix`, checks each entry, and groups the entries by mutation id in `seq` order. Two tabs can mint the same `seq`, so `runId` breaks a tie, and every tab sorts the same entries the same way. It replays each group serially through `host.mutations.run`, so the definition's `retry` applies and `mutate` receives the root's `deps` (§13.1). It replays only a definition whose `meta.persist` is `true`, and it requires each entry's storage key to match its contents (§22). A startup replay that begins online is `track`ed, so `root.waitForIdle()` waits for it; one that begins offline waits for the reconnect instead. A cross-tab lock, through the Web Locks API with a `localStorage` lease as the fallback, keeps two tabs from replaying the same entries at once.
 
@@ -1809,7 +1846,7 @@ const { ready } = createPersisted(ctx, 'draft', draft, {
 
 `createPersisted` is bound to `ctx`, so it cleans up its subscriptions on dispose. The source is any signal-like value with `value`, `set` and `subscribe`: a `Signal`, a `Field`, or a custom trio. Loading the initial value is synchronous for localStorage. For an async storage the source holds its default until the load settles, and `ready` turns `true` then. A user write that lands **before** an async load settles is not lost. It wins over the stored value, and over a cross-tab change that also raced the load, and it is flushed to storage. A cross-tab change that races the load is buffered and applied once ready. Fallible operations (`get`/`set`, `serialize`/`deserialize`, `migrate`, cross-tab `onChange`) route through the optional `onError(err, op, key)` — without it, errors are swallowed. `version` + `migrate` enable a `{"$olas":1,"v":N,"d":…}` on-disk envelope with forward migration; `throttleMs` throttles writes (flushed on dispose). A reader without `version` unwraps that envelope. Without `version`, a value is written raw, unless a reader could take it for an envelope: then it is wrapped as `{"$olas":1,"d":…}`, so it reads back as itself. The unmarked `{"v":N,"d":…}` of earlier versions is an envelope only to a reader with `version`. The source's `subscribe` handler is skipped for a call made while `subscribe()` runs, which is a signal's delivery of its current value; every later call is a change and is written.
 
-Cross-tab sync is opt-in and only supported by storages that emit change events (localStorage via the `storage` event). The localStorage adapter is SSR-safe: without `localStorage`, every read is `null` and every write a no-op. `clearPersisted(storage, { prefix })` deletes the keys under a prefix, and `{ all: true }` deletes every key the adapter enumerates. With neither, it throws, because the default adapter is the whole origin's `localStorage`.
+Cross-tab sync is opt-in and only supported by storages that emit change events (localStorage via the `storage` event). Another tab's value is read as a load is: with `version`, a payload of another version or an unversioned one goes through `migrate`, and is dropped without a migrator. A migrated peer value is not written back, because the tab that wrote it still reads that key. A throttled write still pending when another tab's change arrives is dropped, since that change is newer. The localStorage adapter is SSR-safe: without `localStorage`, every read is `null` and every write a no-op. `clearPersisted(storage, { prefix })` deletes the keys under a prefix, and `{ all: true }` deletes every key the adapter enumerates. With neither, it throws, because the default adapter is the whole origin's `localStorage`.
 
 **The query cache** persists through a plugin:
 
@@ -1823,6 +1860,7 @@ createRoot(app, { deps, queries: queryEngine(), plugins: [persistQueryCachePlugi
 
 - A query opts in with `meta: { persist: true }`, a field persist adds to `QueryMeta`, or through the plugin's `include` option.
 - The plugin writes every canonical write of an opted-in query to storage: a fetch, a `write`, a `replace` or a hydration. It skips `'optimistic'` and `'rollback'` writes. It throttles the storage writes, one per `throttleMs` (default 1000). An entry the cache collects is dropped from storage too.
+- Each write carries the whole cache. The plugin reads what storage holds at startup, with or without `restore`, and holds its first write until an asynchronous read lands, so an entry this session never binds stays in storage until it passes `maxAgeMs`.
 - With synchronous storage the plugin restores during `setup`, before any controller subscribes, so a restored entry is there on the first read. With asynchronous storage the restore lands later, is `track`ed, and fills only entries no subscription has bound yet. `restoreQueryCache(options)` reads the stored cache before `createRoot`, for an app whose first render must see it; pass its result as `hydrate` and set `restore: false`.
 - A restore discards a cache stored under a different `buster`, an entry older than `maxAgeMs`, and an entry dated in the future (§22). `maxAgeMs` defaults to 24 hours.
 
@@ -1839,7 +1877,7 @@ root.debug.subscribe((event) => {
 root.debug.queryEntries() // DebugCacheEntry[] — current state of every cache entry, with its queryId
 ```
 
-A new subscriber first receives a replay of the live controller tree, so a panel that mounts after `createRoot` sees the existing tree at once. No other event type is buffered.
+A new subscriber first receives a replay of the live controller tree, so a panel that mounts after `createRoot` sees the existing tree at once. No other event type is buffered. The replay follows the order construction finished in, because `controller:constructed` is sent after a factory returns. A child built inside its parent's factory therefore arrives before the parent, and one attached later arrives after it.
 
 ### 14.1 Event families
 
@@ -1898,9 +1936,11 @@ const root = createRoot(rootController, {
 
 `dehydrate()` only serializes the **query client cache**: `id`, `key`, `data` and `lastUpdatedAt` for every settled entry. Controller state isn't serialized — controllers reconstruct from their props on the client. **Infinite queries dehydrate too.** Their entries carry the pages as `data` and the page params as `pageParams`, so the client continues paging where the server stopped (§5.11).
 
-Each serialized entry carries its query's `id` alongside its key. Every shared query has an `id` (§5.2), so every settled entry dehydrates. IDs must be unique per query and identical in server and client bundles; registration order never identifies hydrated data. Hydration is namespaced by `id + key hash`, so two queries whose keys match cannot adopt one another's data. An entry that arrives before any subscription binds its key waits in a buffer, and the first binding adopts it. Hand-authored payloads must use the target query's `id`. Core checks the payload's `version` and each entry's shape, and skips an entry it cannot read (§22).
+Each serialized entry carries its query's `id` alongside its key. Every shared query has an `id` (§5.2), so every settled entry dehydrates. IDs must be unique per query and identical in server and client bundles; registration order never identifies hydrated data. Hydration is namespaced by `id + key hash`, so two queries whose keys match cannot adopt one another's data. The key hash is taken over the value JSON round-trips the key to (§5.4), so a key holding an `undefined` member, a Date or `NaN` is adopted after the JSON trip. A bigint key has no JSON form, and `serializeForScript` throws on it. An entry that arrives before any subscription binds its key waits in a buffer, and the first binding adopts it. Hand-authored payloads must use the target query's `id`. Core checks the payload's `version` and each entry's shape, and skips an entry it cannot read (§22).
 
-**Hydrating a live root.** `root.hydrate(state)` applies a payload after `createRoot`. An entry whose key is already bound is written through and supersedes the fetch in flight for it; the rest wait in the buffer. Streaming SSR uses this: each resolved `<Suspense>` boundary pushes its entries into the client root (§16.1). A root without a query engine discards the payload, with a development warning.
+**Hydrating a live root.** `root.hydrate(state)` applies a payload after `createRoot`. An entry whose key is already bound takes the row and supersedes the fetch in flight for it, unless the row is stamped before the entry's `lastUpdatedAt`. Such a row is older than what the entry holds, so it is skipped, and plugins hear no write. The rest wait in the buffer. A row stamped at or after an invalidation clears the stale mark (§5.7).
+
+**Timestamps from the future.** A `lastUpdatedAt` ahead of the client's clock is read as the client's now, on the buffered path and the live one. A server clock running ahead would otherwise give the data a negative age: it would read `isStale` with `staleTime: 0` yet never refetch, and stay fresh past `staleTime`. Streaming SSR uses this: each resolved `<Suspense>` boundary pushes its entries into the client root (§16.1). A root without a query engine discards the payload, with a development warning.
 
 **Inlining the payload.** `serializeForScript(state)` writes a value for an inline `<script>` without opening an injection hole. It returns `JSON.parse("…")` over the JSON, with every character that could end the string, the script or an attribute escaped (§22):
 
@@ -1960,7 +2000,7 @@ Hooks build on `useSyncExternalStore`, so reads are concurrent-safe and do not t
 
 - **`useRoot()`** returns `root.api` from the nearest `<OlasProvider>`, and throws outside one. The `Register` augmentation types it once for the app. Without a registration it returns `unknown`, and `useRoot<Api>()` names the type per call. `createOlasContext<Api>(displayName?)` gives each of several roots its own `Provider` and a typed `useRoot`.
 - **`useValue(signal, options?)`** reads any `ReadSignal`: a `signal`, a `computed`, a `Field`, a `Form` or a `FieldArray`. `select` projects the value and `isEqual` decides when a new value re-renders.
-- **`useQuery(subscription)`** returns the whole `AsyncState` as plain values, with the actions `refetch`, `reset` and `cancel`. The values are `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `isPaused`, `isEnabled`, `lastUpdatedAt` and `hasPendingMutations`. **It re-renders only for the fields the component read during render.** The result is a tracked snapshot. Its getters record each field read, and the subscription notifies React only when one of those moves. A read after commit returns the live value. Until the component reads anything, every change notifies.
+- **`useQuery(subscription)`** returns the whole `AsyncState` as plain values, with the actions `refetch`, `reset` and `cancel`. The values are `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `isPaused`, `isEnabled`, `lastUpdatedAt` and `hasPendingMutations`. **It re-renders only for the fields the component read during render.** The result is a tracked snapshot. Its getters record each field read, and the subscription notifies React only when one of those moves. A read after commit returns the live value, even after React has thrown away a later render of the component. Until the component reads anything, every change notifies.
 - **`useQuery(subscription, { suspense: true })`**, or `useSuspenseQuery(subscription)`, suspends until the first value and types `data` as present. On a disabled query it suspends until the query is enabled and loaded (§5.2), with a one-time development warning.
 - **`useInfiniteQuery(subscription)`** does the same for an infinite subscription, adding `pages`, `flat`, the paging flags, `fetchNextPage` and `fetchPreviousPage`. A list that renders `flat` and `hasNextPage` does not re-render while `isFetchingPreviousPage` flips.
 - **`useField(field)`** returns the field's state as plain values plus its methods, in one subscription. `useFieldInput(field, { transform?, name? })` returns `value`, `onChange`, `onBlur`, `name` and `aria-invalid`, ready to spread onto a native input.
@@ -1985,6 +2025,7 @@ function TextInput({ field, label }: { field: Field<string>; label: string }) {
 
 - `<SuspendOnUnmount controller={handle}>` resumes `handle` when the first consumer mounts and suspends it when the last one unmounts. It takes anything with `suspend()` and `resume()`, such as an `attach` handle (§11.1) or the root.
 - `useSuspendOnHidden(handle)` suspends while `document.visibilityState` is `'hidden'` and resumes on visible.
+- On one controller, the two share their bookkeeping, and the controller resumes only when neither has a reason left to keep it suspended. A wrapper that first mounts on a hidden tab waits for the tab to show. A tab that shows does not resume a controller whose last wrapper has unmounted.
 
 Without these, you call `suspend()` and `resume()` yourself; the adapter doesn't drive lifecycle implicitly.
 
@@ -2072,7 +2113,7 @@ createRealtimePatcher<FeedEvent>(ctx, 'feed-events', {
 })
 ```
 
-The patcher subscribes inside `ctx.effect`, so the subscription ends with the controller, and it runs each handler untracked. Each handler receives its own variant of the event union, `Extract<TEvent, { type: K }>`, and a `'*'` handler sees every event. `channel` is a name or a `ReadSignal<string>`, and a new name moves the subscription to the new channel: a per-route room is a `computed` over the route params. The framework primitives underneath are `ctx.effect` and `write`. Note three choices in the example. `bindQuery` scopes the writes to this root, per §21.5. `write` rather than `setData`, because a realtime event is server truth with nothing to roll back. A fire-and-forget `setData` would leave a live snapshot per event (§6.4). The `origin` tag marks the writes as derived, and cross-tab leaves them alone, since every tab receives the same push (§13.2). `createConnectionState(ctx)` reads the transport's connection state as a signal, and `onReconnect(ctx, fn)` runs `fn` when it comes back. All of them on one `RealtimeService` share one `onConnectionChange` subscription.
+The patcher subscribes inside `ctx.effect`, so the subscription ends with the controller, and it runs each handler untracked. Each handler receives its own variant of the event union, `Extract<TEvent, { type: K }>`, and a `'*'` handler sees every event. `channel` is a name or a `ReadSignal<string>`, and a new name moves the subscription to the new channel: a per-route room is a `computed` over the route params. The framework primitives underneath are `ctx.effect` and `write`. Note three choices in the example. `bindQuery` scopes the writes to this root, per §21.5. `write` rather than `setData`, because a realtime event is server truth with nothing to roll back. A fire-and-forget `setData` would leave a live snapshot per event (§6.4). The `origin` tag marks the writes as derived, and cross-tab leaves them alone, since every tab receives the same push (§13.2). `createConnectionState(ctx)` reads the transport's connection state as a signal, and `onReconnect(ctx, fn)` runs `fn` when it comes back. All of them on one `RealtimeService` share one `onConnectionChange` subscription. A resume restarts the state at the transport's latest report, or at `'connected'` when the transport has reported nothing since the subscription opened. A move back to `'connected'` on resume runs `onReconnect` too.
 
 #### Gesture / transient UI state
 
@@ -2188,6 +2229,8 @@ The `handleClick` method encapsulates the standard semantics:
 - plain click → select only `id`
 - meta-click → toggle `id` in selection
 - shift-click → range from anchor (last clicked) to `id`, using `ordered` to define the range. `ordered` may be the row ids in order, or a `Map` from id to index, which a large list can build once.
+
+A run of shift-clicks computes each range against the selection as it stood before the run's first shift-click, so a second shift-click can shrink the range. A plain or meta click ends the run, and so does any programmatic call: `select`, `deselect`, `toggle`, `clear` and `selectAll`. The next shift-click then starts from the current selection, so ids selected or deselected in between keep that state.
 
 `isSelected(id)` hands back the same signal for an id while anything holds it, so a row that renders `useValue(sel.isSelected(id))` keeps one subscription across renders.
 
@@ -2410,7 +2453,7 @@ const patchPostEverywhere = (ctx: Ctx, id: string, patch: Partial<Post>) => {
 - `defineEntity<T>({ name, idOf })` — module-scope entity descriptor.
 - `entitiesPlugin({ entities: [Post, User, ...] })` — install via `RootOptions.plugins`. Each root gets its own store.
 - The store, a service under the `Entities` scope: `ctx.inject(Entities)` in a controller, `root.inject(Entities)` outside one.
-- `entities.signal(Post, id) → ReadSignal<Post | undefined>` — reactive per-id reads. `entities.list(Post, { filter? })` reads every stored `Post` as one signal.
+- `entities.signal(Post, id) → ReadSignal<Post | undefined>` — reactive per-id reads. The handle is the same for as long as anything holds it, and it survives `remove` and `maxSlots` eviction: it reads `undefined` while the entity is out of the store, and follows it again once a query or `upsert` brings it back. `maxSlots` evicts only ids that no query binds and no `subscribe` on their handle holds. `entities.list(Post, { filter? })` reads every stored `Post` as one signal.
 - `entities.update(Post, id, patchOrUpdater, options?)` — accepts a `Partial<T>` patch or a `(prev: T) => T` updater. A patch shallow-merges by default; pass `{ merge: 'deep' }` to recursively merge plain objects, where arrays and non-plain values replace rather than merge. It backpropagates to every query holding the entity through `host.queries.write`, batched into one round of subscriber notifications. Each entry is patched as it is at the time of the call: the plugin replaces every node `idOf` claims with that id in the entry's current data, so a patch lands on an entity that moved since the entry was last walked, and an entry that no longer holds it gets no write. The writes carry the plugin's name as `origin`, so the plugin skips them when they come back through `onWrite`, and cross-tab does not mirror them (§13.2). Infinite queries are included, because the page arrays are walked transparently. In a development build (§23) each update reports on the plugin's devtools lane which entity it patched and how many entries it reached.
 - `entities.upsert`, `get`, `remove`, `entries` and `bindings` round out the surface (the last two are devtools snapshots). `remove` drops the entity from the store and patches no query.
 
@@ -2851,7 +2894,7 @@ type AsyncState<T> = {
   refetch: () => Promise<T>       // rejects with QueryDisabledError while disabled
   reset: () => void               // clear error, settle status; no fetch
   cancel: () => void              // abort the in-flight fetch; data stays
-  firstValue: () => Promise<T>    // resolves on first success; waits while disabled
+  firstValue: () => Promise<T>    // the data now if there is some, else the first success; waits while disabled
 }
 
 type Snapshot = {
@@ -2908,7 +2951,7 @@ type BindQueryOptions = {
   origin?: string // stamped on the handle's writes and invalidations for plugins (§13.1)
 }
 
-type RetryPolicy = number | ((attempt: number, error: unknown) => boolean)
+type RetryPolicy = false | number | ((attempt: number, error: unknown) => boolean) // false = never, as 0
 type RetryDelay = number | ((attempt: number) => number)
 type RefetchInterval<T> = number | ((data: T | undefined) => number) // see §5.9
 type NetworkMode = 'online' | 'always' | 'offlineFirst' // see §5.5
@@ -2929,7 +2972,7 @@ type QuerySpec<Args extends unknown[], T> = {
   refetchOnReconnect?: boolean
   keepPreviousData?: boolean // default false; see §5.2
   retry?: RetryPolicy        // default 0 (no retry)
-  retryDelay?: RetryDelay    // default 1000
+  retryDelay?: RetryDelay    // default exponential, min(1000 * 2 ** attempt, 30_000); see §5.2
   networkMode?: NetworkMode  // default 'online'; see §5.5
   structuralShare?: boolean  // default true; see §5.6
   meta?: QueryMeta
@@ -3887,7 +3930,7 @@ const fakeProfile = {
 render(<UserProfileView profile={fakeProfile} />)
 ```
 
-These return objects whose signals satisfy the real types so TypeScript accepts them as drop-in substitutes.
+These return objects whose signals satisfy the real types so TypeScript accepts them as drop-in substitutes. They also behave like the real ones. A `fakeField` acts as a field with no validators. `setErrors` is a separate server channel that the next `set()` clears, and `set()` recomputes `isDirty`. `reset()` clears dirty, touched and every error, and `isValid` reads `true` while `isValidating` is set (§8.2). A `fakeAsyncState` given an `error` has status `'error'`, and one with status `'pending'` is fetching, and loading while it has no data. Its `firstValue()` rejects with the error, resolves with data, and otherwise stays pending.
 
 ### 20.11 Persistence adapter (`@kontsedal/olas-persist`)
 
@@ -4183,9 +4226,9 @@ Each definition carries a `Set<QueryClient>`. Binding a handle or an entry regis
 
 Each client also indexes the queries it has bound by `id`, which is what `host.queries.get(id)` reads. There is no process-wide query registry, so `host.queries` reaches only its own root's entries: `host.queries.invalidate(id, key)` refetches in that root alone, including the mutation queue's replay reconciliation. Cross-tab transport remains explicit plugin behavior. The `defineMutation` registry is process-wide, because a replay must find a definition before any controller exists.
 
-Cache keys use a recursive tagged encoding: every primitive, array, object and supported special value has its own type tag. Object properties are sorted; user data cannot impersonate special-value tags. Cycles, functions, symbols, Map/Set and unsupported class instances throw. The hash string (`host.queries.hashKey`) is opaque, and its format is not a persistence protocol.
+Cache keys use a recursive tagged encoding: every primitive, array, object and bigint has its own type tag. Object properties are sorted; user data cannot impersonate a tag. The encoding hashes the value JSON round-trips a key to (§5.4): an `undefined` member is absent, `undefined` in an array and a non-finite number are `null`, and a Date is its ISO string. Cycles, functions, symbols, Map/Set and unsupported class instances throw. The hash string (`host.queries.hashKey`) is opaque, and its format is not a persistence protocol.
 
-Expiry scheduling is shared. `scheduleExpiry` in `expiry-timer.ts` creates **no timer at all** for a non-finite delay, and walks a finite one in chunks against an absolute deadline. A delay above the platform's signed 32-bit limit therefore cannot overflow into an immediate fire. Every user-supplied duration goes through it: the staleness timer in `Entry` and `InfiniteEntry`, the gc timer in `ClientEntry` and `InfiniteClientEntry`, the `refetchInterval` chain, the retry backoff in `abortableSleep`, and `suspend({ maxIdleTime })`. So `staleTime: Infinity` stays fresh until explicitly invalidated, and `gcTime: Infinity` retains a released entry for the life of the root. This applies to regular and infinite entries, initial hydration and streamed hydration.
+Expiry scheduling is shared. `scheduleExpiry` in `expiry-timer.ts` creates **no timer at all** for a non-finite delay, and walks a finite one in chunks against an absolute deadline. A delay above the platform's signed 32-bit limit therefore cannot overflow into an immediate fire. Every user-supplied duration goes through it: the staleness timer in `Entry` and `InfiniteEntry`, the gc timer in `ClientEntry` and `InfiniteClientEntry`, the `refetchInterval` chain, the retry backoff in `abortableSleep`, the windows of `debounced` and `throttled` (§9), and `suspend({ maxIdleTime })`. So `staleTime: Infinity` stays fresh until explicitly invalidated, and `gcTime: Infinity` retains a released entry for the life of the root. This applies to regular and infinite entries, initial hydration and streamed hydration.
 
 ### 21.6 Cache entry state machine
 
@@ -4299,7 +4342,7 @@ Olas trusts its own process. It treats everything that reaches it from outside a
 - `persistQueryCachePlugin` rejects an entry dated in the future, which would otherwise stay fresh for any `staleTime`. It reports every restore failure through `onError`, on sync and async storage alike.
 - `createPersisted` reports a stored value its source refuses as a `'deserialize'` error, and still settles `ready`.
 - The mutation queue checks each entry's shape, attempt count and timestamps, and requires its storage key to match its contents. It replays only definitions whose `meta.persist` is `true`, looked up through `host.mutations.get`. Stored data can delay or repeat an opted-in write; it cannot choose which operation runs.
-- `crossTabPlugin` ignores a message whose `msgId` is not a safe non-negative integer. It reports a message it cannot apply through `onWarn`, and never lets it throw out of the channel's handler. Its `validate(queryId, data)` option lets a tab reject a payload shape it did not expect.
+- `crossTabPlugin` ignores a message whose `msgId` is not a safe non-negative integer. It moves a peer's `msgId` cursor only for a message it applied, and a `msgId` far below the cursor restarts it, so a forged message cannot silence a peer. It reports a message it cannot apply through `onWarn`, and never lets it throw out of the channel's handler. Its `validate(queryId, data)` option lets a tab reject a payload shape it did not expect.
 
 A malformed value never throws out of `createRoot`, never leaves a root or signal wedged, and never bypasses `onError` or `onWarn`. The security tests pin each rule above: `streaming-security.test.tsx` in react, `security.test.ts` in mutation-queue and cross-tab, `query-cache-security.test.ts` and `persisted-security.test.ts` in persist, `merge-security.test.ts` in entities, and the "W15 regression" blocks in core's `regressions.test.ts`.
 

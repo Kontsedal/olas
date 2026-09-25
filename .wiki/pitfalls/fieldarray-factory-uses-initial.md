@@ -3,13 +3,13 @@ name: fieldarray-factory-uses-initial
 description: FieldArray.add(x) only does something useful if the factory uses its `initial` argument.
 type: pitfall
 covers:
-  - packages/core/src/forms/form.ts:845-856
-  - packages/core/src/forms/form.ts:939-953
+  - packages/core/src/forms/form.ts:923-935
+  - packages/core/src/forms/form.ts:1018-1032
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
   - { type: uses, target: ../modules/forms.md }
-last_verified: 2026-05-22
+last_verified: 2026-09-25
 confidence: high
 ---
 

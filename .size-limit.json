@@ -4,35 +4,35 @@
     "path": "packages/core/dist/index.js",
     "import": "{ createRoot, defineController, signal, computed }",
     "ignore": ["@preact/signals-core"],
-    "limit": "5.4 KB"
+    "limit": "5.7 KB"
   },
   {
     "name": "core: + forms",
     "path": "packages/core/dist/index.js",
     "import": "{ createRoot, defineController, createField, createForm, createFieldArray }",
     "ignore": ["@preact/signals-core"],
-    "limit": "9.2 KB"
+    "limit": "10.2 KB"
   },
   {
     "name": "core: + queries and mutations",
     "path": "packages/core/dist/index.js",
     "import": "{ createRoot, defineController, queryEngine, defineQuery, createQuery, createMutation }",
     "ignore": ["@preact/signals-core"],
-    "limit": "17.5 KB"
+    "limit": "18.2 KB"
   },
   {
     "name": "core: everything",
     "path": "packages/core/dist/index.js",
     "import": "*",
     "ignore": ["@preact/signals-core"],
-    "limit": "23.5 KB"
+    "limit": "24.5 KB"
   },
   {
     "name": "react",
     "path": "packages/react/dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom", "@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "3.8 KB"
+    "limit": "4.05 KB"
   },
   {
     "name": "vue",
@@ -53,28 +53,28 @@
     "path": "packages/cross-tab/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "1.4 KB"
+    "limit": "1.5 KB"
   },
   {
     "name": "entities",
     "path": "packages/entities/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "2.4 KB"
+    "limit": "2.7 KB"
   },
   {
     "name": "mutation-queue",
     "path": "packages/mutation-queue/dist/index.js",
     "import": "*",
     "ignore": ["@kontsedal/olas-core", "@kontsedal/olas-persist", "@preact/signals-core"],
-    "limit": "3.3 KB"
+    "limit": "3.45 KB"
   },
   {
     "name": "persist: createPersisted",
     "path": "packages/persist/dist/index.js",
     "import": "{ createPersisted, localStorageAdapter }",
     "ignore": ["@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "1.05 KB"
+    "limit": "1.17 KB"
   },
   {
     "name": "persist: persistQueryCachePlugin",

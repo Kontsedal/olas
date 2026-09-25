@@ -42,7 +42,7 @@ if (brand === 'infiniteQuery') return createInfiniteUse(...)
 return createUse(...)
 ```
 
-### 2. `createUse(client, query, keyOrOptions)` — `use.ts:223`
+### 2. `createUse(client, query, keyOrOptions)` — `use.ts:233`
 
 Builds a `SubscriptionImpl<T>` and an `effect` that owns the binding:
 
@@ -52,10 +52,11 @@ let currentEntry: ClientEntry<T> | null = null
 
 const effectDispose = effect(() => {
   if (!enabled()) {                     # enabledFn from options
-    # sub.detach(keepDataWhileDisabled): when that opt-in is set, detach snapshots
-    # the entry's current data into previousData$ first, so `data` keeps reporting
-    # it while disabled (rq-style) instead of blanking. Default false → blanks (§5.2).
-    untracked(() => { release(currentEntry); sub.detach(keepDataWhileDisabled) })
+    # sub.disable(): with keepPreviousData or keepDataWhileDisabled set, it snapshots
+    # the data on screen into previousData$ first. keepDataWhileDisabled shows it
+    # while disabled (rq-style); otherwise `data` blanks (§5.2). keepPreviousData
+    # bridges a re-enable on a new key with it.
+    untracked(() => { release(currentEntry); sub.disable() })
     return
   }
   const args = keyFn() as Args          # TRACKED — re-runs when these signals change
@@ -82,7 +83,7 @@ Key tricks:
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
 - We refetch on subscribe only if status is `idle`, stale or errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
 
-### 3. `client.bindEntry(query, args)` — `client.ts:1355`
+### 3. `client.bindEntry(query, args)` — `client.ts:1390`
 
 Looks up the entry in `client.maps`. If absent:
 
@@ -95,15 +96,15 @@ Looks up the entry in `client.maps`. If absent:
 
 `ClientEntry`'s constructor builds an `Entry<T>` with a fetcher closure that captures the original `args` (the user's call args, not the hash key — these are distinct, see `../pitfalls/callargs-vs-keyargs.md`).
 
-### 4. `entry.acquire(subscriberPath)` — `client.ts:327`
+### 4. `entry.acquire(subscriberPath)` — `client.ts:356`
 
 Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer. The subscribing controller's path, which `createQuery` reads from `ctxInternals.path`, moves the entry's `subscriptions` count and sends the devtools `cache:subscribed`. Every `release` passes the same path and sends `cache:unsubscribed`: a key change, a disable, a suspend and dispose each release (1.0).
 
-### 5. `SubscriptionImpl.attach(entry)` — `use.ts:139`
+### 5. `SubscriptionImpl.attach(entry)` — `use.ts:142`
 
 Sets the subscription's `current$` signal to the new entry. The subscription's `data`/`error`/`status`/... are all computeds over `current$.value?.entry.<sig>.value` — flipping `current$` ripples through every derived signal in one batched update.
 
-For `keepPreviousData: true`, captures the old entry's `data` into `previousData$` before the swap so the consumer keeps seeing the previous value until the new entry has data of its own.
+For `keepPreviousData: true`, captures the old entry's `data` into `previousData$` before the swap so the consumer keeps seeing the previous value until the new entry has data of its own. The fallback applies only while attached. A detached (disabled) subscription reads `previousData$` only under `keepDataWhileDisabled`, so `keepPreviousData` alone no longer shows another key's data while disabled. Pinned by `use-edges.test.ts`, "keepPreviousData does not leak into a disabled subscription".
 
 ### 6. The fetch resolves
 
@@ -122,7 +123,7 @@ Subscribers downstream see one notification pass.
 
 ## On suspend / resume (§4.1)
 
-`suspend()` releases the current entry and sets a closure `suspended = true`; `resume()` clears it and imperatively rebinds to the current key. The binding effect must read the tracked signals (`enabled`, then `key` when enabled) **before** its `if (suspended) return`, so its dependency set survives a key change that fires during suspension. Reordering these was the T2.1 fix — see `../pitfalls/suspended-effects-lose-deps.md` for the empty-dependency-set trap.
+`suspend()` releases the current entry and sets a closure `suspended = true`; `resume()` clears it and imperatively rebinds to the current key. The binding effect must read the tracked signals (`enabled`, then `key` when enabled) **before** its `if (suspended) return`, so its dependency set survives a key change that fires during suspension. Reordering these was the T2.1 fix — see `../pitfalls/suspended-effects-lose-deps.md` for the empty-dependency-set trap. `resume()` skips the stale-refetch when a fetch is already in flight, as the effect does (`use.ts:335-368`); a suspend and resume during a first fetch used to abort it and fetch again.
 
 ## On disposal
 

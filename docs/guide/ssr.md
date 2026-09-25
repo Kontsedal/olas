@@ -32,6 +32,8 @@ So the server bundle and the client bundle must define each query with the same 
 
 Hydration is keyed by `id` and key hash together. Two queries whose keys hash the same cannot adopt each other's data. A payload you write by hand must set each entry's `id` to its target query's `id`.
 
+The key hash follows what JSON carries, so a key survives the trip to the client. An `undefined` member counts as absent, a Date as its ISO string, and `NaN` or `Infinity` as `null` (§5.4). A bigint has no JSON form, and `serializeForScript` throws on one.
+
 The rest of this page uses one small app. Both bundles import it:
 
 ```ts file=app-controller.ts
@@ -151,7 +153,7 @@ hydrateRoot(
 
 The client buffers each entry by `id` and key hash, and the first subscription that binds the key adopts it with `status: 'success'`. A buffered entry is consumed once. If its controller disposes and the key binds again later, that bind fetches as usual, because hydration is a warm start, not a second cache.
 
-The payload's `lastUpdatedAt` still counts against `staleTime`. With the default `staleTime: 0`, hydrated data is stale at once, so the client refetches it in the background on subscribe: `status` stays `'success'` while `isFetching` turns true. A `staleTime` such as the `60_000` above skips that refetch.
+The payload's `lastUpdatedAt` still counts against `staleTime`. With the default `staleTime: 0`, hydrated data is stale at once, so the client refetches it in the background on subscribe. The data stays on screen, `isFetching` turns true, and `status` reads `'pending'` until the refetch lands. A `staleTime` such as the `60_000` above skips that refetch. A stamp ahead of the client's clock counts as the client's now, so a server clock that runs fast cannot keep data fresh past `staleTime`.
 
 ### Or let `HydrationBoundary` own the client root
 
@@ -323,7 +325,7 @@ Batches can arrive before React hydrates. `OLAS_BOOTSTRAP_SCRIPT` queues them, a
 2. It applies the batches that arrived before mount to this root.
 3. It applies each later batch to every installed root.
 
-A second boundary, or the fresh root of a StrictMode remount, therefore catches up on the stream instead of taking it from the first root. Each batch goes through `root.hydrate` inside one signal `batch`, so subscribers see one notification per batch. A bound entry takes its row at once, and the row supersedes any fetch in flight for it. An unbound key waits in the buffer until its first bind. A client root that no `HydrationBoundary` builds connects with [`installStreamingIntake(root)`](/reference/olas-react.installstreamingintake), which returns the uninstall.
+A second boundary, or the fresh root of a StrictMode remount, therefore catches up on the stream instead of taking it from the first root. Each batch goes through `root.hydrate` inside one signal `batch`, so subscribers see one notification per batch. A bound entry takes its row at once, and the row supersedes any fetch in flight for it. A row stamped before the entry's `lastUpdatedAt` is older than what the entry holds, so the entry skips it. An unbound key waits in the buffer until its first bind. A client root that no `HydrationBoundary` builds connects with [`installStreamingIntake(root)`](/reference/olas-react.installstreamingintake), which returns the uninstall.
 
 ### Why the transform places the tags
 

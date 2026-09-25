@@ -57,6 +57,18 @@ Note the split since. `version.yml` opens the Version Packages PR and needs fix 
 
 A retry reuses the root of a discarded render only when it renders the same element, found by the props object (`.wiki/pitfalls/render-phase-root-leak.md`). With the `<Suspense>` above the component that renders the boundary, each attempt is a new element. Each retry then builds a new root, which refetches what the child suspended on, and a child on `useSuspenseQuery` can suspend forever. The sweep disposes the old roots, so it no longer leaks, but the loop is silent. A development warning could fire when a boundary builds a root for a `def` while an unclaimed root for that `def` is still waiting for its sweep. Sibling boundaries that share a `def` would trigger it too, so the check needs a second signal, such as the same `def` rebuilt three times with no commit between.
 
+### [idea] A superseded run can still send once when its storage write is slow
+
+With async storage (IndexedDB), the mutation queue holds a run's first attempt until the entry is written. A `latest-wins` supersede that lands during that write aborts the run, but `mutate` is still called once the write settles, with an already-aborted signal. A `mutate` that honours its signal sends nothing; one that ignores it sends the stale request. The queue could skip `next()` when the signal is already aborted after the write (`packages/mutation-queue/src/plugin.ts`, `wrapMutate`).
+
+### [idea] `indexedDbAdapter` opens a `BroadcastChannel` wherever one exists
+
+Cross-tab now opens no channel on a server (`.wiki/modules/cross-tab.md`), but persist's `indexedDbAdapter` still creates one for `onChange` whenever `BroadcastChannel` is defined. It posts only after an IndexedDB write, which does nothing on a server without IndexedDB. A server that installs an IndexedDB polyfill would share both the channel and the data across requests. Apply the cross-tab rule (a DOM or a `WorkerGlobalScope`, no Deno/Bun) to the adapter's channel.
+
+### [idea] `Form.reset()` calls `options.initial()` outside the guarded effect
+
+The reactive `initial()` effect now catches a throw and routes it to `onError` (SPEC §8.4). `Form.reset()` calls `options.initial()` directly, so a throw there still reaches the caller, and a `reset()` run inside an effect makes the thunk's reads that effect's dependencies. Read it `untracked` and route the throw the same way (`packages/core/src/forms/form.ts`).
+
 ## Dropped
 
 Each entry says why, so the idea does not come back without new information.
