@@ -191,8 +191,10 @@ const ORPHAN_MAX_MS = 60_000
  */
 type Uncommitted = {
   root: Root<unknown>
-  /** The props object of the render that built it. */
+  /** The props object of the render that built it, or that last reused it. */
   key: object
+  def: ControllerDef<void, unknown>
+  options: RootOptions<AmbientDeps>
   /** Bumped on each touch and on claim, so a stale sweep stands down. */
   generation: number
   timer: ReturnType<typeof setTimeout> | undefined
@@ -209,9 +211,47 @@ const uncommitted = new Map<Root<unknown>, Uncommitted>()
  */
 const uncommittedByProps = new WeakMap<object, Uncommitted>()
 
+let warnedRebuild = false
+
+/** `true` when two `deps` objects hold the same members. */
+function sameDeps(a: object, b: object): boolean {
+  if (a === b) return true
+  const keys = Object.keys(a)
+  if (keys.length !== Object.keys(b).length) return false
+  return keys.every(
+    (k) =>
+      Object.hasOwn(b, k) &&
+      (a as Record<string, unknown>)[k] === (b as Record<string, unknown>)[k],
+  )
+}
+
+/**
+ * An unclaimed root built from `def` and equal options: the same `hydrate`
+ * object and `deps` with the same members. A parent that renders the boundary
+ * below an outer `<Suspense>` re-creates the element on every retry, so its
+ * props object is new each time. Without this lookup each retry built a root
+ * that refetched what the child suspended on, and the child suspended again,
+ * forever. Two boundaries that share a `def` may both find one root here; the
+ * commit that fails to claim it builds its own.
+ */
+function findReusable(
+  def: ControllerDef<void, unknown>,
+  options: RootOptions<AmbientDeps>,
+): { reusable: Uncommitted | undefined; sameDef: boolean } {
+  let sameDef = false
+  for (const entry of uncommitted.values()) {
+    if (entry.def !== def) continue
+    sameDef = true
+    if (entry.options.hydrate === options.hydrate && sameDeps(entry.options.deps, options.deps)) {
+      return { reusable: entry, sameDef }
+    }
+  }
+  return { reusable: undefined, sameDef }
+}
+
 /**
  * The root for a render with no committed root to use: the uncommitted one
- * this element built on an earlier attempt, or a new one.
+ * this element, or an equal one, built on an earlier attempt, or a new one.
  */
 function acquireRoot<Api>(
   key: object,
@@ -229,8 +269,35 @@ function acquireRoot<Api>(
     armSweep(earlier)
     return earlier.root as Root<Api>
   }
+  const { reusable, sameDef } = findReusable(def as ControllerDef<void, unknown>, options)
+  if (reusable !== undefined) {
+    reusable.key = key
+    uncommittedByProps.set(key, reusable)
+    armSweep(reusable)
+    return reusable.root as Root<Api>
+  }
+  if (__DEV__ && sameDef && !warnedRebuild) {
+    warnedRebuild = true
+    console.warn(
+      '[olas] <HydrationBoundary> built a second root for the same def before either ' +
+        'committed. A parent that renders the boundary below an outer <Suspense> re-creates ' +
+        'it on every retry, and its options changed between attempts (a new `hydrate` object, ' +
+        'or `deps` with different members), so the retry could not reuse the earlier root and ' +
+        'will refetch. Keep `hydrate` and `deps` stable across renders, or put a <Suspense> ' +
+        'inside the boundary so it commits first. Two boundaries that render the same def ' +
+        'with different options also see this once, harmlessly.',
+    )
+  }
   const root = createRoot(def, options) as Root<Api>
-  const entry: Uncommitted = { root, key, generation: 0, timer: undefined, deadline: undefined }
+  const entry: Uncommitted = {
+    root,
+    key,
+    def: def as ControllerDef<void, unknown>,
+    options,
+    generation: 0,
+    timer: undefined,
+    deadline: undefined,
+  }
   uncommittedByProps.set(key, entry)
   uncommitted.set(root, entry)
   armSweep(entry)
@@ -325,11 +392,13 @@ type Owned<Api> = {
  * it. A retry of the same element reuses that root. A root no commit claims is
  * disposed about ten seconds after its work goes idle, or after a minute if it
  * never goes idle. A `<Suspense>` above that later hides the boundary's content
- * does not dispose the root: a hide is not an unmount. A retry of an element
- * the parent re-created cannot find the old root and builds a new one, which
- * refetches what the child suspended on. Put a `<Suspense>` boundary inside
- * `HydrationBoundary`, around the part that suspends, so the boundary commits
- * first.
+ * does not dispose the root: a hide is not an unmount. A parent below an outer
+ * `<Suspense>` re-creates the element on every retry; that retry reuses an
+ * unclaimed root built from the same `def`, the same `hydrate` object and
+ * `deps` with the same members. When those options change between attempts,
+ * the retry builds a new root and refetches, and a development build warns
+ * once. A `<Suspense>` inside `HydrationBoundary`, around the part that
+ * suspends, avoids all of this: the boundary commits first.
  *
  * **SSR contract.** During server rendering, callers construct a per-request
  * root and pass it to `<OlasProvider root={...} />`, then dispose it after the

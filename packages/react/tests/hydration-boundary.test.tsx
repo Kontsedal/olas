@@ -439,6 +439,95 @@ describe('HydrationBoundary renders that never commit', () => {
     expect(disposes).toHaveBeenCalledTimes(1)
   })
 
+  test('(n) a parent that re-creates the boundary below an outer Suspense loads once', async () => {
+    const fetcher = vi.fn(async () => 'loaded')
+    const greeting = defineQuery({ id: 'hydration-boundary/re-created', key: () => [], fetcher })
+    const constructs = vi.fn()
+    const def = defineController((ctx) => {
+      constructs()
+      return { greeting: createQuery(ctx, greeting) }
+    })
+    const api = { name: 'service' }
+    function Show() {
+      const root = useRoot<{ greeting: Parameters<typeof useSuspenseQuery<string>>[0] }>()
+      return <span data-testid="g">{useSuspenseQuery(root.greeting).data}</span>
+    }
+    // App renders a new element, with new inline options, on every attempt.
+    function App() {
+      return (
+        <HydrationBoundary def={def} options={{ deps: { api }, queries: queryEngine() }}>
+          <Show />
+        </HydrationBoundary>
+      )
+    }
+    const { findByTestId } = render(
+      <Suspense fallback={<span>loading</span>}>
+        <App />
+      </Suspense>,
+    )
+    expect((await findByTestId('g')).textContent).toBe('loaded')
+    expect(constructs).toHaveBeenCalledTimes(1)
+    expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+
+  test('(o) two boundaries that share a def and options get two roots', () => {
+    let n = 0
+    const def = defineController(() => ({ id: ++n }))
+    function Show() {
+      return <span>{useRoot<{ id: number }>().id}</span>
+    }
+    const options = { deps: {} }
+    const { container } = render(
+      <>
+        <HydrationBoundary def={def} options={options}>
+          <Show />
+        </HydrationBoundary>
+        <HydrationBoundary def={def} options={options}>
+          <Show />
+        </HydrationBoundary>
+      </>,
+    )
+    const ids = [...container.querySelectorAll('span')].map((s) => s.textContent)
+    expect(new Set(ids).size).toBe(2)
+  })
+
+  test('(p) a retry whose options changed warns once, naming the fix', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const greeting = defineQuery({
+      id: 'hydration-boundary/changing-options',
+      key: () => [],
+      // Never settles: React 19's prerender of the suspended tree is the one
+      // retry, so the test sees a rebuild without an endless loop.
+      fetcher: () => new Promise<string>(() => {}),
+    })
+    const def = defineController((ctx) => ({ greeting: createQuery(ctx, greeting) }))
+    function Show() {
+      const root = useRoot<{ greeting: Parameters<typeof useSuspenseQuery<string>>[0] }>()
+      return <span>{useSuspenseQuery(root.greeting).data}</span>
+    }
+    function App() {
+      // A new `hydrate` object per render: the retry cannot reuse the root.
+      return (
+        <HydrationBoundary
+          def={def}
+          options={{ deps: {}, queries: queryEngine(), hydrate: { version: 1, entries: [] } }}
+        >
+          <Show />
+        </HydrationBoundary>
+      )
+    }
+    render(
+      <Suspense fallback={<span>loading</span>}>
+        <App />
+      </Suspense>,
+    )
+    await act(async () => {})
+    const rebuilds = warn.mock.calls.filter((c) => /built a second root/.test(String(c[0])))
+    expect(rebuilds).toHaveLength(1)
+    expect(String(rebuilds[0]?.[0])).toMatch(/<Suspense> inside the boundary/)
+    warn.mockRestore()
+  })
+
   test('(k) one element rendered twice gets two independent roots', () => {
     let n = 0
     const disposes = vi.fn()
