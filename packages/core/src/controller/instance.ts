@@ -170,6 +170,12 @@ export class ControllerInstance {
    * calls. Only ever populated under `__DEV__` — `ctx.debug` no-ops otherwise.
    */
   private debugValues: Record<string, unknown> | undefined = undefined
+  /**
+   * Set when `ctx.debug({...})` ran while this controller was suspended. The
+   * suspended call stores the values but emits nothing, so `resume()` sends
+   * the merged record then and the panel does not keep the old values.
+   */
+  private debugPendingEmit = false
 
   /**
    * Pre-seed scopes from outside the factory — used by `createRoot`'s
@@ -425,6 +431,17 @@ export class ControllerInstance {
 
     if (__DEV__ && this.state === 'active') {
       this.rootShared.devtools.emit({ type: 'controller:resumed', path: this.path })
+      // A `ctx.debug` call made while suspended stored its values without an
+      // event. Send the merged record now, after `controller:resumed`.
+      if (this.debugPendingEmit) {
+        this.debugPendingEmit = false
+        this.rootShared.devtools.emit({
+          type: 'controller:debug',
+          path: this.path,
+          // Set: only a `ctx.debug` call raises the flag, and it stores first.
+          values: this.debugValues as Record<string, unknown>,
+        })
+      }
     }
   }
 
@@ -531,13 +548,16 @@ export class ControllerInstance {
           self.debugValues === undefined ? { ...values } : { ...self.debugValues, ...values }
         // During construction the merged record rides out on
         // `controller:constructed` (see `construct`). A call AFTER construction
-        // (e.g. from inside an effect) pushes an update event instead.
+        // (e.g. from inside an effect) pushes an update event instead. A call
+        // while suspended waits for `resume()`, which sends the merged record.
         if (self.state === 'active') {
           self.rootShared.devtools.emit({
             type: 'controller:debug',
             path: self.path,
             values: self.debugValues,
           })
+        } else if (self.state === 'suspended') {
+          self.debugPendingEmit = true
         }
       },
 

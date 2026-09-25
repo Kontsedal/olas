@@ -114,7 +114,7 @@ describe('windowed lists — T8.2', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} />)
     bus.emit(
-      { type: 'mutation:run', path: ['root'], name: 'save', vars: { id: 1 } },
+      { type: 'mutation:run', path: ['root'], id: 'save', vars: { id: 1 } },
       ...Array.from({ length: 200 }, (_, i) => invalidated(`k${i}`)),
     )
     scrollTo(31 * 200)
@@ -252,7 +252,7 @@ describe('the omnibox — T8.3', () => {
       constructed(['root', 'checkout']),
       constructed(['root', 'checkout', 'leaf']),
       { type: 'cache:fetch-start', queryKey: entry.key },
-      { type: 'mutation:run', path: ['root', 'checkout'], name: 'pay', vars: { sku: 'zeta-9' } },
+      { type: 'mutation:run', path: ['root', 'checkout'], id: 'pay', vars: { sku: 'zeta-9' } },
     )
     return bus
   }
@@ -382,7 +382,7 @@ describe('the omnibox — T8.3', () => {
       {
         type: 'mutation:run',
         path: ['root'],
-        name: 'pay',
+        id: 'pay',
         vars: { sku: 'deep-in-group' },
         causeId: 'run-1',
       },
@@ -416,7 +416,7 @@ describe('the omnibox — T8.3', () => {
       {
         type: 'mutation:run',
         path: ['root'],
-        name: 'late',
+        id: 'late',
         vars: { needle: 'at-130' },
         causeId: 'run-1',
       },

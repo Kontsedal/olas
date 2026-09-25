@@ -115,15 +115,15 @@ describe('Mutations log', () => {
     vi.setSystemTime(clock)
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} defaultTab="mutations" />)
-    bus.emit({ type: 'mutation:run', path: ['root'], name: 'save', vars: { id: 1 } })
+    bus.emit({ type: 'mutation:run', path: ['root'], id: 'save', vars: { id: 1 } })
     clock += 40
     vi.setSystemTime(clock)
     bus.emit(
-      { type: 'mutation:success', path: ['root'], name: 'save', result: 'ok' },
+      { type: 'mutation:success', path: ['root'], id: 'save', result: 'ok' },
       { type: 'mutation:run', path: ['root', 'form'], vars: 'v' },
       { type: 'mutation:error', path: ['root', 'form'], error: 'bad' },
       { type: 'mutation:rollback', path: ['root', 'form'] },
-      { type: 'mutation:error', path: ['root'], name: 'orphan', error: 'late' },
+      { type: 'mutation:error', path: ['root'], id: 'orphan', error: 'late' },
     )
     const [orphan, rollback, error, run2, success, run1] = rows() as HTMLElement[] as [
       HTMLElement,
@@ -156,7 +156,7 @@ describe('Mutations log', () => {
   test('a success with no recorded run shows no duration', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} defaultTab="mutations" />)
-    bus.emit({ type: 'mutation:success', path: ['root'], name: 'save', result: 1 })
+    bus.emit({ type: 'mutation:success', path: ['root'], id: 'save', result: 1 })
     expect(rows()[0]?.querySelector('.olas-devtools-duration')).toBeNull()
   })
 
@@ -164,8 +164,8 @@ describe('Mutations log', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} defaultTab="mutations" />)
     bus.emit(
-      { type: 'mutation:run', path: ['root'], name: 'save', vars: { title: 'draft' } },
-      { type: 'mutation:success', path: ['root'], name: 'save', result: { id: 'srv-9' } },
+      { type: 'mutation:run', path: ['root'], id: 'save', vars: { title: 'draft' } },
+      { type: 'mutation:success', path: ['root'], id: 'save', result: { id: 'srv-9' } },
       { type: 'mutation:error', path: ['root', 'cart'], error: 'out of stock' },
       { type: 'mutation:rollback', path: ['root', 'cart'] },
     )

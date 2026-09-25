@@ -9,7 +9,7 @@
  * `@kontsedal/olas-*` imports resolve to the package sources. Third-party
  * imports resolve through the workspace's installed dependencies.
  *
- * Three annotations, all invisible when the Markdown renders:
+ * Four annotations, all invisible when the Markdown renders:
  * - `<!-- snippet-prelude … -->` on the lines right before a block adds code
  *   that compiles with the block but is not shown, such as
  *   `declare const api: …` for a variable the reader does not need to see
@@ -18,6 +18,11 @@
  *   block's module, so a later block in the same doc can import it as
  *   `./counter`. A relative import that no block defines is the reader's own
  *   file, such as `./App`, and resolves to `any`.
+ * - `program=name` in the info string (```ts program=quickstart) checks the
+ *   block in a program of its own with the doc's other `program=name` blocks.
+ *   Use it when a doc walks through a second app, such as a quickstart with
+ *   no services before a section that augments `AmbientDeps`. A `file=` block
+ *   still resolves from any program of the doc.
  * - `nocheck` in the info string (```ts nocheck) skips the block. Use it for
  *   signature listings, 0.8 "before" code and deliberate pseudo-code.
  *
@@ -56,6 +61,8 @@ type Snippet = {
   line: number
   lang: 'ts' | 'tsx'
   file: string | undefined
+  /** The `program=` group; `undefined` is the doc's main program. */
+  program: string | undefined
   code: string
   preludeLines: number
 }
@@ -89,6 +96,7 @@ function extract(source: string): Snippet[] {
     const info = fence[3] as string
     const lang = fence[2] === 'tsx' ? 'tsx' : 'ts'
     const file = /\bfile=(\S+)/.exec(info)?.[1]
+    const program = /\bprogram=(\S+)/.exec(info)?.[1]
     const start = i + 2
     const body: string[] = []
     i += 1
@@ -105,6 +113,7 @@ function extract(source: string): Snippet[] {
         line: start,
         lang,
         file,
+        program,
         code: [...pre, ...body].join('\n'),
         preludeLines: pre.length,
       })
@@ -205,8 +214,10 @@ const entries = Object.entries(paths)
   .map(([, [entry]]) => entry as string)
 
 // One program per doc. A doc reads as one app, so its `AmbientDeps` or
-// `Register` augmentation must not merge with another doc's. The host caches
-// parsed files, so the package sources are parsed once for all the programs.
+// `Register` augmentation must not merge with another doc's. A doc's
+// `program=` blocks get a program of their own, for a second app in the same
+// doc. The host caches parsed files, so the package sources are parsed once
+// for all the programs.
 const baseHost = ts.createCompilerHost(options)
 const parsed = new Map<string, ts.SourceFile | undefined>()
 const host: ts.CompilerHost = {
@@ -219,13 +230,18 @@ const host: ts.CompilerHost = {
     return sf
   },
 }
-const byDoc = new Map<string, string[]>()
-for (const [path, s] of byPath) byDoc.set(s.source, [...(byDoc.get(s.source) ?? []), path])
+const byDoc = new Map<string, { source: string; files: string[] }>()
+for (const [path, s] of byPath) {
+  const key = s.program === undefined ? s.source : `${s.source}\u0000${s.program}`
+  const group = byDoc.get(key) ?? { source: s.source, files: [] }
+  group.files.push(path)
+  byDoc.set(key, group)
+}
 
 const report = new Map<string, string[]>()
 let total = 0
 let oldProgram: ts.Program | undefined
-for (const [source, docFiles] of byDoc) {
+for (const { source, files: docFiles } of byDoc.values()) {
   const program = ts.createProgram({
     rootNames: [...docFiles, ambient, ...entries],
     options,

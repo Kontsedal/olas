@@ -52,16 +52,25 @@ export type CacheEntry =
   | { id: number; t: number; kind: 'invalidated'; queryKey: readonly unknown[] }
   | { id: number; t: number; kind: 'gc'; queryKey: readonly unknown[] }
 
-/** One entry in the mutation log. `durationMs` is set on success/error when
- * the entry can be paired with a preceding `run` for the same path+name. */
+/** One entry in the mutation log. `id` numbers the log entry; `mutationId` is
+ * the mutation's own `id`, absent for an inline spec without one. `durationMs`
+ * is set on success/error when the entry can be paired with a preceding `run`
+ * for the same path and mutation id. */
 export type MutationEntry =
-  | { id: number; t: number; kind: 'run'; path: readonly string[]; name?: string; vars: unknown }
+  | {
+      id: number
+      t: number
+      kind: 'run'
+      path: readonly string[]
+      mutationId?: string
+      vars: unknown
+    }
   | {
       id: number
       t: number
       kind: 'success'
       path: readonly string[]
-      name?: string
+      mutationId?: string
       result: unknown
       durationMs?: number
     }
@@ -70,11 +79,11 @@ export type MutationEntry =
       t: number
       kind: 'error'
       path: readonly string[]
-      name?: string
+      mutationId?: string
       error: unknown
       durationMs?: number
     }
-  | { id: number; t: number; kind: 'rollback'; path: readonly string[]; name?: string }
+  | { id: number; t: number; kind: 'rollback'; path: readonly string[]; mutationId?: string }
 
 /** One entry in the field validation log. */
 export type FieldEntry = {
@@ -361,7 +370,7 @@ export class DevtoolsStore {
 
   /**
    * Pending `run` start times, in a trie by controller path, then by mutation
-   * name: a FIFO queue each. Overlapping runs of one mutation each pair with
+   * id: a FIFO queue each. Overlapping runs of one mutation each pair with
    * their own start (T6.3). The trie lets a dispose drop a controller's
    * starts and all its descendants' in O(depth), where a flat map needed a
    * scan of every pending key.
@@ -579,37 +588,42 @@ export class DevtoolsStore {
           }
           node = kid
         }
-        const name = event.name ?? ''
-        const q = node.names.get(name)
-        if (q === undefined) node.names.set(name, [this.now()])
+        const mutationId = event.id ?? ''
+        const q = node.ids.get(mutationId)
+        if (q === undefined) node.ids.set(mutationId, [this.now()])
         else q.push(this.now())
-        this.pushMutation({ kind: 'run', path: event.path, name: event.name, vars: event.vars })
+        this.pushMutation({
+          kind: 'run',
+          path: event.path,
+          mutationId: event.id,
+          vars: event.vars,
+        })
         return
       }
       case 'mutation:success': {
-        const durationMs = this.consumeStart(event.path, event.name)
+        const durationMs = this.consumeStart(event.path, event.id)
         this.pushMutation({
           kind: 'success',
           path: event.path,
-          name: event.name,
+          mutationId: event.id,
           result: event.result,
           ...(durationMs !== undefined ? { durationMs } : {}),
         })
         return
       }
       case 'mutation:error': {
-        const durationMs = this.consumeStart(event.path, event.name)
+        const durationMs = this.consumeStart(event.path, event.id)
         this.pushMutation({
           kind: 'error',
           path: event.path,
-          name: event.name,
+          mutationId: event.id,
           error: event.error,
           ...(durationMs !== undefined ? { durationMs } : {}),
         })
         return
       }
       case 'mutation:rollback':
-        this.pushMutation({ kind: 'rollback', path: event.path, name: event.name })
+        this.pushMutation({ kind: 'rollback', path: event.path, mutationId: event.id })
         return
       case 'field:validated':
         this.pushField({
@@ -857,7 +871,10 @@ export class DevtoolsStore {
 
   // ---- mutation timing ----------------------------------------------------
 
-  private consumeStart(path: readonly string[], name: string | undefined): number | undefined {
+  private consumeStart(
+    path: readonly string[],
+    mutationId: string | undefined,
+  ): number | undefined {
     const trail: StartNode[] = [this.starts]
     for (const seg of path) {
       const kid = (trail[trail.length - 1] as StartNode).kids.get(seg)
@@ -865,19 +882,19 @@ export class DevtoolsStore {
       trail.push(kid)
     }
     const node = trail[trail.length - 1] as StartNode
-    const q = node.names.get(name ?? '')
+    const q = node.ids.get(mutationId ?? '')
     if (q === undefined) return undefined
     // FIFO: pair this settle with the OLDEST pending start so overlapping runs
     // of the same mutation each get a duration (T6.3). Exact run↔settle
     // attribution isn't possible — the debug bus carries no per-run id — but
     // FIFO never loses a start the way the old single-value map did.
     const startedAt = q.shift() as number
-    if (q.length === 0) node.names.delete(name ?? '')
+    if (q.length === 0) node.ids.delete(mutationId ?? '')
     // Prune the now-empty tail of the path, so the trie holds only paths
     // with a run in flight.
     for (let i = trail.length - 1; i > 0; i--) {
       const n = trail[i] as StartNode
-      if (n.names.size > 0 || n.kids.size > 0) break
+      if (n.ids.size > 0 || n.kids.size > 0) break
       ;(trail[i - 1] as StartNode).kids.delete(path[i - 1] as string)
     }
     return this.now() - startedAt
@@ -899,10 +916,10 @@ export class DevtoolsStore {
 }
 
 /** One controller-path segment of the pending-start trie. */
-type StartNode = { names: Map<string, number[]>; kids: Map<string, StartNode> }
+type StartNode = { ids: Map<string, number[]>; kids: Map<string, StartNode> }
 
 function newStartNode(): StartNode {
-  return { names: new Map(), kids: new Map() }
+  return { ids: new Map(), kids: new Map() }
 }
 
 /**

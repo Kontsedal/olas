@@ -82,23 +82,23 @@ describe('Tree view', () => {
   test('counts in-flight mutations per controller until they settle', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} defaultTab="tree" />)
-    const run = (name: string): DebugEvent => ({
+    const run = (id: string): DebugEvent => ({
       type: 'mutation:run',
       path: ['root'],
-      name,
+      id,
       vars: 1,
     })
     bus.emit(constructed(['root']), constructed(['root', 'child']), run('save'), run('save'))
     expect(nodeRow('root').textContent).toContain('2 pending')
     expect(nodeRow('child').textContent).not.toContain('pending')
 
-    bus.emit({ type: 'mutation:rollback', path: ['root'], name: 'save' })
+    bus.emit({ type: 'mutation:rollback', path: ['root'], id: 'save' })
     expect(nodeRow('root').textContent).toContain('2 pending') // a rollback is not a settle
 
-    bus.emit({ type: 'mutation:success', path: ['root'], name: 'save', result: 1 })
+    bus.emit({ type: 'mutation:success', path: ['root'], id: 'save', result: 1 })
     expect(nodeRow('root').textContent).toContain('1 pending')
 
-    bus.emit({ type: 'mutation:error', path: ['root'], name: 'save', error: 'x' })
+    bus.emit({ type: 'mutation:error', path: ['root'], id: 'save', error: 'x' })
     expect(nodeRow('root').textContent).not.toContain('pending')
   })
 

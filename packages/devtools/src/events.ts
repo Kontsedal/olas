@@ -22,7 +22,7 @@ export function eventTarget(ev: DebugEvent): string {
     case 'mutation:success':
     case 'mutation:error':
     case 'mutation:rollback':
-      return ev.name !== undefined ? `${ev.name} · ${formatPath(ev.path)}` : formatPath(ev.path)
+      return ev.id !== undefined ? `${ev.id} · ${formatPath(ev.path)}` : formatPath(ev.path)
     case 'field:validated':
       return `${formatPath(ev.path)} · ${ev.field}`
     case 'plugin:event':

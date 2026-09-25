@@ -5,7 +5,7 @@ type: flow
 covers:
   - packages/core/src/query/use.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/controller/instance.ts:302-330
+  - packages/core/src/controller/instance.ts:308-336
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
@@ -32,7 +32,7 @@ const userController = defineController((ctx, props: { id: string }) => {
 
 ## Step by step
 
-### 1. Dispatch on brand — `instance.ts:303`
+### 1. Dispatch on brand — `instance.ts:309`
 
 `createQuery(ctx, query, keyOrOptions)`:
 

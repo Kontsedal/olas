@@ -183,9 +183,9 @@ export class SearchIndex {
       const at = { tab: 'timeline' as const, key, lane }
       if (ev.type.startsWith('mutation:')) {
         const m = ev as Extract<DebugEvent, { type: 'mutation:run' }>
-        const id = `${pathKey(m.path)}#${m.name ?? ''}`
+        const id = `${pathKey(m.path)}#${m.id ?? ''}`
         if (!mutations.has(id)) {
-          const label = m.name ?? '(unnamed)'
+          const label = m.id ?? '(no id)'
           const detail = formatPath(m.path)
           mutations.set(id, {
             hay: lower(label, detail),

@@ -164,17 +164,17 @@ describe('DevtoolsStore event routing gaps', () => {
   test('mutation:error pairs with its run and carries the duration', () => {
     let t = 100
     const store = new DevtoolsStore({ now: () => t })
-    store.handle({ type: 'mutation:run', path: ['root'], name: 'save', vars: 1 })
+    store.handle({ type: 'mutation:run', path: ['root'], id: 'save', vars: 1 })
     t = 175
-    store.handle({ type: 'mutation:error', path: ['root'], name: 'save', error: 'nope' })
+    store.handle({ type: 'mutation:error', path: ['root'], id: 'save', error: 'nope' })
     const err = store.mutations$.peek().find((e) => e.kind === 'error')
-    expect(err).toMatchObject({ kind: 'error', name: 'save', error: 'nope', durationMs: 75 })
+    expect(err).toMatchObject({ kind: 'error', mutationId: 'save', error: 'nope', durationMs: 75 })
   })
 
   test('paused drops mutation and field entries', () => {
     const store = new DevtoolsStore({ now: fixedNow })
     store.pause()
-    store.handle({ type: 'mutation:rollback', path: ['root'], name: 'save' })
+    store.handle({ type: 'mutation:rollback', path: ['root'], id: 'save' })
     store.handle({ type: 'field:validated', path: ['root'], field: 'f', valid: true, errors: [] })
     expect(store.mutations$.peek()).toEqual([])
     expect(store.fields$.peek()).toEqual([])
@@ -183,7 +183,7 @@ describe('DevtoolsStore event routing gaps', () => {
   test('mutation and field logs are bounded by maxEntries — oldest drops first', () => {
     const store = new DevtoolsStore({ maxEntries: 2, now: fixedNow })
     for (let i = 0; i < 4; i++) {
-      store.handle({ type: 'mutation:rollback', path: ['root'], name: `m${i}` })
+      store.handle({ type: 'mutation:rollback', path: ['root'], id: `m${i}` })
       store.handle({
         type: 'field:validated',
         path: ['root'],
@@ -192,25 +192,25 @@ describe('DevtoolsStore event routing gaps', () => {
         errors: [],
       })
     }
-    expect(store.mutations$.peek().map((m) => m.name)).toEqual(['m2', 'm3'])
+    expect(store.mutations$.peek().map((m) => m.mutationId)).toEqual(['m2', 'm3'])
     expect(store.fields$.peek().map((f) => f.field)).toEqual(['f2', 'f3'])
   })
 
   test('disposing a controller drops pending run starts for it and its descendants only', () => {
     let t = 0
     const store = new DevtoolsStore({ now: () => t })
-    store.handle({ type: 'mutation:run', path: ['root', 'a'], name: 'save', vars: 1 })
-    store.handle({ type: 'mutation:run', path: ['root', 'a', 'kid'], name: 'x', vars: 1 })
-    store.handle({ type: 'mutation:run', path: ['root', 'ab'], name: 'y', vars: 1 })
+    store.handle({ type: 'mutation:run', path: ['root', 'a'], id: 'save', vars: 1 })
+    store.handle({ type: 'mutation:run', path: ['root', 'a', 'kid'], id: 'x', vars: 1 })
+    store.handle({ type: 'mutation:run', path: ['root', 'ab'], id: 'y', vars: 1 })
     t = 40
     store.handle({ type: 'controller:disposed', path: ['root', 'a'] })
-    store.handle({ type: 'mutation:success', path: ['root', 'a'], name: 'save', result: 1 })
-    store.handle({ type: 'mutation:success', path: ['root', 'a', 'kid'], name: 'x', result: 1 })
-    store.handle({ type: 'mutation:success', path: ['root', 'ab'], name: 'y', result: 1 })
+    store.handle({ type: 'mutation:success', path: ['root', 'a'], id: 'save', result: 1 })
+    store.handle({ type: 'mutation:success', path: ['root', 'a', 'kid'], id: 'x', result: 1 })
+    store.handle({ type: 'mutation:success', path: ['root', 'ab'], id: 'y', result: 1 })
     const durations = store.mutations$
       .peek()
       .filter((e) => e.kind === 'success')
-      .map((e) => [e.name, 'durationMs' in e ? e.durationMs : undefined])
+      .map((e) => [e.mutationId, 'durationMs' in e ? e.durationMs : undefined])
     // `root>ab` shares a string prefix with `root>a` but is a sibling — it keeps its start.
     expect(durations).toEqual([
       ['save', undefined],

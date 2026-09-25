@@ -11,7 +11,6 @@ covers:
   - packages/core/src/query/entry.ts
   - packages/core/src/query/errors.ts
   - packages/core/src/query/focus-online.ts
-  - packages/core/src/query/index.ts
   - packages/core/src/query/infinite.ts
   - packages/core/src/query/keys.ts
   - packages/core/src/query/local.ts
@@ -79,7 +78,6 @@ A root has a query engine only when `createRoot` gets `queries: queryEngine()`. 
 | `mutation-registry.ts` | The module-level `defineMutation` registry by `id`. `host.mutations.run` looks definitions up here. Internal. |
 | `infinite.ts` | `InfiniteEntry<TPage, TItem, PageParam>`, the paginated variant. Owns `pages`, `pageParams`, `fetchNextPage` and `fetchPreviousPage`. A refetch from an interval, an invalidate or `refetch()` re-fetches every loaded page through `runRefetchAll`, not page one alone (T3.7). SSR, focus and reconnect refetch, `offlineFirst`, plugins and devtools all cover it (`../decisions/infinite-query-parity.md`). |
 | `focus-online.ts` | The shared window-focus and `online` listeners: `subscribeWindowFocus`, `subscribeReconnect`. The plugin host's `network` reuses them. |
-| `index.ts` | A barrel over `local.ts` and `types.ts`. Nothing imports it; the package index is `packages/core/src/index.ts`. |
 
 ## How a subscription is wired
 

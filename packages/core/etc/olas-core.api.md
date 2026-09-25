@@ -145,7 +145,7 @@ export function createQuery<Args extends unknown[], T>(ctx: Ctx, source: Query<A
 export function createQuery<Args extends unknown[], TPage, TItem>(ctx: Ctx, source: InfiniteQuery<Args, TPage, TItem>, keyOrOptions?: (() => readonly [...Args]) | QuerySubscriptionOptions<Args>): InfiniteQuerySubscription<TPage, TItem>;
 
 // @public
-export function createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>(def: ControllerDef<void, Api>, options: RootOptions<TDeps>): Root<Api>;
+export function createRoot<Api, TDeps extends AmbientDeps = AmbientDeps>(def: ControllerDef<void, Api>, options: RootOptions<TDeps>): Root<Api>;
 
 // @public
 export function createSelection<T = unknown>(options?: {
@@ -290,25 +290,30 @@ export type DebugEventBody = {
 } /** An optimistic snapshot layer was committed (mutation success). */ | {
     type: 'snapshot:finalize';
     queryKey: readonly unknown[];
-} | {
+}
+/**
+* The mutation lifecycle. `id` is the mutation's `id`, absent for an inline
+* `createMutation` spec that has none.
+*/
+| {
     type: 'mutation:run';
     path: readonly string[];
-    name?: string;
+    id?: string;
     vars: unknown;
 } | {
     type: 'mutation:success';
     path: readonly string[];
-    name?: string;
+    id?: string;
     result: unknown;
 } | {
     type: 'mutation:error';
     path: readonly string[];
-    name?: string;
+    id?: string;
     error: unknown;
 } | {
     type: 'mutation:rollback';
     path: readonly string[];
-    name?: string;
+    id?: string;
 } | {
     type: 'field:validated';
     path: readonly string[];

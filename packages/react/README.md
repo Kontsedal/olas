@@ -73,7 +73,7 @@ Every export, grouped by what it is for.
 | `useRoot()` | Resolve the provider's root api. `Register` types it; `useRoot<Api>()` is an unchecked cast. Throws outside a provider. |
 | `Register` / `RegisteredApi` | The interface an app augments once with `root: typeof root`, and the api type it yields. |
 | `createOlasContext<Api>(name?)` | Mint an independent Provider + `useRoot` bound to one api type. Use it for two roots in one tree, where one `Register` cannot name both. |
-| `<HydrationBoundary def options streaming?>` | The client half of SSR: React owns this root, building it from a controller def plus `options.hydrate` and disposing it on unmount. `options` is read once. It installs the streaming intake unless `streaming={false}`. |
+| `<HydrationBoundary def options streaming?>` | The client half of SSR: React owns this root, building it from a controller def plus `options.hydrate` and disposing it on unmount. `options` is read once. It installs the streaming intake unless `streaming={false}`. Rendered on the server, it builds a root nothing disposes, and a development build warns once. |
 
 **Reading state**
 

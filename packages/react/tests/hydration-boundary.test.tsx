@@ -20,6 +20,7 @@ afterEach(() => cleanup())
 // recreate only on `def` identity change.
 describe('HydrationBoundary lifecycle (R4.1)', () => {
   test('(a) unmount disposes the root', () => {
+    const warn = vi.spyOn(console, 'warn')
     const disposed = vi.fn()
     const def = defineController((ctx) => {
       ctx.onDispose(disposed)
@@ -33,6 +34,10 @@ describe('HydrationBoundary lifecycle (R4.1)', () => {
     expect(disposed).not.toHaveBeenCalled()
     act(() => unmount())
     expect(disposed).toHaveBeenCalledTimes(1)
+    // In the browser the effect cleanup owns disposal, so the server-render
+    // warning stays quiet.
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
   })
 
   test('(b) StrictMode mount leaves exactly one live root', () => {

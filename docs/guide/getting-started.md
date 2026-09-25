@@ -105,7 +105,7 @@ The factory is synchronous. It sets things up and returns, and the query fetches
 
 ## 3. Create the root
 
-A root instantiates the top controller once, near the app's entry point. It is where `deps` are supplied and where the query engine is switched on.
+A root instantiates the top controller once, near the app's entry point. It is where `deps` are supplied and where the query engine is switched on. `createRoot` checks `deps` against `AmbientDeps`, so leaving out `api` here fails to compile.
 
 ```ts file=root.ts
 // root.ts

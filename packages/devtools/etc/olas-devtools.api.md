@@ -90,7 +90,6 @@ export type DevtoolsPanelProps = {
     maxEntries?: number; /** Capacity of the timeline's ring buffer. Default: 10,000. */
     maxTimelineEntries?: number;
     urlHashKey?: string;
-    inspectorPollMs?: number;
 };
 
 // @public
@@ -159,14 +158,14 @@ export type MutationEntry = {
     t: number;
     kind: 'run';
     path: readonly string[];
-    name?: string;
+    mutationId?: string;
     vars: unknown;
 } | {
     id: number;
     t: number;
     kind: 'success';
     path: readonly string[];
-    name?: string;
+    mutationId?: string;
     result: unknown;
     durationMs?: number;
 } | {
@@ -174,7 +173,7 @@ export type MutationEntry = {
     t: number;
     kind: 'error';
     path: readonly string[];
-    name?: string;
+    mutationId?: string;
     error: unknown;
     durationMs?: number;
 } | {
@@ -182,7 +181,7 @@ export type MutationEntry = {
     t: number;
     kind: 'rollback';
     path: readonly string[];
-    name?: string;
+    mutationId?: string;
 };
 
 // @public

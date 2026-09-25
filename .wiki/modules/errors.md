@@ -35,7 +35,7 @@ confidence: high
 ## Where each kind comes from
 
 - **`'effect'`**: an effect body or its cleanup, a lifecycle hook, a teardown throw during dispose or rollback, and a throwing field validator (`controller/instance.ts`, `forms/bind.ts:38`).
-- **`'emitter'`**: a `ctx.emitter()` handler or a `ctx.on(...)` handler (`instance.ts:544-590`).
+- **`'emitter'`**: a `ctx.emitter()` handler or a `ctx.on(...)` handler (`instance.ts:564-610`).
 - **`'construction'`**: a `ctx.collection` item or a `ctx.lazyChild` that fails after the root is alive (spec §12.1).
 - **`'mutation'`**: a throwing `onError`, `onSuccess` or `onSettled` hook, through `MutationImpl.safeCall` (`query/mutation.ts:665-674`). A failed `mutate` goes to the mutation's `error` signal instead.
 - **`'cache'`**: the refetch an `invalidate` started failed. `invalidateEntry` reports it with `queryId` and `key` and resolves the caller's promise (`query/client.ts:1394-1405`). Pinned by `mutants-client.test.ts`, "a failing refetch an invalidate started reports a cache error naming the entry".

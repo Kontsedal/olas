@@ -4,7 +4,7 @@ description: The tree-and-lifetime handle passed to every controller factory; th
 type: entity
 covers:
   - packages/core/src/controller/types.ts:182-300
-  - packages/core/src/controller/instance.ts:433-1045
+  - packages/core/src/controller/instance.ts:450-1065
   - packages/core/src/query/bind.ts
   - packages/core/src/forms/bind.ts
 edges:
@@ -56,17 +56,17 @@ type Ctx<TDeps = AmbientDeps> = {
 
 The type is `controller/types.ts:190-300`. `Ctx` has no `ctx.session`, no `ctx.signal` or `ctx.computed`, and none of the primitive factories above as members; each of those left `Ctx` in 1.0.
 
-The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:433-1045`). Each method has the same general shape:
+The implementation is `buildCtx()` on `ControllerInstance` (`instance.ts:450-1065`). Each method has the same general shape:
 
 1. Create the primitive.
 2. Push a `LifecycleEntry` onto `self.entries`.
 3. Return the primitive.
 
-The ctx-taking functions follow the same shape through the internals handle: `internals.assertLive(name)`, then `internals.register(entry)` (`instance.ts:451-472`, `query/bind.ts:51-67`).
+The ctx-taking functions follow the same shape through the internals handle: `internals.assertLive(name)`, then `internals.register(entry)` (`instance.ts:468-489`, `query/bind.ts:51-67`).
 
 `ctx.effect`, `ctx.on`, and the lifecycle hooks also wrap user callbacks in a `dispatchError(rootShared.onError, err, {kind, controllerPath})` shield.
 
-**`ctx.debug({...})` is the exception to that shape.** It pushes no `LifecycleEntry` and returns nothing. It merges the given live values onto `instance.debugValues` for the devtools "Variables" view. During construction those ride out on `controller:constructed`'s `debug` field, and afterwards on a `controller:debug` event. It is `__DEV__`-only, a no-op in production that retains nothing there, and it does NOT `assertLive`, so it is safe to call from an effect after construction. See `../modules/devtools.md`.
+**`ctx.debug({...})` is the exception to that shape.** It pushes no `LifecycleEntry` and returns nothing. It merges the given live values onto `instance.debugValues` for the devtools "Variables" view. During construction those ride out on `controller:constructed`'s `debug` field, and afterwards on a `controller:debug` event. A call while the controller is suspended sends its event on `resume()`. It is `__DEV__`-only, a no-op in production that retains nothing there, and it does NOT `assertLive`, so it is safe to call from an effect after construction. See `../modules/devtools.md`.
 
 ## When is `ctx.*` callable?
 
@@ -74,7 +74,7 @@ Spec §3.4: **any time during the controller's active lifetime, not only the ini
 
 Individual primitives also expose `.dispose()` — idempotent, safe to call early. The owning controller will call it again on its own dispose; both calls are no-ops after the first.
 
-**After dispose, every `ctx.*` factory and every ctx-taking function throws** `[olas] <name>() called after the controller was disposed`, where `<name>` is `effect`, `createQuery` and so on. The guard is `assertLive` in `buildCtx` (`instance.ts:441-445`), which the ctx-taking functions call through the internals handle. A captured `ctx` reused past its owner's lifetime is a programming error. Without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
+**After dispose, every `ctx.*` factory and every ctx-taking function throws** `[olas] <name>() called after the controller was disposed`, where `<name>` is `effect`, `createQuery` and so on. The guard is `assertLive` in `buildCtx` (`instance.ts:458-462`), which the ctx-taking functions call through the internals handle. A captured `ctx` reused past its owner's lifetime is a programming error. Without the guard the factory would push into a cleared lifecycle list and leak a live child, subscription and effect. `ctx.effect` used to silently no-op — now it throws like the rest (T2.4). Reads (`ctx.deps`, `ctx.inject`) don't throw. Pinned by `regressions.test.ts` R-L2.4.
 
 ## `ctx.deps` — DI surface
 

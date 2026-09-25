@@ -96,7 +96,7 @@ describe('Timeline rows', () => {
   test('clicking a row with a payload expands it to JSON; clicking again collapses', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} />)
-    bus.emit({ type: 'mutation:run', path: ['root'], name: 'save', vars: { id: 7 } })
+    bus.emit({ type: 'mutation:run', path: ['root'], id: 'save', vars: { id: 7 } })
     const row = rowOf('run')
     expect(row.querySelector('.olas-devtools-chevron')).toBeTruthy()
     expect(body().querySelector('.olas-devtools-payload-json')).toBeNull()
@@ -150,8 +150,8 @@ describe('Timeline cause groups', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} />)
     bus.emit(
-      { type: 'mutation:run', path: ['root'], name: 'save', vars: 1, causeId: 'r1' },
-      { type: 'mutation:success', path: ['root'], name: 'save', result: 1, causeId: 'r1' },
+      { type: 'mutation:run', path: ['root'], id: 'save', vars: 1, causeId: 'r1' },
+      { type: 'mutation:success', path: ['root'], id: 'save', result: 1, causeId: 'r1' },
     )
     expect(groupHead().getAttribute('aria-expanded')).toBe('true')
     expect(groupHead().textContent).toContain('save · root') // titled by the mutation
@@ -248,7 +248,7 @@ describe('Timeline filter', () => {
     const bus = fakeRoot()
     render(<DevtoolsPanel root={bus.root} />)
     bus.emit(
-      { type: 'mutation:run', path: ['root'], name: 'save', vars: { title: 'hello' } },
+      { type: 'mutation:run', path: ['root'], id: 'save', vars: { title: 'hello' } },
       { type: 'cache:set-data', queryKey: ['posts'], source: 'optimistic', data: { title: 'Ada' } },
       { type: 'cache:set-data', queryKey: ['empty'], source: 'write', data: undefined },
       { type: 'snapshot:push', queryKey: ['posts'], causeId: 'run-42' },

@@ -828,7 +828,7 @@ describe('plugin mutation host', () => {
     const { events } = devtoolsOf(root)
     await log.host?.mutations?.run('mut-client/run-path', 1)
     const run = events.find((e) => e.type === 'mutation:run')
-    expect(run).toMatchObject({ path: ['plugin', 'rec'], name: 'mut-client/run-path', vars: 1 })
+    expect(run).toMatchObject({ path: ['plugin', 'rec'], id: 'mut-client/run-path', vars: 1 })
   })
 
   test('disposing the root aborts a run a plugin started', async () => {

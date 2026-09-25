@@ -398,4 +398,40 @@ describe('runtime devtools events', () => {
     expect(debugEvent.values.count).toBe(count)
     root.dispose()
   })
+
+  test('ctx.debug while suspended is sent on resume, after controller:resumed', () => {
+    const def = defineController((ctx) => {
+      ctx.debug({ phase: 'built' })
+      return { expose: (phase: string) => ctx.debug({ phase }) }
+    })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
+    const events: DebugEvent[] = []
+    root.debug.subscribe((ev) => events.push(ev))
+
+    root.suspend()
+    root.api.expose('while-suspended')
+    // Stored, not sent: nothing reaches the bus while the controller is frozen.
+    expect(events.some((e) => e.type === 'controller:debug')).toBe(false)
+
+    root.resume()
+    const types = events.map((e) => e.type)
+    expect(types.slice(-2)).toEqual(['controller:resumed', 'controller:debug'])
+    const sent = events.at(-1) as Extract<DebugEvent, { type: 'controller:debug' }>
+    expect(sent.values).toEqual({ phase: 'while-suspended' })
+
+    // Sent once: a later suspend and resume with no new call sends nothing more.
+    root.suspend()
+    root.resume()
+    expect(events.filter((e) => e.type === 'controller:debug')).toHaveLength(1)
+
+    // A subscriber that attaches later replays the current values.
+    const late: DebugEvent[] = []
+    root.debug.subscribe((ev) => late.push(ev))
+    const replayed = late.find((e) => e.type === 'controller:constructed') as Extract<
+      DebugEvent,
+      { type: 'controller:constructed' }
+    >
+    expect(replayed.debug).toEqual({ phase: 'while-suspended' })
+    root.dispose()
+  })
 })

@@ -175,10 +175,10 @@ describe('pending mutation starts', () => {
   test('a settled run leaves nothing behind in the trie', () => {
     let t = 0
     const store = new DevtoolsStore({ now: () => t })
-    store.handle({ type: 'mutation:run', path: ['root', 'a', 'b'], name: 'save', vars: 1 })
+    store.handle({ type: 'mutation:run', path: ['root', 'a', 'b'], id: 'save', vars: 1 })
     store.handle({ type: 'mutation:run', path: ['root', 'a'], vars: 1 })
     t = 5
-    store.handle({ type: 'mutation:success', path: ['root', 'a', 'b'], name: 'save', result: 1 })
+    store.handle({ type: 'mutation:success', path: ['root', 'a', 'b'], id: 'save', result: 1 })
     expect(internals(store).starts.kids.size).toBe(1) // root › a still has a run
     store.handle({ type: 'mutation:error', path: ['root', 'a'], error: 'x' })
     expect(internals(store).starts.kids.size).toBe(0)
@@ -186,16 +186,16 @@ describe('pending mutation starts', () => {
 
   test('a settle for a path that never ran, or a name that never ran, has no duration', () => {
     const store = new DevtoolsStore({ now: fixedNow })
-    store.handle({ type: 'mutation:run', path: ['root'], name: 'a', vars: 1 })
-    store.handle({ type: 'mutation:success', path: ['elsewhere'], name: 'a', result: 1 })
-    store.handle({ type: 'mutation:success', path: ['root'], name: 'b', result: 1 })
+    store.handle({ type: 'mutation:run', path: ['root'], id: 'a', vars: 1 })
+    store.handle({ type: 'mutation:success', path: ['elsewhere'], id: 'a', result: 1 })
+    store.handle({ type: 'mutation:success', path: ['root'], id: 'b', result: 1 })
     const settles = store.mutations$.peek().filter((m) => m.kind === 'success')
     expect(settles.map((m) => 'durationMs' in m && m.durationMs)).toEqual([false, false])
   })
 
   test('disposing the virtual root drops every pending start', () => {
     const store = new DevtoolsStore({ now: fixedNow })
-    store.handle({ type: 'mutation:run', path: ['root', 'x'], name: 'a', vars: 1 })
+    store.handle({ type: 'mutation:run', path: ['root', 'x'], id: 'a', vars: 1 })
     store.handle(disposed([]))
     expect(internals(store).starts.kids.size).toBe(0)
   })
@@ -241,7 +241,7 @@ describe('store.search — T8.3', () => {
     emit({
       type: 'mutation:run',
       path: ['root', 'checkout'],
-      name: 'placeOrder',
+      id: 'placeOrder',
       vars: { sku: 'zeta-9' },
     })
     emit({
@@ -321,7 +321,7 @@ describe('store.search — T8.3', () => {
   test('the latest run of a mutation is the one a hit points at', () => {
     const { store, emit } = seeded()
     const first = store.search('placeorder').find((g) => g.kind === 'mutation')?.hits[0]?.key
-    emit({ type: 'mutation:success', path: ['root', 'checkout'], name: 'placeOrder', result: 1 })
+    emit({ type: 'mutation:success', path: ['root', 'checkout'], id: 'placeOrder', result: 1 })
     const latest = store.search('placeorder').find((g) => g.kind === 'mutation')?.hits[0]?.key
     expect(latest).not.toBe(first)
   })

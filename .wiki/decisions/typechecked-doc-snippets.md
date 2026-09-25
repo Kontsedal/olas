@@ -56,6 +56,7 @@ Each annotation is invisible when the Markdown renders.
 |---|---|---|
 | `<!-- snippet-prelude … -->` | the lines right before a block | Code compiled with the block and not shown, such as `declare const userQuery: …`. It carries context the prose already gave the reader. It never hides a wrong API. |
 | `file=name.ts` | the fence's info string | Names the block's module, so a later block in the same doc imports it as `./name`. The README's `counter.ts` and `main.tsx` pair works this way. |
+| `program=name` | the fence's info string | Checks the block in a program of its own, with the doc's other `program=name` blocks. For a second app in one doc: the README's quickstart has no services and passes `deps: {}`, while its dependency-injection section augments `AmbientDeps`, which `createRoot` now checks. A `file=` block still resolves from any program of the doc. |
 | `nocheck` | the fence's info string | Skips the block. Only for type and signature listings, deliberate pseudo-code, and 0.8 "before" code in MIGRATING. A listing it skips is checked by hand. |
 
 ## Finding: an augmentation alone does not load a module

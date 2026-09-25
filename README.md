@@ -172,7 +172,7 @@ export const counter = defineController((ctx) => {
 
 Mount the controller as a root once, near your app entry point.
 
-```ts
+```ts program=quickstart
 import { createRoot } from '@kontsedal/olas-core'
 import { counter } from './counter'
 
@@ -186,11 +186,11 @@ root.dispose()                    // tears down the effect, signals, everything
 
 `createRoot` returns a handle. The controller's api is on `root.api`, and the root's own controls sit beside it: `dispose`, `suspend`, `resume`, `dehydrate`, `hydrate`, `waitForIdle`, `bindQuery`, `inject` and `debug`.
 
-`deps` is required (more on this in [Dependency injection](#dependency-injection)). For trivial apps, `{}` is fine.
+`deps` is required (more on this in [Dependency injection](#dependency-injection)). An app with no services passes `{}`. Once the app declares its services on `AmbientDeps`, `createRoot` requires them.
 
 ### 3. Reading from React
 
-```tsx
+```tsx program=quickstart
 // main.tsx
 import { createRoot as createReactRoot } from 'react-dom/client'
 import { createRoot as createOlasRoot } from '@kontsedal/olas-core'
@@ -214,7 +214,7 @@ createReactRoot(document.getElementById('root')!).render(
 )
 ```
 
-```tsx file=App.tsx
+```tsx file=App.tsx program=quickstart
 // App.tsx
 import { useRoot, useValue } from '@kontsedal/olas-react'
 
@@ -466,7 +466,7 @@ const root = createRoot(appController, {
 })
 ```
 
-In tests, pass in fakes — no mocking framework needed.
+`createRoot` checks `deps` against `AmbientDeps`, so a root that leaves out `router` does not compile. In tests, pass in fakes — no mocking framework needed. `createTestController` does not check, so a test passes only the fakes its controller reads.
 
 ### Cross-controller communication — emitters
 

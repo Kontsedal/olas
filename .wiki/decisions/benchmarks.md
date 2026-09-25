@@ -10,7 +10,7 @@ edges:
   - { type: related, target: engine-assurance.md }
   - { type: related, target: ../entities/entry.md }
   - { type: related, target: ../entities/query-client.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -49,3 +49,14 @@ The first run had TanStack 2.7× faster on the fetch cycle. Timing its phases on
 - **Root dispose armed a gc timer per entry.** Disposing the controllers released each subscription, and each release armed a gc timer. `QueryClient.dispose` cleared them all a moment later, so 1,000 queries cost 1,000 `setTimeout` and `clearTimeout` pairs. The root now calls `queryClient.close()` first, and a release on a closing client arms nothing.
 
 Dispose went from 6.9 ms to 0.37 ms for 1,000 queries, and the fetch-cycle gap from 2.7× to 1.14×. Both are pinned by `regressions.test.ts` under "W15 regression: teardown costs", confirmed to fail on the old code. One devtools test used `root.dispose()` to make a subscriber leave; it now detaches a child controller, since a root teardown no longer collects entries one at a time.
+
+## Where the fan-out gap comes from (2026-09-25)
+
+The 1.30× fan-out gap does not come from the wrappers, and no change to `signals/runtime.ts` closes it. That profile left the code as it was. The runs were on a machine shared with other test suites, so a single number moves by ±30%. Each finding below repeats across at least three alternating runs, and the `min` column was steadier than the mean.
+
+- **The bench's `effect` has no `try`.** The fan-out uses the standalone `effect`, which calls preact's `effect` directly (`runtime.ts:126-128`). The error routing is in `ctx.effect` (`controller/instance.ts`), which this bench does not call. Registering the same 10,000 effects through `ctx.effect` cost about 10% more, a cost the bench does not measure.
+- **The ratio depends on the order inside the file.** With Olas first, as in `baselines.bench.ts`, raw preact came out 1.02×, 1.16×, 1.19× and 1.27× faster over four runs. With the two entries swapped, Olas was 1.03× and 1.01× faster, and preact 1.06× faster.
+- **Loading core slows raw preact by as much as the wrappers seem to cost.** Each case ran alone in its own worker. Raw preact took a best time of 0.310–0.321 ms per write. Raw preact in a process that had imported core, without calling it, took 0.393–0.451 ms. Olas took 0.413–0.419 ms.
+- **Removing the wrappers buys about 4%.** A variant built on subclasses of preact's own `Signal` and `Computed`, so that `.value` is preact's accessor, beat the wrapped signals by about 4%. That variant changes behaviour, because a signal would then be a preact signal, with preact's `brand` and a writable `value` on a computed. In plain Node, with each variant in its own process and the built `dist`, Olas ran at 1.01–1.04× raw preact.
+
+So the wrapper cost is a few percent. The rest of the gap is the bench's order and the second module sharing preact's JIT state, which a benchmark of one library alone does not pay.

@@ -1,6 +1,7 @@
 import { describe, expect, test, vi } from 'vitest'
 import { createField, createFieldArray, createForm } from '../src'
 import { createRoot, defineController } from '../src/controller'
+import type { FormIssue } from '../src/forms'
 import { required } from '../src/forms/validators'
 import { queryEngine } from '../src/query/engine'
 import { signal } from '../src/signals'
@@ -961,6 +962,146 @@ describe('FieldArray — a no-op edit leaves the array clean', () => {
     root.api.tags.move(0, 1)
     expect(root.api.tags.value).toEqual(['b', 'a'])
     expect(root.api.tags.isDirty.value).toBe(true)
+    root.dispose()
+  })
+})
+
+// A form-level validator owns the errors it routes. A reset or `setAsInitial`
+// that leaves the form's value unchanged does not re-run it, so clearing the
+// routed errors there hid a rule that still failed: `form.isValid` read true
+// until the next edit (1.0 coverage pass).
+describe('regression: a no-op reset keeps form-level errors visible', () => {
+  const mismatch = (v: { password: string; confirm: string }) =>
+    v.password === v.confirm ? [] : [{ path: ['confirm'], message: 'Passwords must match' }]
+
+  const build = () => {
+    const def = defineController((ctx) => ({
+      form: createForm(
+        ctx,
+        {
+          password: createField<string>(ctx, ''),
+          confirm: createField<string>(ctx, ''),
+        },
+        { validators: [mismatch] },
+      ),
+    }))
+    return createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+  }
+
+  test('field.reset() on an unchanged field keeps the routed error and the form invalid', () => {
+    const root = build()
+    const { form } = root.api
+    form.fields.password.set('secret')
+    expect(form.fields.confirm.errors.value).toEqual(['Passwords must match'])
+    // `confirm` is already at its initial '', so the form's value does not move.
+    form.fields.confirm.reset()
+    expect(form.fields.confirm.errors.value).toEqual(['Passwords must match'])
+    expect(form.isValid.value).toBe(false)
+    root.dispose()
+  })
+
+  test('field.setAsInitial() with the same value keeps the routed error', () => {
+    const root = build()
+    const { form } = root.api
+    form.fields.password.set('secret')
+    form.fields.confirm.setAsInitial('')
+    expect(form.fields.confirm.errors.value).toEqual(['Passwords must match'])
+    expect(form.isValid.value).toBe(false)
+    root.dispose()
+  })
+
+  test('a reset that changes the value re-runs the form, which recomputes the error', () => {
+    const root = build()
+    const { form } = root.api
+    form.fields.password.set('secret')
+    form.fields.confirm.set('secret')
+    expect(form.isValid.value).toBe(true)
+    // Back to '' while password is 'secret': the rule fails again.
+    form.fields.confirm.reset()
+    expect(form.fields.confirm.errors.value).toEqual(['Passwords must match'])
+    // Resetting password too satisfies the rule, and the error clears.
+    form.fields.password.reset()
+    expect(form.fields.confirm.errors.value).toEqual([])
+    expect(form.isValid.value).toBe(true)
+    root.dispose()
+  })
+
+  test("form.reset() on an unchanged form keeps its own validator's errors", () => {
+    const def = defineController((ctx) => ({
+      form: createForm(
+        ctx,
+        {
+          start: createField<number>(ctx, 5),
+          end: createField<number>(ctx, 1),
+        },
+        { validators: [(v) => (v.end > v.start ? null : 'End must be after start')] },
+      ),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const { form } = root.api
+    expect(form.topLevelErrors.value).toEqual(['End must be after start'])
+    form.reset()
+    expect(form.topLevelErrors.value).toEqual(['End must be after start'])
+    expect(form.isValid.value).toBe(false)
+    root.dispose()
+  })
+
+  test('an error an outer form routed onto a nested form survives the nested reset()', () => {
+    const def = defineController((ctx) => {
+      const address = createForm(ctx, { city: createField<string>(ctx, '') })
+      return {
+        form: createForm(
+          ctx,
+          { country: createField<string>(ctx, 'NL'), address },
+          {
+            validators: [
+              (v) =>
+                v.country === 'NL' && v.address.city === ''
+                  ? [{ path: ['address'], message: 'Pick a city' }]
+                  : [],
+            ],
+          },
+        ),
+      }
+    })
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const { form } = root.api
+    expect(form.fields.address.topLevelErrors.value).toEqual(['Pick a city'])
+    form.fields.address.reset()
+    expect(form.fields.address.topLevelErrors.value).toEqual(['Pick a city'])
+    expect(form.isValid.value).toBe(false)
+    root.dispose()
+  })
+
+  test('a no-op reset during an async form-level run neither restarts it nor loses its result', async () => {
+    const pending = deferred<FormIssue[]>()
+    let runs = 0
+    const def = defineController((ctx) => ({
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
+        {
+          validators: [
+            () => {
+              runs += 1
+              return pending.promise
+            },
+          ],
+        },
+      ),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const { form } = root.api
+    expect(runs).toBe(1)
+    expect(form.isValidating.value).toBe(true)
+    form.fields.name.reset()
+    expect(runs).toBe(1)
+    pending.resolve([{ path: ['name'], message: 'Taken' }])
+    await vi.waitFor(() => expect(form.isValidating.value).toBe(false))
+    expect(form.fields.name.errors.value).toEqual(['Taken'])
+    form.fields.name.reset()
+    expect(form.fields.name.errors.value).toEqual(['Taken'])
+    expect(runs).toBe(1)
     root.dispose()
   })
 })

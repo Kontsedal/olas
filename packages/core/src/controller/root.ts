@@ -210,8 +210,13 @@ function buildRootHandle<Api>(
 /**
  * Construct a root controller. Root factories take no props — startup config
  * goes in `deps`.
+ *
+ * `deps` is checked against `AmbientDeps`: in an app that augments it with
+ * `api: ApiClient`, a root whose `deps` has no `api` does not compile. Extra
+ * members are allowed. `createTestController` does not check, so a test can
+ * pass only the fakes the controller under test reads.
  */
-export function createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>(
+export function createRoot<Api, TDeps extends AmbientDeps = AmbientDeps>(
   def: ControllerDef<void, Api>,
   options: RootOptions<TDeps>,
 ): Root<Api> {

@@ -71,7 +71,7 @@ A [`Field<T>`](/reference/olas-core.field) carries five state signals and six ac
 | `touched` | `markTouched()` has run, normally on blur. |
 | `isValidating` | An async validator is pending. |
 
-`set(value)` writes and re-validates. `reset()` restores the initial value and clears dirty, touched and every error. `markTouched()` records a blur. `revalidate()` re-runs the validators and resolves with the new `isValid`. `setAsInitial(value)` moves the baseline without marking the field dirty. `setErrors(messages)` pins server errors, covered [below](#server-errors).
+`set(value)` writes and re-validates. `reset()` restores the initial value and clears dirty, touched, the validator errors and the server errors. A message a form-level rule routed onto the field stays until that rule runs again. `markTouched()` records a blur. `revalidate()` re-runs the validators and resolves with the new `isValid`. `setAsInitial(value)` moves the baseline without marking the field dirty. `setErrors(messages)` pins server errors, covered [below](#server-errors).
 
 **Annotate the type when you pass validators.** `createField` infers `T` from the initial value. With a `validators` array, `createField(ctx, '', { validators })` infers `Field<''>`, and the first `set('ada')` fails to compile far from the declaration. `createField(ctx, null)` gives a `Field<null>` for the same reason. Write `createField<string>(...)` and `createField<string | null>(...)`. The [literal-type pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/literal-type-narrowing.md) explains the inference.
 
@@ -190,7 +190,7 @@ export const changePassword = defineController((ctx) => {
 })
 ```
 
-A routed message joins the field's `errors` and is recomputed on every form-level run, so fixing the mismatch removes it. An empty path, or one that names no field, lands in `topLevelErrors`. `form.isValid` is `false` while any leaf is invalid or `topLevelErrors` is non-empty.
+A routed message joins the field's `errors` and is recomputed on every form-level run, so fixing the mismatch removes it. Only that run writes it. A field's `reset()` or `setAsInitial()` that leaves the form's value unchanged does not re-run the rule, so its message stays, and so does a form's `topLevelErrors` through `form.reset()`. An empty path, or one that names no field, lands in `topLevelErrors`. `form.isValid` is `false` while any leaf is invalid or `topLevelErrors` is non-empty.
 
 ## Seed a form from server data
 

@@ -77,7 +77,7 @@ const OLAS_BOOTSTRAP_SCRIPT: string                       // drop into bootstrap
 const STREAMING_GLOBAL: '__OLAS_HYDRATION__'              // intake queue's window key
 ```
 
-The listing matches `packages/react/src/index.ts:1-47`. `useRoot` is at `context.ts:59-65` and `HydrationBoundary` at `context.ts:156-229`.
+The listing matches `packages/react/src/index.ts:1-47`. `useRoot` is at `context.ts:59-65` and `HydrationBoundary` at `context.ts:158-251`.
 
 ## How subscription works
 
@@ -154,8 +154,9 @@ Default behavior in olas: unmounting the React component does NOT dispose the co
 - The root is created **lazily during render** in a `useRef` (`if (rootRef.current === null) …`) — a ref mutated in render creates exactly one root across StrictMode's double render.
 - `options` is captured in a ref on first mount and **read once**; a new inline `options={{...}}` on a parent re-render is ignored (it would otherwise discard cache state every render). The root is recreated only when the **`def` identity** changes (dispose old + create new, in render).
 - A `useEffect(…, [])` disposes on unmount. StrictMode simulates mount, unmount and remount **without re-rendering between them**. The effect's remount-setup therefore recreates the disposed root and calls `forceRender()`, so the Provider hands descendants a live root. This is a dev-only double-construct, as TanStack does. The rebuilt root reuses the same options, and so the same `queryEngine()` value, which works because an engine is a definition. Pinned by `packages/react/tests/hydration-boundary.test.tsx`, "(b2) StrictMode with a query engine and a hydrate payload".
-- A `def` change drops `hydrate` from the options it reuses (`context.ts:180-190`). The server payload described the first root's tree, so the replacement starts from its own fetches. A StrictMode remount of the same `def` still hydrates. Pinned by "(e) the root rebuilt for a new def does not re-apply the first hydrate payload".
-- A second effect calls `installStreamingIntake` on the current root, unless `streaming={false}` (`context.ts:218-226`). It reads `rootRef.current`, so a StrictMode remount installs on the fresh root. See `../flows/ssr.md`.
+- A `def` change drops `hydrate` from the options it reuses (`context.ts:202-212`). The server payload described the first root's tree, so the replacement starts from its own fetches. A StrictMode remount of the same `def` still hydrates. Pinned by "(e) the root rebuilt for a new def does not re-apply the first hydrate payload".
+- A second effect calls `installStreamingIntake` on the current root, unless `streaming={false}` (`context.ts:240-248`). It reads `rootRef.current`, so a StrictMode remount installs on the fresh root. See `../flows/ssr.md`.
+- **Rendered on the server, the boundary leaks its root.** A server render runs no effects, so the cleanup that disposes the root never runs. In a development build the boundary warns once per process when it renders with no `window` (`context.ts:172-193`). The message names the fix: a per-request root through `OlasProvider`, disposed after the response. The once-gate is a module flag, because the mistake sits in the app's server entry and one message names it. Pinned by `coverage-server-env.test.tsx`, "warns once that its root is never disposed", and the jsdom lifecycle test asserts the browser path stays quiet.
 
 ## SSR round trip, end to end (0.9 review)
 

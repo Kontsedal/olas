@@ -20,7 +20,7 @@ confidence: medium
 
 1. **Every duration is in milliseconds.** No option takes seconds.
 2. **Core's lifetime policies end in `Time`:** `staleTime`, `gcTime`, and `suspend({ maxIdleTime })`. They say how long something stays fresh, cached or alive. The names match TanStack Query, which most readers already know.
-3. **Every other duration ends in `Ms`:** `throttleMs` (persist), `flushMs` (realtime), `backoffMs`, `maxBackoffMs` and `ttlMs` (mutation-queue), and `inspectorPollMs` (devtools). These tune a mechanism rather than state a policy, and the suffix names the unit.
+3. **Every other duration ends in `Ms`:** `throttleMs` (persist), `flushMs` (realtime), and `backoffMs`, `maxBackoffMs` and `ttlMs` (mutation-queue). These tune a mechanism rather than state a policy, and the suffix names the unit.
 4. **`retryDelay` and `refetchInterval` keep their names.** Both also accept a function (`(attempt) => ms`, `(data) => ms`), so neither name can carry a unit suffix honestly. They match TanStack Query too.
 
 ## What changed for 1.0

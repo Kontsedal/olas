@@ -18,7 +18,7 @@ edges:
   - { type: uses, target: ../decisions/brand-markers-not-classes.md }
   - { type: related, target: ../decisions/forms-are-read-signals.md }
   - { type: related, target: ../pitfalls/fieldarray-factory-uses-initial.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -89,7 +89,7 @@ The whole body runs inside an `effect`, so any signal read inside any validator 
 
 **`isValid` stability (T5.3).** `isValid` reads live `errors` when settled, but **holds the last settled validity while `isValidating`**, through a `lastValid$` signal updated at every settle point. Without this, a `debouncedValidator` cleared `validatorErrors$` on each async start, `isValid` strobed to `false` on every keystroke, and a bound submit button flickered. A field with no prior settled run defaults to valid, so there is no false-invalid flash on mount. This replaced the older "treat-as-invalid-while-validating" rule (spec §8.2 updated).
 
-`debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` rather than the widened `Validator<T>`, so a direct caller storing the result in a `string | null` signal type-checks. It stays assignable wherever a `Validator<T>` is expected (`field.ts:545-548`).
+`debouncedValidator(fn, ms)` returns a validator whose Promise resolves after `ms` (or rejects with AbortError if the signal aborts first). Its return type is the precise `(v, s) => Promise<string | null>` rather than the widened `Validator<T>`, so a direct caller storing the result in a `string | null` signal type-checks. It stays assignable wherever a `Validator<T>` is expected (`field.ts:547-550`).
 
 **A sync failure abandons the pass's async validators (1.0).** A pass runs every validator, sync and async together. When a sync one fails, the pass settles on its errors at once and does not wait for the async ones. `abandonAsyncResults` in `utils.ts` then aborts them and attaches a no-op handler to each promise. Without it, the rejection that the next pass or dispose caused was unhandled: clearing a field with `required` and a `debouncedValidator` logged an `AbortError`. The field, form and field-array runners share the helper. Pinned by `regressions.test.ts`, "an async validator abandoned by a failing sync one settles quietly".
 
@@ -100,7 +100,9 @@ A validator on `FormOptions.validators` or on `FieldArrayOptions.validators` may
 - **empty-path** (and unresolvable) issues → the node's own `topLevelErrors$`.
 - **path** issues → `resolveNode(this, path)` walks keys on a Form and numeric indices on a FieldArray to reach the target node, then calls its `setFormErrors(msgs)`.
 
-Each node type (`FieldImpl`, `FormImpl`, `FieldArrayImpl`) exposes `setFormErrors`. On a Field it feeds `formErrors$`, which merges into `errors`. On a Form or FieldArray it feeds `parentFormErrors$`, which merges into that node's **`topLevelErrors`** getter, now a `computed` over its own errors plus the parent-injected ones, and is factored into `isValid`. `routeFormIssues` clears any target written last run but not this one, tracked in `lastFormErrorTargets`, so a fixed rule removes its message. The router runs inside the validator `effect`, but only *reads* the tracked form `value` and *writes* error signals, peeking elsewhere. It therefore adds no spurious dependencies and cannot loop, because errors are not part of `value`. Pinned by `regressions.test.ts` under R-F5.2. The Standard-Schema path from `validator(schema)` to `FormIssue[]` is pinned by `standard-schema.test.ts`.
+Each node type (`FieldImpl`, `FormImpl`, `FieldArrayImpl`) exposes `setFormErrors`. On a Field it feeds `formErrors$`, which merges into `errors`. On a Form or FieldArray it feeds `parentFormErrors$`, which merges into that node's **`topLevelErrors`** getter, now a `computed` over its own errors plus the parent-injected ones, and is factored into `isValid`. `routeFormIssues` clears any target written last run but not this one, tracked in `lastFormErrorTargets`, so a fixed rule removes its message.
+
+**The form-level run is the only writer of the routed channels (1.0).** `FieldImpl.reset()` and `setAsInitial()` leave `formErrors$`, and `FormImpl.reset()` and `FieldArrayImpl.reset()` leave `topLevelErrors$` and `parentFormErrors$`. A reset that changes the form's value re-runs the validator effect, which recomputes them. A reset that leaves the value unchanged does not re-run it, and clearing the channels there hid a rule that still failed: `form.isValid` read `true` until the next edit. Keeping the last result also keeps async runs sane, because a no-op reset starts no new run and cannot drop an in-flight one's result. Pinned by `form.test.ts`, "regression: a no-op reset keeps form-level errors visible". The router runs inside the validator `effect`, but only *reads* the tracked form `value` and *writes* error signals, peeking elsewhere. It therefore adds no spurious dependencies and cannot loop, because errors are not part of `value`. Pinned by `regressions.test.ts` under R-F5.2. The Standard-Schema path from `validator(schema)` to `FormIssue[]` is pinned by `standard-schema.test.ts`.
 
 ## `Form.set(partial)` — batched deep merge
 

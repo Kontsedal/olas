@@ -386,7 +386,7 @@ class MutationImpl<V, R> implements Mutation<V, R> {
     if (!__DEV__) return
     if (this.devtools === undefined) return
     const out: Record<string, unknown> = { ...event, path: this.controllerPath }
-    if (this.spec.id !== undefined) out.name = this.spec.id
+    if (this.spec.id !== undefined) out.id = this.spec.id
     // `causeId` (the run id) correlates this event with the run's optimistic
     // writes / snapshot events / settle in the devtools timeline. Empty string
     // means "no run id" (non-persistable in a prod build) — omit it.

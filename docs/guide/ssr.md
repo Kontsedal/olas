@@ -341,7 +341,7 @@ On Node, render with `renderToReadableStream`, since Node has Web Streams, and p
 
 `HydrationBoundary` is the client half. It builds its root during render and disposes it in an effect, and React runs no effects on the server. A `HydrationBoundary` rendered on the server therefore builds a root that nothing disposes, and the handler holds no reference to it. That root's subscriptions, timers and cache outlive the response.
 
-On the server, build the per-request root yourself, render it through `OlasProvider`, and dispose it when the response is done, as both server examples above do.
+On the server, build the per-request root yourself, render it through `OlasProvider`, and dispose it when the response is done, as both server examples above do. A development build warns once when a `HydrationBoundary` renders on the server, so the mistake shows up in the server log.
 
 ## Persisted state and the first render
 

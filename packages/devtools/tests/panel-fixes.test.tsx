@@ -56,12 +56,12 @@ describe('DevtoolsPanel', () => {
     bus.emit(constructed(['root']), {
       type: 'mutation:run',
       path: ['root'],
-      name: 'a',
+      id: 'a',
       vars: 1,
     })
     expect(nodeRow('root').textContent).toContain('1 pending')
     // `b` ran before the panel mounted; only its settle arrives.
-    bus.emit({ type: 'mutation:success', path: ['root'], name: 'b', result: 1 })
+    bus.emit({ type: 'mutation:success', path: ['root'], id: 'b', result: 1 })
     expect(nodeRow('root').textContent).toContain('1 pending')
   })
 

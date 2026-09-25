@@ -11,7 +11,7 @@ covers:
   - packages/core/src/controller/root.ts:156-201
   - packages/core/src/query/entry.ts:406-455
   - packages/react/src/streaming.ts
-  - packages/react/src/context.ts:118-229
+  - packages/react/src/context.ts:118-251
 edges:
   - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
@@ -212,7 +212,7 @@ hydrateRoot(
 )
 ```
 
-`HydrationBoundary` creates and owns the client root, and on mount it calls `installStreamingIntake(root)` (`packages/react/src/context.ts:218-226`). The intake (`streaming.ts:387-440`):
+`HydrationBoundary` creates and owns the client root, and on mount it calls `installStreamingIntake(root)` (`packages/react/src/context.ts:240-248`). The intake (`streaming.ts:387-440`):
 
 1. upgrades the bootstrap queue into a fan-out intake that keeps every batch it has seen;
 2. applies the batches that arrived before mount to this root;

@@ -9,6 +9,8 @@ covers:
   - packages/core/src/query/client.ts:1003-1024
   - packages/core/src/query/mutation.ts:374-395
   - packages/core/src/controller/root.ts:202-205
+  - packages/core/src/controller/instance.ts:378-446
+  - packages/core/src/controller/instance.ts:542-562
   - packages/core/src/plugin/host.ts:166-169
 edges:
   - { type: documented-in, target: ../../SPEC.md }
@@ -29,15 +31,15 @@ confidence: medium
 
 ## The event union shape
 
-`DebugEvent = DebugEventBody & DebugEventMeta`, written as a **distributive conditional** (`devtools.ts:114-118`) — `DebugEventBody extends infer B ? (B extends DebugEventBody ? B & DebugEventMeta : never) : never` — NOT a plain `Body & Meta` intersection. The distribution keeps each variant's literal `type` discriminant intact, so `switch (event.type)` still narrows. A plain intersection with a union does not narrow reliably. `DebugEventMeta` at `devtools.ts:7-27` adds three **optional** fields to every variant: `seq`, `t` and `causeId`. They are optional so hand-built events and the panel store's `handle()` stay valid in tests. The bus stamps `seq` and `t` on delivery regardless, as described below.
+`DebugEvent = DebugEventBody & DebugEventMeta`, written as a **distributive conditional** (`devtools.ts:118-122`) — `DebugEventBody extends infer B ? (B extends DebugEventBody ? B & DebugEventMeta : never) : never` — NOT a plain `Body & Meta` intersection. The distribution keeps each variant's literal `type` discriminant intact, so `switch (event.type)` still narrows. A plain intersection with a union does not narrow reliably. `DebugEventMeta` at `devtools.ts:7-27` adds three **optional** fields to every variant: `seq`, `t` and `causeId`. They are optional so hand-built events and the panel store's `handle()` stay valid in tests. The bus stamps `seq` and `t` on delivery regardless, as described below.
 
 ## DevtoolsEmitter
 
 One per root, built by `createRootWithProps` (`controller/root.ts:24`). Held inside `RootShared.devtools`, and handed to the `QueryClient` and the `PluginSet`. Emits are routed from `ControllerInstance`, from `QueryClient` (invalidate, gc and set-data), from inside `Entry`, `InfiniteEntry` and `MutationImpl` at the relevant lifecycle points, from the forms, and from `host.debug`.
 
 - `emit(event)` — short-circuits when `handlers.size === 0` (one Set size check), AFTER `recordLifecycle`. So the bus in production with no subscriber costs one Set size check.
-- **`seq`/`t` stamping.** `emit` and the subscribe-time replay both route through `stamp(event)` at `devtools.ts:245-249`. It returns a `{ ...event, seq: ++this.seq, t: Date.now() }` COPY and never mutates the caller's inline event. A caller-supplied `causeId` is preserved, and a `causeId: undefined` is dropped, so "no cause" is an absent key. The emitter owns `seq` and `t`, and reassigns them every time. `seq` is per-root monotonic, and a late subscriber's replayed snapshot events get fresh, higher `seq`s, so they still sort before its subsequent live events.
-- `subscribe(handler)` — replays the live-controller snapshot (each event `stamp`ed, plus a `controller:suspended` for a suspended controller), then fires on every event; returns unsub. Exposed publicly as `root.debug.subscribe(...)`, next to `root.debug.queryEntries()`, which returns `QueryClient.queryEntriesSnapshot()` (`controller/root.ts:202-205`). `root.debug` is typed `DebugBus` (`devtools.ts:149-152`).
+- **`seq`/`t` stamping.** `emit` and the subscribe-time replay both route through `stamp(event)` at `devtools.ts:249-253`. It returns a `{ ...event, seq: ++this.seq, t: Date.now() }` COPY and never mutates the caller's inline event. A caller-supplied `causeId` is preserved, and a `causeId: undefined` is dropped, so "no cause" is an absent key. The emitter owns `seq` and `t`, and reassigns them every time. `seq` is per-root monotonic, and a late subscriber's replayed snapshot events get fresh, higher `seq`s, so they still sort before its subsequent live events.
+- `subscribe(handler)` — replays the live-controller snapshot (each event `stamp`ed, plus a `controller:suspended` for a suspended controller), then fires on every event; returns unsub. Exposed publicly as `root.debug.subscribe(...)`, next to `root.debug.queryEntries()`, which returns `QueryClient.queryEntriesSnapshot()` (`controller/root.ts:202-205`). `root.debug` is typed `DebugBus` (`devtools.ts:153-156`).
 - Handler exceptions are caught — a buggy devtools handler must not break the program.
 - Iterates over a snapshot, like `Emitter`.
 - **The default build** strips every `emit(...)` call site via tsdown's
@@ -54,7 +56,7 @@ One per root, built by `createRootWithProps` (`controller/root.ts:24`). Held ins
 
 ## How events reach the bus
 
-Lifecycle events from `ControllerInstance` go straight through `rootShared.devtools.emit(...)`; see `instance.ts:246-256, 297-299, 370-372, 426-428`. Each call site is wrapped in `if (__DEV__)`, so production builds elide it.
+Lifecycle events from `ControllerInstance` go straight through `rootShared.devtools.emit(...)`; see `instance.ts:252-262, 303-305, 376-378, 432-446`. Each call site is wrapped in `if (__DEV__)`, so production builds elide it.
 
 **Cache events** (Phase 13; extended T8.1 and W10). `QueryClient` holds a `devtools?: DevtoolsEmitter`. `devtoolsEntryEvents(devtools, queryId, queryKey)` (`client.ts:150-202`) builds one `EntryEvents` callback bundle, and both `ClientEntry` and `InfiniteClientEntry` pass it to their entry (`client.ts:293`, `client.ts:525`):
 
@@ -74,13 +76,13 @@ Every other cache write emits `cache:set-data` through the private `emitDevtools
 
 The ambient cause supplies only the `causeId`. `QueryClient.invalidate`, `invalidateAll` and `dropEntry`, and their infinite counterparts, emit `cache:invalidated` and `cache:gc` directly, with the `queryId`. A plugin's `host.queries.invalidate` emits no `cache:invalidated`: it calls `invalidateEntry` without the devtools emit (`client.ts:878-884`).
 
-**Mutation events** (Phase 13; `causeId` T8.1). `MutationImpl` takes an optional `DevtoolsEmitter` constructor argument, which `createMutation` in `query/bind.ts:142-152` passes from the controller's internals. Each `executeRun` mints a `runId` up front through `makeRunId()`, generated when a plugin observes mutations or when `__DEV__` is set. That id is BOTH the `runId` on the plugins' `MutationEvent` AND the devtools `causeId`. Each event carries the mutation's `id` as `name` when it has one. The private `emit(event, causeId?)` at `mutation.ts:374-395` stamps it onto the `mutation:run`, `success`, `error` and `rollback` events. `mutation:run` fires after `onMutate` succeeds and the counters are bumped. `mutation:success` fires before the user's `onSuccess`, and `mutation:error` before the user's `onError`. `mutation:rollback` fires through a wrapped `Snapshot`. An auto-rollback from supersede, dispose or error emits it, and so does a user-driven `snapshot.rollback()`, exactly once per snapshot.
+**Mutation events** (Phase 13; `causeId` T8.1). `MutationImpl` takes an optional `DevtoolsEmitter` constructor argument, which `createMutation` in `query/bind.ts:142-152` passes from the controller's internals. Each `executeRun` mints a `runId` up front through `makeRunId()`, generated when a plugin observes mutations or when `__DEV__` is set. That id is BOTH the `runId` on the plugins' `MutationEvent` AND the devtools `causeId`. Each event carries the mutation's `id` as `id` when it has one; an inline spec without one sends none. Before 1.0 the field was named `name`, a leftover from the removed mutation `name`. The private `emit(event, causeId?)` at `mutation.ts:374-395` stamps it onto the `mutation:run`, `success`, `error` and `rollback` events. `mutation:run` fires after `onMutate` succeeds and the counters are bumped. `mutation:success` fires before the user's `onSuccess`, and `mutation:error` before the user's `onError`. `mutation:rollback` fires through a wrapped `Snapshot`. An auto-rollback from supersede, dispose or error emits it, and so does a user-driven `snapshot.rollback()`, exactly once per snapshot.
 
 ## `ctx.debug({...})` — controller variables
 
-`ctx.debug(record)`, in `buildCtx` in `instance.ts:525-542`, lets a controller expose named **live** values for the devtools "Variables" view. Signals, computeds and fields are held by reference rather than snapshotted. It is dev-only, guarded by `if (!__DEV__) return`, so it costs nothing and retains nothing in production. It merges across calls into `ControllerInstance.debugValues`.
+`ctx.debug(record)`, in `buildCtx` in `instance.ts:542-562`, lets a controller expose named **live** values for the devtools "Variables" view. Signals, computeds and fields are held by reference rather than snapshotted. It is dev-only, guarded by `if (!__DEV__) return`, so it costs nothing and retains nothing in production. It merges across calls into `ControllerInstance.debugValues`.
 
-Timing: `ctx.debug` runs *during* the factory, in state `constructing`, before `construct()` emits `controller:constructed`. The merged record therefore **rides out on `controller:constructed`** as a `debug?` field on that event, correctly ordered and replayed to late subscribers. A call *after* construction, in state `active` and typically from an effect, instead emits a `controller:debug` event carrying the full merged record. `DevtoolsEmitter.recordLifecycle` stores `debug` per live controller from either event, so replay includes it. The panel renders each value reactively via `useValue()` (see `devtools-panel.md`).
+Timing: `ctx.debug` runs *during* the factory, in state `constructing`, before `construct()` emits `controller:constructed`. The merged record therefore **rides out on `controller:constructed`** as a `debug?` field on that event, correctly ordered and replayed to late subscribers. A call *after* construction, in state `active` and typically from an effect, instead emits a `controller:debug` event carrying the full merged record. A call while **suspended** stores the values and sets `debugPendingEmit`. `resume()` then sends one `controller:debug` with the merged record, right after `controller:resumed` (`instance.ts:432-445`), so the panel never keeps the pre-suspend values. Pinned by `devtools-events.test.ts`, "ctx.debug while suspended is sent on resume". `DevtoolsEmitter.recordLifecycle` stores `debug` per live controller from either event, so replay includes it. The panel renders each value reactively via `useValue()` (see `devtools-panel.md`).
 
 ## Correlation backbone (`seq` / `t` / `causeId`)
 
@@ -108,7 +110,7 @@ See [../flows/devtools-causal-timeline.md](../flows/devtools-causal-timeline.md)
 | Event family | Status |
 |---|---|
 | `controller:constructed / suspended / resumed / disposed` | ✓ wired in `ControllerInstance` (`constructed` also carries `debug` — see below) |
-| `controller:debug` | ✓ wired via `ctx.debug({...})` (post-construction updates; construction-time vars ride `controller:constructed`) |
+| `controller:debug` | ✓ wired via `ctx.debug({...})` (post-construction updates, and on `resume()` after a call made while suspended; construction-time vars ride `controller:constructed`) |
 | `cache:fetch-start / fetch-success / fetch-error` | ✓ wired via `EntryEvents` (regular and infinite queries; carry `fetchId` as `causeId`) |
 | `cache:set-data` | ✓ wired — every write source: `fetch`, `hydrate`, `optimistic`, `rollback`, `write`, `replace` |
 | `cache:invalidated / gc` | ✓ wired in `QueryClient` |

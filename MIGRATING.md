@@ -40,6 +40,7 @@ The third column says what the codemod does with each row: **rewrites** it, **fl
 | `createRoot(app, { deps })`, which always built a query client | `createRoot(app, { deps, queries: queryEngine() })`. A root whose controllers create a query, a mutation or a bound query needs the engine | rewrites: every root gains one, which a root with no queries can drop |
 | `defaultQueryOptions`, `refetchOnWindowFocus` and `refetchOnReconnect` on the root options | `queries: queryEngine({ defaults: { … } })`. `plugins` and `hydrate` stay on the root options | rewrites |
 | `DefaultQueryOptions` | `QueryDefaults` | rewrites |
+| `createRoot(app, { deps })` accepted any `deps` object | `deps` must satisfy `AmbientDeps`, so a root that leaves out a service the app declared fails to compile. Extra members still compile. `createTestController` does not check, so a test passes only the fakes it needs | — |
 | `createTestController(def, { deps, props, defaultQueryOptions })`, returning the api with the controls mixed in | the handle `createRoot` returns: `const { api } = createTestController(def, { deps })`. `props` is optional for a controller without props, and defaults go in `queries: queryEngine({ defaults })` | rewrites |
 
 #### Controllers and `ctx`
@@ -122,6 +123,8 @@ The third column says what the codemod does with each row: **rewrites** it, **fl
 | mutation-queue `onReplaySettle(entry, result, api)`, with `api.invalidate(query, args)` | the third argument is the root's `QueryHost`: `queries.invalidate(id, key)` | flags |
 | router `createRoot(app, { scopes: adapter.scopes })` | `createRoot(app, { plugins: [adapter.plugin] })` | rewrites |
 | cross-tab: one plugin instance per root, mirroring other plugins' writes along with the app's | one definition serves any number of roots, and it mirrors only the app's own writes by default | — See [Cross-tab](#cross-tab-mirrors-the-apps-own-writes) |
+| devtools `<DevtoolsPanel inspectorPollMs={…}>`, deprecated and ignored | removed. The cache inspector refreshes on every cache event, so there is no interval to set | — |
+| devtools: a `mutation:*` event's `name`, and `MutationEntry.name` in the panel store | the event's `id`, and `MutationEntry.mutationId`. `MutationEntry.id` still numbers the log entry | — |
 
 #### Packaging
 

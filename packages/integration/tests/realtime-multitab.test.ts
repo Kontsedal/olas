@@ -17,6 +17,7 @@
  */
 
 import {
+  type Ctx,
   createQuery,
   createRoot,
   defineController,
@@ -25,15 +26,14 @@ import {
   queryEngine,
 } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
-import { createRealtimePatcher, onReconnect, type RealtimeService } from '@kontsedal/olas-realtime'
+import { createRealtimePatcher, onReconnect, type RealtimeDeps } from '@kontsedal/olas-realtime'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createBusFactory, fakeRealtime, settle } from './_helpers'
 
-declare module '@kontsedal/olas-core' {
-  interface AmbientDeps {
-    realtime: RealtimeService
-  }
-}
+// The suite is one TypeScript program, and `createRoot` checks `deps` against
+// `AmbientDeps`. Augmenting it with `realtime` here would make every root in
+// every file pass one, so these controllers narrow their own `ctx` instead.
+const withRealtime = (ctx: Ctx): Ctx<RealtimeDeps> => ctx as unknown as Ctx<RealtimeDeps>
 
 type Post = { id: string; title: string; likes: number }
 
@@ -73,7 +73,7 @@ describe('integration: realtime + multi-tab', () => {
     const buildDef = (q: Query<[], { posts: Post[] }>) =>
       defineController((ctx) => {
         const feed = createQuery(ctx, q, () => [])
-        createRealtimePatcher<FeedEvent>(ctx, 'feed', {
+        createRealtimePatcher<FeedEvent>(withRealtime(ctx), 'feed', {
           'like-added': ({ postId }) => {
             q.setData(() => {
               const prev = feed.data.peek()
@@ -151,7 +151,7 @@ describe('integration: realtime + multi-tab', () => {
     const buildDef = (q: Query<[], { posts: Post[] }>) =>
       defineController((ctx) => {
         const feed = createQuery(ctx, q, () => [])
-        createRealtimePatcher<FeedEvent>(ctx, 'feed', {
+        createRealtimePatcher<FeedEvent>(withRealtime(ctx), 'feed', {
           'like-added': ({ postId }) => {
             q.setData(() => {
               const prev = feed.data.peek()
@@ -209,7 +209,7 @@ describe('integration: realtime + multi-tab', () => {
 
     const def = defineController((ctx) => {
       const users = createQuery(ctx, usersQuery, () => [])
-      onReconnect(ctx, () => {
+      onReconnect(withRealtime(ctx), () => {
         usersQuery.invalidate()
       })
       return { users }

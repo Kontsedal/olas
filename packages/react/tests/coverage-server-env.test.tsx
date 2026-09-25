@@ -13,6 +13,7 @@ import {
 import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
+  HydrationBoundary,
   installStreamingIntake,
   STREAMING_GLOBAL,
   type SuspendableController,
@@ -55,6 +56,28 @@ describe('keep-alive on the server', () => {
     expect(renderToString(<Probe />)).toBe('<span>ok</span>')
     expect(c.suspend).not.toHaveBeenCalled()
     expect(c.resume).not.toHaveBeenCalled()
+  })
+})
+
+describe('HydrationBoundary on the server', () => {
+  test('warns once that its root is never disposed, and names the fix', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const def = defineController(() => ({ label: 'ssr' }))
+    const page = () => (
+      <HydrationBoundary def={def} options={{ deps: {} }}>
+        <p>child</p>
+      </HydrationBoundary>
+    )
+    expect(renderToString(page())).toBe('<p>child</p>')
+    expect(warn).toHaveBeenCalledTimes(1)
+    const message = String(warn.mock.calls[0]?.[0])
+    expect(message).toMatch(/<HydrationBoundary> rendered on the server/)
+    expect(message).toMatch(/never disposed/)
+    expect(message).toMatch(/<OlasProvider root=\{root\}>/)
+    expect(message).toMatch(/root\.dispose\(\) after the response/)
+    // The next request renders the same way and does not repeat the warning.
+    expect(renderToString(page())).toBe('<p>child</p>')
+    expect(warn).toHaveBeenCalledTimes(1)
   })
 })
 

@@ -121,9 +121,11 @@ class FieldImpl<T> implements Field<T> {
    * Errors routed here by a parent (or ancestor) form-level validator that
    * targeted this field via a `FormIssue` path — the third error channel
    * beside validator + server errors (T5.2). Owned by the routing form: cleared
-   * and re-applied on every form-level validation run, so it does NOT clear on
-   * the field's own `set()` (a stale cross-field error survives until the next
-   * form-level run recomputes it). Cleared by `reset()` / `setAsInitial()`.
+   * and re-applied on every form-level validation run, and written by nothing
+   * else. So neither the field's `set()` nor its `reset()` or `setAsInitial()`
+   * clears it. A write that changes the value re-runs the form, which
+   * recomputes the channel. A no-op reset leaves the form's value as it was,
+   * so the rule's last result still stands and must stay visible.
    */
   private readonly formErrors$: Signal<string[]>
   private readonly errors$: Computed<string[]>
@@ -309,9 +311,9 @@ class FieldImpl<T> implements Field<T> {
       // response is no longer relevant. Without clearing, errors like
       // "username taken" persist across a successful re-hydrate.
       if (this.serverErrors$.peek().length > 0) this.serverErrors$.set([])
-      // A stale cross-field error from the old value is likewise irrelevant;
-      // the next form-level run recomputes it against the fresh value.
-      if (this.formErrors$.peek().length > 0) this.formErrors$.set([])
+      // `formErrors$` stays: the routing form owns it. A new value re-runs the
+      // form, which recomputes it; the same value leaves its rule's result
+      // standing.
     })
   }
 
@@ -325,7 +327,7 @@ class FieldImpl<T> implements Field<T> {
       this.touched$.set(false)
       this.validatorErrors$.set([])
       this.serverErrors$.set([])
-      this.formErrors$.set([])
+      // Not `formErrors$`: the routing form owns it (see its declaration).
       this.validating$.set(false)
       // Re-lock validation if the field was in blur/submit mode — a reset
       // means we're back to a clean slate, so the user shouldn't immediately

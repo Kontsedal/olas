@@ -385,8 +385,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
           ;(child as Field<unknown>).reset()
         }
       }
-      this.topLevelErrors$.set([])
-      this.parentFormErrors$.set([])
+      // `topLevelErrors$` and `parentFormErrors$` stay: this form's validators
+      // and an ancestor's own them. A reset that changes the value re-runs
+      // both, and one that does not leaves their last result standing, so a
+      // rule that still fails stays visible (the same as a field's routed
+      // errors).
       // Submission lifecycle is conceptually part of "form state"; resetting
       // a form means the user is starting over. Without these clears, a UI
       // bound to `submitCount`/`submitError` would show stale state after
@@ -1018,8 +1021,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       for (const ini of this.initialItems) {
         this.add(ini)
       }
-      this.topLevelErrors$.set([])
-      this.parentFormErrors$.set([])
+      // The error channels stay with their validators, as in `FormImpl.reset`.
+      // Rebuilt items give the array a new value, so both re-run anyway.
       // clear()/add() above flipped structural dirt; reset() lands on the
       // clean initial baseline (T5.1).
       this.structurallyDirty$.set(false)

@@ -5,7 +5,7 @@ type: decision
 covers:
   - packages/core/src/forms/form-types.ts:73-225
   - packages/core/src/forms/form.ts:261-345
-  - packages/core/src/forms/form.ts:866-975
+  - packages/core/src/forms/form.ts:869-978
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/form-submit.test.ts }
@@ -28,7 +28,7 @@ useValue(form)         // re-renders when any leaf changes
 form.subscribe(fn)     // same
 ```
 
-The three node kinds also share `set` and `setAsInitial`, each taking its own value shape. `Form.resetWithInitial` was renamed `setAsInitial`, and `FieldArray` gained both methods (`packages/core/src/forms/form.ts:941-975`).
+The three node kinds also share `set` and `setAsInitial`, each taking its own value shape. `Form.resetWithInitial` was renamed `setAsInitial`, and `FieldArray` gained both methods (`packages/core/src/forms/form.ts:944-978`).
 
 ## Why
 

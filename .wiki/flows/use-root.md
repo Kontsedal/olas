@@ -5,7 +5,7 @@ type: flow
 covers:
   - packages/react/src/context.ts:14-116
   - packages/react/src/hooks.ts:24-135
-  - packages/core/src/controller/root.ts:100-219
+  - packages/core/src/controller/root.ts:100-224
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/react/tests/adapter.test.tsx }

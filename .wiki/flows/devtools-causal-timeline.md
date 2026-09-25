@@ -63,7 +63,7 @@ passthrough (zero cost). See [../modules/devtools.md](../modules/devtools.md) â†
 ## 3. The emitted chain (all sharing `causeId = runId`)
 
 ```
-mutation:run          causeId=R   (name 'save')
+mutation:run          causeId=R   (id 'save')
 snapshot:push         causeId=R   (queryKey ['1'])
 cache:set-data        causeId=R   source 'mutate'  data 'optimistic'
 snapshot:rollback     causeId=R   (mutate threw â†’ auto-rollback)

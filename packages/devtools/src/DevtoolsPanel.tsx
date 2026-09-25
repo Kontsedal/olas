@@ -61,12 +61,6 @@ export type DevtoolsPanelProps = {
    * reloading the page restores filter + tab. Default: no persistence.
    */
   urlHashKey?: string
-  /**
-   * @deprecated Ignored. The cache inspector is now event-driven — it refreshes
-   * from `root.debug.queryEntries()` whenever a cache event arrives, so there
-   * is no polling interval to configure. Kept for back-compat; will be removed.
-   */
-  inspectorPollMs?: number
 }
 
 /** A search jump: the row to scroll to and highlight. `nonce` makes a repeat jump fire again. */
@@ -445,16 +439,16 @@ function treeRowEstimate(row: TreeRow, toggles: Toggles): number {
 }
 
 function rollupPending(entries: readonly MutationEntry[]): Map<string, number> {
-  const inFlight = new Map<string, number>() // (path|name) → count
+  const inFlight = new Map<string, number>() // (path|mutation id) → count
   const out = new Map<string, number>() // path → pending count
   for (const e of entries) {
-    const key = `${e.path.join('>')}#${e.name ?? ''}`
+    const key = `${e.path.join('>')}#${e.mutationId ?? ''}`
     const pathKey = e.path.join('>')
     if (e.kind === 'run') {
       inFlight.set(key, (inFlight.get(key) ?? 0) + 1)
       out.set(pathKey, (out.get(pathKey) ?? 0) + 1)
     } else if (e.kind === 'success' || e.kind === 'error') {
-      // Only a settle for a (path, name) with a run in flight lowers the
+      // Only a settle for a (path, mutation id) with a run in flight lowers the
       // path's count: the run may predate the panel, a Clear, or the log's
       // window, and another mutation's badge must not drop with it.
       const n = inFlight.get(key) ?? 0
@@ -1355,7 +1349,7 @@ function MutationsView({
 }
 
 function mutationHaystack(e: MutationEntry): string {
-  const parts: string[] = [e.kind, ...e.path, e.name ?? '']
+  const parts: string[] = [e.kind, ...e.path, e.mutationId ?? '']
   if (e.kind === 'run') parts.push(toSearchText(e.vars))
   if (e.kind === 'success') parts.push(toSearchText(e.result))
   if (e.kind === 'error') parts.push(toSearchText(e.error))
@@ -1380,7 +1374,9 @@ function MutationRow({
           ? 'olas-devtools-kind-success'
           : ''
 
-  const target = entry.name ? `${entry.name} · ${formatPath(entry.path)}` : formatPath(entry.path)
+  const target = entry.mutationId
+    ? `${entry.mutationId} · ${formatPath(entry.path)}`
+    : formatPath(entry.path)
 
   let payload: unknown | undefined
   let suffix: string | null = null

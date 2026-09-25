@@ -34,7 +34,7 @@ edges:
   - { type: related, target: ../flows/devtools-causal-timeline.md }
   - { type: related, target: ../pitfalls/raf-unbound-illegal-invocation.md }
   - { type: related, target: ../decisions/ui-rules.md }
-last_verified: 2026-09-24
+last_verified: 2026-09-25
 confidence: medium
 ---
 
@@ -53,7 +53,6 @@ function DevtoolsPanel(props: {
   maxEntries?: number         // per-log cap, default 100
   maxTimelineEntries?: number // timeline ring capacity, default 10,000
   urlHashKey?: string
-  inspectorPollMs?: number    // deprecated + ignored — the inspector is event-driven
 }): ReactElement
 
 function DevtoolsLauncher(props: {
@@ -70,6 +69,7 @@ class DevtoolsStore {
   readonly tree$: ReadSignal<ControllerNode>          // live controller tree (not a log)
   readonly cache$: ReadSignal<CacheEntry[]>           // cache event log (ring, maxEntries)
   readonly mutations$: ReadSignal<MutationEntry[]>    // mutation event log (ring)
+  // MutationEntry.mutationId is the mutation's own id (event.id); MutationEntry.id numbers the entry
   readonly fields$: ReadSignal<FieldEntry[]>          // field-validation log (ring)
   readonly events$: ReadSignal<TimelineEvent[]>       // unified timeline (ring, maxTimelineEntries)
   readonly droppedEvents$: ReadSignal<number>         // timeline events the ring overwrote
@@ -113,7 +113,7 @@ The log and tree signals became `ReadSignal`s in the 8A change. The store derive
 - **The keyed tree.** Each controller is a mutable `Cell` in a `Map` by path key (`util.ts` `pathKey`), and each cell keeps its children in a `Map` by segment. A cell caches its immutable `ControllerNode` snapshot. A change clears the snapshot on the cell and its ancestors, stopping at the first one already cleared, and `tree$` rebuilds only those. The tree publishes once per event, at once, whatever `coalesce` says. The panel tests read the tree right after a lifecycle event inside one `act`, and they pin that.
 - **Retained-but-capped disposed nodes.** Each cell counts the nodes and the live nodes in its subtree. A dispose queues the cell. Past `maxDisposedNodes`, the store pops the queue, skips a stale entry or a cell with a live descendant, and removes the largest fully-disposed subtree containing the popped cell. The order is dispose order; the old whole-tree walk used construction order. A compaction keeps the queue within about twice the disposed count, so churn on the same paths does not grow it.
 - **Frozen disposal.** On `controller:disposed` the store replaces each signal in the node's `ctx.debug` record with the value it holds, and records `disposedAt`. A re-construction of a disposed path clears those frozen values unless the new event carries its own.
-- **Mutation starts.** Pending `run` start times sit in a trie by controller path, then by name, as FIFO queues. A settle pops the oldest start and prunes emptied trie nodes. A dispose drops the controller's subtree of the trie in O(depth). The earlier flat map was scanned on every dispose.
+- **Mutation starts.** Pending `run` start times sit in a trie by controller path, then by mutation id, as FIFO queues. A settle pops the oldest start and prunes emptied trie nodes. A dispose drops the controller's subtree of the trie in O(depth). The earlier flat map was scanned on every dispose.
 
 ## Why the tree has a virtual empty root
 
@@ -190,11 +190,11 @@ A `cache:set-data` row expands to `<DiffView>`, which renders `diffValues(entry.
 
 A tree row whose `ControllerNode.debug` record is non-empty renders a **Variables** section, open by default, listing each `name: value` a controller registered via `ctx.debug({...})`. The store sets the record from `controller:constructed`'s `debug` field and updates it on `controller:debug`. `controller:debug` is kept off the timeline, because it is a state re-registration rather than a causal event.
 
-Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:606-607`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
+Rendering is **reactive with no polling**. `<DebugVar>` duck-types a signal-like value (`util.ts` `isSignalLike`, `peek` plus `subscribeChanges`) and renders it through `<ReactiveValue>`, which calls `useValue()` (`DevtoolsPanel.tsx:600-601`). Non-signals render a static `JsonView`, and functions show `[fn]`. Only mounted rows hold subscriptions, so windowing also bounds the live subscriptions. A disposed node's values are frozen snapshots, so they render statically.
 
 ## Event-driven inspector (the poll is gone)
 
-The store seeds `cacheState$` from `queryEntries()` once on `attach()` and refreshes it, coalesced through the same flush as the logs, whenever a cache or snapshot event arrives. `attach()` also seeds the per-entry diff baseline from that snapshot. **An entry is identified by its query id and its key** (`entryKey` in `util.ts`), in the diff baseline, the search index and the inspector list. Two queries can hold entries under one key, as kanban's board and archive queries do at `["b1"]`, and a key-only identity merged them. `DebugCacheEntry.queryId` comes from core. The `inspectorPollMs` prop is retained but ignored. A pure timer-driven `isStale` transition, with no accompanying event, won't refresh the inspector until the next event.
+The store seeds `cacheState$` from `queryEntries()` once on `attach()` and refreshes it, coalesced through the same flush as the logs, whenever a cache or snapshot event arrives. `attach()` also seeds the per-entry diff baseline from that snapshot. **An entry is identified by its query id and its key** (`entryKey` in `util.ts`), in the diff baseline, the search index and the inspector list. Two queries can hold entries under one key, as kanban's board and archive queries do at `["b1"]`, and a key-only identity merged them. `DebugCacheEntry.queryId` comes from core. 1.0 removed the ignored `inspectorPollMs` prop. A pure timer-driven `isStale` transition, with no accompanying event, won't refresh the inspector until the next event.
 
 ## What's tested
 

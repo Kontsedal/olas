@@ -171,7 +171,7 @@ describe('Field.setAsInitial', () => {
     root.dispose()
   })
 
-  test('clears errors a form-level validator routed onto the field, until the next form run', () => {
+  test('keeps an error a form-level validator routed onto the field; the form owns it', () => {
     const root = build((ctx) => {
       const a = createField<string>(ctx, 'ok')
       const b = createField<string>(ctx, '')
@@ -190,17 +190,19 @@ describe('Field.setAsInitial', () => {
     const { a, b } = root.api.form.fields
     a.set('bad')
     expect(b.errors.value).toEqual(['b is wrong'])
-    // Re-anchoring to the same value leaves the form value unchanged, so only
-    // the field's own clearing is observed here.
+    // Re-anchoring to the same value leaves the form value unchanged, so the
+    // rule's last result still stands.
     b.setAsInitial('')
-    expect(b.errors.value).toEqual([])
-    // The next form-level run recomputes the routed error.
-    a.set('bad again')
     expect(b.errors.value).toEqual(['b is wrong'])
+    // A new baseline value re-runs the form, which recomputes the channel.
+    b.setAsInitial('fresh')
+    expect(b.errors.value).toEqual(['b is wrong'])
+    a.set('ok')
+    expect(b.errors.value).toEqual([])
     root.dispose()
   })
 
-  test('a routed error cleared by reset() stays cleared when the rule is later fixed', () => {
+  test('a routed error kept through reset() clears when the rule is fixed', () => {
     const root = build((ctx) => {
       const a = createField<string>(ctx, 'ok')
       const b = createField<string>(ctx, '')
@@ -218,8 +220,8 @@ describe('Field.setAsInitial', () => {
     a.set('bad')
     expect(b.errors.value).toEqual(['b is wrong'])
     b.reset()
-    expect(b.errors.value).toEqual([])
-    // The next form-level run clears its last target again — already empty.
+    expect(b.errors.value).toEqual(['b is wrong'])
+    // The next form-level run clears its last target.
     a.set('ok')
     expect(b.errors.value).toEqual([])
     expect(root.api.form.isValid.value).toBe(true)

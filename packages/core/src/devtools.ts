@@ -91,10 +91,14 @@ export type DebugEventBody =
   | { type: 'snapshot:rollback'; queryKey: readonly unknown[] }
   /** An optimistic snapshot layer was committed (mutation success). */
   | { type: 'snapshot:finalize'; queryKey: readonly unknown[] }
-  | { type: 'mutation:run'; path: readonly string[]; name?: string; vars: unknown }
-  | { type: 'mutation:success'; path: readonly string[]; name?: string; result: unknown }
-  | { type: 'mutation:error'; path: readonly string[]; name?: string; error: unknown }
-  | { type: 'mutation:rollback'; path: readonly string[]; name?: string }
+  /**
+   * The mutation lifecycle. `id` is the mutation's `id`, absent for an inline
+   * `createMutation` spec that has none.
+   */
+  | { type: 'mutation:run'; path: readonly string[]; id?: string; vars: unknown }
+  | { type: 'mutation:success'; path: readonly string[]; id?: string; result: unknown }
+  | { type: 'mutation:error'; path: readonly string[]; id?: string; error: unknown }
+  | { type: 'mutation:rollback'; path: readonly string[]; id?: string }
   | {
       type: 'field:validated'
       path: readonly string[]

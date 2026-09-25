@@ -156,11 +156,14 @@ Every primitive can be called at any point in the controller's active life, not 
 | `inject(scope)` | Resolve a scope from outside the tree, as the root controller would. |
 | `debug` | The devtools event bus. |
 
+<!-- snippet-prelude
+declare const deps: import('@kontsedal/olas-core').AmbientDeps
+-->
 ```ts
 import { createRoot } from '@kontsedal/olas-core'
 import { board } from './board'
 
-const root = createRoot(board, { deps: {} }) // board reads no services
+const root = createRoot(board, { deps }) // the app's services, see "Deps and AmbientDeps"
 root.api.open('card-1')
 root.suspend({ maxIdleTime: 5 * 60_000 })
 root.resume()
@@ -222,18 +225,21 @@ declare module '@kontsedal/olas-core' {
 
 After the augmentation, `ctx.deps.api` is a `UserApi` in every controller, with no generics on any signature (§20.3). Without one, each `ctx.deps` value is `unknown`.
 
-`createRoot` infers the type of `deps` from the object you pass, so it does not check that object against `AmbientDeps`. A missing service compiles and shows up at runtime as `undefined`. Add `satisfies AmbientDeps` where the app builds its deps to get the check:
+`createRoot` checks the `deps` you pass against `AmbientDeps`. A root that leaves out a service, or passes one of the wrong type, does not compile. Extra members are allowed:
 
 ```ts
-import { type AmbientDeps, createRoot, signal } from '@kontsedal/olas-core'
+import { createRoot, signal } from '@kontsedal/olas-core'
 import { board } from './board'
 import type { UserApi } from './deps'
 
 declare const httpUserApi: UserApi
 
-const deps = { api: httpUserApi, online: signal(true) } satisfies AmbientDeps
-const root = createRoot(board, { deps })
+const root = createRoot(board, { deps: { api: httpUserApi, online: signal(true) } })
+// @ts-expect-error `online` is missing
+createRoot(board, { deps: { api: httpUserApi } })
 ```
+
+`createTestController` does not check `deps`, so a test passes only the fakes its controller reads.
 
 Two more properties make deps the home for app-wide state. A value can be reactive, such as the `online` signal above, and a `computed` that reads `ctx.deps.online.value` tracks it (§10.1). A subtree can also override part of it: `ctx.child(def, props, { deps: { api: fakeApi } })` swaps `api` for that child and its descendants.
 

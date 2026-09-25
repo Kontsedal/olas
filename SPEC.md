@@ -876,7 +876,7 @@ draft.isDirty        // ReadSignal<boolean>
 draft.touched        // ReadSignal<boolean>
 draft.isValidating   // ReadSignal<boolean>
 draft.set(value)              // writes value, runs validators, marks dirty
-draft.reset()                 // restore initial value, clear dirty/touched/errors
+draft.reset()                 // restore initial value, clear dirty/touched/validator + server errors
 draft.markTouched()
 draft.revalidate()            // re-run validators; resolves to post-run isValid
 draft.setAsInitial(value)     // bump the "initial" baseline (form-from-server pattern, §8.4)
@@ -1024,7 +1024,7 @@ form.fields.confirm.errors // ['Passwords must match'] — routed onto the field
 form.topLevelErrors        // [] — nothing landed at the top
 ```
 
-Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` and `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel**, beside a field's own validator output and `setErrors` server errors. They merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run**. Fixing the mismatch therefore removes them, while a field's own `set()` does not. An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
+Each issue's `path` walks the schema exactly like `flatErrors` paths (object keys, numeric array indices); an **empty** path lands in `topLevelErrors`. A whole-form Standard-Schema validator (`validator(schema)` and `zodValidator(objectSchema)`) works the same way — its issues keep their `path`, so `z.object({...}).refine(fn, { path: ['confirm'] })` lands on `confirm`. Field-targeted messages are a **third error channel**, beside a field's own validator output and `setErrors` server errors. They merge into the field's visible `errors`, and are **cleared and recomputed on every form-level run**. Fixing the mismatch therefore removes them, while a field's own `set()` does not. The form-level run is their only writer: a field's `reset()` and `setAsInitial()` leave them, and so does a form's `reset()` for its `topLevelErrors`. A reset that changes the form's value re-runs the validators, and one that does not leaves their last result standing, so a rule that still fails stays on screen. An unresolvable path falls back to `topLevelErrors` rather than vanishing. The same mechanism applies to array-level validators on a `FieldArray`, whose paths are `[index, ...]`.
 
 **Flat error summary.** For a11y "X errors at top of form" displays:
 
@@ -1846,7 +1846,7 @@ A new subscriber first receives a replay of the live controller tree, so a panel
 - `cache:subscribed | fetch-start | fetch-success | fetch-error | invalidated | gc` — `{ queryKey }`, and `queryId` on every one but `subscribed` (`fetch-success`/`fetch-error` add `durationMs`, `fetch-error` adds `error`, `subscribed` adds `subscriberPath`).
 - `cache:set-data` — `{ queryId, queryKey, source, data }`. Emitted on every cache write; `data` is the post-write value and `source` is the plugins' `WriteSource`: `'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'write' | 'replace'` (§13.1). This is what lets a panel show *current* data without polling.
 - `snapshot:push | rollback | finalize` — `{ queryKey }`. The optimistic-update stack (§6.4): a tracked `setData` pushes, a mutation error and supersede rolls back, a mutation success finalizes.
-- `mutation:run | success | error | rollback` — `{ path, name? }`, where `name` is the mutation's `id` (`run` adds `vars`, `success` `result`, `error` `error`).
+- `mutation:run | success | error | rollback` — `{ path, id? }`, where `id` is the mutation's `id`, absent for an inline spec without one (`run` adds `vars`, `success` `result`, `error` `error`).
 - `field:validated` — `{ path, field, valid, errors }`.
 - `plugin:event` — `{ plugin, payload }`. A plugin published `payload` on its lane through `host.debug(...)` (§13.1).
 
@@ -1982,7 +1982,7 @@ function TextInput({ field, label }: { field: Field<string>; label: string }) {
 
 Without these, you call `suspend()` and `resume()` yourself; the adapter doesn't drive lifecycle implicitly.
 
-**SSR and streaming.** `<HydrationBoundary def={appController} options={rootOptions}>` builds the client root from `options`, including `options.hydrate`, provides it, and disposes it on unmount. It survives a StrictMode remount, and by default it installs the streaming intake. On the server, `createStreamingHydrator({ nonce? })` returns a `plugin` for the server root and a `flush()` that drains the settled entries as one `<script>` tag. `createStreamingTransform(flush)` places those tags into a `renderToReadableStream` stream only where the HTML so far sits between elements, because a chunk can end inside a tag or an attribute. `OLAS_BOOTSTRAP_SCRIPT` goes into React's `bootstrapScriptContent`, and `installStreamingIntake(root)` connects a client root that is not built by a `HydrationBoundary`. The payload goes through `serializeForScript`, and the `nonce` covers a Content-Security-Policy (§22).
+**SSR and streaming.** `<HydrationBoundary def={appController} options={rootOptions}>` builds the client root from `options`, including `options.hydrate`, provides it, and disposes it on unmount. It survives a StrictMode remount, and by default it installs the streaming intake. A server render runs no effects, so a boundary rendered there builds a root that nothing disposes; a development build warns once, naming `OlasProvider` with a per-request root as the fix. On the server, `createStreamingHydrator({ nonce? })` returns a `plugin` for the server root and a `flush()` that drains the settled entries as one `<script>` tag. `createStreamingTransform(flush)` places those tags into a `renderToReadableStream` stream only where the HTML so far sits between elements, because a chunk can end inside a tag or an attribute. `OLAS_BOOTSTRAP_SCRIPT` goes into React's `bootstrapScriptContent`, and `installStreamingIntake(root)` connects a client root that is not built by a `HydrationBoundary`. The payload goes through `serializeForScript`, and the `nonce` covers a Content-Security-Policy (§22).
 
 ### 16.2 Vue (`@kontsedal/olas-vue`)
 
@@ -2811,7 +2811,7 @@ declare module '@kontsedal/olas-core' {
 }
 ```
 
-Now every `Ctx` everywhere has `ctx.deps: { api, session, logger }`. No generics needed in controller signatures. The same augmentation types `deps` in query fetchers, `mutate` and `createCache` (§5.2, §6).
+Now every `Ctx` everywhere has `ctx.deps: { api, session, logger }`. No generics needed in controller signatures. The same augmentation types `deps` in query fetchers, `mutate` and `createCache` (§5.2, §6). It also checks the root: `createRoot`'s `deps` must satisfy `AmbientDeps`, so a root that leaves out `logger` does not compile, while one that passes an extra service does. `createTestController` does not check, so a test passes only the fakes its controller reads (§17.1).
 
 **Style B — a narrower `Ctx` in a helper (for libraries).** A composable that needs only some services types its parameter with them, as `@kontsedal/olas-realtime` does with `Ctx<{ realtime: RealtimeService }>`:
 
@@ -3364,7 +3364,9 @@ type QueryEngine = { readonly [BRAND]: 'queryEngine' }
 
 function queryEngine(options?: QueryEngineOptions): QueryEngine
 
-function createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>(
+// `deps` must satisfy `AmbientDeps` (§20.3): a missing service does not compile,
+// an extra member does
+function createRoot<Api, TDeps extends AmbientDeps = AmbientDeps>(
   def: ControllerDef<void, Api>,
   options: RootOptions<TDeps>,
 ): Root<Api>
@@ -3543,10 +3545,10 @@ type DebugEventBody =
   | { type: 'snapshot:push'; queryKey: readonly unknown[] }
   | { type: 'snapshot:rollback'; queryKey: readonly unknown[] }
   | { type: 'snapshot:finalize'; queryKey: readonly unknown[] }
-  | { type: 'mutation:run'; path: readonly string[]; name?: string; vars: unknown }
-  | { type: 'mutation:success'; path: readonly string[]; name?: string; result: unknown }
-  | { type: 'mutation:error'; path: readonly string[]; name?: string; error: unknown }
-  | { type: 'mutation:rollback'; path: readonly string[]; name?: string }
+  | { type: 'mutation:run'; path: readonly string[]; id?: string; vars: unknown }
+  | { type: 'mutation:success'; path: readonly string[]; id?: string; result: unknown }
+  | { type: 'mutation:error'; path: readonly string[]; id?: string; error: unknown }
+  | { type: 'mutation:rollback'; path: readonly string[]; id?: string }
   | { type: 'field:validated'; path: readonly string[]; field: string; valid: boolean; errors: string[] }
   | { type: 'plugin:event'; plugin: string; payload: unknown }
 
@@ -4005,7 +4007,8 @@ function createTestController<Props, Api, TDeps extends Record<string, unknown> 
   options: TestControllerOptions<Props, TDeps>,
 ): Root<Api>
 // — constructs an isolated root wrapping a single controller. Returns the same
-//   handle createRoot does, so the api is on `.api`.
+//   handle createRoot does, so the api is on `.api`. `deps` is not checked
+//   against `AmbientDeps`, so a test passes only the fakes its controller reads.
 
 function fakeField<T>(initial: T, overrides?: Partial<{ errors: string[] /* … */ }>): Field<T>
 function fakeAsyncState<T>(overrides?: Partial<{ data: T | undefined /* … */ }>): AsyncState<T>

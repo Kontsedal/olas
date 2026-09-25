@@ -233,7 +233,7 @@ export const counter = defineController(() => {
 ### `createRoot<Api, TDeps>(def, options): Root<Api>`
 
 ```ts nocheck
-function createRoot<Api, TDeps extends Record<string, unknown> = AmbientDeps>(
+function createRoot<Api, TDeps extends AmbientDeps = AmbientDeps>(
   def: ControllerDef<void, Api>,
   options: RootOptions<TDeps>,
 ): Root<Api>
@@ -244,8 +244,9 @@ Instantiate a controller as a *root*. Roots have no props (`ControllerDef<void, 
 ```ts
 import { createRoot } from '@kontsedal/olas-core'
 import { counter } from './counter'
+import { deps } from './deps'
 
-const root = createRoot(counter, { deps: {} })
+const root = createRoot(counter, { deps })
 root.api.increment()
 root.dispose()
 ```
@@ -269,7 +270,7 @@ type RootOptions<TDeps> = {
 }
 ```
 
-- `deps` — required object; available everywhere as `ctx.deps`. Use it for api clients, routers, services, the current time. `createRoot` infers the type from what you pass and does not check it against `AmbientDeps`, so a missing service compiles. Write `deps: { api } satisfies AmbientDeps` to have the compiler check it.
+- `deps` — required object; available everywhere as `ctx.deps`. Use it for api clients, routers, services, the current time. `createRoot` checks it against `AmbientDeps`, so a root that leaves out a service the app declared does not compile. Extra members are allowed. `createTestController` does not check, so a test passes only the fakes its controller reads.
 - `onError` — sink for *uncaught* errors from effects, mutations, caches, emitter handlers, plugins and construction. Throws inside `onError` are swallowed. Without it, errors go to `console.error`.
 - `hydrate` — replay a `DehydratedState` produced on the server. It needs `queries`: without an engine, development builds warn and the payload is discarded.
 - `queries` — the query engine, `queryEngine(options?)`. Root-wide query defaults are configured on it. Omit it for a root with no cache.
@@ -289,9 +290,10 @@ The query engine: pass one to `createRoot` to give the root a cache. It is a def
 ```ts
 import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { counter } from './counter'
+import { deps } from './deps'
 
 const queries = queryEngine({ defaults: { staleTime: 5 * 60_000, retry: 1 } })
-const root = createRoot(counter, { deps: {}, queries })
+const root = createRoot(counter, { deps, queries })
 ```
 
 The engine creates the root's client inside `createRoot`, before plugin setup and the controller factory, so a plugin's `setup` can already reach the cache.
@@ -1211,6 +1213,7 @@ Dynamic list of `Field<T>` or `Form<S>` items. The factory is invoked once per i
 
 ```ts
 import { createField, createFieldArray, createRoot, defineController } from '@kontsedal/olas-core'
+import { deps } from './deps'
 
 const todoList = defineController((ctx) => {
   const todos = createFieldArray(
@@ -1221,7 +1224,7 @@ const todoList = defineController((ctx) => {
   return { todos }
 })
 
-const { api } = createRoot(todoList, { deps: {} })
+const { api } = createRoot(todoList, { deps })
 api.todos.add('walk dog')
 api.todos.remove(0)
 ```
@@ -1434,6 +1437,7 @@ An identity helper that types an object literal as an `OlasPlugin`. A plugin is 
 ```ts
 import { createRoot, definePlugin, queryEngine } from '@kontsedal/olas-core'
 import { counter } from './counter'
+import { deps } from './deps'
 
 export const logger = definePlugin({
   name: 'logger',
@@ -1444,7 +1448,7 @@ export const logger = definePlugin({
   },
 })
 
-const root = createRoot(counter, { deps: {}, queries: queryEngine(), plugins: [logger] })
+const root = createRoot(counter, { deps, queries: queryEngine(), plugins: [logger] })
 ```
 
 ### Types: `OlasPlugin`, `PluginHost`
@@ -1575,9 +1579,10 @@ import { OlasProvider } from '@kontsedal/olas-react'
 import { renderToString } from 'react-dom/server'
 import { App } from './App'
 import { appController } from './app-controller'
+import { deps } from './deps'
 
 export async function render(): Promise<string> {
-  const root = createRoot(appController, { deps: {}, queries: queryEngine() })
+  const root = createRoot(appController, { deps, queries: queryEngine() })
   await root.waitForIdle()
   const html = renderToString(
     <OlasProvider root={root}>
@@ -1597,6 +1602,7 @@ import { OlasProvider } from '@kontsedal/olas-react'
 import { hydrateRoot } from 'react-dom/client'
 import { App } from './App'
 import { appController } from './app-controller'
+import { deps } from './deps'
 
 declare global {
   interface Window {
@@ -1605,7 +1611,7 @@ declare global {
 }
 
 const root = createRoot(appController, {
-  deps: {},
+  deps,
   queries: queryEngine(),
   hydrate: window.__OLAS_STATE__,
 })
@@ -1653,9 +1659,10 @@ Single sink for uncaught errors from effects, mutations, caches, emitter handler
 ```ts
 import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { counter } from './counter'
+import { deps } from './deps'
 
 const root = createRoot(counter, {
-  deps: {},
+  deps,
   queries: queryEngine(),
   onError: (err, context) => {
     const where = context.queryId ?? context.pluginName ?? context.controllerPath.join('/')
@@ -1720,10 +1727,10 @@ type DebugEventBody =
   | { type: 'cache:fetch-error'; queryId?: string; queryKey: readonly unknown[]; error: unknown; durationMs: number }
   | { type: 'cache:set-data'; queryId?: string; queryKey: readonly unknown[]; source: WriteSource; data: unknown }
   | { type: 'snapshot:push' | 'snapshot:rollback' | 'snapshot:finalize'; queryKey: readonly unknown[] }
-  | { type: 'mutation:run'; path: readonly string[]; name?: string; vars: unknown }
-  | { type: 'mutation:success'; path: readonly string[]; name?: string; result: unknown }
-  | { type: 'mutation:error'; path: readonly string[]; name?: string; error: unknown }
-  | { type: 'mutation:rollback'; path: readonly string[]; name?: string }
+  | { type: 'mutation:run'; path: readonly string[]; id?: string; vars: unknown }
+  | { type: 'mutation:success'; path: readonly string[]; id?: string; result: unknown }
+  | { type: 'mutation:error'; path: readonly string[]; id?: string; error: unknown }
+  | { type: 'mutation:rollback'; path: readonly string[]; id?: string }
   | { type: 'field:validated'; path: readonly string[]; field: string; valid: boolean; errors: string[] }
   | { type: 'plugin:event'; plugin: string; payload: unknown }
 ```
@@ -1930,8 +1937,9 @@ Register the root's type once, where the app creates the root:
 ```ts file=root.ts
 import { createRoot, queryEngine } from '@kontsedal/olas-core'
 import { counter } from './counter'
+import { deps } from './deps'
 
-export const root = createRoot(counter, { deps: {}, queries: queryEngine() })
+export const root = createRoot(counter, { deps, queries: queryEngine() })
 
 declare module '@kontsedal/olas-react' {
   interface Register {
@@ -2235,10 +2243,11 @@ import {
 import { renderToReadableStream } from 'react-dom/server'
 import { App } from './App'
 import { appController } from './app-controller'
+import { deps } from './deps'
 
 export async function handle(nonce: string): Promise<Response> {
   const { plugin, flush } = createStreamingHydrator({ nonce })
-  const root = createRoot(appController, { deps: {}, queries: queryEngine(), plugins: [plugin] })
+  const root = createRoot(appController, { deps, queries: queryEngine(), plugins: [plugin] })
   const stream = await renderToReadableStream(
     <OlasProvider root={root}>
       <App />
@@ -2252,7 +2261,7 @@ export async function handle(nonce: string): Promise<Response> {
 ```
 
 - Install `plugin` on the root that renders. On a separate root it captures nothing.
-- On the server, build one root per request and render it through `OlasProvider`. A `HydrationBoundary` builds its root during render and disposes it in an effect, and a server render runs no effects, so that root would never be disposed. Dispose the root, and call the hydrator's `dispose()`, once the response has finished.
+- On the server, build one root per request and render it through `OlasProvider`. A `HydrationBoundary` builds its root during render and disposes it in an effect, and a server render runs no effects, so that root would never be disposed. A development build warns once when a `HydrationBoundary` renders on the server. Dispose the root, and call the hydrator's `dispose()`, once the response has finished.
 - Pipe the render through `createStreamingTransform(flush)`. A stream chunk can end inside a tag or an attribute, so the transform writes a batch only where the HTML so far ends between elements. It drains once more when the stream closes. With Node's `renderToPipeableStream`, render with `renderToReadableStream` instead, or write `flush()` only after the stream has ended. See [`.wiki/pitfalls/stream-chunks-split-tags.md`](.wiki/pitfalls/stream-chunks-split-tags.md).
 - `nonce` puts a Content-Security-Policy nonce on the emitted tags. Pass the same nonce to React for its own scripts.
 - `OLAS_BOOTSTRAP_SCRIPT` primes the client's intake before hydration runs. Pass it as `bootstrapScriptContent`.
@@ -2273,8 +2282,9 @@ import { olasPlugin } from '@kontsedal/olas-vue'
 import { createApp } from 'vue'
 import App from './App.vue'
 import { counter } from './counter'
+import { deps } from './deps'
 
-const root = createRoot(counter, { deps: {}, queries: queryEngine() })
+const root = createRoot(counter, { deps, queries: queryEngine() })
 createApp(App).use(olasPlugin(root)).mount('#app')
 ```
 
@@ -2429,6 +2439,7 @@ Persist the query cache across reloads. A query opts in with `meta: { persist: t
 import { createRoot, defineQuery, queryEngine } from '@kontsedal/olas-core'
 import { persistQueryCachePlugin } from '@kontsedal/olas-persist'
 import { counter } from './counter'
+import { deps } from './deps'
 
 type Settings = { theme: 'light' | 'dark' }
 
@@ -2440,7 +2451,7 @@ export const settingsQuery = defineQuery({
 })
 
 const root = createRoot(counter, {
-  deps: {},
+  deps,
   queries: queryEngine(),
   plugins: [persistQueryCachePlugin({ key: 'my-app/query-cache', buster: 'v1' })],
 })
@@ -2601,6 +2612,7 @@ type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | '
 import { createRoot, defineQuery, queryEngine } from '@kontsedal/olas-core'
 import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
 import { counter } from './counter'
+import { deps } from './deps'
 
 type Cart = { items: string[] }
 
@@ -2612,7 +2624,7 @@ export const cartQuery = defineQuery({
 })
 
 const root = createRoot(counter, {
-  deps: {},
+  deps,
   queries: queryEngine(),
   plugins: [
     crossTabPlugin({
@@ -2655,6 +2667,7 @@ Entity normalization as a plugin. Define entities at module scope. The plugin wa
 ```ts
 import { createRoot, defineController, queryEngine } from '@kontsedal/olas-core'
 import { defineEntity, Entities, entitiesPlugin } from '@kontsedal/olas-entities'
+import { deps } from './deps'
 
 type Post = { id: string; title: string; authorId: string }
 
@@ -2671,7 +2684,7 @@ const posts = defineController((ctx) => {
 })
 
 const root = createRoot(posts, {
-  deps: {},
+  deps,
   queries: queryEngine(),
   plugins: [entitiesPlugin({ entities: [PostEntity] })],
 })
@@ -2709,6 +2722,7 @@ Full surface lives in [`packages/realtime/README.md`](packages/realtime/README.m
 import { createMutation, createRoot, defineController, defineMutation, queryEngine } from '@kontsedal/olas-core'
 import { MutationQueue, mutationQueuePlugin } from '@kontsedal/olas-mutation-queue'
 import { localStorageAdapter } from '@kontsedal/olas-persist'
+import { deps } from './deps'
 
 export const addComment = defineMutation({
   id: 'comments/add',
@@ -2726,7 +2740,7 @@ const thread = defineController((ctx) => {
 })
 
 const root = createRoot(thread, {
-  deps: {},
+  deps,
   queries: queryEngine(),
   plugins: [mutationQueuePlugin({ storage: localStorageAdapter(), keyPrefix: 'my-app/mutations/v1' })],
 })
@@ -2777,6 +2791,7 @@ Bridge TanStack Router and React Router v6 route state into scope-injectable sig
 ```ts
 import { computed, createRoot, defineController } from '@kontsedal/olas-core'
 import { createRouterAdapter, RouteParamsScope } from '@kontsedal/olas-router'
+import { deps } from './deps'
 
 const userPage = defineController((ctx) => {
   const params = ctx.inject(RouteParamsScope)
@@ -2785,7 +2800,7 @@ const userPage = defineController((ctx) => {
 })
 
 const adapter = createRouterAdapter()
-const root = createRoot(userPage, { deps: {}, plugins: [adapter.plugin] })
+const root = createRoot(userPage, { deps, plugins: [adapter.plugin] })
 ```
 
 ### `createRouterAdapter(initial?: RouteState): RouterAdapter`

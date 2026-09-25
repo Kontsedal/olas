@@ -146,11 +146,13 @@ export function createOlasContext<Api>(displayName?: string): OlasContext<Api> {
  * recreated only when the `def` identity changes; to swap it on navigation,
  * pass a different `def` (or re-key the component).
  *
- * **SSR contract.** During server rendering, callers typically construct
- * a per-request root inline and pass it to `<OlasProvider root={...} />`.
- * The `HydrationBoundary` shape is the *client-side* mirror — it accepts
- * a controller def + the dehydrated state and produces a root that
- * matches what the server rendered.
+ * **SSR contract.** During server rendering, callers construct a per-request
+ * root and pass it to `<OlasProvider root={...} />`, then dispose it after the
+ * response. The `HydrationBoundary` shape is the *client-side* mirror — it
+ * accepts a controller def + the dehydrated state and produces a root that
+ * matches what the server rendered. Rendered on the server, it builds a root
+ * that nothing disposes, because a server render runs no effects; a
+ * development build warns once when that happens.
  */
 /** Props of `<HydrationBoundary>`. */
 export type HydrationBoundaryProps<Api> = {
@@ -167,8 +169,28 @@ export type HydrationBoundaryProps<Api> = {
   children: ReactNode
 }
 
+let warnedServerBoundary = false
+
+/**
+ * A server render runs no effects, so the unmount cleanup that disposes the
+ * boundary's root never runs there. Each request would leave a root alive,
+ * with its gc timers and plugins. Once per process: the mistake is in the
+ * app's server entry, and one message names it.
+ */
+function warnServerBoundary(): void {
+  if (warnedServerBoundary) return
+  warnedServerBoundary = true
+  console.warn(
+    '[olas] <HydrationBoundary> rendered on the server. A server render runs no effects, so ' +
+      'the root it builds is never disposed, and its timers outlive the request. On the ' +
+      'server, create a root per request, render it through <OlasProvider root={root}>, and ' +
+      'call root.dispose() after the response.',
+  )
+}
+
 export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): ReactNode {
   const { def, options, children, streaming = true } = props
+  if (__DEV__ && typeof window === 'undefined') warnServerBoundary()
 
   const rootRef = useRef<Root<Api> | null>(null)
   // `options` is captured ONCE (first mount) so a new inline literal on a

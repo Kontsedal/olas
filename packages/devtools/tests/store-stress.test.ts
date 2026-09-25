@@ -69,9 +69,9 @@ function workload(total: number): DebugEvent[] {
     } else if (r < 0.5) {
       events.push({ type: 'cache:fetch-success', queryKey: key, durationMs: 3, causeId })
     } else if (r < 0.6) {
-      events.push({ type: 'mutation:run', path: item, name: 'save', vars: { seq }, causeId })
+      events.push({ type: 'mutation:run', path: item, id: 'save', vars: { seq }, causeId })
     } else if (r < 0.7) {
-      events.push({ type: 'mutation:success', path: item, name: 'save', result: seq, causeId })
+      events.push({ type: 'mutation:success', path: item, id: 'save', result: seq, causeId })
     } else if (r < 0.8) {
       events.push({
         type: 'field:validated',
