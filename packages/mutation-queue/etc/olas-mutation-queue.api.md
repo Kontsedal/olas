@@ -26,7 +26,7 @@ export type MutationQueueOptions = {
     dedupeBy?: (mutationId: string, variables: unknown) => string | undefined;
     migrate?: (raw: unknown, fromVersion: number) => QueueEntry | null;
     ttlMs?: number;
-    backoffMs?: number; /** Cap on the exponential backoff. Defaults to `60_000` (60s). */
+    backoffMs?: number;
     maxBackoffMs?: number;
     maxEntryBytes?: number;
     onReplaySettle?: (entry: QueueEntry, result: unknown, queries: QueryHost) => void;

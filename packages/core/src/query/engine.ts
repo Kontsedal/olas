@@ -54,15 +54,21 @@ export type QueryEngineHost = {
  */
 export type QueryEngine = {
   readonly [BRAND]: 'queryEngine'
-  /** @internal */
+  /**
+   * @internal
+   */
   readonly [INTERNAL]: QueryEngineInternals
 }
 
 /** @internal What `createRoot` reads off an engine. */
 export type QueryEngineInternals = {
-  /** The defaults, readable without the client so `createCache` can use them. */
+  /**
+   * The defaults, readable without the client so `createCache` can use them.
+   */
   readonly options: QueryEngineOptions
-  /** Called once per adopting root, by `createRoot`. */
+  /**
+   * Called once per adopting root, by `createRoot`.
+   */
   create(host: QueryEngineHost): QueryClient
 }
 

@@ -75,7 +75,7 @@ export type MutationState<V, R> = {
 
 // @public
 export type MutationStore<V, R> = ReadSignal<MutationState<V, R>> & {
-    mutate: MutateFn<V>; /** Start a run and return its promise. The caller owns the rejection. */
+    mutate: MutateFn<V>;
     run: MutationRun<V, R>;
     reset: () => void;
 };

@@ -49,13 +49,13 @@ export type MockFetchHandler = MockFetchResponse | ((context: FetchContext) => u
 
 // @public
 export type MockFetchOptions = {
-    passthrough?: boolean; /** Latency added to every mocked answer, in ms. Default 0. */
+    passthrough?: boolean;
     delayMs?: number;
 };
 
 // @public
 export type MockFetchPlugin = OlasPlugin & {
-    readonly calls: readonly FetchContext[]; /** Set the handler for a query, mid-test: switch it to an error, say. */
+    readonly calls: readonly FetchContext[];
     respond(queryId: string, handler: MockFetchHandler): void;
 };
 
@@ -73,12 +73,12 @@ export type MockFetchResponse = {
 
 // @public
 export type PluginRecorder = {
-    readonly plugin: OlasPlugin; /** Every observation event, in arrival order. */
+    readonly plugin: OlasPlugin;
     readonly events: readonly RecordedEvent[];
     readonly writes: readonly WriteEvent[];
     readonly invalidations: readonly InvalidateEvent[];
     readonly removals: readonly RemoveEvent[];
-    readonly mutations: readonly MutationEvent[]; /** Drop everything recorded so far. */
+    readonly mutations: readonly MutationEvent[];
     clear(): void;
 };
 

@@ -44,7 +44,9 @@ export type InfiniteFetchCtx<PageParam> = {
  *   `subscription.flat` convenience signal.
  */
 export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = TPage> = {
-  /** See `QuerySpec.id`. Required, and unique across regular and infinite queries. */
+  /**
+   * See `QuerySpec.id`. Required, and unique across regular and infinite queries.
+   */
   id: string
   key: (...args: Args) => unknown[]
   /**
@@ -69,15 +71,25 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
   keepPreviousData?: boolean
   retry?: RetryPolicy
   retryDelay?: RetryDelay
-  /** See `QuerySpec.refetchOnWindowFocus`. A focus refetch re-fetches every loaded page. */
+  /**
+   * See `QuerySpec.refetchOnWindowFocus`. A focus refetch re-fetches every loaded page.
+   */
   refetchOnWindowFocus?: boolean
-  /** See `QuerySpec.refetchOnReconnect`. A reconnect refetch re-fetches every loaded page. */
+  /**
+   * See `QuerySpec.refetchOnReconnect`. A reconnect refetch re-fetches every loaded page.
+   */
   refetchOnReconnect?: boolean
-  /** See `QuerySpec.networkMode`. Defaults to `'online'`. */
+  /**
+   * See `QuerySpec.networkMode`. Defaults to `'online'`.
+   */
   networkMode?: NetworkMode
-  /** See `QuerySpec.structuralShare`. Applies to the head-page refresh. */
+  /**
+   * See `QuerySpec.structuralShare`. Applies to the head-page refresh.
+   */
   structuralShare?: boolean
-  /** See `QuerySpec.meta`. */
+  /**
+   * See `QuerySpec.meta`.
+   */
   meta?: QueryMeta
 }
 
@@ -87,9 +99,13 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
  */
 export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
   readonly [BRAND]: 'infiniteQuery'
-  /** Like `Query.invalidate`; resolves when the triggered refetch (all loaded pages) settles. */
+  /**
+   * Like `Query.invalidate`; resolves when the triggered refetch (all loaded pages) settles.
+   */
   invalidate(...args: Args): Promise<void>
-  /** Like `Query.invalidateAll`; resolves when every entry's refetch settles. */
+  /**
+   * Like `Query.invalidateAll`; resolves when every entry's refetch settles.
+   */
   invalidateAll(): Promise<void>
   setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot
   /**
@@ -113,7 +129,9 @@ export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
   /** Cancel the in-flight fetch (initial/refetch or paging) for a key. See
    *  `Query.cancel` (spec §5, §6.4). */
   cancel(...args: Args): void
-  /** Cancel in-flight fetches for every keyed entry of this infinite query. */
+  /**
+   * Cancel in-flight fetches for every keyed entry of this infinite query.
+   */
   cancelAll(): void
   prefetch(...args: Args): Promise<TPage>
 }
@@ -246,7 +264,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     structuralShare?: boolean
     onSuccessData?: (pages: TPage[]) => void
     events?: EntryEvents
-    /** Seeds the entry from a hydrated payload: pages with their params, aligned. */
+    /**
+     * Seeds the entry from a hydrated payload: pages with their params, aligned.
+     */
     initialPages?: TPage[]
     initialPageParams?: PageParam[]
     initialUpdatedAt?: number

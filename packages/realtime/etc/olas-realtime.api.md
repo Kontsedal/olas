@@ -32,7 +32,7 @@ export type LiveStream<TEvent> = {
 
 // @public
 export type LiveStreamOptions<TEvent = unknown> = {
-    capacity?: number; /** Default: 16. Set to 0 (or negative) for synchronous flush. */
+    capacity?: number;
     flushMs?: number;
     rafFlush?: boolean;
     onDrop?: (dropped: readonly TEvent[]) => void;

@@ -114,7 +114,9 @@ export type MutationQueueOptions = {
    * Defaults to `0` (no backoff — current behavior).
    */
   backoffMs?: number
-  /** Cap on the exponential backoff. Defaults to `60_000` (60s). */
+  /**
+   * Cap on the exponential backoff. Defaults to `60_000` (60s).
+   */
   maxBackoffMs?: number
   /**
    * Soft byte-size budget per durable entry. When the JSON-serialized

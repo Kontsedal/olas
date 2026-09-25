@@ -113,7 +113,9 @@ export type LocalCache<T> = AsyncState<T> & {
    * `invalidate()`'s, the cache fetches once more to reconcile (spec §6.4).
    */
   replace(value: T): void
-  /** Idempotent — also called when the owning controller disposes. */
+  /**
+   * Idempotent — also called when the owning controller disposes.
+   */
   dispose(): void
 }
 
@@ -126,7 +128,9 @@ export type DehydratedEntry = {
    */
   id: string
   key: readonly unknown[]
-  /** The cached value. For an infinite query, its pages. */
+  /**
+   * The cached value. For an infinite query, its pages.
+   */
   data: unknown
   lastUpdatedAt: number
   /**
@@ -352,7 +356,9 @@ export type Query<Args extends unknown[], T> = {
    * bound handle to select the root explicitly.
    */
   invalidate(...args: Args): Promise<void>
-  /** Like `invalidate` for every keyed entry; resolves when all triggered refetches settle. */
+  /**
+   * Like `invalidate` for every keyed entry; resolves when all triggered refetches settle.
+   */
   invalidateAll(): Promise<void>
   /**
    * Patch the current data for a specific key **optimistically**. Returns a
@@ -447,9 +453,13 @@ export type Query<Args extends unknown[], T> = {
    * by itself when a subscription acquires or resumes.
    */
   cancel(...args: Args): void
-  /** Cancel in-flight fetches for every keyed entry of this query. */
+  /**
+   * Cancel in-flight fetches for every keyed entry of this query.
+   */
   cancelAll(): void
-  /** Eagerly fetch into the cache without subscribing. */
+  /**
+   * Eagerly fetch into the cache without subscribing.
+   */
   prefetch(...args: Args): Promise<T>
 }
 

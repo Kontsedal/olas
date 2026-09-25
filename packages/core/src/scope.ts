@@ -7,11 +7,17 @@ import { BRAND, type PHANTOM } from './brand'
  */
 export type Scope<T> = {
   readonly [BRAND]: 'scope'
-  /** Optional human-readable name (used in error messages). */
+  /**
+   * Optional human-readable name (used in error messages).
+   */
   readonly name?: string
-  /** Default value used when no provider exists; `undefined` if none was set. */
+  /**
+   * Default value used when no provider exists; `undefined` if none was set.
+   */
   readonly default?: T
-  /** True iff `defineScope` was called with a `default` (even `default: undefined`). */
+  /**
+   * True iff `defineScope` was called with a `default` (even `default: undefined`).
+   */
   readonly hasDefault: boolean
   // Phantom for inference — typed `T` is preserved through the scope's lifetime.
   readonly [PHANTOM]?: T
@@ -24,7 +30,9 @@ export type ScopeOptions<T> = {
    * one, `inject` throws.
    */
   default?: T
-  /** Labels the scope in error messages. */
+  /**
+   * Labels the scope in error messages.
+   */
   name?: string
 }
 

@@ -22,19 +22,33 @@ import { DEVTOOLS_CSS } from './styles'
  * keeps its state and where it first opens.
  */
 export type DevtoolsLauncherProps = {
-  /** The root to inspect. The panel subscribes to `root.debug` on mount. */
+  /**
+   * The root to inspect. The panel subscribes to `root.debug` on mount.
+   */
   root: Pick<Root<unknown>, 'debug'>
-  /** Default panel tab. */
+  /**
+   * Default panel tab.
+   */
   defaultTab?: DevtoolsTab
-  /** Cap on each event log. */
+  /**
+   * Cap on each event log.
+   */
   maxEntries?: number
-  /** Capacity of the timeline's ring buffer. Default 10,000. */
+  /**
+   * Capacity of the timeline's ring buffer. Default 10,000.
+   */
   maxTimelineEntries?: number
-  /** Persist tab+filter state under this key (independent of window state). */
+  /**
+   * Persist tab+filter state under this key (independent of window state).
+   */
   urlHashKey?: string
-  /** localStorage key for window state (position/size/open/minimized). */
+  /**
+   * localStorage key for window state (position/size/open/minimized).
+   */
   storageKey?: string
-  /** Initial position if no persisted state. */
+  /**
+   * Initial position if no persisted state.
+   */
   initial?: { x?: number; y?: number; w?: number; h?: number }
 }
 

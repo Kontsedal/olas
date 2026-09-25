@@ -143,7 +143,9 @@ type HydratedSlot = {
   data: unknown
   lastUpdatedAt: number
   origin: string | undefined
-  /** Present for an infinite query's payload; `data` is then its pages. */
+  /**
+   * Present for an infinite query's payload; `data` is then its pages.
+   */
   pageParams: readonly unknown[] | undefined
 }
 

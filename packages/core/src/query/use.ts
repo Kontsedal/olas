@@ -231,7 +231,9 @@ export function createUse<Args extends unknown[], T, U = T>(
   /** Suspend the subscription — release the entry (its refetchInterval +
    *  focus/online listeners pause) without disposing it. Spec §4.1. */
   suspend: () => void
-  /** Resume after `suspend`. Re-acquires the entry and refetches if stale. */
+  /**
+   * Resume after `suspend`. Re-acquires the entry and refetches if stale.
+   */
   resume: () => void
 } {
   const internal = query as unknown as QueryInternal<Args, T>

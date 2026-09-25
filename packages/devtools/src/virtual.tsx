@@ -23,22 +23,36 @@ const FALLBACK_VIEWPORT = 600
 
 export type VirtualListProps = {
   count: number
-  /** Height estimate for row `index`, in px, used until the row is measured. */
+  /**
+   * Height estimate for row `index`, in px, used until the row is measured.
+   */
   estimate: (index: number) => number
-  /** A stable key per row. Measured sizes are remembered by it. */
+  /**
+   * A stable key per row. Measured sizes are remembered by it.
+   */
   getKey: (index: number) => string
-  /** One DOM element per row. */
+  /**
+   * One DOM element per row.
+   */
   renderRow: (index: number) => ReactNode
-  /** Rows mounted past each edge of the viewport. */
+  /**
+   * Rows mounted past each edge of the viewport.
+   */
   overscan?: number
-  /** The row container: `ul` for `<li>` rows, `div` otherwise. */
+  /**
+   * The row container: `ul` for `<li>` rows, `div` otherwise.
+   */
   as?: 'ul' | 'div'
   className?: string
   role?: string
   label: string
-  /** The row container's own top and bottom padding, in px. */
+  /**
+   * The row container's own top and bottom padding, in px.
+   */
   pad?: number
-  /** Scroll row `scrollToIndex` into view, once for each distinct `scrollNonce`. */
+  /**
+   * Scroll row `scrollToIndex` into view, once for each distinct `scrollNonce`.
+   */
   scrollToIndex?: number
   scrollNonce?: number
 }

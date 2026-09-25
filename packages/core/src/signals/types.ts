@@ -6,7 +6,9 @@
  */
 export type ReadSignal<T> = {
   readonly value: T
-  /** Read the current value without registering a dependency. */
+  /**
+   * Read the current value without registering a dependency.
+   */
   peek(): T
   /**
    * Subscribe to value changes. The handler is called synchronously with the

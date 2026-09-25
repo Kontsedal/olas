@@ -16,7 +16,7 @@ export function clearPersisted(storage?: StorageAdapter, options?: ClearPersiste
 // @public
 export type ClearPersistedOptions = {
     prefix?: string;
-    all?: boolean; /** Receives each failed delete with its key, and a failed enumeration under `'<keys>'`. */
+    all?: boolean;
     onError?: (err: unknown, key: string) => void;
 };
 
@@ -28,7 +28,7 @@ export function indexedDbAdapter(options?: IndexedDbAdapterOptions): StorageAdap
 
 // @public
 export type IndexedDbAdapterOptions = {
-    databaseName?: string; /** Object store inside the database. Defaults to `'kv'`. */
+    databaseName?: string;
     storeName?: string;
     channelName?: string | null;
     indexedDB?: IDBFactory;
@@ -58,8 +58,8 @@ export type PersistErrorOp = 'load' | 'deserialize' | 'serialize' | 'write' | 'm
 
 // @public
 export type PersistOptions<T> = {
-    storage?: StorageAdapter | undefined; /** Turns a value into the stored string. Default `JSON.stringify`. */
-    serialize?: (value: T) => string; /** Turns a stored string back into a value. Default `JSON.parse`. */
+    storage?: StorageAdapter | undefined;
+    serialize?: (value: T) => string;
     deserialize?: (raw: string) => T;
     crossTab?: boolean;
     version?: number;
@@ -70,13 +70,13 @@ export type PersistOptions<T> = {
 
 // @public
 export type PersistQueryCacheOptions = {
-    storage?: StorageAdapter; /** The storage key the whole cache is written under. Default `'olas/query-cache'`. */
+    storage?: StorageAdapter;
     key?: string;
-    buster?: string; /** Entries whose data is older than this are not restored. Default 24 hours. */
-    maxAgeMs?: number; /** At most one storage write per window, carrying the latest cache. Default 1000. */
-    throttleMs?: number; /** Which queries persist. Default: those with `meta: { persist: true }`. */
+    buster?: string;
+    maxAgeMs?: number;
+    throttleMs?: number;
     include?: (query: QueryRef) => boolean;
-    restore?: boolean; /** A failed read, parse or write. Default: a warning in development. */
+    restore?: boolean;
     onError?: (error: unknown, op: QueryCacheErrorOp) => void;
 };
 

@@ -93,7 +93,9 @@ export type FormOptions<S extends FormSchema> = {
    * `resetOnInitialChange` for opt-out. Spec §8.4.
    */
   initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>
-  /** Form-level validators, which see the whole value. */
+  /**
+   * Form-level validators, which see the whole value.
+   */
   validators?: FormValidator<S>[]
   /**
    * When `initial` is a function and one of its tracked deps changes:
@@ -119,9 +121,13 @@ export type FieldOptions<T> = {
 
 /** Options for `createFieldArray(ctx, itemFactory, options?)`. */
 export type FieldArrayOptions<I> = {
-  /** One item per entry, each built by the item factory from its value. */
+  /**
+   * One item per entry, each built by the item factory from its value.
+   */
   initial?: Array<ItemInitial<I>>
-  /** Array-level validators, which see every item's value. */
+  /**
+   * Array-level validators, which see every item's value.
+   */
   validators?: FieldArrayValidator<I>[]
 }
 
@@ -140,9 +146,13 @@ export type SubmitResult<R> =
 
 /** Options for `Form.submit`. */
 export type SubmitOptions = {
-  /** Run `validate()` first and skip the handler when invalid. Default `true`. */
+  /**
+   * Run `validate()` first and skip the handler when invalid. Default `true`.
+   */
   validateBeforeSubmit?: boolean
-  /** Call `reset()` after the handler resolves. Default `false`. */
+  /**
+   * Call `reset()` after the handler resolves. Default `false`.
+   */
   resetOnSuccess?: boolean
   /**
    * `'capture'` (default) resolves `{ ok: false, reason: 'error' }` when the
@@ -181,7 +191,9 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
    * resolves, throws, or pre-submit validation fails.
    */
   readonly isSubmitting: ReadSignal<boolean>
-  /** Number of times `submit(...)` has been called. Bumps before the handler runs. */
+  /**
+   * Number of times `submit(...)` has been called. Bumps before the handler runs.
+   */
   readonly submitCount: ReadSignal<number>
   /**
    * The thrown value from the most recent failed submission, if any.
@@ -192,7 +204,9 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
    */
   readonly submitError: ReadSignal<unknown>
 
-  /** Deep-merge a partial value into the form, batched. */
+  /**
+   * Deep-merge a partial value into the form, batched.
+   */
   set(partial: DeepPartial<FormValue<S>>): void
   /**
    * Load `partial` as the form's new baseline — the form-level
@@ -200,7 +214,9 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
    * initial, so `isDirty` stays false and a later `reset()` returns here.
    */
   setAsInitial(partial: DeepPartial<FormValue<S>>): void
-  /** Reset every leaf to its initial value. */
+  /**
+   * Reset every leaf to its initial value.
+   */
   reset(): void
   /**
    * Reset a named subtree to its initial. Path uses the same dotted /
@@ -209,9 +225,13 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
    * "clear this subtree" gesture. Pass `''` to reset the whole form.
    */
   clearSubtree(path: string): void
-  /** Mark every leaf as touched (so error messages appear). */
+  /**
+   * Mark every leaf as touched (so error messages appear).
+   */
   markAllTouched(): void
-  /** Re-run every leaf's validators. Resolves with true if all leaves are valid. */
+  /**
+   * Re-run every leaf's validators. Resolves with true if all leaves are valid.
+   */
   validate(): Promise<boolean>
   /**
    * Run a submission. Pre-validates the form (unless `validateBeforeSubmit: false`),
@@ -230,7 +250,9 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
    * separate from validator output and auto-cleared on the next user write.
    */
   setErrors(errors: Record<string, ReadonlyArray<string>>): void
-  /** Idempotent. Called by the owning controller's dispose. */
+  /**
+   * Idempotent. Called by the owning controller's dispose.
+   */
   dispose(): void
 }
 

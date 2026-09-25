@@ -11,7 +11,9 @@ type StreamingEntry = {
   key: readonly unknown[]
   data: unknown
   lastUpdatedAt: number
-  /** Present for an infinite query: the params of `data`'s pages. */
+  /**
+   * Present for an infinite query: the params of `data`'s pages.
+   */
   pageParams?: readonly unknown[]
 }
 
@@ -87,7 +89,9 @@ export type StreamingHydratorOptions = {
  * ```
  */
 export type StreamingHydrator = {
-  /** Register on the server root's `RootOptions.plugins`. */
+  /**
+   * Register on the server root's `RootOptions.plugins`.
+   */
   plugin: OlasPlugin
   /**
    * Drain pending entries as a single `<script>` tag string. Returns the
@@ -95,7 +99,9 @@ export type StreamingHydrator = {
    * already-flushed entries are not re-emitted.
    */
   flush(): string
-  /** Drop captured state. Call after the stream closes. */
+  /**
+   * Drop captured state. Call after the stream closes.
+   */
   dispose(): void
 }
 

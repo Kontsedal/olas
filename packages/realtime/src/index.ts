@@ -127,9 +127,13 @@ export function createRealtimePatcher<TEvent extends { type: string }>(
  * `flushMs <= 0` flushes synchronously per event.
  */
 export type LiveStreamOptions<TEvent = unknown> = {
-  /** Default: 1000. */
+  /**
+   * Default: 1000.
+   */
   capacity?: number
-  /** Default: 16. Set to 0 (or negative) for synchronous flush. */
+  /**
+   * Default: 16. Set to 0 (or negative) for synchronous flush.
+   */
   flushMs?: number
   /**
    * Coalesce flushes against `requestAnimationFrame` instead of

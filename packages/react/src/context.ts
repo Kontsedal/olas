@@ -129,7 +129,9 @@ export function createOlasContext<Api>(displayName?: string): OlasContext<Api> {
 /** Props of `<HydrationBoundary>`. */
 export type HydrationBoundaryProps<Api> = {
   def: import('@kontsedal/olas-core').ControllerDef<void, Api>
-  /** Root options, with `deps` checked against `AmbientDeps` as `createRoot` checks them. */
+  /**
+   * Root options, with `deps` checked against `AmbientDeps` as `createRoot` checks them.
+   */
   options: RootOptions<AmbientDeps>
   /**
    * When `true` (default), installs the streaming intake on mount so

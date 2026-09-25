@@ -16,6 +16,10 @@
 //   5. every `development` export condition points at a build that loads and
 //      exports the same names, and core's two builds differ where they must:
 //      the production build emits no devtools events, the development build does.
+//   6. no doc comment in a built `.d.ts` sits at the end of a line after code.
+//      The declaration bundler moves a one-line member doc onto the previous
+//      member's line, where TypeScript attaches it to nothing, and the hover
+//      doc is lost. Sources write member docs as multi-line blocks for that.
 // Exits non-zero on any failure. Pairs with publint + attw (which check the
 // packaging metadata) — this checks the artifacts actually run.
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -153,6 +157,20 @@ for (const name of readdirSync(join(root, 'packages'))) {
     } catch (err) {
       failures.push(`${pkg.name}: require() of the ESM entry failed — ${err?.message ?? err}`)
     }
+  }
+
+  // 6. Stranded doc comments in the declarations (see the header).
+  for (const f of readdirSync(distDir)) {
+    if (!f.endsWith('.d.ts')) continue
+    const lines = readFileSync(join(distDir, f), 'utf8').split('\n')
+    lines.forEach((line, i) => {
+      if (/\S\s*\/\*\*.*\*\/\s*$/.test(line) && !/^\s*\/\*\*/.test(line)) {
+        failures.push(
+          `${pkg.name}: dist/${f}:${i + 1} has a doc comment after code, which TypeScript ` +
+            'attaches to nothing. Write that member doc as a multi-line /** … */ block in the source.',
+        )
+      }
+    })
   }
 
   // 5. The `development` condition's build: it exists, loads, and exports the

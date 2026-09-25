@@ -77,13 +77,21 @@ export type EntityDef<T> = {
 
 /** What `defineEntity` takes. */
 export type EntityOptions<T> = {
-  /** Unique among the entities one plugin is given; the store's partition key. */
+  /**
+   * Unique among the entities one plugin is given; the store's partition key.
+   */
   name: string
-  /** The entity's id when `value` is one of this type, else `null` / `undefined`. */
+  /**
+   * The entity's id when `value` is one of this type, else `null` / `undefined`.
+   */
   idOf: (value: T) => string | null | undefined
-  /** See `EntityDef.isCanonical`. */
+  /**
+   * See `EntityDef.isCanonical`.
+   */
   isCanonical?: (value: T) => boolean
-  /** Soft cap on unique ids retained — see `EntityDef.maxSlots`. */
+  /**
+   * Soft cap on unique ids retained — see `EntityDef.maxSlots`.
+   */
   maxSlots?: number
 }
 
@@ -224,7 +232,9 @@ export type EntityStore = {
    * would never reach it.
    */
   signal<T>(entity: EntityDef<T>, id: string): ReadSignal<T | undefined>
-  /** Non-reactive read. Equivalent to `signal(entity, id).peek()`. */
+  /**
+   * Non-reactive read. Equivalent to `signal(entity, id).peek()`.
+   */
   get<T>(entity: EntityDef<T>, id: string): T | undefined
   /**
    * Explicitly add or replace an entity in the normalized store. Useful when
@@ -317,7 +327,9 @@ export const Entities: Scope<EntityStore> = defineScope<EntityStore>({ name: 'ol
 
 /** Options for `entitiesPlugin(...)`. */
 export type EntitiesOptions = {
-  /** Every entity type the store normalizes. Names must be unique. */
+  /**
+   * Every entity type the store normalizes. Names must be unique.
+   */
   readonly entities: ReadonlyArray<EntityDef<unknown>>
 }
 

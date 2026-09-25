@@ -28,9 +28,13 @@ export type QueryCacheErrorOp = 'restore' | 'write'
 
 /** Options for `persistQueryCachePlugin` and `restoreQueryCache`. */
 export type PersistQueryCacheOptions = {
-  /** Where the cache is kept. Default `localStorageAdapter()`. */
+  /**
+   * Where the cache is kept. Default `localStorageAdapter()`.
+   */
   storage?: StorageAdapter
-  /** The storage key the whole cache is written under. Default `'olas/query-cache'`. */
+  /**
+   * The storage key the whole cache is written under. Default `'olas/query-cache'`.
+   */
   key?: string
   /**
    * A version for the stored shape. A cache written under a different buster
@@ -38,11 +42,17 @@ export type PersistQueryCacheOptions = {
    * shape. Default `''`.
    */
   buster?: string
-  /** Entries whose data is older than this are not restored. Default 24 hours. */
+  /**
+   * Entries whose data is older than this are not restored. Default 24 hours.
+   */
   maxAgeMs?: number
-  /** At most one storage write per window, carrying the latest cache. Default 1000. */
+  /**
+   * At most one storage write per window, carrying the latest cache. Default 1000.
+   */
   throttleMs?: number
-  /** Which queries persist. Default: those with `meta: { persist: true }`. */
+  /**
+   * Which queries persist. Default: those with `meta: { persist: true }`.
+   */
   include?: (query: QueryRef) => boolean
   /**
    * Restore the stored cache when the root starts. Default `true`. Pass
@@ -50,7 +60,9 @@ export type PersistQueryCacheOptions = {
    * handed the result to `createRoot({ hydrate })`.
    */
   restore?: boolean
-  /** A failed read, parse or write. Default: a warning in development. */
+  /**
+   * A failed read, parse or write. Default: a warning in development.
+   */
   onError?: (error: unknown, op: QueryCacheErrorOp) => void
 }
 

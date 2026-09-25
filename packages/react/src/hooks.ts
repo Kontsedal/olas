@@ -43,15 +43,21 @@ const isAbortError = (err: unknown): boolean =>
 
 /** Options for `useValue`. */
 export type UseValueOptions<T> = {
-  /** Decides when a new value re-renders. Default `Object.is`. */
+  /**
+   * Decides when a new value re-renders. Default `Object.is`.
+   */
   isEqual?: (a: T, b: T) => boolean
 }
 
 /** Options for `useValue` with a projection: the hook returns `select(value)`. */
 export type UseValueSelectOptions<T, U> = {
-  /** Project the value. The hook returns the projection and compares it with `isEqual`. */
+  /**
+   * Project the value. The hook returns the projection and compares it with `isEqual`.
+   */
   select: (value: T) => U
-  /** Decides when a new projection re-renders. Default `Object.is`. */
+  /**
+   * Decides when a new projection re-renders. Default `Object.is`.
+   */
   isEqual?: (a: U, b: U) => boolean
 }
 
@@ -245,7 +251,9 @@ export type UseQueryResult<T> = {
   isFetching: boolean
   isStale: boolean
   isPaused: boolean
-  /** `false` while the subscription's `enabled` returns `false`. */
+  /**
+   * `false` while the subscription's `enabled` returns `false`.
+   */
   isEnabled: boolean
   lastUpdatedAt: number | undefined
   hasPendingMutations: boolean
@@ -407,9 +415,13 @@ export function useSuspenseQuery<T>(subscription: AsyncState<T>): UseSuspenseQue
  * changes.
  */
 export type UseInfiniteQueryResult<TPage, TItem> = UseQueryResult<TPage[]> & {
-  /** The loaded pages, in order. */
+  /**
+   * The loaded pages, in order.
+   */
   pages: TPage[]
-  /** The pages' items, flattened through the spec's `itemsOf`; equals `pages` without one. */
+  /**
+   * The pages' items, flattened through the spec's `itemsOf`; equals `pages` without one.
+   */
   flat: TItem[]
   hasNextPage: boolean
   hasPreviousPage: boolean
@@ -575,9 +587,13 @@ export function useField<T>(field: Field<T>): UseFieldResult<T> {
 
 /** Options for `useFieldInput`. A field whose value is not a string needs `transform`. */
 export type UseFieldInputOptions<T> = {
-  /** Converts between the field's value and the input's string. */
+  /**
+   * Converts between the field's value and the input's string.
+   */
   transform?: FieldTransform<T>
-  /** Passed through as the input's `name`. */
+  /**
+   * Passed through as the input's `name`.
+   */
   name?: string
 }
 
@@ -715,9 +731,13 @@ export type MutateFn<V> = (...args: Parameters<MutationRun<V, unknown>>) => void
 export type UseMutationResult<V, R> = {
   data: R | undefined
   error: unknown | undefined
-  /** Outcome of the latest run. See `Mutation.status`. */
+  /**
+   * Outcome of the latest run. See `Mutation.status`.
+   */
   status: AsyncStatus
-  /** True while any run is in flight. */
+  /**
+   * True while any run is in flight.
+   */
   isPending: boolean
   isIdle: boolean
   isSuccess: boolean
@@ -729,7 +749,9 @@ export type UseMutationResult<V, R> = {
    * unhandled rejection.
    */
   mutate: MutateFn<V>
-  /** Start a run and return its promise. The caller owns the rejection. */
+  /**
+   * Start a run and return its promise. The caller owns the rejection.
+   */
   run: MutationRun<V, R>
   reset: () => void
 }

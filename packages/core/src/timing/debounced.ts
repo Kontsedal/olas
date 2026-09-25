@@ -4,11 +4,17 @@ import type { ReadSignal } from '../signals/types'
 
 /** Options for `debounced` and `throttled`. */
 export type TimingOptions = {
-  /** Aborting it stops the timer and releases the source subscription. */
+  /**
+   * Aborting it stops the timer and releases the source subscription.
+   */
   signal?: AbortSignal
-  /** Emit on the leading edge of a window. */
+  /**
+   * Emit on the leading edge of a window.
+   */
   leading?: boolean
-  /** Emit on the trailing edge of a window. */
+  /**
+   * Emit on the trailing edge of a window.
+   */
   trailing?: boolean
 }
 

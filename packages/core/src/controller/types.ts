@@ -66,13 +66,17 @@ export type Field<T> = ReadSignal<T> & {
    * the field (via `set`), or explicitly via `setErrors([])` / `reset()`.
    */
   setErrors(errors: ReadonlyArray<string>): void
-  /** Idempotent. Called by the owning controller's dispose. */
+  /**
+   * Idempotent. Called by the owning controller's dispose.
+   */
   dispose(): void
 }
 
 /** Options for `root.suspend(options?)`. */
 export type SuspendOptions = {
-  /** Dispose the root if it is not resumed within this many milliseconds. */
+  /**
+   * Dispose the root if it is not resumed within this many milliseconds.
+   */
   maxIdleTime?: number
 }
 
@@ -115,9 +119,13 @@ export type Collection<K, Api> = {
    * to bring it back (spec §4.1).
    */
   suspendItem(key: K): void
-  /** Resume a previously-suspended item. No-op if not suspended / not present. */
+  /**
+   * Resume a previously-suspended item. No-op if not suspended / not present.
+   */
   resumeItem(key: K): void
-  /** Whether the item is currently suspended. False when not present. */
+  /**
+   * Whether the item is currently suspended. False when not present.
+   */
   isItemSuspended(key: K): boolean
 }
 
@@ -358,7 +366,9 @@ export type RootOptions<TDeps> = {
  * name from anyone's api. Spec §20.8.
  */
 export type Root<Api> = {
-  /** What the root controller's factory returned. */
+  /**
+   * What the root controller's factory returned.
+   */
   readonly api: Api
   /**
    * Bind imperative query operations to this root without subscribing or
@@ -378,7 +388,9 @@ export type Root<Api> = {
    * plugin, else the scope's default. Throws when none exists.
    */
   inject<T>(scope: Scope<T>): T
-  /** Tear down the whole tree and the query client. Idempotent. */
+  /**
+   * Tear down the whole tree and the query client. Idempotent.
+   */
   dispose(): void
   /**
    * Freeze the tree: effects stop, subscriptions release their entries,
@@ -386,9 +398,13 @@ export type Root<Api> = {
    * is not resumed within that many milliseconds. Spec §4.1, §4.3.
    */
   suspend(options?: SuspendOptions): void
-  /** Thaw a suspended tree: effects re-run, stale entries refetch. */
+  /**
+   * Thaw a suspended tree: effects re-run, stale entries refetch.
+   */
   resume(): void
-  /** Serialize the query cache for SSR. Spec §15. */
+  /**
+   * Serialize the query cache for SSR. Spec §15.
+   */
   dehydrate(): DehydratedState
   /**
    * Apply dehydrated entries to this root's cache. An entry whose key is
@@ -403,6 +419,8 @@ export type Root<Api> = {
    * flight. Spec §15.
    */
   waitForIdle(): Promise<void>
-  /** The devtools event bus. Dev-only events; see spec §14. */
+  /**
+   * The devtools event bus. Dev-only events; see spec §14.
+   */
   readonly debug: DebugBus
 }

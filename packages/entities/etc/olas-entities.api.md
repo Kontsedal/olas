@@ -44,15 +44,15 @@ export type EntityDef<T> = {
 
 // @public
 export type EntityOptions<T> = {
-    name: string; /** The entity's id when `value` is one of this type, else `null` / `undefined`. */
-    idOf: (value: T) => string | null | undefined; /** See `EntityDef.isCanonical`. */
-    isCanonical?: (value: T) => boolean; /** Soft cap on unique ids retained — see `EntityDef.maxSlots`. */
+    name: string;
+    idOf: (value: T) => string | null | undefined;
+    isCanonical?: (value: T) => boolean;
     maxSlots?: number;
 };
 
 // @public
 export type EntityStore = {
-    signal<T>(entity: EntityDef<T>, id: string): ReadSignal<T | undefined>; /** Non-reactive read. Equivalent to `signal(entity, id).peek()`. */
+    signal<T>(entity: EntityDef<T>, id: string): ReadSignal<T | undefined>;
     get<T>(entity: EntityDef<T>, id: string): T | undefined;
     upsert<T>(entity: EntityDef<T>, value: T): void;
     update<T extends object>(entity: EntityDef<T>, id: string, patch: Partial<T> | ((prev: T) => T), options?: {

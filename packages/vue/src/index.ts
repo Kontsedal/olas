@@ -101,7 +101,9 @@ function warnOutsideScope(hook: string): void {
 
 /** Options for `useValue`. */
 export type UseValueOptions<T> = {
-  /** Decides when a new value triggers Vue. Default `Object.is`. */
+  /**
+   * Decides when a new value triggers Vue. Default `Object.is`.
+   */
   isEqual?: (a: T, b: T) => boolean
 }
 
@@ -236,7 +238,9 @@ export function useInfiniteQuery<TPage, TItem>(
 
 /** What `useField` returns. `value` is writable, for `v-model`. */
 export type UseFieldReturn<T> = {
-  /** Reads the field; assigning writes through `field.set`. */
+  /**
+   * Reads the field; assigning writes through `field.set`.
+   */
   value: WritableComputedRef<T>
 } & Refs<{
   errors: string[]
@@ -294,9 +298,13 @@ export type UseMutationReturn<V, R> = Refs<{
   isPending: boolean
   lastVariables: V | undefined
 }> & {
-  /** Start a run and return nothing: a failure lands on `error` and `status`. */
+  /**
+   * Start a run and return nothing: a failure lands on `error` and `status`.
+   */
   mutate: MutateFn<V>
-  /** Start a run and return its promise. The caller owns the rejection. */
+  /**
+   * Start a run and return its promise. The caller owns the rejection.
+   */
   run: MutationRun<V, R>
   reset: () => void
 }

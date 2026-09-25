@@ -74,14 +74,14 @@ export function runCodemod(files: readonly SourceFile[], options: RunOptions): R
 
 // @public
 export type RunOptions = {
-    readonly rootDir: string; /** The transforms to run, in order. Defaults to every 1.0 transform. */
+    readonly rootDir: string;
     readonly transforms?: readonly Transform[];
 };
 
 // @public
 export type RunResult = {
-    readonly summaries: readonly TransformSummary[]; /** Every TODO, sorted by file and line, without duplicates. */
-    readonly todos: readonly Todo[]; /** The files whose text differs from before the run. Nothing is saved. */
+    readonly summaries: readonly TransformSummary[];
+    readonly todos: readonly Todo[];
     readonly changed: readonly SourceFile[];
 };
 
@@ -93,15 +93,15 @@ export const suspendOptions: Transform;
 
 // @public
 export type Todo = {
-    readonly file: string; /** 1-based line of the site. */
-    readonly line: number; /** Name of the transform that reported it. */
-    readonly transform: string; /** What to change by hand, in one line. */
+    readonly file: string;
+    readonly line: number;
+    readonly transform: string;
     readonly reason: string;
 };
 
 // @public
 export type Transform = {
-    readonly name: string; /** One line for the summary and the README table. */
+    readonly name: string;
     readonly description: string;
     run(files: readonly SourceFile[], context: TransformContext): TransformResult;
 };
@@ -123,9 +123,9 @@ export const transforms: readonly Transform[];
 // @public
 export type TransformSummary = {
     readonly name: string;
-    readonly description: string; /** Files whose text this transform changed. */
-    readonly files: number; /** Sites it rewrote. */
-    readonly sites: number; /** TODOs it reported. */
+    readonly description: string;
+    readonly files: number;
+    readonly sites: number;
     readonly todos: number;
 };
 

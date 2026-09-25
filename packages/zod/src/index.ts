@@ -425,7 +425,9 @@ export type ZodFormOptions<T extends z.ZodObject<z.ZodRawShape>> = {
    * value for their type.
    */
   initial?: DeepPartial<z.infer<T>> | (() => DeepPartial<z.infer<T>> | undefined)
-  /** When a function `initial` changes: see `FormOptions.resetOnInitialChange`. */
+  /**
+   * When a function `initial` changes: see `FormOptions.resetOnInitialChange`.
+   */
   resetOnInitialChange?: 'when-clean' | 'never' | 'always'
   extraValidators?: ExtraValidators
 }

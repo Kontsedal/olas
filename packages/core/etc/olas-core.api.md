@@ -59,8 +59,8 @@ export type Collection<K, Api> = {
     readonly size: ReadSignal<number>;
     get(key: K): Api | undefined;
     has(key: K): boolean;
-    suspendItem(key: K): void; /** Resume a previously-suspended item. No-op if not suspended / not present. */
-    resumeItem(key: K): void; /** Whether the item is currently suspended. False when not present. */
+    suspendItem(key: K): void;
+    resumeItem(key: K): void;
     isItemSuspended(key: K): boolean;
 };
 
@@ -346,7 +346,7 @@ export type DebugEventBody = {
 
 // @public
 export type DebugEventMeta = {
-    seq?: number; /** Epoch ms when the event was emitted (or replayed). Stamped by the emitter. */
+    seq?: number;
     t?: number;
     causeId?: string;
 };
@@ -380,7 +380,7 @@ export function defineScope<T>(options?: ScopeOptions<T>): Scope<T>;
 // @public
 export type DehydratedEntry = {
     id: string;
-    key: readonly unknown[]; /** The cached value. For an infinite query, its pages. */
+    key: readonly unknown[];
     data: unknown;
     lastUpdatedAt: number;
     pageParams?: readonly unknown[];
@@ -400,9 +400,9 @@ export const email: (message?: string) => Validator<string>;
 
 // @public
 export type Emitter<T> = {
-    emit: [T] extends [void] ? () => void : (value: T) => void; /** Subscribe to every emission. Returns the unsubscribe function. */
-    on(handler: (value: T) => void): () => void; /** Subscribe to the next emission only. Auto-unsubscribes after firing. */
-    once(handler: (value: T) => void): () => void; /** Tear down the emitter. Subsequent `emit` / `on` / `once` are no-ops. */
+    emit: [T] extends [void] ? () => void : (value: T) => void;
+    on(handler: (value: T) => void): () => void;
+    once(handler: (value: T) => void): () => void;
     dispose(): void;
 };
 
@@ -412,8 +412,8 @@ export type EmitterErrorReporter = (err: unknown) => void;
 // @public
 export type ErrorContext = {
     kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction' | 'plugin';
-    controllerPath: readonly string[]; /** The query's `id`, for `cache` kinds. */
-    queryId?: string; /** The entry's key (`spec.key(...)` output), for `cache` kinds. */
+    controllerPath: readonly string[];
+    queryId?: string;
     key?: readonly unknown[];
     eventId: string;
     timestamp: number;
@@ -428,10 +428,10 @@ export type ErrorHandler = (err: unknown, context: ErrorContext) => void;
 // @public
 export type FetchContext = {
     readonly query: QueryRef;
-    readonly key: readonly unknown[]; /** The arguments the fetcher is called with. */
-    readonly args: readonly unknown[]; /** For an infinite query, the page being fetched. */
+    readonly key: readonly unknown[];
+    readonly args: readonly unknown[];
     readonly pageParam?: unknown;
-    readonly signal: AbortSignal; /** 0 for the first attempt, then one more per retry. */
+    readonly signal: AbortSignal;
     readonly attempt: number;
 };
 
@@ -453,7 +453,7 @@ export type Field<T> = ReadSignal<T> & {
     reset(): void;
     markTouched(): void;
     revalidate(): Promise<boolean>;
-    setErrors(errors: ReadonlyArray<string>): void; /** Idempotent. Called by the owning controller's dispose. */
+    setErrors(errors: ReadonlyArray<string>): void;
     dispose(): void;
 };
 
@@ -486,7 +486,7 @@ export type FieldArrayItemErrors<I> = I extends Field<any> ? string[] : I extend
 
 // @public
 export type FieldArrayOptions<I> = {
-    initial?: Array<ItemInitial<I>>; /** Array-level validators, which see every item's value. */
+    initial?: Array<ItemInitial<I>>;
     validators?: FieldArrayValidator<I>[];
 };
 
@@ -522,17 +522,17 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
     readonly touched: ReadSignal<boolean>;
     readonly isValidating: ReadSignal<boolean>;
     readonly dirtyFields: ReadSignal<string[]>;
-    readonly isSubmitting: ReadSignal<boolean>; /** Number of times `submit(...)` has been called. Bumps before the handler runs. */
+    readonly isSubmitting: ReadSignal<boolean>;
     readonly submitCount: ReadSignal<number>;
-    readonly submitError: ReadSignal<unknown>; /** Deep-merge a partial value into the form, batched. */
+    readonly submitError: ReadSignal<unknown>;
     set(partial: DeepPartial<FormValue<S>>): void;
-    setAsInitial(partial: DeepPartial<FormValue<S>>): void; /** Reset every leaf to its initial value. */
+    setAsInitial(partial: DeepPartial<FormValue<S>>): void;
     reset(): void;
-    clearSubtree(path: string): void; /** Mark every leaf as touched (so error messages appear). */
-    markAllTouched(): void; /** Re-run every leaf's validators. Resolves with true if all leaves are valid. */
+    clearSubtree(path: string): void;
+    markAllTouched(): void;
     validate(): Promise<boolean>;
     submit<R = unknown>(handler: (value: FormValue<S>) => R | Promise<R>, options?: SubmitOptions): Promise<SubmitResult<Awaited<R>>>;
-    setErrors(errors: Record<string, ReadonlyArray<string>>): void; /** Idempotent. Called by the owning controller's dispose. */
+    setErrors(errors: Record<string, ReadonlyArray<string>>): void;
     dispose(): void;
 };
 
@@ -547,7 +547,7 @@ export type FormIssue = {
 
 // @public
 export type FormOptions<S extends FormSchema> = {
-    initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>; /** Form-level validators, which see the whole value. */
+    initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>;
     validators?: FormValidator<S>[];
     resetOnInitialChange?: 'when-clean' | 'never' | 'always';
 };
@@ -572,14 +572,14 @@ export type InfiniteFetchCtx<PageParam> = {
 
 // @public
 export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
-    readonly [BRAND]: 'infiniteQuery'; /** Like `Query.invalidate`; resolves when the triggered refetch (all loaded pages) settles. */
-    invalidate(...args: Args): Promise<void>; /** Like `Query.invalidateAll`; resolves when every entry's refetch settles. */
+    readonly [BRAND]: 'infiniteQuery';
+    invalidate(...args: Args): Promise<void>;
     invalidateAll(): Promise<void>;
     setData(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): Snapshot;
     write(...args: [...Args, updater: (prev: TPage[] | undefined) => TPage[]]): void;
     replace(...args: [...Args, pages: TPage[]]): void;
     peek(...args: Args): TPage[] | undefined;
-    cancel(...args: Args): void; /** Cancel in-flight fetches for every keyed entry of this infinite query. */
+    cancel(...args: Args): void;
     cancelAll(): void;
     prefetch(...args: Args): Promise<TPage>;
 };
@@ -601,11 +601,11 @@ export type InfiniteQuerySpec<Args extends unknown[], PageParam, TPage, TItem = 
     refetchInterval?: RefetchInterval<TPage[]>;
     keepPreviousData?: boolean;
     retry?: RetryPolicy;
-    retryDelay?: RetryDelay; /** See `QuerySpec.refetchOnWindowFocus`. A focus refetch re-fetches every loaded page. */
-    refetchOnWindowFocus?: boolean; /** See `QuerySpec.refetchOnReconnect`. A reconnect refetch re-fetches every loaded page. */
-    refetchOnReconnect?: boolean; /** See `QuerySpec.networkMode`. Defaults to `'online'`. */
-    networkMode?: NetworkMode; /** See `QuerySpec.structuralShare`. Applies to the head-page refresh. */
-    structuralShare?: boolean; /** See `QuerySpec.meta`. */
+    retryDelay?: RetryDelay;
+    refetchOnWindowFocus?: boolean;
+    refetchOnReconnect?: boolean;
+    networkMode?: NetworkMode;
+    structuralShare?: boolean;
     meta?: QueryMeta;
 };
 
@@ -648,7 +648,7 @@ export type LocalCache<T> = AsyncState<T> & {
     invalidate(): Promise<void>;
     setData(updater: (prev: T | undefined) => T): Snapshot;
     write(updater: (prev: T | undefined) => T): void;
-    replace(value: T): void; /** Idempotent — also called when the owning controller disposes. */
+    replace(value: T): void;
     dispose(): void;
 };
 
@@ -680,14 +680,14 @@ export type MutateContext = {
     readonly mutation: MutationRef;
     readonly runId: string;
     readonly variables: unknown;
-    readonly signal: AbortSignal; /** 0 for the first attempt, then one more per retry. */
-    readonly attempt: number; /** The plugin that started the run through `host.mutations.run`, else `undefined`. */
+    readonly signal: AbortSignal;
+    readonly attempt: number;
     readonly origin: string | undefined;
 };
 
 // @public
 export type MutateCtx = {
-    signal: AbortSignal; /** The owning controller's `deps`; the root's `deps` on a replay. */
+    signal: AbortSignal;
     deps: AmbientDeps;
 };
 
@@ -725,12 +725,12 @@ export class MutationDisposedError extends Error {
 
 // @public
 export type MutationEvent = {
-    readonly mutation: MutationRef; /** Unique per run; shared by the run's events and its devtools timeline. */
+    readonly mutation: MutationRef;
     readonly runId: string;
     readonly variables: unknown;
-    readonly phase: 'start' | 'success' | 'error' | 'cancel'; /** The resolved value, on `'success'`. */
-    readonly result?: unknown; /** The final thrown value, on `'error'`. */
-    readonly error?: unknown; /** The plugin that started the run through `host.mutations.run`, else `undefined`. */
+    readonly phase: 'start' | 'success' | 'error' | 'cancel';
+    readonly result?: unknown;
+    readonly error?: unknown;
     readonly origin: string | undefined;
 };
 
@@ -773,8 +773,8 @@ export type MutationSpec<V, R> = {
 
 // @public
 export type NetworkHost = {
-    isOnline(): boolean; /** Call `fn` whenever the browser comes back online. Returns an unsubscribe. */
-    onReconnect(fn: () => void): () => void; /** Call `fn` whenever the window regains focus or visibility. Returns an unsubscribe. */
+    isOnline(): boolean;
+    onReconnect(fn: () => void): () => void;
     onFocus(fn: () => void): () => void;
 };
 
@@ -794,39 +794,39 @@ export const pattern: (re: RegExp, message?: string) => Validator<string>;
 export type PluginHooks = {
     onWrite?(event: WriteEvent): void;
     onInvalidate?(event: InvalidateEvent): void;
-    onRemove?(event: RemoveEvent): void; /** An entry gained its first subscriber. */
-    onActivate?(event: ActivityEvent): void; /** An entry lost its last subscriber. */
-    onDeactivate?(event: ActivityEvent): void; /** Every mutation run, with or without an `id`. */
+    onRemove?(event: RemoveEvent): void;
+    onActivate?(event: ActivityEvent): void;
+    onDeactivate?(event: ActivityEvent): void;
     onMutation?(event: MutationEvent): void;
-    wrapFetch?(context: FetchContext, next: () => Promise<unknown>): Promise<unknown>; /** Wrap every `mutate` attempt, with the same composition rules as `wrapFetch`. */
-    wrapMutate?(context: MutateContext, next: () => Promise<unknown>): Promise<unknown>; /** Tear down: called once, when the root disposes, in reverse `plugins` order. */
+    wrapFetch?(context: FetchContext, next: () => Promise<unknown>): Promise<unknown>;
+    wrapMutate?(context: MutateContext, next: () => Promise<unknown>): Promise<unknown>;
     dispose?(): void;
 };
 
 // @public
 export type PluginHost = {
     readonly deps: AmbientDeps;
-    provide<T>(scope: Scope<T>, value: T): void; /** Route an error to the root's `onError` as `{ kind: 'plugin', pluginName }`. */
-    reportError(err: unknown): void; /** Run `fn` when the plugin is disposed (after its `dispose` hook). */
+    provide<T>(scope: Scope<T>, value: T): void;
+    reportError(err: unknown): void;
     onDispose(fn: () => void): void;
-    track(work: Promise<unknown>): void; /** Browser connectivity and focus, shared with the query engine's own triggers. */
-    readonly network: NetworkHost; /** Query cache access, or `null` when the root has no query engine. */
-    readonly queries: QueryHost | null; /** Run registered mutations, or `null` when the root has no query engine. */
-    readonly mutations: MutationHost | null; /** Dev-only: publish a payload on this plugin's devtools lane. A no-op in production. */
+    track(work: Promise<unknown>): void;
+    readonly network: NetworkHost;
+    readonly queries: QueryHost | null;
+    readonly mutations: MutationHost | null;
     debug(payload: unknown): void;
 };
 
 // @public
 export type Query<Args extends unknown[], T> = {
     readonly [BRAND]: 'query';
-    invalidate(...args: Args): Promise<void>; /** Like `invalidate` for every keyed entry; resolves when all triggered refetches settle. */
+    invalidate(...args: Args): Promise<void>;
     invalidateAll(): Promise<void>;
     setData(...args: [...Args, updater: (prev: T | undefined) => T]): Snapshot;
     write(...args: [...Args, updater: (prev: T | undefined) => T]): void;
     replace(...args: [...Args, value: T]): void;
     peek(...args: Args): T | undefined;
-    cancel(...args: Args): void; /** Cancel in-flight fetches for every keyed entry of this query. */
-    cancelAll(): void; /** Eagerly fetch into the cache without subscribing. */
+    cancel(...args: Args): void;
+    cancelAll(): void;
     prefetch(...args: Args): Promise<T>;
 };
 
@@ -857,14 +857,14 @@ export type QueryEngineOptions = {
 
 // @public
 export type QueryHost = {
-    get(id: string): QueryRef | undefined; /** Keys of every entry this root holds for the query. */
-    keys(id: string): ReadonlyArray<readonly unknown[]>; /** An entry's current data, without subscribing. For an infinite query, its pages. */
+    get(id: string): QueryRef | undefined;
+    keys(id: string): ReadonlyArray<readonly unknown[]>;
     peek(id: string, key: readonly unknown[]): unknown;
     write(id: string, key: readonly unknown[], updater: (prev: unknown) => unknown, options?: WriteOptions): void;
     replace(id: string, key: readonly unknown[], value: unknown, options?: WriteOptions): void;
-    invalidate(id: string, key: readonly unknown[]): Promise<void>; /** Apply dehydrated entries, as `root.hydrate` does. */
-    hydrate(state: DehydratedState): void; /** Serialize the cache, as `root.dehydrate` does. */
-    dehydrate(): DehydratedState; /** The stable hash the engine keys entries by. Two keys collide exactly when their hashes do. */
+    invalidate(id: string, key: readonly unknown[]): Promise<void>;
+    hydrate(state: DehydratedState): void;
+    dehydrate(): DehydratedState;
     hashKey(key: readonly unknown[]): string;
 };
 
@@ -913,7 +913,7 @@ export type QuerySubscriptionOptions<Args extends readonly unknown[]> = {
 
 // @public
 export type ReadSignal<T> = {
-    readonly value: T; /** Read the current value without registering a dependency. */
+    readonly value: T;
     peek(): T;
     subscribe(handler: (value: T) => void): () => void;
     subscribeChanges(handler: (value: T) => void): () => void;
@@ -943,13 +943,13 @@ export type Root<Api> = {
     readonly api: Api;
     bindQuery<Args extends unknown[], T>(query: Query<Args, T>, options?: BindQueryOptions): QueryActions<Args, T>;
     bindQuery<Args extends unknown[], TPage, TItem>(query: InfiniteQuery<Args, TPage, TItem>, options?: BindQueryOptions): InfiniteQueryActions<Args, TPage, TItem>;
-    inject<T>(scope: Scope<T>): T; /** Tear down the whole tree and the query client. Idempotent. */
+    inject<T>(scope: Scope<T>): T;
     dispose(): void;
-    suspend(options?: SuspendOptions): void; /** Thaw a suspended tree: effects re-run, stale entries refetch. */
-    resume(): void; /** Serialize the query cache for SSR. Spec §15. */
+    suspend(options?: SuspendOptions): void;
+    resume(): void;
     dehydrate(): DehydratedState;
     hydrate(state: DehydratedState): void;
-    waitForIdle(): Promise<void>; /** The devtools event bus. Dev-only events; see spec §14. */
+    waitForIdle(): Promise<void>;
     readonly debug: DebugBus;
 };
 
@@ -965,16 +965,16 @@ export type RootOptions<TDeps> = {
 
 // @public
 export type Scope<T> = {
-    readonly [BRAND]: 'scope'; /** Optional human-readable name (used in error messages). */
-    readonly name?: string; /** Default value used when no provider exists; `undefined` if none was set. */
-    readonly default?: T; /** True iff `defineScope` was called with a `default` (even `default: undefined`). */
+    readonly [BRAND]: 'scope';
+    readonly name?: string;
+    readonly default?: T;
     readonly hasDefault: boolean;
     readonly [PHANTOM]?: T;
 };
 
 // @public
 export type ScopeOptions<T> = {
-    default?: T; /** Labels the scope in error messages. */
+    default?: T;
     name?: string;
 };
 
@@ -1045,7 +1045,7 @@ export type StandardSchemaV1Result<O> = {
 
 // @public
 export type SubmitOptions = {
-    validateBeforeSubmit?: boolean; /** Call `reset()` after the handler resolves. Default `false`. */
+    validateBeforeSubmit?: boolean;
     resetOnSuccess?: boolean;
     onError?: 'rethrow' | 'capture';
 };
@@ -1073,8 +1073,8 @@ export function throttled<T>(source: ReadSignal<T>, ms: number, options?: Timing
 
 // @public
 export type TimingOptions = {
-    signal?: AbortSignal; /** Emit on the leading edge of a window. */
-    leading?: boolean; /** Emit on the trailing edge of a window. */
+    signal?: AbortSignal;
+    leading?: boolean;
     trailing?: boolean;
 };
 
@@ -1103,8 +1103,8 @@ export type ValidatorResult = string | null | FormIssue[];
 // @public
 export type WriteEvent = {
     readonly query: QueryRef;
-    readonly key: readonly unknown[]; /** The data after the write. For an infinite query, the pages array. */
-    readonly data: unknown; /** Epoch ms the entry's data is current as of. */
+    readonly key: readonly unknown[];
+    readonly data: unknown;
     readonly updatedAt: number;
     readonly source: WriteSource;
     readonly origin: string | undefined;

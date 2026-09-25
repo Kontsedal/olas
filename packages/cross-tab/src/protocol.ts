@@ -31,7 +31,9 @@ export type SetDataMessage = {
   queryId: string
   keyArgs: readonly unknown[]
   data: unknown
-  /** Present for an infinite query: the params of `data`'s pages, one per page. */
+  /**
+   * Present for an infinite query: the params of `data`'s pages, one per page.
+   */
   pageParams?: readonly unknown[]
 }
 

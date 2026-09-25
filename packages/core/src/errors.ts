@@ -16,9 +16,13 @@
 export type ErrorContext = {
   kind: 'effect' | 'cache' | 'mutation' | 'emitter' | 'construction' | 'plugin'
   controllerPath: readonly string[]
-  /** The query's `id`, for `cache` kinds. */
+  /**
+   * The query's `id`, for `cache` kinds.
+   */
   queryId?: string
-  /** The entry's key (`spec.key(...)` output), for `cache` kinds. */
+  /**
+   * The entry's key (`spec.key(...)` output), for `cache` kinds.
+   */
   key?: readonly unknown[]
   eventId: string
   timestamp: number

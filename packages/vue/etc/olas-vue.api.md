@@ -83,7 +83,7 @@ export type UseMutationReturn<V, R> = Refs<{
     isPending: boolean;
     lastVariables: V | undefined;
 }> & {
-    mutate: MutateFn<V>; /** Start a run and return its promise. The caller owns the rejection. */
+    mutate: MutateFn<V>;
     run: MutationRun<V, R>;
     reset: () => void;
 };

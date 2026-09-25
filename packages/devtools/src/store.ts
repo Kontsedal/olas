@@ -20,7 +20,9 @@ export type ControllerNode = {
    * was read once, at dispose time, and replaced by the value it held.
    */
   debug?: Record<string, unknown>
-  /** Epoch ms of the `controller:disposed` that retired this node. Disposed nodes only. */
+  /**
+   * Epoch ms of the `controller:disposed` that retired this node. Disposed nodes only.
+   */
   disposedAt?: number
 }
 
@@ -102,15 +104,25 @@ export type FieldEntry = {
  * `cache:set-data`.
  */
 export type TimelineEvent = {
-  /** Store-assigned, stable for the entry's lifetime — the React key. */
+  /**
+   * Store-assigned, stable for the entry's lifetime — the React key.
+   */
   id: number
-  /** Emitter sequence (or a store-assigned fallback for un-stamped events). */
+  /**
+   * Emitter sequence (or a store-assigned fallback for un-stamped events).
+   */
   seq: number
-  /** Epoch ms. */
+  /**
+   * Epoch ms.
+   */
   t: number
-  /** Correlates events from one cause (mutation run / fetch) into a group. */
+  /**
+   * Correlates events from one cause (mutation run / fetch) into a group.
+   */
   causeId?: string
-  /** The raw event — the panel derives badge / target / payload from it. */
+  /**
+   * The raw event — the panel derives badge / target / payload from it.
+   */
   event: DebugEvent
   /**
    * For `cache:set-data` only: the entry's value *before* this write, captured
@@ -140,13 +152,21 @@ export const DEFAULT_MAX_DISPOSED_NODES = 200
 
 /** Options for `new DevtoolsStore(options?)`. Every field is optional. */
 export type DevtoolsStoreOptions = {
-  /** Cap on each event log (cache, mutation, field). Oldest entries drop first. */
+  /**
+   * Cap on each event log (cache, mutation, field). Oldest entries drop first.
+   */
   maxEntries?: number
-  /** Ring-buffer capacity of the unified timeline (`events$`). Default 10,000. */
+  /**
+   * Ring-buffer capacity of the unified timeline (`events$`). Default 10,000.
+   */
   maxTimelineEntries?: number
-  /** Cap on retained disposed controller nodes. Earliest-disposed subtrees drop first. */
+  /**
+   * Cap on retained disposed controller nodes. Earliest-disposed subtrees drop first.
+   */
   maxDisposedNodes?: number
-  /** Optional clock — useful for tests. Default: `() => Date.now()`. */
+  /**
+   * Optional clock — useful for tests. Default: `() => Date.now()`.
+   */
   now?: () => number
   /**
    * Event-write coalescing strategy for the logs and the timeline. The tree
@@ -162,7 +182,9 @@ export type DevtoolsStoreOptions = {
    *   a deterministic queue.
    */
   coalesce?: 'sync' | 'raf' | ((fn: () => void) => number)
-  /** Cancel a scheduled flush — only needed when `coalesce` is a function. */
+  /**
+   * Cancel a scheduled flush — only needed when `coalesce` is a function.
+   */
   cancelSchedule?: (handle: number) => void
 }
 
@@ -241,16 +263,26 @@ type Cell = {
   props: unknown
   debug: Record<string, unknown> | undefined
   disposedAt: number | undefined
-  /** By segment. A Map keeps insertion (construction) order and deletes in O(1). */
+  /**
+   * By segment. A Map keeps insertion (construction) order and deletes in O(1).
+   */
   readonly children: Map<string, Cell>
-  /** Nodes in this subtree, itself included. */
+  /**
+   * Nodes in this subtree, itself included.
+   */
   size: number
-  /** Non-disposed nodes in this subtree, itself included. 0 = fully disposed. */
+  /**
+   * Non-disposed nodes in this subtree, itself included. 0 = fully disposed.
+   */
   live: number
-  /** The cached snapshot; `null` once this node or a descendant changed. */
+  /**
+   * The cached snapshot; `null` once this node or a descendant changed.
+   */
   snap: ControllerNode | null
   removed: boolean
-  /** Stamp of this cell's latest dispose; matches its live queue entry. */
+  /**
+   * Stamp of this cell's latest dispose; matches its live queue entry.
+   */
   disposeSeq: number
 }
 

@@ -20,7 +20,9 @@ export type CrossTabOptions = {
    * inbound message. Default: `console.warn`.
    */
   onWarn?: (message: string, cause?: unknown) => void
-  /** Override the channel constructor. Mainly for tests sharing an in-memory bus. */
+  /**
+   * Override the channel constructor. Mainly for tests sharing an in-memory bus.
+   */
   channelFactory?: (name: string) => ChannelLike | undefined
   /**
    * Soft byte-size limit on a single outbound message. When the JSON-

@@ -33,9 +33,13 @@ export type PersistOptions<T> = {
    * when `localStorage` isn't defined.
    */
   storage?: StorageAdapter | undefined
-  /** Turns a value into the stored string. Default `JSON.stringify`. */
+  /**
+   * Turns a value into the stored string. Default `JSON.stringify`.
+   */
   serialize?: (value: T) => string
-  /** Turns a stored string back into a value. Default `JSON.parse`. */
+  /**
+   * Turns a stored string back into a value. Default `JSON.parse`.
+   */
   deserialize?: (raw: string) => T
   /**
    * Apply another tab's write to the same key. Needs a storage adapter with
@@ -110,9 +114,13 @@ export type PersistableSource<T> = {
  * picked for typical app use.
  */
 export type IndexedDbAdapterOptions = {
-  /** Database name. Defaults to `'olas-persist'`. */
+  /**
+   * Database name. Defaults to `'olas-persist'`.
+   */
   databaseName?: string
-  /** Object store inside the database. Defaults to `'kv'`. */
+  /**
+   * Object store inside the database. Defaults to `'kv'`.
+   */
   storeName?: string
   /**
    * `BroadcastChannel` name used to notify other tabs of writes through this
@@ -649,7 +657,9 @@ export function createPersisted<T>(
  * or `all: true`. With neither, the call throws.
  */
 export type ClearPersistedOptions = {
-  /** Delete only keys starting with this. Must be non-empty. */
+  /**
+   * Delete only keys starting with this. Must be non-empty.
+   */
   prefix?: string
   /**
    * Delete EVERY key the adapter enumerates. Required when no `prefix` is
@@ -659,7 +669,9 @@ export type ClearPersistedOptions = {
    * put there.
    */
   all?: boolean
-  /** Receives each failed delete with its key, and a failed enumeration under `'<keys>'`. */
+  /**
+   * Receives each failed delete with its key, and a failed enumeration under `'<keys>'`.
+   */
   onError?: (err: unknown, key: string) => void
 }
 

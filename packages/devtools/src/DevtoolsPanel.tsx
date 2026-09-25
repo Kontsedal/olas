@@ -50,13 +50,21 @@ const TABS: readonly DevtoolsTab[] = TAB_LABELS.map(([name]) => name)
 
 /** Props of `<DevtoolsPanel>`. */
 export type DevtoolsPanelProps = {
-  /** The root to inspect. The panel subscribes to `root.debug` on mount. */
+  /**
+   * The root to inspect. The panel subscribes to `root.debug` on mount.
+   */
   root: Pick<Root<unknown>, 'debug'>
-  /** Initial tab. Default: `'timeline'`. */
+  /**
+   * Initial tab. Default: `'timeline'`.
+   */
   defaultTab?: DevtoolsTab
-  /** Cap on each event log. Default: 100. */
+  /**
+   * Cap on each event log. Default: 100.
+   */
   maxEntries?: number
-  /** Capacity of the timeline's ring buffer. Default: 10,000. */
+  /**
+   * Capacity of the timeline's ring buffer. Default: 10,000.
+   */
   maxTimelineEntries?: number
   /**
    * Persist filter state to the URL hash under this key. When set,
@@ -1477,7 +1485,9 @@ type RowProps = {
   kindClass: string
   target: string
   t: number
-  /** Either a tiny inline string (durations, urls) OR a structured payload. */
+  /**
+   * Either a tiny inline string (durations, urls) OR a structured payload.
+   */
   inline?: string | null
   payload?: unknown
   suffix?: string | null

@@ -38,11 +38,17 @@ export type CtxEntry =
  * — the shape can change in a patch release.
  */
 export type CtxInternals = {
-  /** Throws if the controller is disposed. `method` names the caller. */
+  /**
+   * Throws if the controller is disposed. `method` names the caller.
+   */
   assertLive(method: string): void
-  /** Register teardown owned by this controller. */
+  /**
+   * Register teardown owned by this controller.
+   */
   register(entry: CtxEntry): void
-  /** The root's `QueryClient`, or a thrown error naming the missing engine. */
+  /**
+   * The root's `QueryClient`, or a thrown error naming the missing engine.
+   */
   requireClient(operation: string): QueryClient
   /**
    * Count a `createCache` local cache's fetches toward `root.waitForIdle()`
@@ -50,19 +56,29 @@ export type CtxInternals = {
    * entry, so the root tracks it here.
    */
   trackLocalCache(cache: LocalWork): () => void
-  /** Root-wide query defaults (§5.9), readable without a query engine. */
+  /**
+   * Root-wide query defaults (§5.9), readable without a query engine.
+   */
   readonly queryDefaults: {
     staleTime?: number
     keepPreviousData?: boolean
     [key: string]: unknown
   }
-  /** Controller path, for devtools and error contexts. */
+  /**
+   * Controller path, for devtools and error contexts.
+   */
   readonly path: readonly string[]
-  /** Routes a primitive's error to the root handler with the right context. */
+  /**
+   * Routes a primitive's error to the root handler with the right context.
+   */
   report(err: unknown, kind: 'effect' | 'emitter'): void
-  /** The root's raw error handler, for primitives that dispatch their own. */
+  /**
+   * The root's raw error handler, for primitives that dispatch their own.
+   */
   readonly onError: ErrorHandler | undefined
-  /** Devtools bus, for field and form instrumentation. */
+  /**
+   * Devtools bus, for field and form instrumentation.
+   */
   readonly devtools: unknown
 }
 

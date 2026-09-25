@@ -130,9 +130,13 @@ export interface MutationMeta {}
 
 /** What `mutate` receives besides the variables. */
 export type MutateCtx = {
-  /** Fires when the run is cancelled (supersede, `reset()`, dispose). */
+  /**
+   * Fires when the run is cancelled (supersede, `reset()`, dispose).
+   */
   signal: AbortSignal
-  /** The owning controller's `deps`; the root's `deps` on a replay. */
+  /**
+   * The owning controller's `deps`; the root's `deps` on a replay.
+   */
   deps: AmbientDeps
 }
 
@@ -231,7 +235,9 @@ export type MutationRun<V, R> = (
  * Spec §6, §20.5.
  */
 export type Mutation<V, R> = {
-  /** Trigger a run. Returns a Promise that resolves with the mutate result. */
+  /**
+   * Trigger a run. Returns a Promise that resolves with the mutate result.
+   */
   run: MutationRun<V, R>
   data: ReadSignal<R | undefined>
   error: ReadSignal<unknown | undefined>
@@ -297,9 +303,13 @@ type SerialEntry<V, R> = {
  */
 export type MutationLifecycleHooks = {
   emit(event: MutationEvent): void
-  /** `wrapMutate` middleware, when any plugin installed one. */
+  /**
+   * `wrapMutate` middleware, when any plugin installed one.
+   */
   wrap?(context: MutateContext, next: () => Promise<unknown>): Promise<unknown>
-  /** Set on runs a plugin started through `host.mutations.run`. */
+  /**
+   * Set on runs a plugin started through `host.mutations.run`.
+   */
   origin?: string
 }
 

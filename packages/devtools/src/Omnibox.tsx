@@ -16,7 +16,9 @@ const GROUP_TITLE: Record<SearchKind, string> = {
 export function Omnibox(props: {
   search: (query: string) => SearchGroup[]
   onPick: (hit: SearchHit) => void
-  /** Changes whenever the store's data changes, so open results stay current. */
+  /**
+   * Changes whenever the store's data changes, so open results stay current.
+   */
   rev: unknown
   inputRef: RefObject<HTMLInputElement | null>
 }): ReactElement {

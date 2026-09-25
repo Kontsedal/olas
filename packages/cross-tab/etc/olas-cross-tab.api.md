@@ -24,7 +24,7 @@ export const CROSS_TAB_PLUGIN_NAME = "olas-cross-tab";
 // @public
 export type CrossTabOptions = {
     channelName: string;
-    onWarn?: (message: string, cause?: unknown) => void; /** Override the channel constructor. Mainly for tests sharing an in-memory bus. */
+    onWarn?: (message: string, cause?: unknown) => void;
     channelFactory?: (name: string) => ChannelLike | undefined;
     maxPayloadBytes?: number;
     optimistic?: boolean;
@@ -62,7 +62,7 @@ export type SetDataMessage = {
     msgId: number;
     queryId: string;
     keyArgs: readonly unknown[];
-    data: unknown; /** Present for an infinite query: the params of `data`'s pages, one per page. */
+    data: unknown;
     pageParams?: readonly unknown[];
 };
 

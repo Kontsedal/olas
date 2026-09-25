@@ -6,19 +6,29 @@ import type { Todo, Transform } from './types'
 export type TransformSummary = {
   readonly name: string
   readonly description: string
-  /** Files whose text this transform changed. */
+  /**
+   * Files whose text this transform changed.
+   */
   readonly files: number
-  /** Sites it rewrote. */
+  /**
+   * Sites it rewrote.
+   */
   readonly sites: number
-  /** TODOs it reported. */
+  /**
+   * TODOs it reported.
+   */
   readonly todos: number
 }
 
 /** Options for `runCodemod(files, options)`. */
 export type RunOptions = {
-  /** Directory that placeholder ids are relative to: the project root. */
+  /**
+   * Directory that placeholder ids are relative to: the project root.
+   */
   readonly rootDir: string
-  /** The transforms to run, in order. Defaults to every 1.0 transform. */
+  /**
+   * The transforms to run, in order. Defaults to every 1.0 transform.
+   */
   readonly transforms?: readonly Transform[]
 }
 
@@ -27,11 +37,17 @@ export type RunOptions = {
  * caller saves `changed` and prints `todos`.
  */
 export type RunResult = {
-  /** One per transform, in the order they ran. */
+  /**
+   * One per transform, in the order they ran.
+   */
   readonly summaries: readonly TransformSummary[]
-  /** Every TODO, sorted by file and line, without duplicates. */
+  /**
+   * Every TODO, sorted by file and line, without duplicates.
+   */
   readonly todos: readonly Todo[]
-  /** The files whose text differs from before the run. Nothing is saved. */
+  /**
+   * The files whose text differs from before the run. Nothing is saved.
+   */
   readonly changed: readonly SourceFile[]
 }
 

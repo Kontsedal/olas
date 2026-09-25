@@ -6,7 +6,9 @@ import { structuralShare } from './structural-share'
 import type { AsyncStatus, NetworkMode, RetryDelay, RetryPolicy, Snapshot } from './types'
 
 export type EntryEvents = {
-  /** A fetch began. `fetchId` correlates this with its settle + `cache:set-data`. */
+  /**
+   * A fetch began. `fetchId` correlates this with its settle + `cache:set-data`.
+   */
   onFetchStart?: (fetchId: string) => void
   /**
    * A fetch resolved. Carries the written `data` (so the client can emit a
@@ -15,11 +17,17 @@ export type EntryEvents = {
    */
   onFetchSuccess?: (durationMs: number, data: unknown, fetchId: string) => void
   onFetchError?: (durationMs: number, error: unknown, fetchId: string) => void
-  /** An optimistic snapshot layer was pushed (`setData` with tracking). */
+  /**
+   * An optimistic snapshot layer was pushed (`setData` with tracking).
+   */
   onSnapshotPush?: () => void
-  /** An optimistic snapshot layer was rolled back. */
+  /**
+   * An optimistic snapshot layer was rolled back.
+   */
   onSnapshotRollback?: () => void
-  /** An optimistic snapshot layer was committed. */
+  /**
+   * An optimistic snapshot layer was committed.
+   */
   onSnapshotFinalize?: () => void
 }
 
@@ -36,7 +44,9 @@ export function nextFetchCauseId(): string {
 }
 
 export type EntryOptions<T> = {
-  /** Called once per attempt; `attempt` is 0, then one more per retry. */
+  /**
+   * Called once per attempt; `attempt` is 0, then one more per retry.
+   */
   fetcher: () => (signal: AbortSignal, attempt: number) => Promise<T>
   staleTime?: number
   initialData?: T | undefined
@@ -72,7 +82,9 @@ type SnapshotRecord<T> = {
  */
 export type FetchFailure = {
   readonly error: unknown
-  /** The 0-based attempt that failed last: `0` when no retry ran. */
+  /**
+   * The 0-based attempt that failed last: `0` when no retry ran.
+   */
   readonly attempt: number
   /**
    * Present when a `retry` or `retryDelay` callback threw: `error` is then the

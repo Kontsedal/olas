@@ -12,7 +12,9 @@ export type DebugEventMeta = {
    * for events replayed to a late subscriber.
    */
   seq?: number
-  /** Epoch ms when the event was emitted (or replayed). Stamped by the emitter. */
+  /**
+   * Epoch ms when the event was emitted (or replayed). Stamped by the emitter.
+   */
   t?: number
   /**
    * Correlates every event produced by one cause — a single mutation run, a
@@ -143,7 +145,9 @@ export type DebugEvent = DebugEventBody extends infer B
  * so devtools panels can show *current data*, not just past fetch events.
  */
 export type DebugCacheEntry = {
-  /** The query this entry belongs to. Two queries can hold entries under one key. */
+  /**
+   * The query this entry belongs to. Two queries can hold entries under one key.
+   */
   queryId: string
   key: readonly unknown[]
   status: 'idle' | 'pending' | 'success' | 'error'
@@ -182,7 +186,9 @@ type LiveControllerEntry = {
   path: readonly string[]
   props: unknown
   state: 'active' | 'suspended'
-  /** Latest `ctx.debug({...})` record for this controller (live refs), if any. */
+  /**
+   * Latest `ctx.debug({...})` record for this controller (live refs), if any.
+   */
   debug?: Record<string, unknown>
 }
 

@@ -30,15 +30,21 @@ export type MockFetchOptions = {
    * network by accident. `true` lets it run its real fetcher.
    */
   passthrough?: boolean
-  /** Latency added to every mocked answer, in ms. Default 0. */
+  /**
+   * Latency added to every mocked answer, in ms. Default 0.
+   */
   delayMs?: number
 }
 
 /** The plugin `mockFetchPlugin` returns, plus its call log and a way to change answers. */
 export type MockFetchPlugin = OlasPlugin & {
-  /** Every fetch attempt the plugin answered or passed through, in order. */
+  /**
+   * Every fetch attempt the plugin answered or passed through, in order.
+   */
   readonly calls: readonly FetchContext[]
-  /** Set the handler for a query, mid-test: switch it to an error, say. */
+  /**
+   * Set the handler for a query, mid-test: switch it to an error, say.
+   */
   respond(queryId: string, handler: MockFetchHandler): void
 }
 
@@ -107,15 +113,21 @@ export type RecordedEvent =
 
 /** What `createPluginRecorder` returns. */
 export type PluginRecorder = {
-  /** Install it in `plugins`, alongside the plugin under test or alone. */
+  /**
+   * Install it in `plugins`, alongside the plugin under test or alone.
+   */
   readonly plugin: OlasPlugin
-  /** Every observation event, in arrival order. */
+  /**
+   * Every observation event, in arrival order.
+   */
   readonly events: readonly RecordedEvent[]
   readonly writes: readonly WriteEvent[]
   readonly invalidations: readonly InvalidateEvent[]
   readonly removals: readonly RemoveEvent[]
   readonly mutations: readonly MutationEvent[]
-  /** Drop everything recorded so far. */
+  /**
+   * Drop everything recorded so far.
+   */
   clear(): void
 }
 

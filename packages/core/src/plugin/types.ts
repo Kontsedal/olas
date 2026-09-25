@@ -42,7 +42,9 @@ export type OlasPlugin = {
 
 /** What one root offers a plugin during and after `setup`. */
 export type PluginHost = {
-  /** The root's `deps`. */
+  /**
+   * The root's `deps`.
+   */
   readonly deps: AmbientDeps
   /**
    * Make a value available to every controller (`ctx.inject(scope)`) and to
@@ -50,32 +52,50 @@ export type PluginHost = {
    * `setup`; a `RootOptions.scopes` binding for the same scope wins.
    */
   provide<T>(scope: Scope<T>, value: T): void
-  /** Route an error to the root's `onError` as `{ kind: 'plugin', pluginName }`. */
+  /**
+   * Route an error to the root's `onError` as `{ kind: 'plugin', pluginName }`.
+   */
   reportError(err: unknown): void
-  /** Run `fn` when the plugin is disposed (after its `dispose` hook). */
+  /**
+   * Run `fn` when the plugin is disposed (after its `dispose` hook).
+   */
   onDispose(fn: () => void): void
   /**
    * Count `work` as in flight until it settles, so `root.waitForIdle()`
    * waits for it — a startup restore or a replay, for example.
    */
   track(work: Promise<unknown>): void
-  /** Browser connectivity and focus, shared with the query engine's own triggers. */
+  /**
+   * Browser connectivity and focus, shared with the query engine's own triggers.
+   */
   readonly network: NetworkHost
-  /** Query cache access, or `null` when the root has no query engine. */
+  /**
+   * Query cache access, or `null` when the root has no query engine.
+   */
   readonly queries: QueryHost | null
-  /** Run registered mutations, or `null` when the root has no query engine. */
+  /**
+   * Run registered mutations, or `null` when the root has no query engine.
+   */
   readonly mutations: MutationHost | null
-  /** Dev-only: publish a payload on this plugin's devtools lane. A no-op in production. */
+  /**
+   * Dev-only: publish a payload on this plugin's devtools lane. A no-op in production.
+   */
   debug(payload: unknown): void
 }
 
 /** Connectivity and focus, as the query engine sees them. */
 export type NetworkHost = {
-  /** `navigator.onLine`, or `true` where there is no navigator. */
+  /**
+   * `navigator.onLine`, or `true` where there is no navigator.
+   */
   isOnline(): boolean
-  /** Call `fn` whenever the browser comes back online. Returns an unsubscribe. */
+  /**
+   * Call `fn` whenever the browser comes back online. Returns an unsubscribe.
+   */
   onReconnect(fn: () => void): () => void
-  /** Call `fn` whenever the window regains focus or visibility. Returns an unsubscribe. */
+  /**
+   * Call `fn` whenever the window regains focus or visibility. Returns an unsubscribe.
+   */
   onFocus(fn: () => void): () => void
 }
 
@@ -97,9 +117,13 @@ export type QueryHost = {
    * `bindQuery` reached. `undefined` for a query this root has never touched.
    */
   get(id: string): QueryRef | undefined
-  /** Keys of every entry this root holds for the query. */
+  /**
+   * Keys of every entry this root holds for the query.
+   */
   keys(id: string): ReadonlyArray<readonly unknown[]>
-  /** An entry's current data, without subscribing. For an infinite query, its pages. */
+  /**
+   * An entry's current data, without subscribing. For an infinite query, its pages.
+   */
   peek(id: string, key: readonly unknown[]): unknown
   /**
    * A canonical patch of an existing entry (spec §6.4) — no optimistic
@@ -123,11 +147,17 @@ export type QueryHost = {
    * next subscribe (spec §5.7). Resolves when that refetch settles.
    */
   invalidate(id: string, key: readonly unknown[]): Promise<void>
-  /** Apply dehydrated entries, as `root.hydrate` does. */
+  /**
+   * Apply dehydrated entries, as `root.hydrate` does.
+   */
   hydrate(state: DehydratedState): void
-  /** Serialize the cache, as `root.dehydrate` does. */
+  /**
+   * Serialize the cache, as `root.dehydrate` does.
+   */
   dehydrate(): DehydratedState
-  /** The stable hash the engine keys entries by. Two keys collide exactly when their hashes do. */
+  /**
+   * The stable hash the engine keys entries by. Two keys collide exactly when their hashes do.
+   */
   hashKey(key: readonly unknown[]): string
 }
 
@@ -171,9 +201,13 @@ export type WriteSource = 'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'wri
 export type WriteEvent = {
   readonly query: QueryRef
   readonly key: readonly unknown[]
-  /** The data after the write. For an infinite query, the pages array. */
+  /**
+   * The data after the write. For an infinite query, the pages array.
+   */
   readonly data: unknown
-  /** Epoch ms the entry's data is current as of. */
+  /**
+   * Epoch ms the entry's data is current as of.
+   */
   readonly updatedAt: number
   readonly source: WriteSource
   /**
@@ -232,15 +266,23 @@ export type MutationRef = {
  */
 export type MutationEvent = {
   readonly mutation: MutationRef
-  /** Unique per run; shared by the run's events and its devtools timeline. */
+  /**
+   * Unique per run; shared by the run's events and its devtools timeline.
+   */
   readonly runId: string
   readonly variables: unknown
   readonly phase: 'start' | 'success' | 'error' | 'cancel'
-  /** The resolved value, on `'success'`. */
+  /**
+   * The resolved value, on `'success'`.
+   */
   readonly result?: unknown
-  /** The final thrown value, on `'error'`. */
+  /**
+   * The final thrown value, on `'error'`.
+   */
   readonly error?: unknown
-  /** The plugin that started the run through `host.mutations.run`, else `undefined`. */
+  /**
+   * The plugin that started the run through `host.mutations.run`, else `undefined`.
+   */
   readonly origin: string | undefined
 }
 
@@ -248,12 +290,18 @@ export type MutationEvent = {
 export type FetchContext = {
   readonly query: QueryRef
   readonly key: readonly unknown[]
-  /** The arguments the fetcher is called with. */
+  /**
+   * The arguments the fetcher is called with.
+   */
   readonly args: readonly unknown[]
-  /** For an infinite query, the page being fetched. */
+  /**
+   * For an infinite query, the page being fetched.
+   */
   readonly pageParam?: unknown
   readonly signal: AbortSignal
-  /** 0 for the first attempt, then one more per retry. */
+  /**
+   * 0 for the first attempt, then one more per retry.
+   */
   readonly attempt: number
 }
 
@@ -263,9 +311,13 @@ export type MutateContext = {
   readonly runId: string
   readonly variables: unknown
   readonly signal: AbortSignal
-  /** 0 for the first attempt, then one more per retry. */
+  /**
+   * 0 for the first attempt, then one more per retry.
+   */
   readonly attempt: number
-  /** The plugin that started the run through `host.mutations.run`, else `undefined`. */
+  /**
+   * The plugin that started the run through `host.mutations.run`, else `undefined`.
+   */
   readonly origin: string | undefined
 }
 
@@ -279,11 +331,17 @@ export type PluginHooks = {
   onWrite?(event: WriteEvent): void
   onInvalidate?(event: InvalidateEvent): void
   onRemove?(event: RemoveEvent): void
-  /** An entry gained its first subscriber. */
+  /**
+   * An entry gained its first subscriber.
+   */
   onActivate?(event: ActivityEvent): void
-  /** An entry lost its last subscriber. */
+  /**
+   * An entry lost its last subscriber.
+   */
   onDeactivate?(event: ActivityEvent): void
-  /** Every mutation run, with or without an `id`. */
+  /**
+   * Every mutation run, with or without an `id`.
+   */
   onMutation?(event: MutationEvent): void
   /**
    * Wrap every fetch attempt. Call `next()` to run the inner chain (the
@@ -292,8 +350,12 @@ export type PluginHooks = {
    * outermost. A throw fails the attempt like a fetcher throw.
    */
   wrapFetch?(context: FetchContext, next: () => Promise<unknown>): Promise<unknown>
-  /** Wrap every `mutate` attempt, with the same composition rules as `wrapFetch`. */
+  /**
+   * Wrap every `mutate` attempt, with the same composition rules as `wrapFetch`.
+   */
   wrapMutate?(context: MutateContext, next: () => Promise<unknown>): Promise<unknown>
-  /** Tear down: called once, when the root disposes, in reverse `plugins` order. */
+  /**
+   * Tear down: called once, when the root disposes, in reverse `plugins` order.
+   */
   dispose?(): void
 }

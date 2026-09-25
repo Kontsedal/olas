@@ -214,9 +214,13 @@ export type MutateFn<V> = (...args: Parameters<MutationRun<V, unknown>>) => void
 
 /** What `mutationStore` returns: a store of the mutation's state, plus its triggers. */
 export type MutationStore<V, R> = ReadSignal<MutationState<V, R>> & {
-  /** Start a run and return nothing: a failure lands on `error` and `status`. */
+  /**
+   * Start a run and return nothing: a failure lands on `error` and `status`.
+   */
   mutate: MutateFn<V>
-  /** Start a run and return its promise. The caller owns the rejection. */
+  /**
+   * Start a run and return its promise. The caller owns the rejection.
+   */
   run: MutationRun<V, R>
   reset: () => void
 }

@@ -26,7 +26,7 @@ export type UnwrapZod<S> = S extends z.ZodDefault<infer Inner> ? UnwrapZod<Inner
 
 // @public
 export type ZodFormOptions<T extends z.ZodObject<z.ZodRawShape>> = {
-    initial?: DeepPartial<z.infer<T>> | (() => DeepPartial<z.infer<T>> | undefined); /** When a function `initial` changes: see `FormOptions.resetOnInitialChange`. */
+    initial?: DeepPartial<z.infer<T>> | (() => DeepPartial<z.infer<T>> | undefined);
     resetOnInitialChange?: 'when-clean' | 'never' | 'always';
     extraValidators?: ExtraValidators;
 };

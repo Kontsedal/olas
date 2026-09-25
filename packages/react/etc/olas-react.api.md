@@ -38,7 +38,7 @@ export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): Reac
 
 // @public
 export type HydrationBoundaryProps<Api> = {
-    def: ControllerDef<void, Api>; /** Root options, with `deps` checked against `AmbientDeps` as `createRoot` checks them. */
+    def: ControllerDef<void, Api>;
     options: RootOptions<AmbientDeps>;
     streaming?: boolean;
     children: ReactNode;
@@ -86,7 +86,7 @@ export const STREAMING_GLOBAL: "__OLAS_HYDRATION__";
 // @public
 export type StreamingHydrator = {
     plugin: OlasPlugin;
-    flush(): string; /** Drop captured state. Call after the stream closes. */
+    flush(): string;
     dispose(): void;
 };
 
@@ -123,7 +123,7 @@ export function useFieldInput<T>(field: Field<T>, options: UseFieldInputOptions<
 
 // @public
 export type UseFieldInputOptions<T> = {
-    transform?: FieldTransform<T>; /** Passed through as the input's `name`. */
+    transform?: FieldTransform<T>;
     name?: string;
 };
 
@@ -164,7 +164,7 @@ export function useInfiniteQuery<TPage, TItem>(subscription: InfiniteQuerySubscr
 
 // @public
 export type UseInfiniteQueryResult<TPage, TItem> = UseQueryResult<TPage[]> & {
-    pages: TPage[]; /** The pages' items, flattened through the spec's `itemsOf`; equals `pages` without one. */
+    pages: TPage[];
     flat: TItem[];
     hasNextPage: boolean;
     hasPreviousPage: boolean;
@@ -187,14 +187,14 @@ export type UseMutationCallbacks<V, R> = {
 // @public
 export type UseMutationResult<V, R> = {
     data: R | undefined;
-    error: unknown | undefined; /** Outcome of the latest run. See `Mutation.status`. */
-    status: AsyncStatus; /** True while any run is in flight. */
+    error: unknown | undefined;
+    status: AsyncStatus;
     isPending: boolean;
     isIdle: boolean;
     isSuccess: boolean;
     isError: boolean;
     lastVariables: V | undefined;
-    mutate: MutateFn<V>; /** Start a run and return its promise. The caller owns the rejection. */
+    mutate: MutateFn<V>;
     run: MutationRun<V, R>;
     reset: () => void;
 };
@@ -215,7 +215,7 @@ export type UseQueryResult<T> = {
     isLoading: boolean;
     isFetching: boolean;
     isStale: boolean;
-    isPaused: boolean; /** `false` while the subscription's `enabled` returns `false`. */
+    isPaused: boolean;
     isEnabled: boolean;
     lastUpdatedAt: number | undefined;
     hasPendingMutations: boolean;
@@ -256,7 +256,7 @@ export type UseValueOptions<T> = {
 
 // @public
 export type UseValueSelectOptions<T, U> = {
-    select: (value: T) => U; /** Decides when a new projection re-renders. Default `Object.is`. */
+    select: (value: T) => U;
     isEqual?: (a: U, b: U) => boolean;
 };
 

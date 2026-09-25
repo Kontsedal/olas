@@ -54,7 +54,7 @@ export type ControllerNode = {
     state: 'active' | 'suspended' | 'disposed';
     props: unknown;
     children: ControllerNode[];
-    debug?: Record<string, unknown>; /** Epoch ms of the `controller:disposed` that retired this node. Disposed nodes only. */
+    debug?: Record<string, unknown>;
     disposedAt?: number;
 };
 
@@ -66,12 +66,12 @@ export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement;
 
 // @public
 export type DevtoolsLauncherProps = {
-    root: Pick<Root<unknown>, 'debug'>; /** Default panel tab. */
-    defaultTab?: DevtoolsTab; /** Cap on each event log. */
-    maxEntries?: number; /** Capacity of the timeline's ring buffer. Default 10,000. */
-    maxTimelineEntries?: number; /** Persist tab+filter state under this key (independent of window state). */
-    urlHashKey?: string; /** localStorage key for window state (position/size/open/minimized). */
-    storageKey?: string; /** Initial position if no persisted state. */
+    root: Pick<Root<unknown>, 'debug'>;
+    defaultTab?: DevtoolsTab;
+    maxEntries?: number;
+    maxTimelineEntries?: number;
+    urlHashKey?: string;
+    storageKey?: string;
     initial?: {
         x?: number;
         y?: number;
@@ -85,9 +85,9 @@ export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement;
 
 // @public
 export type DevtoolsPanelProps = {
-    root: Pick<Root<unknown>, 'debug'>; /** Initial tab. Default: `'timeline'`. */
-    defaultTab?: DevtoolsTab; /** Cap on each event log. Default: 100. */
-    maxEntries?: number; /** Capacity of the timeline's ring buffer. Default: 10,000. */
+    root: Pick<Root<unknown>, 'debug'>;
+    defaultTab?: DevtoolsTab;
+    maxEntries?: number;
     maxTimelineEntries?: number;
     urlHashKey?: string;
 };
@@ -117,11 +117,11 @@ export class DevtoolsStore {
 
 // @public
 export type DevtoolsStoreOptions = {
-    maxEntries?: number; /** Ring-buffer capacity of the unified timeline (`events$`). Default 10,000. */
-    maxTimelineEntries?: number; /** Cap on retained disposed controller nodes. Earliest-disposed subtrees drop first. */
-    maxDisposedNodes?: number; /** Optional clock — useful for tests. Default: `() => Date.now()`. */
+    maxEntries?: number;
+    maxTimelineEntries?: number;
+    maxDisposedNodes?: number;
     now?: () => number;
-    coalesce?: 'sync' | 'raf' | ((fn: () => void) => number); /** Cancel a scheduled flush — only needed when `coalesce` is a function. */
+    coalesce?: 'sync' | 'raf' | ((fn: () => void) => number);
     cancelSchedule?: (handle: number) => void;
 };
 
@@ -194,8 +194,8 @@ export type SearchHit = {
     kind: SearchKind;
     label: string;
     detail: string;
-    tab: 'tree' | 'inspector' | 'timeline'; /** The row key in `tab`: a controller path key, a query-key hash, or `e<eventId>`. */
-    key: string; /** For a timeline hit, the lane its event is on, so a jump can un-hide it. */
+    tab: 'tree' | 'inspector' | 'timeline';
+    key: string;
     lane?: string;
 };
 
@@ -216,10 +216,10 @@ export function setNodeState(root: ControllerNode, path: readonly string[], stat
 
 // @public
 export type TimelineEvent = {
-    id: number; /** Emitter sequence (or a store-assigned fallback for un-stamped events). */
-    seq: number; /** Epoch ms. */
-    t: number; /** Correlates events from one cause (mutation run / fetch) into a group. */
-    causeId?: string; /** The raw event — the panel derives badge / target / payload from it. */
+    id: number;
+    seq: number;
+    t: number;
+    causeId?: string;
     event: DebugEvent;
     prev?: unknown;
 };

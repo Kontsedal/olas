@@ -15,9 +15,13 @@ export type SearchHit = {
   label: string
   detail: string
   tab: 'tree' | 'inspector' | 'timeline'
-  /** The row key in `tab`: a controller path key, a query-key hash, or `e<eventId>`. */
+  /**
+   * The row key in `tab`: a controller path key, a query-key hash, or `e<eventId>`.
+   */
   key: string
-  /** For a timeline hit, the lane its event is on, so a jump can un-hide it. */
+  /**
+   * For a timeline hit, the lane its event is on, so a jump can un-hide it.
+   */
   lane?: string
 }
 
