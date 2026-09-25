@@ -1,8 +1,8 @@
 /**
- * Compile-time build flag. Substituted by tsdown's `define:` at bundle time
- * — `JSON.stringify(process.env.NODE_ENV !== 'production')`. The published
- * production `.mjs`/`.cjs` artefacts inline `false` here and the bundler's
- * dead-code elimination drops the wrapped emit sites entirely. Under vitest
- * the root `vitest.config.ts` substitutes `true`. Mirrors `@kontsedal/olas-core`.
+ * Compile-time build flag. `tsdown.config.ts` inlines it per build: `false`
+ * in `dist/` (the default export condition), where dead-code elimination
+ * drops every `if (__DEV__)` branch, and `true` in `dist/dev/` (the
+ * `development` condition). Under vitest the root `vitest.config.ts`
+ * substitutes `true`. Mirrors `@kontsedal/olas-core`; see SPEC §23.
  */
 declare const __DEV__: boolean

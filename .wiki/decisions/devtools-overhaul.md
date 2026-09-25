@@ -25,7 +25,9 @@ confidence: medium
 > **Status (2026-09-24): 8A has landed.** T8.1, the event backbone, and T8.4, the causal
 > timeline, shipped on 2026-07-28. T8.2, T8.3 and the lane half of T8.8 shipped on
 > 2026-09-24. The tasks marked ✅ below are implemented. The rest of 8B, and all of 8C and
-> 8D, are the open design. The remediation's **T6.3** fixed the outright devtools bugs
+> 8D, were set aside in the 1.0 BACKLOG pass (2026-09-25), which dropped them with this page
+> as the record of the design. The subscriber events T8.5 needed did land (`cache:subscribed`
+> and `cache:unsubscribed`, with a subscriber count in the inspector). The remediation's **T6.3** fixed the outright devtools bugs
 > before any of this: the false `[Circular]`, the unbounded tree, the per-keystroke
 > re-stringify and the run-to-success pairing. See `modules/devtools-panel.md`.
 

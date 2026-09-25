@@ -413,8 +413,8 @@ describe('ctx.fieldArray', () => {
     root.dispose()
   })
 
-  test('form.resetWithInitial re-anchors initialItems so reset() returns there', () => {
-    // Reaching `resetWithInitial` requires Form.options.initial as a
+  test('form.setAsInitial re-anchors initialItems so reset() returns there', () => {
+    // Reaching `setAsInitial` requires Form.options.initial as a
     // function so it can return a different shape on the second pass —
     // simulating loading server data after the form was created with a
     // placeholder. Pre-fix, the array's `initialItems` was never updated,
@@ -435,7 +435,7 @@ describe('ctx.fieldArray', () => {
     const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
     expect(root.api.form.value).toEqual({ tags: ['a', 'b'] })
 
-    // "Server reloaded" — apply via resetWithInitial path. We trigger it by
+    // "Server reloaded" — apply via the setAsInitial path. We trigger it by
     // mutating the source and calling reset() (which re-applies `initial`).
     serverData = { tags: ['x', 'y', 'z'] }
     root.api.form.reset()

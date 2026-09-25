@@ -2,7 +2,7 @@ import { defineQuery } from '@kontsedal/olas-core'
 import type { Board } from '../../api'
 
 /**
- * Board query — keyed by board id. `crossTab: true` propagates optimistic
+ * Board query — keyed by board id. `meta: { crossTab: true }` propagates optimistic
  * patches across browser tabs through `crossTabPlugin`. The fetcher pulls
  * `api` off `ctx.deps`; per-tab fetches still run independently.
  */

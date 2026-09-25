@@ -1983,13 +1983,15 @@ import { queryEngine } from '@kontsedal/olas-core'
 import { HydrationBoundary } from '@kontsedal/olas-react'
 import { App } from './App'
 import { appController } from './app-controller'
+import { deps } from './deps'
 
 const queries = queryEngine()
 
+// `deps` is checked against AmbientDeps, as createRoot checks it.
 export const Main = () => (
   <HydrationBoundary
     def={appController}
-    options={{ deps: {}, queries, hydrate: window.__OLAS_STATE__ }}
+    options={{ deps, queries, hydrate: window.__OLAS_STATE__ }}
   >
     <App />
   </HydrationBoundary>

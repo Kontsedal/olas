@@ -7,8 +7,8 @@
  *   │          │  Archive drawer             │             │
  *   └──────────┴─────────────────────────────┴─────────────┘
  *
- * `OlasProvider` exposes `appController`'s api via `useRoot()` /
- * `useController(appController)`. We also wire `useSuspendOnHidden(root)`
+ * `OlasProvider` exposes `appController`'s api via `useRoot()`.
+ * We also wire `useSuspendOnHidden(root)`
  * so background tabs stop polling.
  */
 

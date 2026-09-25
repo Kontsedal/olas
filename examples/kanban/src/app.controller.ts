@@ -95,7 +95,7 @@ export const appController = defineController(
       users,
       labels,
       // The entities store, so React components can subscribe to one entity
-      // by id (`use(app.entities.signal(UserEntity, id))`).
+      // by id (`useValue(app.entities.signal(UserEntity, id))`).
       entities: ctx.inject(Entities),
     }
   },

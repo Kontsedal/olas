@@ -212,7 +212,6 @@ The store seeds `cacheState$` from `queryEntries()` once on `attach()` and refre
 
 The older suites still pin the rest: `store.test.ts`, `panel.test.tsx`, `diff.test.ts`, `jsonview.test.tsx` and the `coverage-*` files. `core/tests/devtools-events.test.ts` pins the runtime-emit and `seq`/`causeId` contract.
 
-## What's NOT included / follow-ups
+## What it does not do
 
-- The rest of the overhaul: T8.5 tracing, T8.6 live actions, T8.7 environment simulation and the forms inspector, T8.9 session export and import, and the T8.10 UX pass. See [../decisions/devtools-overhaul.md](../decisions/devtools-overhaul.md).
-- Signal dependency graph view.
+- No effect or signal tracing, no live actions (refetch, rollback or edit from the panel), no environment simulation or forms inspector, no session export or import, and no signal dependency graph. `decisions/devtools-overhaul.md` records the design for these, and the 1.0 BACKLOG pass dropped them: the panel covers the tree, the cache, mutations, the timeline and plugin lanes.

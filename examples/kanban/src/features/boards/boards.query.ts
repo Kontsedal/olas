@@ -1,7 +1,7 @@
 /**
  * Board catalog query — used by the sidebar.
  *
- * `crossTab: true` lets a board-rename in another tab reach this tab's
+ * `meta: { crossTab: true }` lets a board-rename in another tab reach this tab's
  * sidebar without a refetch. The `queryId` is the routing key.
  */
 

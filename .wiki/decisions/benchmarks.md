@@ -34,7 +34,7 @@ AMD Ryzen 7 9800X3D (16 threads), Node 26.8.1, Windows 11. Two runs; the range i
 
 | Operation | Result |
 |---|---|
-| Signal fan-out: one source, 10,000 computed + effect pairs | raw preact is 1.30–1.32× faster than Olas; Olas is 4.4–5.3× faster than MobX |
+| Signal fan-out: one source, 10,000 computed + effect pairs | raw preact is 1.30–1.32× faster than Olas as the bench file orders them, but within about 4% when each runs in its own process (see "Where the fan-out gap comes from" below); Olas is 4.4–5.3× faster than MobX |
 | Write one entry observed by 10,000 subscribers | Olas is 2.0–2.1× faster than TanStack Query |
 | Fetch 1,000 queries and wait for all to settle | TanStack Query is 1.12–1.14× faster |
 | Refetch an unchanged 1 MB payload (structural sharing) | TanStack Query is 1.18–1.28× faster |

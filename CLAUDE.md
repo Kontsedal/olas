@@ -10,7 +10,7 @@ Three artifacts in this repo own different kinds of truth. Keep them strictly se
 2. **`.wiki/`** — the codebase wiki (pattern in `WIKI_SPEC.md`). Synthesis of how the code is structured, why it's that way, and what's known to be true about it. **Always start a session by reading `.wiki/index.md`** — it points to every other page. The wiki is faster, cheaper, and more accurate than grepping the source.
 3. **`BACKLOG.md`** — the **only** place future work, ideas, and stray thoughts live. See "The BACKLOG protocol" below for the rule.
 
-Current implementation status: fourteen published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 2,012 tests across 158 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
+Current implementation status: fourteen published packages ship, plus the private `packages/integration` cross-package test suite. The roster and what each package covers is in "Workspace layout" below. 2,232 tests across 176 files, plus the `examples/` apps: kanban, reader-ssr, stock-ticker, virtualized-table and vue-tasks. Don't tear down "unused" scaffolding without checking. Some pieces anticipate work that hasn't landed yet, and `BACKLOG.md` lists what's outstanding.
 
 ## Commands
 
@@ -39,7 +39,7 @@ pnpm wiki:lint                                     # check .wiki/ for broken cit
 pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
-CI = `install → build → typecheck → lint → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
+CI = `install → build → typecheck → lint → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `program=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
 
 ## Releasing
 
@@ -70,7 +70,7 @@ packages/
   realtime/        # @kontsedal/olas-realtime       — createRealtimePatcher + createLiveStream + createConnectionState over a consumer-supplied RealtimeService
   mutation-queue/  # @kontsedal/olas-mutation-queue — durable persist + reload-safe replay for `meta: { persist: true }` mutations (plugin; the MutationQueue scope)
   router/          # @kontsedal/olas-router         — createRouterAdapter → { plugin, Bridge }; RouteParams/Search/Pathname scopes (TanStack Router / React Router v6)
-  eslint-plugin/   # @kontsedal/olas-eslint-plugin  — six syntax-only lint rules + recommended/strict flat configs
+  eslint-plugin/   # @kontsedal/olas-eslint-plugin  — eight syntax-only lint rules + recommended/strict flat configs
   codemod/         # @kontsedal/olas-codemod        — 0.8 → 1.0 migration CLI on ts-morph (npx @kontsedal/olas-codemod 1.0)
   integration/     # private — cross-package integration test suite, not published
 ```
@@ -259,7 +259,7 @@ If a backlog item turns into a real plan with a date, that's still fine — keep
 
 - **Don't commit `dist/`.** `tsdown` cleans on every build; `.gitignore` excludes it. `pnpm-lock.yaml` IS committed.
 - **`@preact/signals-core` is a peer dep on `@kontsedal/olas-core`** — declared in both `peerDependencies` and `devDependencies`. Consumers install it; the library does not bundle it.
-- **biome config in `biome.json`**, currently v2.x per `package.json`. Two rules are intentionally off. `noExplicitAny` is off because the wrapper types need it. `noConfusingVoidType` is off because it matches the spec's effect signature `() => void | (() => void)`. Don't re-enable them.
+- **biome config in `biome.json`**, currently v2.x per `package.json`. Two rules are intentionally off everywhere. `noExplicitAny` is off because the wrapper types need it. `noConfusingVoidType` is off because it matches the spec's effect signature `() => void | (() => void)`. Don't re-enable them. Three more, `useHookAtTopLevel`, `useExhaustiveDependencies` and `noArrayIndexKey`, are errors in `examples/**` only, where the code is meant to be exemplary; `.wiki/modules/examples.md` lists the package-level exceptions that keep them off elsewhere.
 - **The spec uses `§N.M` to cite sections.** Page bodies should do the same — `(spec §6.1)` is more useful than "see the mutations section".
 - **Every interface follows one set of rules**, covering the four example apps and the devtools panel. Values are picked by role from a named scale, colour marks state, and the corner tiers name a layer. The scales live in [`examples/_shared/ui/tokens.css`](examples/_shared/ui/tokens.css); the rules and the reasoning are in [`.wiki/decisions/ui-rules.md`](.wiki/decisions/ui-rules.md). Nothing enforces them, which that page says plainly — read it before touching a stylesheet.
 - **Every `.md` follows one writing style**, checked by `pnpm prose:lint`. One fact per sentence, a named actor, no word that carries no fact. The rules, and the four things the linter flags that we leave alone on purpose, are in [`.wiki/decisions/prose-rules.md`](.wiki/decisions/prose-rules.md). Read it before a docs pass; a clean run is not the goal.

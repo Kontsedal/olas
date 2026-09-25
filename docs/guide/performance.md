@@ -72,14 +72,14 @@ Recorded on 2026-09-24: AMD Ryzen 7 9800X3D (16 threads), Node 26.8.1, Windows 1
 
 | Operation | Result |
 |---|---|
-| Signal fan-out | raw preact is **1.30–1.32× faster** than Olas; Olas is 4.4–5.3× faster than MobX |
+| Signal fan-out | raw preact is **1.30–1.32× faster** than Olas in this file's order; within about 4% run apart. Olas is 4.4–5.3× faster than MobX |
 | Cache write, 10,000 subscribers | Olas is 2.0–2.1× faster than TanStack Query |
 | Fetch cycle, 1,000 queries | TanStack Query is **1.12–1.14× faster** |
 | Structural sharing, 1 MB | TanStack Query is **1.18–1.28× faster** |
 
 Read these with their caveats:
 
-- **Olas is slower in three of the four groups.** The signal fan-out gap is the price of the wrapper types over `@preact/signals-core` (see [why the runtime is wrapped](https://github.com/Kontsedal/olas/blob/main/.wiki/decisions/signals-runtime-wrapped.md)).
+- **Olas is slower in three of the four groups.** Most of the signal fan-out gap comes from the order of the cases in the bench file, not from Olas's wrappers over `@preact/signals-core`. Run in separate processes against the built package, Olas is 1.01–1.04× raw preact, and removing the wrappers entirely would save about 4% ([the investigation](https://github.com/Kontsedal/olas/blob/main/.wiki/decisions/benchmarks.md), [why the runtime is wrapped](https://github.com/Kontsedal/olas/blob/main/.wiki/decisions/signals-runtime-wrapped.md)).
 - **The fetch cycle is not like for like.** Olas builds a controller tree with 1,000 subscriptions and waits on `root.waitForIdle()`. TanStack creates 1,000 observers and awaits `fetchQuery`.
 - **They are micro-benchmarks on one machine.** A run on other hardware, or with other work on the machine, gives other ratios. Compare ratios within one run, not absolute times across runs.
 - **They do not gate CI.** Wall-clock timing is too noisy for a pass or fail line, so no CI job runs them. `size-limit` guards bundle size instead.
