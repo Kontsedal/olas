@@ -3,8 +3,8 @@ name: render-phase-root-leak
 description: A root built during render and disposed in an effect leaks whenever React discards the render before it commits. A retry must reuse it, and something other than an effect must dispose it.
 type: pitfall
 covers:
-  - packages/react/src/context.ts:177-290
-  - packages/react/src/context.ts:340-408
+  - packages/react/src/context.ts:177-357
+  - packages/react/src/context.ts:411-479
 edges:
   - { type: tested-by, target: ../../packages/react/tests/hydration-boundary.test.tsx }
   - { type: uses, target: ../modules/react.md }
@@ -42,16 +42,16 @@ Measured against the pre-fix boundary under React 19.2:
 The rules, implemented in `packages/react/src/context.ts`:
 
 1. **A render never disposes and never takes ownership.** Only the commit writes `ownedRef`, claims a root, and disposes the root it replaces.
-2. **A retry reuses the root of its earlier attempt.** `acquireRoot` keys unclaimed roots by the props object, which a retry of the same element shares (`context.ts:216-238`). The server builds a root per render instead, because nothing there commits.
-3. **Something other than an effect disposes a root that never commits.** `armSweep` disposes a root still unclaimed ten seconds after its work goes idle (`context.ts:246-266`). The countdown waits for idle because a child suspended on the root's own fetch retries only when that fetch settles. A minute bounds that wait, for a root that never goes idle.
-4. **A commit that cannot claim its root rebuilds it.** The root may have been swept, claimed by another fiber rendering the same element, or disposed by StrictMode's simulated unmount. The claim effect builds a fresh one and renders again before paint (`context.ts:376-383`).
+2. **A retry reuses the root of its earlier attempt.** `acquireRoot` keys unclaimed roots by the props object, which a retry of the same element shares (`context.ts:256-305`). The server builds a root per render instead, because nothing there commits.
+3. **Something other than an effect disposes a root that never commits.** `armSweep` disposes a root still unclaimed ten seconds after its work goes idle (`context.ts:313-333`). The countdown waits for idle because a child suspended on the root's own fetch retries only when that fetch settles. A minute bounds that wait, for a root that never goes idle.
+4. **A commit that cannot claim its root rebuilds it.** The root may have been swept, claimed by another fiber rendering the same element, or disposed by StrictMode's simulated unmount. The claim effect builds a fresh one and renders again before paint (`context.ts:447-454`).
 5. **Dispose on unmount in a passive effect, never a layout effect.** React runs layout-effect cleanups when a `<Suspense>` above hides content it already showed. A layout-effect dispose treated that hide as an unmount and killed the live root. The second review round caught this regression in the first version of the fix.
 
 React gives no signal for a discarded render, so a timer is the only deterministic way to catch one. A `FinalizationRegistry` on the fiber would never dispose too early, but it disposes at an unknown time, and its effects keep running until then.
 
 ## What it still costs
 
-An element the parent re-creates on each attempt is a new props object, so its retry builds a new root. That happens when the `<Suspense>` sits above the component that renders the boundary. The old root is swept, but the new one refetches, so the loop above can still happen there. The TSDoc tells apps to put a `<Suspense>` inside the boundary, which lets the boundary commit first.
+An element the parent re-creates on each attempt is a new props object. That happens when the `<Suspense>` sits above the component that renders the boundary. `findReusable` then reuses an unclaimed root built from the same `def`, the same `hydrate` object and `deps` with the same members, so the usual inline `options={{ deps: { api }, queries: queryEngine() }}` no longer loops. The loop remains only when those options change between attempts, such as a `hydrate` parsed inline on every render. A development build warns once then. A `<Suspense>` inside the boundary avoids the question, because the boundary commits first.
 
 A root swept while React still meant to commit it costs a rebuild, and the rebuild refetches whatever `hydrate` did not cover. That needs a child waiting on something outside the root, such as a `lazy()` chunk or a `use()` promise, for longer than the grace period.
 

@@ -20,50 +20,25 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 - Cite `SPEC.md §X.Y` when an item amends the spec; that signals "spec change required, not only an implementation."
 - If a backlog item is implied by an existing spec line, quote the line.
 
-**The 1.0 BACKLOG pass emptied the backlog of open work.** That pass (2026-09-25, `.wiki/log.md`) implemented every item worth doing and dropped the rest, with the reasons below. What remains planned is the release itself, which needs the maintainer: repo settings, the npm token and the Version Packages PR.
+**The 1.0 BACKLOG pass emptied the backlog of open work.** That pass (2026-09-25, `.wiki/log.md`) implemented every item worth doing and dropped the rest, with the reasons below. What remains planned is the release itself: merging `release/1.0` to `main` and reviewing the Version Packages PR.
 
 ---
 
 ## Release
 
-### [planned] Internal peer ranges have no upper bound
-
-**Resolved for 0.x.** The nine sub-packages declared `peerDependencies: { "@kontsedal/olas-core": ">=0.3.0" }` with no ceiling. That was cosmetic while all ten shipped in lockstep at one version. Dropping the `fixed` group made it load-bearing, so every internal peer range now carries `<1.0.0`. The ranges read `>=0.3.0 <1.0.0`, and `>=0.9.0 <1.0.0` on mutation-queue.
-
-Verified against this tree with throwaway changesets. An in-range bump, core 0.8.0 to 0.9.0 and zod to 0.8.1, leaves the ceilings intact and bumps nothing else. An out-of-range bump, core to 1.0.0, cascades a major to all nine and rewrites their ranges. That is the intended fence.
-
-**What remains.** On that cascade `changeset version` rewrites `>=0.3.0 <1.0.0` to `>=1.0.0`, dropping the ceiling again: it manages the floor and discards the rest of the range. So the ceiling survives normal operation but is stripped exactly when a major lands. This is tolerable now that publishing is manual. The rewrite shows up in the "Version Packages" PR diff, which a human reviews before merging, and again before running the publish workflow. If it starts being missed, the fix is a post-`version` script that re-applies ceilings, run as part of `changeset version`.
-
-**For the 1.0 release.** Core's major cascades to every package, so the 1.0 Version Packages PR is where the ceiling goes. That PR hand-sets every internal peer to `^1.0.0` before merge. The new vue and svelte packages carry `>=0.3.0 <1.0.0` on core today, like the rest. eslint-plugin and codemod have no core peer.
-
 ### [planned] Move the docs site to the Actions deploy once release/1.0 is on main
 
 [from W14] The site is live at https://kontsedal.github.io/olas/, served from the `gh-pages` branch ("Deploy from a branch"). `docs.yml` could not deploy it: GitHub dispatches only workflows that exist on the default branch, and the `github-pages` environment allows only `main`. Once `docs.yml` is on `main`, switch Pages to GitHub Actions (`gh api -X PUT repos/Kontsedal/olas/pages -f build_type=workflow`), run the Docs workflow with `deploy` ticked, and delete the `gh-pages` branch. Until then, a docs change goes live only by rebuilding the site and pushing it to `gh-pages` by hand.
 
-### [planned] CI releases cannot complete without two repo-settings changes
-
-The 0.4.0 release had to be finished by hand twice, for reasons the workflow cannot fix from inside:
-
-1. **`GitHub Actions is not permitted to create or approve pull requests`** — the changesets action built and pushed `changeset-release/main` but could not open the Version Packages PR (run 30610698827). Fix: Settings → Actions → General → Workflow permissions → allow Actions to create PRs. Until then, every release needs a manual `gh pr create --head changeset-release/main`.
-2. **No `NPM_TOKEN` repo secret exists**, because `gh secret list` is empty. The publish step therefore dies with `ENEEDAUTH` on all ten packages, as in run 30610849873. 0.3.0 and 0.4.0 were both published from a locally-authenticated machine (`npm whoami` → kontsedal) via `pnpm release`. Fix: mint an npm automation token and `gh secret set NPM_TOKEN`.
-
-Neither blocks releasing — the local path works — but the CI pipeline is decorative until both are done.
-
-Note the split since. `version.yml` opens the Version Packages PR and needs fix 1. `publish.yml` is `workflow_dispatch`-only, pushes to npm, and needs fix 2. Fix 1 is the more annoying of the two, because without it there is no automated PR to review and the whole version step has to be run by hand.
-
 ## Packages
-
-### [idea] Warn when a `HydrationBoundary` rebuilds its root on every retry
-
-A retry reuses the root of a discarded render only when it renders the same element, found by the props object (`.wiki/pitfalls/render-phase-root-leak.md`). With the `<Suspense>` above the component that renders the boundary, each attempt is a new element. Each retry then builds a new root, which refetches what the child suspended on, and a child on `useSuspenseQuery` can suspend forever. The sweep disposes the old roots, so it no longer leaks, but the loop is silent. A development warning could fire when a boundary builds a root for a `def` while an unclaimed root for that `def` is still waiting for its sweep. Sibling boundaries that share a `def` would trigger it too, so the check needs a second signal, such as the same `def` rebuilt three times with no commit between.
 
 ### [idea] `gcTime: NaN` and `maxIdleTime: NaN` never expire
 
 `scheduleExpiry` reads `NaN` as "never", as it reads `Infinity`. The retry sleep and the `debounced`/`throttled` windows now read `NaN` as 0, but an entry with `gcTime: NaN` is never collected, and `suspend({ maxIdleTime: NaN })` never disposes. Reading `NaN` as 0 there would drop or dispose at once, which is no safer, so the better fix is a development warning at the option, as `refetchInterval` already warns (`packages/core/src/expiry-timer.ts`).
 
-### [idea] An optimistic `setData` makes a stale entry look fresh
+### [idea] A `refetchInterval` tick can land over a live optimistic write
 
-An optimistic write moves `lastUpdatedAt`, and the staleness check reads `lastUpdatedAt`, so a subscriber that binds after the write does not refetch an entry whose server data is old. Live hydration already compares against a separate server timestamp (`serverUpdatedAt` in `entry.ts`); staleness could read the same one. The catch is that a mutation's own `onSuccess` invalidation usually refetches anyway, so the case needs a mutation with no invalidation.
+A subscriber, focus, reconnect or `prefetch` that wants a fetch while an optimistic write is live now waits for the write to settle (SPEC §5.9). An interval tick does not: it skips only while fetching, paused or hidden, never consults staleness, so its response can overwrite the guess on screen, and a later rollback restores that response. Holding the tick back the same way would close it, at the cost of a polled query going quiet for the length of a slow mutation (`packages/core/src/query/client.ts`, the interval handler).
 
 ## Dropped
 

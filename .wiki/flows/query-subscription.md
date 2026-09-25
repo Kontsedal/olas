@@ -82,6 +82,7 @@ Key tricks:
 - `keyFn()` runs **inside the tracking scope**. Any signal it reads becomes a dep — the effect re-runs when those signals change. That's how `props.id` flipping causes an entry swap.
 - Everything inside `untracked(...)` is shielded — bind/release/acquire are imperative, not reactive deps.
 - We refetch on subscribe only if status is `idle`, stale or errored — not if a fetch is already in flight (otherwise concurrent subscribers would double-fetch the same entry).
+- `isStaleNow()` measures from the last fetch, hydrated row or canonical write, never from an optimistic write. It answers `false` while an optimistic write is live, and the entry runs the fetch once that write settles (spec §5.9, `../entities/entry.md`).
 - Joining can pick up a fetch requested before a subscriber-less invalidation. The entry, not `use.ts`, handles that: when such a response lands while someone holds the entry, it fetches once more (`Entry.catchUpIfStillStale`, see `../entities/entry.md`). `resume()` and `prefetch` join the same way and get the same catch-up.
 
 ### 3. `client.bindEntry(query, args)` — `client.ts:1469`

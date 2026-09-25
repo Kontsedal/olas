@@ -9,9 +9,9 @@ covers:
   - packages/core/src/query/client.ts:1965-2036
   - packages/core/src/query/actions.ts:42-59
   - packages/core/src/query/local.ts
-  - packages/core/src/query/entry.ts:741-875
+  - packages/core/src/query/entry.ts:732-872
   - packages/core/src/query/infinite.ts:97-129
-  - packages/core/src/query/infinite.ts:767-937
+  - packages/core/src/query/infinite.ts:769-946
 edges:
   - { type: tested-by, target: ../../packages/core/tests/query.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/infinite.test.ts }
@@ -19,6 +19,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/catch-up-refetch.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/local-cache-writes.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/infinite-rebase.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/optimistic-staleness.test.ts }
   - { type: uses, target: ../entities/entry.md }
   - { type: uses, target: ../entities/query-client.md }
   - { type: related, target: ../flows/plugin-lifecycle.md }
@@ -39,7 +40,7 @@ write(...keyArgs, updater): void         // canonical
 
 A third, `replace(...keyArgs, value)`, came later; see "Three write methods" below.
 
-The core difference is whether a snapshot record is pushed (`Entry.setData`'s `{ track }`, `packages/core/src/query/entry.ts:774-794`), and that difference is load-bearing. A second follows from it. A canonical write rebases live optimistic snapshots onto its value, so a mutation that rolls back later restores the canonical data rather than an older baseline (`entry.ts:797-806`).
+The core difference is whether a snapshot record is pushed (`Entry.setData`'s `{ track }`, `packages/core/src/query/entry.ts:765-787`), and that difference is load-bearing. A second follows from it. A canonical write rebases live optimistic snapshots onto its value, so a mutation that rolls back later restores the canonical data rather than an older baseline (`entry.ts:788-797`).
 
 ## Why `setData` alone was not enough
 
@@ -97,7 +98,7 @@ question — "is this write the whole record", which nothing inside the entry ca
 
 ## Infinite queries have the same three doors
 
-`InfiniteQuery` gained `peek`, `write` and `replace` in 1.0 (`packages/core/src/query/infinite.ts:97-129`, `client.ts:1965-2012`). The rules carry over unchanged: `write` patches the pages and leaves an in-flight fetch alone, and `replace` takes whole pages and supersedes it. An empty pages array is how an infinite entry says "nothing here", so a `replace` with `[]` leaves the fetch alone, as `replace(undefined)` does on a regular query. `peek` returns `undefined` for a missing entry or no loaded page. Both writes go through `InfiniteEntry.setData(..., { track: false })` (`infinite.ts:827-871`), which keeps `pageParams` length-aligned with the pages by trimming or padding with the last param. Pinned by `packages/core/tests/infinite.test.ts`, "InfiniteQuery peek / write / replace — parity with Query".
+`InfiniteQuery` gained `peek`, `write` and `replace` in 1.0 (`packages/core/src/query/infinite.ts:97-129`, `client.ts:1965-2012`). The rules carry over unchanged: `write` patches the pages and leaves an in-flight fetch alone, and `replace` takes whole pages and supersedes it. An empty pages array is how an infinite entry says "nothing here", so a `replace` with `[]` leaves the fetch alone, as `replace(undefined)` does on a regular query. `peek` returns `undefined` for a missing entry or no loaded page. Both writes go through `InfiniteEntry.setData(..., { track: false })` (`infinite.ts:834-878`), which keeps `pageParams` length-aligned with the pages by trimming or padding with the last param. Pinned by `packages/core/tests/infinite.test.ts`, "InfiniteQuery peek / write / replace — parity with Query".
 
 ## Consequences to preserve
 
@@ -111,6 +112,12 @@ question — "is this write the whole record", which nothing inside the entry ca
 A `replace` discards the fetch in flight on the claim that the fetch has nothing left to add. That claim fails for one kind of fetch: an invalidation's. A reconnect's `invalidateAll()` asks for everything the app missed, and a push folded in with `replace` mid-fetch threw that away while carrying only its own record. The BACKLOG item "A superseded catch-up refetch is discarded, not re-run" recorded it, and a code reviewer reproduced it: the missed data never arrived, and the entry stayed stale with no fetch coming.
 
 "Supersede without aborting" was not an answer, because the result would still be discarded. So since 1.0 `supersedeByWrite` re-fetches once when the entry is force-stale and still has subscribers. A `replace` during that catch-up leaves it in flight, because otherwise a burst of pushes would cancel and restart it forever. Its response is server truth and lands over those writes. `await invalidate()` settles with the catch-up. The mechanics are in `../entities/entry.md`; pinned by `catch-up-refetch.test.ts`.
+
+## Only a canonical write counts toward freshness
+
+The split carries a third consequence: which writes restart the stale clock. A canonical write is server truth, so `write` and `replace` set `serverUpdatedAt`, and staleness counts from it. A `setData` is a guess, so it moves `lastUpdatedAt` and leaves the clock alone (spec §5.9).
+
+Until the 1.0 third pass the subscribe-time check read `lastUpdatedAt`, so a guess reset freshness. Past `staleTime`, a new subscriber skipped its refetch while the guess was live, after its rollback and after its finalize, and the rolled-back case showed old server data as fresh. The `isStale` signal read `true` throughout, so the two disagreed. While a guess is live, a staleness-driven fetch now waits and runs once the last live guess settles; `../entities/entry.md` has the mechanics. Pinned by `optimistic-staleness.test.ts`.
 
 ## `LocalCache` has the canonical writes too
 

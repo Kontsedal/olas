@@ -179,7 +179,7 @@ export const board = defineController((ctx, props: { listId: string }) => {
 ```
 
 - **The runner settles the snapshot.** It finalizes the snapshot when `mutate` succeeds. It rolls the snapshot back when `mutate` fails, after `onError` has run, and `onError` receives the snapshot as its third argument. Both calls are idempotent, so an `onError` that rolls back by hand does no harm.
-- **Cancel even when nothing invalidates the query.** A stale entry refetches when a subscriber acquires it and after a `resume()`. That response lands over the patch unless you cancel first (§5.5). The [no-invalidator pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/no-invalidator-still-refetches.md) describes the downstream bug.
+- **Cancel even when nothing invalidates the query.** A stale entry refetches when a subscriber acquires it and after a `resume()`. A response already in flight when you patch lands over the patch unless you cancel first (§5.5). One that a live patch holds back runs after the snapshot settles (§5.9). The [no-invalidator pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/no-invalidator-still-refetches.md) describes the downstream bug.
 - **The entry reports the pending guess.** The query's `hasPendingMutations` signal is `true` while a `setData` snapshot on the entry is unsettled. Use it to render "saving…" on one record without a `pending` flag in the data.
 - **`onMutate` is synchronous.** It returns a `Snapshot` or nothing. If it throws, the run fails with that error, `onError` and `onSettled` fire, and `mutate` does not run.
 

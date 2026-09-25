@@ -39,6 +39,8 @@ An entry does not need an invalidator to fetch. It fetches whenever a **subscrip
 
 The fetch starts at the moment of that acquire, so a write racing it loses. Nothing in the program says `invalidate`.
 
+The acquire that bites is the one that came *before* the write. Since the 1.0 third pass, an acquire that comes while the optimistic write is live starts no fetch. The entry holds that fetch back and runs it once the write settles (spec §5.9, `../entities/entry.md`). That does not help the fetch already in flight when `setData` runs, and only `cancel()` stops that one.
+
 ## What it looks like when it bites
 
 An optimistic toggle that visibly reverts a moment later, only if the user had hidden and re-shown the feature at least `staleTime` ago. Transient, self-healing, unreproducible on the first try — which is exactly why it survived code review and was only caught by mutation-testing the `cancel()` line back in.

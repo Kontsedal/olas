@@ -32,7 +32,7 @@
     "path": "packages/react/dist/index.js",
     "import": "*",
     "ignore": ["react", "react-dom", "@kontsedal/olas-core", "@preact/signals-core"],
-    "limit": "4.05 KB"
+    "limit": "4.2 KB"
   },
   {
     "name": "vue",

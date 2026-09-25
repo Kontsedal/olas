@@ -2002,7 +2002,7 @@ export const Main = () => (
 The boundary **owns** the root:
 
 - Created during the first render, so the children read hydrated data in it, and **disposed on unmount**. A `<Suspense>` above that later hides the boundary's content does not dispose it. StrictMode's simulated remount builds a second root in development, as TanStack Query's provider does.
-- A render that never commits, because a child suspended or threw before the first commit, does not leak its root. A retry of the same element reuses it, and a root no commit claims is disposed about ten seconds after its work goes idle, or after a minute at most. Put a `<Suspense>` inside the boundary so it commits first.
+- A render that never commits, because a child suspended or threw before the first commit, does not leak its root. A retry reuses it, even when the parent re-created the element, as long as `def`, the `hydrate` object and the members of `deps` stayed the same; otherwise a development build warns. A root no commit claims is disposed about ten seconds after its work goes idle, or after a minute at most. A `<Suspense>` inside the boundary lets it commit first.
 - `options` is read **once** on mount. A new inline `options={{...}}` on a parent re-render is ignored on purpose, so it won't discard cache state every render.
 - The root is recreated only when the **`def` identity** changes (pass a different `def`, or re-key the component, to swap it on navigation). The replacement starts without `options.hydrate`, because the server payload described the first root's tree.
 - `streaming` (default `true`) installs the streaming-SSR intake, so the `<script>` tags that `createStreamingHydrator().flush()` writes route into this root. Pass `false` for a one-shot `options.hydrate`.

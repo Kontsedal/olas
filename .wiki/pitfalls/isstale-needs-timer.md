@@ -3,9 +3,9 @@ name: isstale-needs-timer
 description: Expiry cannot be a computed of Date.now() — its deps don't change as time passes. Use a Signal with a timer, and don't hand that timer a raw delay.
 type: pitfall
 covers:
-  - packages/core/src/query/entry.ts:159-286
-  - packages/core/src/query/entry.ts:592-600
-  - packages/core/src/query/entry.ts:964-969
+  - packages/core/src/query/entry.ts:159-277
+  - packages/core/src/query/entry.ts:584-604
+  - packages/core/src/query/entry.ts:983-1008
   - packages/core/src/expiry-timer.ts
   - packages/core/src/utils.ts
   - packages/core/src/controller/root.ts
@@ -91,17 +91,25 @@ Plus:
 
 Subscribers to `isStale` now see the flip happen at the right moment.
 
+The snippet above is the original fix. Today one helper, `settleStaleness(at)` (`entry.ts:584-604`), sets the signal from the age of `at` and arms the timer for the remainder. Every write of server truth calls it: a fetch, a hydrated row, a canonical write, and in `InfiniteEntry` a page fetch too.
+
 ## A separate helper for "check stale right now"
 
-When code needs the imperative answer ("is this stale RIGHT NOW for purposes of deciding whether to refetch on subscribe?"), use `entry.isStaleNow()` — it computes `Date.now() - lastUpdatedAt >= staleTime` on the spot. This is what `bindEntry` and `prefetch` use; the reactive `isStale` signal is for UI or consumer subscriptions.
+When code needs the imperative answer ("should this refetch RIGHT NOW, on subscribe?"), use `entry.isStaleNow()` (`entry.ts:983-1008`). It computes the age on the spot. This is what a subscribe, `resume()`, the focus and reconnect triggers and `prefetch` use; the reactive `isStale` signal is for UI or consumer subscriptions.
 
 ```ts
 isStaleNow(): boolean {
-  const last = this.lastUpdatedAt.peek()
-  if (last === undefined) return true
-  return Date.now() - last >= this.staleTime
+  if (this.forcedStale) return true         // an invalidation still standing
+  if (!this.isServerStale()) return false   // Date.now() - serverUpdatedAt < staleTime
+  if (this.snapshots.length > 0) {          // an optimistic write is live
+    this.fetchHeldBack = true               // run the fetch once it settles
+    return false
+  }
+  return true
 }
 ```
+
+**Both read the same clock, and it is not `lastUpdatedAt` (1.0, third pass).** The check used to compute `Date.now() - lastUpdatedAt`, and an optimistic `setData` moves `lastUpdatedAt`. A guess then made stale data look fresh to the check while the timer-driven signal still read `true`. Both now follow `serverUpdatedAt`, which only server truth sets. See `../entities/entry.md`, "Staleness runs on the server's clock".
 
 ## The second half of the trap: don't hand the timer a raw delay (0.9)
 

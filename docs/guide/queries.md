@@ -108,8 +108,8 @@ A subscription is an [`AsyncState<T>`](/reference/olas-core.asyncstate). Every f
 | `status` | `'idle'`, `'pending'`, `'success'` or `'error'`. It reads `'pending'` during a background refetch too, while `data` stays. |
 | `isLoading` | A first load is in flight and there is no data yet. Gate spinners on it. |
 | `isFetching` | Any fetch is in flight, background refetches included. Gate progress bars on it. |
-| `isStale` | `staleTime` has passed since the last success. |
-| `lastUpdatedAt` | Epoch ms of the last success. |
+| `isStale` | `staleTime` has passed since the last fetch, hydrated row, `write` or `replace`. An optimistic `setData` does not reset it. |
+| `lastUpdatedAt` | Epoch ms of the last change to `data`: a fetch, a hydrated row or a write, an optimistic `setData` included. |
 | `hasPendingMutations` | An optimistic write on this entry has not settled yet. See [Mutations](/guide/mutations#optimistic-updates). |
 | `isPaused` | A fetch is parked until the network returns. |
 | `isEnabled` | `false` while the subscription's `enabled` gate is closed. |
@@ -172,7 +172,7 @@ The projection runs per subscriber, and the cache keeps the raw value. It re-run
 
 | Setting | Default | Effect |
 |---|---|---|
-| `staleTime` | `0` | How long a success stays fresh. A subscriber that acquires a stale entry starts a fetch. |
+| `staleTime` | `0` | How long server data stays fresh, counted from the last fetch, hydrated row, `write` or `replace`. A subscriber that acquires a stale entry starts a fetch. |
 | `gcTime` | 5 min | How long an entry with no subscribers survives before the client drops it. |
 | `refetchInterval` | off | A background refetch while subscribed: a fixed gap in ms, or a thunk over the latest data. |
 | `refetchOnWindowFocus` | `false` | Refetch a subscribed, stale entry when the window regains focus. |
@@ -351,7 +351,8 @@ The client compares every successful fetch against the entry's previous data (`s
 
 - **The fetcher gets the arguments, and the hash gets the key.** A `key` that adds a prefix or drops an argument changes the hash only.
 - **`isStale` is timer-driven.** A signal derived from `Date.now()` would not update as time passes, so the entry flips `isStale` on a timer. The [isStale pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/isstale-needs-timer.md) has the details.
-- **A stale entry fetches without any invalidator.** A new subscriber, a second root and a `resume()` each start a fetch on a stale entry. An optimistic `setData` needs a `cancel` first even when nothing calls `invalidate` (§5.5).
+- **A stale entry fetches without any invalidator.** A new subscriber, a second root and a `resume()` each start a fetch on a stale entry. A fetch that started before an optimistic `setData` lands over it, so the write needs a `cancel` first even when nothing calls `invalidate` (§5.5).
+- **An optimistic write does not make data fresh.** Staleness counts from the last server write. A guess leaves the entry as stale as it was, and so does its rollback or finalize. While the guess is live, a subscriber, focus, reconnect or `prefetch` that finds the entry stale starts no fetch. The entry runs one fetch when the last live write settles, if something still holds it (§5.9).
 - **An unbound call with no root yet does nothing.** `invalidate`, `write` and `peek` have no client to act on, and `setData` returns an inert snapshot. `prefetch` throws and names `root.bindQuery`.
 - **`undefined` means "nothing here".** `peek`, `firstValue` and `replace` read `undefined` as no data, so `replace(..., undefined)` does not supersede a fetch in flight.
 

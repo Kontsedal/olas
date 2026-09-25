@@ -11,10 +11,10 @@ covers:
   - packages/core/src/controller/root.ts:179-231
   - packages/core/src/query/bind.ts:91-138
   - packages/core/src/query/entry.ts:129-140
-  - packages/core/src/query/entry.ts:606-676
+  - packages/core/src/query/entry.ts:610-667
   - packages/core/src/query/keys.ts
   - packages/react/src/streaming.ts
-  - packages/react/src/context.ts:140-408
+  - packages/react/src/context.ts:140-479
 edges:
   - { type: tested-by, target: ../../packages/core/tests/cache-identity.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
@@ -114,13 +114,13 @@ The row's key crosses JSON, and the client re-hashes it. `stableHash` (`keys.ts:
 
 Each row is consumed once. If a controller disposes and the key is bound again later, the row is gone and the second bind fetches as usual. This is intentional: hydration is a warm start, not a permanent cache.
 
-`Entry.applyHydration` (`packages/core/src/query/entry.ts:630-676`) supersedes any fetch in flight, rebases live optimistic snapshots onto the server data, and reports nothing itself. It skips a row stamped before the entry's `serverUpdatedAt` and returns `false`, so a late streamed row cannot revert newer server data; `InfiniteEntry.applyHydration` does the same. `serverUpdatedAt` moves on a fetch, a hydrated row or a canonical write, and not on an optimistic `setData`. The check read `lastUpdatedAt` before the second 1.0 pass, and an optimistic write then made a newer row look old. A row stamped at or after the entry's latest invalidation clears the stale mark, for both kinds (spec §5.7). A row stamped before it leaves the mark, and an entry that someone holds then fetches once more, since the row superseded the invalidation's fetch. See `../entities/entry.md`. The client reports exactly one `'hydrate'` write to plugins per row it applies, from either path, and none for a skipped row. Pinned by `plugin-host.test.ts`: "hydrating a bound entry reports ONE write, as hydrate" and "a buffered payload reports as hydrate when its entry binds".
+`Entry.applyHydration` (`packages/core/src/query/entry.ts:634-667`) supersedes any fetch in flight, rebases live optimistic snapshots onto the server data, and reports nothing itself. It skips a row stamped before the entry's `serverUpdatedAt` and returns `false`, so a late streamed row cannot revert newer server data; `InfiniteEntry.applyHydration` does the same. `serverUpdatedAt` moves on a fetch, a hydrated row or a canonical write, and not on an optimistic `setData`. The check read `lastUpdatedAt` before the second 1.0 pass, and an optimistic write then made a newer row look old. A row stamped at or after the entry's latest invalidation clears the stale mark, for both kinds (spec §5.7). A row stamped before it leaves the mark, and an entry that someone holds then fetches once more, since the row superseded the invalidation's fetch. See `../entities/entry.md`. The client reports exactly one `'hydrate'` write to plugins per row it applies, from either path, and none for a skipped row. Pinned by `plugin-host.test.ts`: "hydrating a bound entry reports ONE write, as hydrate" and "a buffered payload reports as hydrate when its entry binds".
 
 Each malformed entry is skipped with a development warning (`eachHydrationEntry`, `client.ts:1292-1304`), so one bad row cannot fail `createRoot`. Pinned by `regressions.test.ts`, "a malformed hydration payload".
 
 ## `staleTime` interaction
 
-A hydrated entry's `lastUpdatedAt` comes from the payload. On subscribe, `isStaleNow()` checks `Date.now() - lastUpdatedAt >= staleTime`. A fresh entry does not refetch. A stale one refetches in the background: the data stays, `isFetching` turns true, and `status` reads `'pending'` until the refetch lands (spec §5.3).
+A hydrated entry's `lastUpdatedAt` and `serverUpdatedAt` come from the payload. On subscribe, `isStaleNow()` checks `Date.now() - serverUpdatedAt >= staleTime`, a clock an optimistic write leaves alone (spec §5.9). A fresh entry does not refetch. A stale one refetches in the background: the data stays, `isFetching` turns true, and `status` reads `'pending'` until the refetch lands (spec §5.3).
 
 A stamp ahead of the client's clock is read as the client's now, through `notInFuture` (`entry.ts:136-140`), on the buffered path and the live one. A negative age used to read `isStale` with `staleTime: 0` yet never refetch, and keep data fresh past `staleTime`. Pinned by `ssr.test.ts`, "a server clock ahead of the client".
 
@@ -225,7 +225,7 @@ hydrateRoot(
 )
 ```
 
-`HydrationBoundary` creates and owns the client root, and once it commits it calls `installStreamingIntake(root)` on it (`packages/react/src/context.ts:400-405`). The intake (`streaming.ts:398-451`):
+`HydrationBoundary` creates and owns the client root, and once it commits it calls `installStreamingIntake(root)` on it (`packages/react/src/context.ts:471-476`). The intake (`streaming.ts:398-451`):
 
 1. upgrades the bootstrap queue into a fan-out intake that keeps every batch it has seen;
 2. applies the batches that arrived before mount to this root;
