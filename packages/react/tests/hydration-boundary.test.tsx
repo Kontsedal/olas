@@ -367,6 +367,78 @@ describe('HydrationBoundary renders that never commit', () => {
     expect(a.live()).toBe(1)
   })
 
+  test('(l) a Suspense above that hides the committed boundary keeps its root', async () => {
+    const { def, constructs, disposes } = trackedDef()
+    const gate = signal(false)
+    let release!: () => void
+    const pending = new Promise<void>((r) => {
+      release = r
+    })
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+    function Child() {
+      const api = useRoot<{ label: string }>()
+      // A store-driven update is synchronous, so React cannot keep the old
+      // content on screen: it hides it behind the fallback, and runs the
+      // layout-effect cleanups of the hidden tree.
+      if (useValue(gate) && !settled) throw pending
+      return <span data-testid="l">{api.label}</span>
+    }
+    const { findByTestId } = render(
+      <Suspense fallback={<span>loading</span>}>
+        <HydrationBoundary def={def} options={{ deps: {} }}>
+          <Child />
+        </HydrationBoundary>
+      </Suspense>,
+    )
+    await findByTestId('l')
+    await act(async () => {
+      gate.set(true)
+    })
+    expect(disposes).not.toHaveBeenCalled()
+    await act(async () => {
+      release()
+      await pending
+    })
+    expect((await findByTestId('l')).textContent).toBe('x')
+    expect(constructs).toHaveBeenCalledTimes(1)
+    expect(disposes).not.toHaveBeenCalled()
+  })
+
+  test('(m) an unclaimed root that never goes idle is disposed after a minute', async () => {
+    vi.useFakeTimers()
+    const greeting = defineQuery({
+      id: 'hydration-boundary/hung',
+      key: () => [],
+      fetcher: () => new Promise<string>(() => {}),
+    })
+    const disposes = vi.fn()
+    const def = defineController((ctx) => {
+      ctx.onDispose(disposes)
+      return { greeting: createQuery(ctx, greeting) }
+    })
+    function Show() {
+      const api = useRoot<{ greeting: Parameters<typeof useSuspenseQuery<string>>[0] }>()
+      return <span>{useSuspenseQuery(api.greeting).data}</span>
+    }
+    const { unmount } = render(
+      <Suspense fallback={<span>loading</span>}>
+        <HydrationBoundary def={def} options={{ deps: {}, queries: queryEngine() }}>
+          <Show />
+        </HydrationBoundary>
+      </Suspense>,
+    )
+    await act(async () => {})
+    act(() => unmount())
+    // The hung fetch keeps `waitForIdle` pending, so the idle countdown never starts.
+    await act(() => vi.advanceTimersByTimeAsync(GRACE_MS * 3))
+    expect(disposes).not.toHaveBeenCalled()
+    await act(() => vi.advanceTimersByTimeAsync(60_000))
+    expect(disposes).toHaveBeenCalledTimes(1)
+  })
+
   test('(k) one element rendered twice gets two independent roots', () => {
     let n = 0
     const disposes = vi.fn()

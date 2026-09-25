@@ -179,6 +179,8 @@ function warnServerBoundary(): void {
  * idle, before it is disposed as an orphan.
  */
 const ORPHAN_GRACE_MS = 10_000
+/** An unclaimed root that never goes idle, such as one with a hung fetch, is disposed after this anyway. */
+const ORPHAN_MAX_MS = 60_000
 
 /**
  * A root `HydrationBoundary` built during a render that has not committed.
@@ -194,9 +196,10 @@ type Uncommitted = {
   /** Bumped on each touch and on claim, so a stale sweep stands down. */
   generation: number
   timer: ReturnType<typeof setTimeout> | undefined
+  deadline: ReturnType<typeof setTimeout> | undefined
 }
 
-/** Client only: the roots no commit has claimed yet. */
+/** The roots no commit has claimed yet. */
 const uncommitted = new Map<Root<unknown>, Uncommitted>()
 /**
  * The same roots by props object. A retry of a thrown-away render reuses the
@@ -215,23 +218,22 @@ function acquireRoot<Api>(
   def: ControllerDef<void, Api>,
   options: RootOptions<AmbientDeps>,
 ): Root<Api> {
-  const server = typeof window === 'undefined'
+  // The server never commits, so nothing there could claim a root, and an
+  // element hoisted to module scope would hand one request's root to the
+  // next. Each server render builds its own; the dev warning names the fix.
+  if (typeof window === 'undefined') return createRoot(def, options) as Root<Api>
   const earlier = uncommittedByProps.get(key)
-  // On the client, a root is reusable only while unclaimed: once a boundary
-  // commits it, a second fiber rendering the same element builds its own.
-  if (earlier !== undefined && (server || uncommitted.get(earlier.root) === earlier)) {
-    if (!server) armSweep(earlier)
+  // A root is reusable only while unclaimed: once a boundary commits it, a
+  // second fiber rendering the same element builds its own.
+  if (earlier !== undefined && uncommitted.get(earlier.root) === earlier) {
+    armSweep(earlier)
     return earlier.root as Root<Api>
   }
   const root = createRoot(def, options) as Root<Api>
-  const entry: Uncommitted = { root, key, generation: 0, timer: undefined }
+  const entry: Uncommitted = { root, key, generation: 0, timer: undefined, deadline: undefined }
   uncommittedByProps.set(key, entry)
-  // The server never commits, so it keeps no strong reference and arms no
-  // timer: the WeakMap entry goes when the element does.
-  if (!server) {
-    uncommitted.set(root, entry)
-    armSweep(entry)
-  }
+  uncommitted.set(root, entry)
+  armSweep(entry)
   return root
 }
 
@@ -239,21 +241,26 @@ function acquireRoot<Api>(
  * (Re)start the countdown to disposing an unclaimed root. The grace period
  * starts once the root is idle: a child suspended on the root's own fetch is
  * retried when that fetch settles, and the retry must still find the root.
+ * `ORPHAN_MAX_MS` bounds the wait for idle.
  */
 function armSweep(entry: Uncommitted): void {
   const generation = ++entry.generation
   clearTimeout(entry.timer)
+  clearTimeout(entry.deadline)
   entry.timer = undefined
   const stillUnclaimed = (): boolean =>
     entry.generation === generation && uncommitted.get(entry.root) === entry
-  const countDown = (): void => {
+  const sweep = (): void => {
     if (!stillUnclaimed()) return
-    entry.timer = setTimeout(() => {
-      if (!stillUnclaimed()) return
-      uncommitted.delete(entry.root)
-      uncommittedByProps.delete(entry.key)
-      entry.root.dispose()
-    }, ORPHAN_GRACE_MS)
+    uncommitted.delete(entry.root)
+    uncommittedByProps.delete(entry.key)
+    clearTimeout(entry.timer)
+    clearTimeout(entry.deadline)
+    entry.root.dispose()
+  }
+  entry.deadline = setTimeout(sweep, ORPHAN_MAX_MS)
+  const countDown = (): void => {
+    if (stillUnclaimed()) entry.timer = setTimeout(sweep, ORPHAN_GRACE_MS)
   }
   entry.root.waitForIdle().then(countDown, countDown)
 }
@@ -271,6 +278,7 @@ function claimRoot(root: Root<unknown>): boolean {
   uncommittedByProps.delete(entry.key)
   entry.generation++
   clearTimeout(entry.timer)
+  clearTimeout(entry.deadline)
   return true
 }
 
@@ -315,7 +323,9 @@ type Owned<Api> = {
  * **A render that never commits.** A child that suspends or throws before the
  * boundary's first commit makes React discard the render, and the root with
  * it. A retry of the same element reuses that root. A root no commit claims is
- * disposed about ten seconds after its work goes idle. A retry of an element
+ * disposed about ten seconds after its work goes idle, or after a minute if it
+ * never goes idle. A `<Suspense>` above that later hides the boundary's content
+ * does not dispose the root: a hide is not an unmount. A retry of an element
  * the parent re-created cannot find the old root and builds a new one, which
  * refetches what the child suspended on. Put a `<Suspense>` boundary inside
  * `HydrationBoundary`, around the part that suspends, so the boundary commits
@@ -374,9 +384,11 @@ export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): Reac
     if (next !== root) forceRender()
   }, [root])
 
-  // Dispose on unmount. Kept apart from the claim, whose cleanup would also
-  // run when `root` changes.
-  useIsomorphicLayoutEffect(
+  // Dispose on unmount. A passive effect: React runs layout-effect cleanups
+  // when a Suspense boundary above hides content it already showed, and a
+  // hide is not an unmount. Kept apart from the claim, whose cleanup would
+  // also run when `root` changes.
+  useEffect(
     () => () => {
       ownedRef.current?.root.dispose()
       ownedRef.current = null

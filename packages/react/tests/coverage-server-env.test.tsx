@@ -18,6 +18,7 @@ import {
   STREAMING_GLOBAL,
   type SuspendableController,
   SuspendOnUnmount,
+  useRoot,
   useSuspendOnHidden,
 } from '../src'
 
@@ -78,6 +79,23 @@ describe('HydrationBoundary on the server', () => {
     // The next request renders the same way and does not repeat the warning.
     expect(renderToString(page())).toBe('<p>child</p>')
     expect(warn).toHaveBeenCalledTimes(1)
+  })
+  test('an element hoisted to module scope builds a root per server render', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let built = 0
+    const def = defineController(() => ({ request: ++built }))
+    function Show() {
+      return <p>{useRoot<{ request: number }>().request}</p>
+    }
+    // One element object, rendered for two requests: the second must not
+    // read the first request's root.
+    const page = (
+      <HydrationBoundary def={def} options={{ deps: {} }}>
+        <Show />
+      </HydrationBoundary>
+    )
+    expect(renderToString(page)).toBe('<p>1</p>')
+    expect(renderToString(page)).toBe('<p>2</p>')
   })
 })
 
