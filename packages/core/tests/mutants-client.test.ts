@@ -971,7 +971,7 @@ describe('devtools cache events', () => {
     root.hydrate({
       version: 1,
       entries: [
-        { id: 'mut-client/dt-hydrate-live', key: ['k'], data: 'server', lastUpdatedAt: 1 },
+        { id: 'mut-client/dt-hydrate-live', key: ['k'], data: 'server', lastUpdatedAt: Date.now() },
         {
           id: 'mut-client/dt-hydrate-later',
           key: ['k'],

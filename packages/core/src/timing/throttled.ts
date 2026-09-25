@@ -1,3 +1,4 @@
+import { scheduleExpiry } from '../expiry-timer'
 import { effect, signal } from '../signals'
 import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
@@ -25,6 +26,8 @@ function now(): number {
  * - `options.signal` ties the internal effect to a lifecycle.
  *
  * The returned handle exposes `cancel()` / `flush()` — see `TimingSignal`.
+ * `ms` goes through the shared expiry scheduler, as in `debounced`: with
+ * `Infinity`, only the leading edge and `flush()` emit.
  */
 export function throttled<T>(
   source: ReadSignal<T>,
@@ -40,7 +43,9 @@ export function throttled<T>(
   }
   const out = signal<T>(source.peek())
   let lastEmit = Number.NEGATIVE_INFINITY
-  let trailingTimer: ReturnType<typeof setTimeout> | null = null
+  // Through `scheduleExpiry`, as in `debounced` (§21.5): `null` means no
+  // trailing timer is pending, which for an `Infinity` window is for good.
+  let trailingTimer: (() => void) | null = null
   let trailingValue: T = source.peek()
   let hasPending = false
   let initial = true
@@ -67,10 +72,8 @@ export function throttled<T>(
       lastEmit = t
       hasPending = false
       // The leading emit consumed the value — drop any stale trailing-pending.
-      if (trailingTimer != null) {
-        clearTimeout(trailingTimer)
-        trailingTimer = null
-      }
+      trailingTimer?.()
+      trailingTimer = null
     } else if (trailing) {
       // Coalesce into the trailing edge. With `trailing: false` we schedule
       // nothing and never set `hasPending`, so a later `flush()` can't emit a
@@ -78,22 +81,18 @@ export function throttled<T>(
       trailingValue = value
       hasPending = true
       const delay = elapsed >= ms ? ms : ms - elapsed
-      if (trailingTimer == null) trailingTimer = setTimeout(fireTrailing, delay)
+      if (trailingTimer == null) trailingTimer = scheduleExpiry(delay, fireTrailing)
     }
   })
 
   const cancel = () => {
-    if (trailingTimer != null) {
-      clearTimeout(trailingTimer)
-      trailingTimer = null
-    }
+    trailingTimer?.()
+    trailingTimer = null
     hasPending = false
   }
   const flush = () => {
-    if (trailingTimer != null) {
-      clearTimeout(trailingTimer)
-      trailingTimer = null
-    }
+    trailingTimer?.()
+    trailingTimer = null
     if (hasPending) {
       out.set(trailingValue)
       lastEmit = now()

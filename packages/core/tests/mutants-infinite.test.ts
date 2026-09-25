@@ -390,7 +390,7 @@ describe('the first load and refetches', () => {
     expect(derivedFrom.some((p) => p.tag === 'dropped')).toBe(false)
   })
 
-  test('a refetch cancelled from inside getNextPageParam commits nothing and rejects as aborted', async () => {
+  test('a refetch cancelled from inside getNextPageParam commits nothing and resolves with the kept page', async () => {
     let tag: string | undefined
     let onDerive: (() => void) | undefined
     const inf = defineInfiniteQuery({
@@ -411,8 +411,9 @@ describe('the first load and refetches', () => {
     await root.waitForIdle()
     tag = 'refetched'
     onDerive = () => root.api.h.cancel()
+    // As `prefetch` does, a cancel over loaded pages settles with what it kept.
     const outcome = await root.api.h.prefetch().catch((e: unknown) => e)
-    expect(isAbortError(outcome)).toBe(true)
+    expect(outcome).toEqual(page(0))
     expect(root.api.feed.pages.value).toEqual([page(0)])
     expect(root.api.feed.isFetching.value).toBe(false)
   })

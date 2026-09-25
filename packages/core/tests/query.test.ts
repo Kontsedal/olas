@@ -54,16 +54,34 @@ describe('stableHash', () => {
     expect(() => stableHash([new Set(['a'])])).toThrow(/Map\/Set/)
   })
 
-  // R-Q3.8 (T3.8) — JSON.stringify applies toJSON BEFORE the replacer, so the
-  // Date / class-instance checks ran on already-serialized values (dead code).
-  // Reading the raw holder property (`this[key]`) fixes both the Date collision
-  // and the class-with-toJSON bypass.
-  test('a Date does not collide with its ISO string (R-Q3.8)', () => {
-    expect(stableHash([new Date(0)])).not.toBe(stableHash(['1970-01-01T00:00:00.000Z']))
+  // A key hashes as the value JSON round-trips it to, so a dehydrated or
+  // persisted entry is adopted after the trip (§5.4, §15). R-Q3.8 once kept a
+  // Date apart from its ISO string; the SSR round-trip needs them equal, since
+  // JSON carries a Date as that string.
+  test('a Date hashes as its ISO string, the form JSON carries it in', () => {
+    expect(stableHash([new Date(0)])).toBe(stableHash(['1970-01-01T00:00:00.000Z']))
     // Nested inside an object, too.
-    expect(stableHash([{ at: new Date(0) }])).not.toBe(
-      stableHash([{ at: '1970-01-01T00:00:00.000Z' }]),
-    )
+    expect(stableHash([{ at: new Date(0) }])).toBe(stableHash([{ at: '1970-01-01T00:00:00.000Z' }]))
+    // An invalid Date is `null` in JSON.
+    expect(stableHash([new Date(Number.NaN)])).toBe(stableHash([null]))
+  })
+
+  test('undefined members, undefined elements and non-finite numbers hash as JSON writes them', () => {
+    expect(stableHash([{ a: 1, b: undefined }])).toBe(stableHash([{ a: 1 }]))
+    expect(stableHash([1, undefined])).toBe(stableHash([1, null]))
+    // biome-ignore lint/suspicious/noSparseArray: a hole is what JSON writes as null
+    expect(stableHash([[1, , 3]])).toBe(stableHash([[1, null, 3]]))
+    expect(stableHash([Number.NaN])).toBe(stableHash([null]))
+    expect(stableHash([Number.POSITIVE_INFINITY])).toBe(stableHash([null]))
+    expect(stableHash([Number.NEGATIVE_INFINITY])).toBe(stableHash([null]))
+    // Every key JSON leaves alone still hashes by type.
+    expect(stableHash([null])).not.toBe(stableHash(['null']))
+    expect(stableHash([1])).not.toBe(stableHash(['1']))
+  })
+
+  test('a key hashes the same after a JSON round trip', () => {
+    const key = [{ at: new Date(5), missing: undefined, n: Number.NaN, list: [undefined, -0] }]
+    expect(stableHash(JSON.parse(JSON.stringify(key)))).toBe(stableHash(key))
   })
 
   test('different Dates hash differently; equal Dates hash equally (R-Q3.8)', () => {

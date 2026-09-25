@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { createQuery } from '../src'
+import { createCache, createQuery } from '../src'
 import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
 import { queryEngine } from '../src/query/engine'
+import { Entry } from '../src/query/entry'
+import { signal } from '../src/signals'
 
 const emptyDeps = {}
 
@@ -502,5 +504,147 @@ describe('reconnect dispatch', () => {
     window.dispatchEvent(new Event('online'))
     expect(fired).toEqual(['a'])
     offA()
+  })
+})
+
+describe('a fetch requested offline supersedes the one in flight', () => {
+  // In `online` mode a fetch requested while offline parks. It used to park
+  // without superseding the fetch already running, so that older response
+  // still landed. On a local cache whose key changed, the old key's data
+  // showed under the new key (§5.5, §5.6).
+  const setOnline = (v: boolean): void => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => v })
+  }
+  afterEach(() => setOnline(true))
+
+  test("the reviewer reproduction: a local cache does not show the old key's data", async () => {
+    const key = signal('A')
+    const pending: Array<(v: string) => void> = []
+    const def = defineController((ctx) => ({
+      c: createCache(
+        ctx,
+        () => {
+          const k = key.peek()
+          return new Promise<string>((r) => {
+            pending.push(() => r(`data for ${k}`))
+          })
+        },
+        { key: () => [key.value] },
+      ),
+    }))
+    const root = createRoot(def, { deps: emptyDeps })
+    expect(pending).toHaveLength(1)
+    setOnline(false)
+    key.set('B')
+    expect(root.api.c.isPaused.value).toBe(true)
+    // A's response arrives after the key moved on.
+    pending[0]?.('')
+    await vi.waitFor(() => expect(root.api.c.isFetching.value).toBe(false))
+    await Promise.resolve()
+    expect(root.api.c.data.value).toBeUndefined()
+    // Reconnect fetches B.
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(pending).toHaveLength(2))
+    pending[1]?.('')
+    await vi.waitFor(() => expect(root.api.c.data.value).toBe('data for B'))
+    root.dispose()
+  })
+
+  test('a shared query: an offline refetch drops the response already on its way', async () => {
+    let calls = 0
+    const pending: Array<(v: number) => void> = []
+    const q = defineQuery({
+      id: 'query-focus-online/offline-supersede',
+      key: () => [],
+      fetcher: () => {
+        calls += 1
+        return new Promise<number>((r) => pending.push(r))
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    expect(calls).toBe(1)
+    setOnline(false)
+    const refetched = root.api.x.refetch()
+    expect(root.api.x.isPaused.value).toBe(true)
+    expect(root.api.x.isFetching.value).toBe(false)
+    pending[0]?.(1)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.api.x.data.value).toBeUndefined()
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(calls).toBe(2))
+    pending[1]?.(2)
+    await expect(refetched).resolves.toBe(2)
+    root.dispose()
+  })
+})
+
+describe('offline and reconnect scheduling', () => {
+  const setOnline = (v: boolean): void => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => v })
+  }
+  afterEach(() => {
+    setOnline(true)
+    vi.restoreAllMocks()
+    vi.useRealTimers()
+  })
+
+  test('interval ticks while parked do not park again', async () => {
+    vi.useFakeTimers()
+    const parks = vi.spyOn(Entry.prototype as never, 'scheduleDeferredFetch')
+    let calls = 0
+    const q = defineQuery({
+      id: 'query-focus-online/offline-ticks',
+      key: () => [],
+      fetcher: async () => ++calls,
+      refetchInterval: 1000,
+    })
+    setOnline(false)
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    expect(parks).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(parks).toHaveBeenCalledTimes(1)
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(calls).toBe(1)
+    root.dispose()
+  })
+
+  test('refetchOnReconnect: one online event makes one request, not two', async () => {
+    let calls = 0
+    let aborts = 0
+    const q = defineQuery({
+      id: 'query-focus-online/reconnect-once',
+      key: () => [],
+      fetcher: ({ signal: s }) => {
+        calls += 1
+        s.addEventListener('abort', () => {
+          aborts += 1
+        })
+        return Promise.resolve(calls)
+      },
+      refetchOnReconnect: true,
+    })
+    setOnline(false)
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    expect(root.api.x.isPaused.value).toBe(true)
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
+    expect(calls).toBe(1)
+    expect(aborts).toBe(0)
+    root.dispose()
   })
 })

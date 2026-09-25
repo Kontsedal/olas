@@ -113,6 +113,35 @@ type AnyInfiniteQuery = InfiniteQuery<any, any, any> & {
  */
 const hydrationKey = (id: string, hash: string): string => JSON.stringify([id, hash])
 
+/**
+ * Whether two binds passed the same call arg, for the dev warning in
+ * `bindEntry`. Values compare by `stableHash`, so equal args built afresh on
+ * every re-key match. An arg that cannot be hashed, such as a function or a
+ * class instance, compares by identity.
+ */
+function sameCallArg(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true
+  try {
+    return stableHash([a]) === stableHash([b])
+  } catch {
+    return false
+  }
+}
+
+/**
+ * A key as a warning prints it: JSON, with a bigint written as `1n`. Plain
+ * `JSON.stringify` throws on a bigint, and the warning must not break the bind.
+ */
+function describeKey(key: readonly unknown[]): string {
+  try {
+    return JSON.stringify(key, (_name, value: unknown) =>
+      typeof value === 'bigint' ? `${value}n` : value,
+    )
+  } catch {
+    return String(key)
+  }
+}
+
 /** The shape a dehydrated entry must have before hydration reads it. */
 function isHydrationEntry(value: unknown): value is DehydratedEntry {
   if (value === null || typeof value !== 'object') return false
@@ -426,8 +455,10 @@ export class ClientEntry<T> {
       // the current request, so a fetch slower than the interval would
       // livelock — abort→restart every tick, never completing, hammering one
       // aborted request per interval (T3.2). Skip the tick; the running fetch
-      // will finish and the next tick re-arms once it's idle.
-      if (this.entry.isFetching.peek()) return
+      // will finish and the next tick re-arms once it's idle. A fetch parked
+      // for the network is skipped too: the reconnect drain runs it, and each
+      // tick would only park one more waiter.
+      if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
       this.entry.startFetch().catch(() => {
         /* error already captured on entry */
       })
@@ -483,7 +514,9 @@ export class ClientEntry<T> {
     if (!this.entry.isStaleNow()) return
     // Join an in-flight fetch instead of aborting + restarting it — a focus /
     // reconnect landing mid-fetch shouldn't cancel it (T3.9, cf. T3.2 interval).
-    if (this.entry.isFetching.peek()) return
+    // A parked fetch is left to the entry's reconnect drain: on one `online`
+    // event, both firing started a request and then aborted it for another.
+    if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
     this.entry.startFetch().catch(() => {
       /* error already captured on entry */
     })
@@ -607,7 +640,7 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
   /** See `ClientEntry.triggerEventRefetch`. A refetch re-fetches every loaded page. */
   private triggerEventRefetch(): void {
     if (!this.entry.isStaleNow()) return
-    if (this.entry.isFetching.peek()) return
+    if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
     this.entry.startFetch().catch(() => {
       /* error captured on entry */
     })
@@ -678,9 +711,9 @@ export class InfiniteClientEntry<TPage, TItem, PageParam> {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
       }
-      // Join an in-flight fetch instead of aborting it (T3.2) — see the
-      // regular `ClientEntry.startIntervalTimer` for the livelock rationale.
-      if (this.entry.isFetching.peek()) return
+      // Join an in-flight fetch instead of aborting it (T3.2), and leave a
+      // parked one to the reconnect drain — see `ClientEntry.armIntervalTick`.
+      if (this.entry.isFetching.peek() || this.entry.isPaused.peek()) return
       this.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
@@ -1127,8 +1160,10 @@ export class QueryClient implements PluginEngine {
     if (query !== undefined && query[BRAND] === 'query') {
       const entry = this.maps.get(query as AnyQuery)?.get(hash)
       if (entry !== undefined) {
-        entry.entry.applyHydration(data, lastUpdatedAt)
-        this.emitWrite(entry.query, entry.keyArgs, data, lastUpdatedAt, 'hydrate', origin)
+        // A row older than the entry's data is skipped, and reports nothing.
+        if (!entry.entry.applyHydration(data, lastUpdatedAt)) return
+        const at = entry.entry.lastUpdatedAt.peek()
+        this.emitWrite(entry.query, entry.keyArgs, data, at, 'hydrate', origin)
         if (__DEV__) this.emitDevtoolsSetData(entry.query, entry.keyArgs, data, 'hydrate')
         return
       }
@@ -1138,7 +1173,7 @@ export class QueryClient implements PluginEngine {
       const pages = infinitePayload(data, pageParams)
       if (entry !== undefined) {
         if (pages === undefined) return
-        entry.entry.applyHydration(pages.pages, pages.pageParams, lastUpdatedAt)
+        if (!entry.entry.applyHydration(pages.pages, pages.pageParams, lastUpdatedAt)) return
         this.emitInfiniteWrite(entry, 'hydrate', origin)
         return
       }
@@ -1406,7 +1441,7 @@ export class QueryClient implements PluginEngine {
           internal,
           keyArgs,
           hydrated.data,
-          hydrated.lastUpdatedAt,
+          created.entry.lastUpdatedAt.peek(),
           'hydrate',
           hydrated.origin,
         )
@@ -1424,13 +1459,13 @@ export class QueryClient implements PluginEngine {
       const len = Math.max(prev.length, args.length)
       let mismatch = prev.length !== args.length
       for (let i = 0; i < len && !mismatch; i++) {
-        if (!Object.is(prev[i], args[i])) mismatch = true
+        if (!sameCallArg(prev[i], args[i])) mismatch = true
       }
       if (mismatch) {
         // eslint-disable-next-line no-console
         console.warn(
           `[olas] bindEntry: hash collision with diverging callArgs for query` +
-            ` ${internal.__spec.id} key=${JSON.stringify(keyArgs)}.` +
+            ` ${internal.__spec.id} key=${describeKey(keyArgs)}.` +
             ` First bind's args are used by the fetcher; later args ignored.` +
             ` Either include the difference in spec.key(...) or pass identical args.`,
         )
@@ -1921,6 +1956,7 @@ export class QueryClient implements PluginEngine {
     }
   }
 
+  /** The infinite counterpart of `prefetch`, settling with the first page. */
   prefetchInfinite<Args extends unknown[], TPage>(
     query: InfiniteQuery<Args, TPage, any>,
     args: Args,
@@ -1934,11 +1970,21 @@ export class QueryClient implements PluginEngine {
       if (status === 'success' && !entry.entry.isStaleNow()) {
         return entry.entry.pages.peek()[0] as TPage
       }
-      return entry.entry.startFetch()
+      // Join a request in flight rather than restarting it, as `prefetch` does.
+      if (entry.entry.isFetching.peek()) return (await entry.entry.settled())[0] as TPage
+      return entry.entry.startFetch().catch(async (err: unknown) => {
+        if (isAbortError(err)) return (await entry.entry.settled())[0] as TPage
+        throw err
+      })
     })()
     return promise.finally(() => entry.release())
   }
 
+  /**
+   * Fetch into the cache without subscribing, holding the entry until the
+   * fetch settles. A fresh entry resolves with its data at once. A fetch
+   * already in flight is joined, not restarted.
+   */
   prefetch<Args extends unknown[], T>(query: Query<Args, T>, args: Args): Promise<T> {
     const entry = this.bindEntry(query, args)
     entry.acquire()
@@ -1948,15 +1994,16 @@ export class QueryClient implements PluginEngine {
         return entry.entry.data.peek() as T
       }
       if (entry.entry.isFetching.peek()) {
-        return entry.entry.firstValue()
+        return entry.entry.settled()
       }
       return entry.entry.startFetch().catch((err) => {
         // A supersede aborts this fetch without it being a failure — a newer refetch, a key
         // change, or a canonical `write` landing while this was outstanding (§6.4). Don't
-        // surface the spurious AbortError: resolve with whatever the entry settles on, which
-        // is what `subscription.refetch` has done since T3.9 (`use.ts`) and what an awaiting
-        // SSR loader needs. Real errors still reject.
-        if (isAbortError(err)) return entry.entry.firstValue()
+        // surface the spurious AbortError: settle with whatever the entry settles on, which
+        // is what `subscription.refetch` does too (`use.ts`) and what an awaiting SSR loader
+        // needs. Real errors still reject, and so does a `cancel()` that leaves the entry
+        // without data: nothing is coming to fill it, and waiting would hold the entry forever.
+        if (isAbortError(err)) return entry.entry.settled()
         throw err
       })
     })()

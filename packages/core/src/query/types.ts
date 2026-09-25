@@ -22,9 +22,14 @@ export type AsyncStatus = 'idle' | 'pending' | 'success' | 'error'
  * - `refetch()` — force a fetch; resolves with the result.
  * - `reset()` — clear `error` + `status` without re-fetching.
  * - `cancel()` — abort the in-flight fetch, if any.
- * - `firstValue()` — resolves on the first success after subscribe. Resolves
- *   at once when data is already there; rejects on the first failure. It is
- *   the promise to hand to Suspense or React 19's `use(...)`.
+ * - `firstValue()` — resolves at once when data is already there, even while
+ *   a background refetch runs or after one failed. Otherwise it resolves on
+ *   the first success and rejects on the first failure. It is the promise to
+ *   hand to Suspense or React 19's `use(...)`.
+ *
+ * `status` reads `'pending'` during every fetch, a background refetch
+ * included, while `data` stays. Test `data !== undefined` for "something to
+ * show".
  */
 export type AsyncState<T> = {
   data: ReadSignal<T | undefined>
@@ -127,6 +132,11 @@ export type DehydratedEntry = {
    * the same (spec §15).
    */
   id: string
+  /**
+   * The key args. The client hashes them as JSON round-trips them (§5.4), so a
+   * key holding an `undefined` member, a Date or `NaN` is adopted after the
+   * payload crosses JSON.
+   */
   key: readonly unknown[]
   /**
    * The cached value. For an infinite query, its pages.
@@ -151,10 +161,11 @@ export type DehydratedState = {
 }
 
 /**
- * Retry policy for queries and mutations. A number is a max-attempt count
- * (default backoff). A function decides per-attempt (return `true` to retry).
+ * Retry policy for queries and mutations. `false` never retries, as `0` does.
+ * A number is a max-attempt count (default backoff). A function decides
+ * per-attempt (return `true` to retry).
  */
-export type RetryPolicy = number | ((attempt: number, error: unknown) => boolean)
+export type RetryPolicy = false | number | ((attempt: number, error: unknown) => boolean)
 
 /** Backoff in ms. A number is constant delay; a function computes per-attempt. */
 export type RetryDelay = number | ((attempt: number) => number)
@@ -236,7 +247,9 @@ export interface QueryMeta {}
  *   automatically resume when reconnect fires (via `subscribeReconnect`).
  *   Inflight fetches are NOT aborted on offline; a `bindEntry` / `acquire`
  *   that lands while offline simply defers the initial fetch. The deferred
- *   entry reports `isPaused: true` until reconnect.
+ *   entry reports `isPaused: true` until reconnect. A fetch requested while
+ *   offline does supersede one already in flight, as a request made online
+ *   does, so the older response never lands.
  * - `always` — never gate on connectivity; fetcher runs whenever requested.
  *   Useful for queries against `localhost` / IPC / a service worker that
  *   doesn't surface through `navigator.onLine`.
@@ -458,7 +471,11 @@ export type Query<Args extends unknown[], T> = {
    */
   cancelAll(): void
   /**
-   * Eagerly fetch into the cache without subscribing.
+   * Eagerly fetch into the cache without subscribing. A fresh entry resolves
+   * with its data at once. A fetch already in flight is joined, and the
+   * promise settles with it, not with the stale data it replaces. Rejects with
+   * the fetch's error, or with an `AbortError` when a `cancel()` leaves the
+   * entry without data (spec §5.7).
    */
   prefetch(...args: Args): Promise<T>
 }

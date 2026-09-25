@@ -219,18 +219,32 @@ describe('hydration', () => {
     expect(entry.isStale.peek()).toBe(true)
   })
 
-  test('a payload at or past staleTime turns fresh data stale at once', async () => {
+  test('a payload at or past staleTime reads stale at once', () => {
+    vi.useFakeTimers()
+    // Each on a fresh entry: a payload older than the data an entry holds is
+    // skipped, so it can no longer turn fetched data stale.
+    const old = keep(new Entry<number>({ fetcher: () => async () => 1, staleTime: 1_000 }))
+    old.applyHydration(2, Date.now() - 5_000)
+    expect(old.isStale.peek()).toBe(true)
+
+    const edge = keep(new Entry<number>({ fetcher: () => async () => 1, staleTime: 1_000 }))
+    edge.applyHydration(3, Date.now() - 1_000) // exactly staleTime old
+    expect(edge.isStale.peek()).toBe(true)
+
+    const inside = keep(new Entry<number>({ fetcher: () => async () => 1, staleTime: 1_000 }))
+    inside.applyHydration(4, Date.now() - 999)
+    expect(inside.isStale.peek()).toBe(false)
+  })
+
+  test('a payload older than the fetched data is skipped', async () => {
     vi.useFakeTimers()
     const entry = keep(new Entry<number>({ fetcher: () => async () => 1, staleTime: 1_000 }))
     await entry.startFetch()
+    expect(entry.applyHydration(2, Date.now() - 5_000)).toBe(false)
+    expect(entry.data.peek()).toBe(1)
     expect(entry.isStale.peek()).toBe(false)
-    entry.applyHydration(2, Date.now() - 5_000)
-    expect(entry.isStale.peek()).toBe(true)
-
-    await entry.startFetch()
-    expect(entry.isStale.peek()).toBe(false)
-    entry.applyHydration(3, Date.now() - 1_000) // exactly staleTime old
-    expect(entry.isStale.peek()).toBe(true)
+    expect(entry.applyHydration(3, Date.now())).toBe(true)
+    expect(entry.data.peek()).toBe(3)
   })
 
   test('a fresh payload reads fresh for exactly its remaining lifetime', async () => {

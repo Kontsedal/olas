@@ -213,8 +213,8 @@ describe('installStreamingIntake (client side)', () => {
     ]
     if (intake === undefined) throw new Error('intake missing')
     intake.push([
-      { queryId: 'streaming-batch-q1', key: [], data: 'next-v1', lastUpdatedAt: 100 },
-      { queryId: 'streaming-batch-q2', key: [], data: 'next-v2', lastUpdatedAt: 100 },
+      { queryId: 'streaming-batch-q1', key: [], data: 'next-v1', lastUpdatedAt: Date.now() },
+      { queryId: 'streaming-batch-q2', key: [], data: 'next-v2', lastUpdatedAt: Date.now() },
     ])
     // Effect runs once for the batch, not twice.
     expect(runs - baseline).toBe(1)

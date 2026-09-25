@@ -231,7 +231,10 @@ describe('plugin query host', () => {
     const host = queriesOf(log)
     host.hydrate({
       version: 1,
-      entries: [{ id: 'cov-client/host-hydrate', key: ['k'], data: 'from-host', lastUpdatedAt: 1 }],
+      // Stamped now: a row older than the entry's fetched data is skipped.
+      entries: [
+        { id: 'cov-client/host-hydrate', key: ['k'], data: 'from-host', lastUpdatedAt: Date.now() },
+      ],
     })
     expect(root.api.s.data.value).toBe('from-host')
     expect(log.writes.at(-1)).toMatchObject({ source: 'hydrate', origin: 'rec', data: 'from-host' })
@@ -271,7 +274,8 @@ describe('plugin query host', () => {
 
     expect(host.hashKey([{ a: 1, b: 2 }])).toBe(host.hashKey([{ b: 2, a: 1 }]))
     expect(host.hashKey([null])).not.toBe(host.hashKey(['null']))
-    expect(host.hashKey([null])).not.toBe(host.hashKey([undefined]))
+    // An undefined element is `null` in JSON, so the two hash alike (§5.4).
+    expect(host.hashKey([null])).toBe(host.hashKey([undefined]))
     expect(host.hashKey([true])).not.toBe(host.hashKey(['true']))
     expect(host.hashKey([true])).not.toBe(host.hashKey([false]))
   })

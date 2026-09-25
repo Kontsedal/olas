@@ -25,7 +25,6 @@ describe('cache key identities', () => {
     [undefined, ['undefined']],
     [1n, ['bigint', '1']],
     [{}, []],
-    [{ x: undefined }, {}],
     [JSON.parse('{"__proto__":{"x":1}}'), {}],
   ])('distinguishes key pair %#', (a, b) => {
     expect(stableHash([a])).not.toBe(stableHash([b]))
@@ -38,6 +37,13 @@ describe('cache key identities', () => {
     expect(stableHash([-0])).toBe(stableHash([0]))
     expect(stableHash([{ offset: -0 }])).toBe(stableHash([{ offset: 0 }]))
     expect(stableHash([-0])).not.toBe(stableHash(['0']))
+  })
+
+  test('an undefined member hashes as absent, as JSON writes it (§5.4)', () => {
+    // A dehydrated key crosses JSON, which drops the member. Distinguishing the
+    // two would make the entry unadoptable on the client.
+    expect(stableHash([{ x: undefined }])).toBe(stableHash([{}]))
+    expect(stableHash([{ nested: [{ x: undefined }] }])).toBe(stableHash([{ nested: [{}] }]))
   })
 
   test('rejects cycles and supports shared acyclic references', () => {
@@ -174,5 +180,84 @@ describe('SSR identity across separately evaluated bundles', () => {
     expect(root.api.sub.data.peek()).toBeUndefined()
     await root.waitForIdle()
     expect(root.api.sub.data.peek()).toBe('own data')
+  })
+})
+
+describe('the diverging-callArgs warning (dev)', () => {
+  // A second bind of a key with other call args warns: the fetcher keeps the
+  // first bind's args. The warning printed the key with `JSON.stringify`,
+  // which throws on a bigint, so binding one crashed `createRoot` in dev. It
+  // also compared args by identity, and warned on equal args built afresh.
+  test('a bigint key does not crash the bind, and the warning names it', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const q = defineQuery({
+        id: 'cache-identity/bigint-warning',
+        key: (n: bigint, _opts: { tag: string }) => [n],
+        fetcher: async () => 'data',
+      })
+      const root = keep(
+        createRoot(
+          defineController((ctx) => ({
+            a: createQuery(ctx, q, () => [1n, { tag: 'a' }]),
+            b: createQuery(ctx, q, () => [1n, { tag: 'b' }]),
+          })),
+          { queries: queryEngine(), deps: {} },
+        ),
+      )
+      expect(root.api.b.status.value).toBe('pending')
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.[0])).toContain('1n')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('equal call args built afresh do not warn', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const q = defineQuery({
+        id: 'cache-identity/equal-args',
+        key: (filter: { page: number }) => [filter.page],
+        fetcher: async () => 'data',
+      })
+      keep(
+        createRoot(
+          defineController((ctx) => ({
+            a: createQuery(ctx, q, () => [{ page: 1 }]),
+            b: createQuery(ctx, q, () => [{ page: 1 }]),
+          })),
+          { queries: queryEngine(), deps: {} },
+        ),
+      )
+      expect(warn).not.toHaveBeenCalled()
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  test('call args holding a function still compare, by identity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const q = defineQuery({
+        id: 'cache-identity/function-args',
+        key: (id: string, _onProgress: () => void) => [id],
+        fetcher: async () => 'data',
+      })
+      const shared = (): void => {}
+      keep(
+        createRoot(
+          defineController((ctx) => ({
+            a: createQuery(ctx, q, () => ['x', shared]),
+            b: createQuery(ctx, q, () => ['x', shared]),
+            c: createQuery(ctx, q, () => ['x', () => {}]),
+          })),
+          { queries: queryEngine(), deps: {} },
+        ),
+      )
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+    }
   })
 })

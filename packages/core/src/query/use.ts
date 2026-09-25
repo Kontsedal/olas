@@ -77,6 +77,8 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
   private readonly enabled$: Signal<boolean> = signal(true)
   private readonly waiters = new AttachWaiters<ClientEntry<T>>()
   private readonly firstValues = new FirstValueCache<ClientEntry<T>, U>()
+  /** The unprojected value `data` shows, the retained snapshot included. */
+  private readonly rawData: ReadSignal<T | undefined>
 
   readonly data: ReadSignal<U | undefined>
   readonly error: ReadSignal<unknown | undefined>
@@ -101,17 +103,18 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     // applies BEFORE downstream subscribers run — combined with structural
     // sharing on the entry, an unchanged payload + a stable `select`
     // outputs the same `U` reference and doesn't churn the React tree.
+    // The retained snapshot fills in for two transitions, each under its own
+    // flag: a key change while attached (`keepPreviousData`) and a disable
+    // while detached (`keepDataWhileDisabled`). Either flag alone never reaches
+    // across to the other transition (§5.2).
     const rawData = computed(() => {
       const cur = this.current$.value
-      const curData = cur?.entry.data.value
+      if (cur === null) return this.keepDataWhileDisabled ? this.previousData$.value : undefined
+      const curData = cur.entry.data.value
       if (curData !== undefined) return curData
-      // Fall back to the retained snapshot for BOTH transitions that keep the
-      // last good value: a key change (`keepPreviousData`) and a disable
-      // (`keepDataWhileDisabled`). `previousData$` is only populated when one of
-      // them is on, so testing either flag here is sufficient.
-      if (keepPreviousData || this.keepDataWhileDisabled) return this.previousData$.value
-      return undefined
+      return keepPreviousData ? this.previousData$.value : undefined
     })
+    this.rawData = rawData
     this.data =
       select === undefined
         ? (rawData as unknown as ReadSignal<U | undefined>)
@@ -151,20 +154,24 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     this.enabled$.set(enabled)
   }
 
-  detach(retainData = false): void {
-    // On a disable with `keepDataWhileDisabled`, snapshot the current entry's
-    // data into `previousData$` before unbinding, so `rawData` keeps reporting
-    // it. Not done on dispose (`retainData` defaults false) — the sub is gone.
-    if (retainData) {
-      const d = this.current$.peek()?.entry.data.peek()
-      if (d !== undefined) this.previousData$.set(d)
+  /**
+   * Unbind on a disable. The data on screen at that moment, a bridged
+   * `keepPreviousData` value included, becomes the retained snapshot:
+   * `keepDataWhileDisabled` shows it while disabled, and `keepPreviousData`
+   * bridges a re-enable on a new key with it. A no-op when already detached,
+   * so a second disable keeps the first snapshot.
+   */
+  disable(): void {
+    if (this.current$.peek() === null) return
+    if (this.keepPreviousData || this.keepDataWhileDisabled) {
+      this.previousData$.set(this.rawData.peek())
     }
     this.current$.set(null)
   }
 
   /** Dispose: detach and reject every `firstValue()` still waiting to attach. */
   close(): void {
-    this.detach()
+    this.current$.set(null)
     this.waiters.close()
   }
 
@@ -177,10 +184,13 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     return cur.entry.refetch().then(
       (v) => this.project(v),
       (err) => {
-        // A supersede (newer refetch / key change) aborts this fetch. Don't
-        // surface the spurious AbortError — resolve with the superseding
-        // fetch's eventual outcome instead (T3.9). Real errors still reject.
-        if (isAbortError(err)) return this.firstValue()
+        // A supersede (a newer refetch, a hydration, a `replace`) aborts this
+        // fetch. Don't surface the spurious AbortError — settle with the
+        // superseding fetch's eventual outcome instead (T3.9). Not
+        // `firstValue()`: it resolves at once with the data on hand, which is
+        // what the superseding fetch is replacing. Real errors still reject,
+        // and so does a `cancel()` that leaves no data.
+        if (isAbortError(err)) return cur.entry.settled().then((v) => this.project(v))
         throw err
       },
     )
@@ -275,9 +285,9 @@ export function createUse<Args extends unknown[], T, U = T>(
           currentEntry.release(subscriberPath)
           currentEntry = null
         }
-        // `keepDataWhileDisabled` snapshots the last data so `data` keeps
-        // reporting it while disabled; otherwise the subscription blanks (§5.2).
-        sub.detach(keepDataWhileDisabled)
+        // `keepDataWhileDisabled` keeps reporting the last data while disabled;
+        // otherwise the subscription blanks (§5.2).
+        sub.disable()
       })
       return
     }
@@ -335,7 +345,7 @@ export function createUse<Args extends unknown[], T, U = T>(
       // as the effect would have on the change (§5.2). The entry was released
       // at suspend.
       sub.setEnabled(false)
-      sub.detach(keepDataWhileDisabled)
+      sub.disable()
       return
     }
     sub.setEnabled(true)
@@ -345,9 +355,12 @@ export function createUse<Args extends unknown[], T, U = T>(
     currentEntry = entry
     sub.attach(entry)
     // On resume, refetch if stale (matches the spec §4.1 "stale-on-resume"
-    // requirement). Non-stale data stays as-is.
+    // requirement). Non-stale data stays as-is. A fetch already in flight is
+    // joined, as on the effect path: restarting it would abort a request the
+    // entry is about to receive.
     const status = entry.entry.status.peek()
-    if (status === 'idle' || entry.entry.isStaleNow() || status === 'error') {
+    const fetching = entry.entry.isFetching.peek()
+    if (!fetching && (status === 'idle' || entry.entry.isStaleNow() || status === 'error')) {
       entry.entry.startFetch().catch(() => {
         /* error captured on entry */
       })
@@ -375,6 +388,9 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     InfiniteClientEntry<TPage, TItem, unknown>,
     TPage[]
   >()
+  /** The pages retained in place of the entry's, while they are shown. */
+  private readonly retained: ReadSignal<TPage[] | undefined>
+  private readonly keepDataWhileDisabled: boolean
 
   readonly data: ReadSignal<TPage[] | undefined>
   readonly pages: ReadSignal<TPage[]>
@@ -399,17 +415,18 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     keepDataWhileDisabled = false,
     itemsOf?: (page: TPage) => TItem[],
   ) {
-    // Retained pages cover both transitions that keep the last good value: a
-    // key change (`keepPreviousData`) and a disable (`keepDataWhileDisabled`).
-    // `previousPages$` is only populated when one of them is on.
-    const retains = keepPreviousData || keepDataWhileDisabled
+    // Retained pages fill in for two transitions, each under its own flag: a
+    // key change while attached (`keepPreviousData`) and a disable while
+    // detached (`keepDataWhileDisabled`). As in `SubscriptionImpl`.
     const retained = computed<TPage[] | undefined>(() => {
-      const ps = this.current$.value?.entry.pages.value
-      if (ps && ps.length > 0) return undefined
-      if (!retains) return undefined
+      const cur = this.current$.value
+      if (cur !== null && cur.entry.pages.value.length > 0) return undefined
+      if (!(cur === null ? keepDataWhileDisabled : keepPreviousData)) return undefined
       const prev = this.previousPages$.value
       return prev && prev.length > 0 ? prev : undefined
     })
+    this.retained = retained
+    this.keepDataWhileDisabled = keepDataWhileDisabled
     this.pages = computed(() => retained.value ?? this.current$.value?.entry.pages.value ?? [])
     this.data = computed(() => {
       const kept = retained.value
@@ -466,16 +483,17 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
 
   /** Dispose: detach and reject every `firstValue()` still waiting to attach. */
   close(): void {
-    this.detach()
+    this.current$.set(null)
     this.waiters.close()
   }
 
-  detach(retainData = false): void {
-    // A disable with `keepDataWhileDisabled` snapshots the current pages
-    // before unbinding. Not done on dispose, since the subscription is gone.
-    if (retainData) {
-      const ps = this.current$.peek()?.entry.pages.peek()
-      if (ps !== undefined && ps.length > 0) this.previousPages$.set(ps)
+  /** Unbind on a disable, retaining the pages on screen. See `SubscriptionImpl.disable`. */
+  disable(): void {
+    const cur = this.current$.peek()
+    if (cur === null) return
+    if (this.keepPreviousData || this.keepDataWhileDisabled) {
+      const ps = cur.entry.pages.peek()
+      this.previousPages$.set(this.retained.peek() ?? (ps.length > 0 ? ps : undefined))
     }
     this.current$.set(null)
   }
@@ -489,8 +507,9 @@ class InfiniteSubscriptionImpl<TPage, TItem> implements InfiniteQuerySubscriptio
     return cur.entry.refetch().then(
       () => cur.entry.pages.peek(),
       (err) => {
-        // Supersede → resolve with the superseder's outcome, not AbortError (T3.9).
-        if (isAbortError(err)) return this.firstValue()
+        // Supersede → settle with the superseder's outcome, not AbortError
+        // (T3.9). `settled()`, not `firstValue()`: see `SubscriptionImpl.refetch`.
+        if (isAbortError(err)) return cur.entry.settled()
         throw err
       },
     )
@@ -574,7 +593,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
           currentEntry.release(subscriberPath)
           currentEntry = null
         }
-        sub.detach(keepDataWhileDisabled)
+        sub.disable()
       })
       return
     }
@@ -623,7 +642,7 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
     if (!isEnabled) {
       // See the regular-query variant: settle into the disabled state now.
       sub.setEnabled(false)
-      sub.detach(keepDataWhileDisabled)
+      sub.disable()
       return
     }
     sub.setEnabled(true)
@@ -632,8 +651,10 @@ export function createInfiniteUse<Args extends unknown[], TPage, TItem>(
     entry.acquire(subscriberPath)
     currentEntry = entry
     sub.attach(entry)
+    // Join a fetch in flight, as the regular-query variant does.
     const status = entry.entry.status.peek()
-    if (status === 'idle' || entry.entry.isStaleNow() || status === 'error') {
+    const fetching = entry.entry.isFetching.peek()
+    if (!fetching && (status === 'idle' || entry.entry.isStaleNow() || status === 'error')) {
       entry.entry.startFetch().catch(() => {
         /* error captured on entry */
       })

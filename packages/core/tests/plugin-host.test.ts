@@ -269,6 +269,30 @@ describe('onWrite', () => {
     )
     await root.waitForIdle()
     log.writes.length = 0
+    // Stamped now: a row older than the entry's fetched data is skipped.
+    const at = Date.now()
+    root.hydrate({
+      version: 1,
+      entries: [
+        {
+          id: 'plugin-host/user',
+          key: ['user', '1'],
+          data: { id: '1', name: 'H' },
+          lastUpdatedAt: at,
+        },
+      ],
+    })
+    expect(log.writes).toHaveLength(1)
+    expect(log.writes[0]).toMatchObject({ source: 'hydrate', updatedAt: at, origin: undefined })
+  })
+
+  test('a row older than the bound entry data reports no write', async () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(userRootDef, { queries: queryEngine(), deps: {}, plugins: [plugin] }),
+    )
+    await root.waitForIdle()
+    log.writes.length = 0
     root.hydrate({
       version: 1,
       entries: [
@@ -280,8 +304,7 @@ describe('onWrite', () => {
         },
       ],
     })
-    expect(log.writes).toHaveLength(1)
-    expect(log.writes[0]).toMatchObject({ source: 'hydrate', updatedAt: 42, origin: undefined })
+    expect(log.writes).toHaveLength(0)
   })
 
   test('a buffered payload reports as hydrate when its entry binds', () => {

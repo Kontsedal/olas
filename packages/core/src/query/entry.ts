@@ -120,6 +120,18 @@ export function followRedirects<R>(
   })
 }
 
+/**
+ * A payload timestamp, with one from the future read as now. A server clock
+ * ahead of the client's would otherwise give the data a negative age: `isStale`
+ * and the subscribe-time check disagree, and freshness outlasts `staleTime`
+ * (§15). Shared by `Entry` and `InfiniteEntry`.
+ */
+export function notInFuture(at: number): number
+export function notInFuture(at: number | undefined): number | undefined
+export function notInFuture(at: number | undefined): number | undefined {
+  return at === undefined ? undefined : Math.min(at, Date.now())
+}
+
 /** The `ErrorContext` fields a failure contributes, when `err` is that failure. */
 export function failureContext(
   failure: FetchFailure | null,
@@ -174,8 +186,17 @@ export class Entry<T> {
   private lastFailure: FetchFailure | null = null
   private staleTimer: (() => void) | null = null
   /** Set by `markStale()` (invalidate without fetch); forces `isStaleNow()`
-   *  true until the next successful fetch clears it. Spec §5.7, T3.9. */
+   *  true until data requested after it lands. Spec §5.7, T3.9. */
   private forcedStale = false
+  /**
+   * Bumped by every `markStale()`. A fetch records it at start, and its success
+   * clears `forcedStale` only when no `markStale()` came after: a response
+   * requested before an invalidation does not reconcile it (§5.7).
+   */
+  private staleEpoch = 0
+  /** `Date.now()` of the latest `markStale()`. A hydrated row clears
+   *  `forcedStale` only when it is stamped at or after this. */
+  private staleSince = 0
   private snapshots: Array<SnapshotRecord<T>> = []
   private nextSnapshotId = 0
   private disposed = false
@@ -217,6 +238,7 @@ export class Entry<T> {
     this.events = options.events ?? {}
     this.onSuccessData = options.onSuccessData as ((data: unknown) => void) | undefined
     this.data = signal<T | undefined>(options.initialData)
+    const initialUpdatedAt = notInFuture(options.initialUpdatedAt)
     if (options.initialData !== undefined) {
       this.status = signal<AsyncStatus>('success')
       // For hydrated data, derive `isStale` from the *actual* age of the
@@ -227,7 +249,7 @@ export class Entry<T> {
       if (this.staleTime === 0) {
         this.isStale.set(true)
       } else {
-        const last = options.initialUpdatedAt
+        const last = initialUpdatedAt
         const alreadyStale = last === undefined || Date.now() - last >= this.staleTime
         this.isStale.set(alreadyStale)
         // Only schedule a timer if the data isn't already stale. If it is,
@@ -243,7 +265,7 @@ export class Entry<T> {
     } else {
       this.status = signal<AsyncStatus>('idle')
     }
-    this.lastUpdatedAt = signal<number | undefined>(options.initialUpdatedAt)
+    this.lastUpdatedAt = signal<number | undefined>(initialUpdatedAt)
   }
 
   startFetch(): Promise<T> {
@@ -251,11 +273,21 @@ export class Entry<T> {
       return Promise.reject(new Error('Entry disposed'))
     }
     // `online` mode: defer until reconnect when the browser thinks we're
-    // offline. Don't touch status — the UI keeps showing last-known data.
-    // `always` / `offlineFirst` proceed to the fetcher; `offlineFirst` will
-    // re-handle a network rejection inside the catch path.
+    // offline. The UI keeps showing last-known data. `always` / `offlineFirst`
+    // proceed to the fetcher; `offlineFirst` will re-handle a network
+    // rejection inside the catch path.
+    //
+    // A fetch already in flight is superseded first, as a request made online
+    // supersedes it (§5.5): its response was asked for before this request,
+    // and on a local cache whose key changed it carries the old key's data.
+    // One batch, so no observer sees the entry settled and unpaused between.
     if (this.networkMode === 'online' && this.isOffline()) {
-      return this.scheduleDeferredFetch()
+      let parked: Promise<T> | undefined
+      batch(() => {
+        this.cancel()
+        parked = this.scheduleDeferredFetch()
+      })
+      return parked as Promise<T>
     }
     const myId = ++this.currentFetchId
     this.currentAbort?.abort()
@@ -278,7 +310,7 @@ export class Entry<T> {
       // devtools handlers must not break the program.
     }
 
-    const request = this.runWithRetry(myId, abort)
+    const request = this.runWithRetry(myId, abort, this.staleEpoch)
     this.currentRequest = request
     return this.releaseOnSettle(request, abort)
   }
@@ -341,7 +373,7 @@ export class Entry<T> {
     )
   }
 
-  private async runWithRetry(myId: number, abort: AbortController): Promise<T> {
+  private async runWithRetry(myId: number, abort: AbortController, staleEpoch: number): Promise<T> {
     let attempt = 0
     while (true) {
       if (myId !== this.currentFetchId || this.disposed) {
@@ -353,7 +385,7 @@ export class Entry<T> {
         if (myId !== this.currentFetchId || this.disposed) {
           throw new DOMException('Superseded', 'AbortError')
         }
-        return this.applySuccess(result)
+        return this.applySuccess(result, staleEpoch)
       } catch (err) {
         // Superseded or disposed: a newer fetch (or `cancel` / `applyHydration`
         // / `dispose`) owns the entry's state now and has already set it, so
@@ -381,12 +413,16 @@ export class Entry<T> {
         // `fetch()` network failure surfaces as a `TypeError`; `AbortError` is
         // already handled above. Spec §5.5, T3.5.
         if (this.networkMode === 'offlineFirst' && this.isOffline() && err instanceof TypeError) {
+          // One batch with the park, so no observer sees the entry settled and
+          // unpaused in between (`settled()` would take that for a cancel).
+          let parked: Promise<T> | undefined
           batch(() => {
             this.isFetching.set(false)
             this.isLoading.set(false)
             this.status.set(this.data.peek() !== undefined ? 'success' : 'idle')
+            parked = this.scheduleDeferredFetch()
           })
-          return this.scheduleDeferredFetch()
+          return parked as Promise<T>
         }
         let delay: number | null
         try {
@@ -408,7 +444,7 @@ export class Entry<T> {
 
   private shouldRetry(attempt: number, err: unknown): boolean {
     const retry = this.retry
-    if (retry === 0) return false
+    if (retry === false || retry === 0) return false
     if (typeof retry === 'number') return attempt < retry
     return retry(attempt, err)
   }
@@ -422,7 +458,11 @@ export class Entry<T> {
     return typeof d === 'function' ? d(attempt) : d
   }
 
-  private applySuccess(result: T): T {
+  /**
+   * Write a fetch result. `staleEpoch` is the `staleEpoch` the fetch started
+   * under: a `markStale()` since then keeps the entry stale.
+   */
+  private applySuccess(result: T, staleEpoch: number): T {
     // Structurally share with the previous value so unchanged sub-trees
     // keep their `===` identity. Downstream `computed`s and React snapshots
     // stop thrashing on no-op refetches. Bails on Maps/Sets/class instances
@@ -440,6 +480,10 @@ export class Entry<T> {
     if (this.snapshots.length > 0) {
       for (const s of this.snapshots) s.prev = shared
     }
+    // Data requested after the latest `markStale()` reconciles it (T3.9). A
+    // response requested before it does not: the invalidation asked for data
+    // newer than this, so the next subscriber still refetches (§5.7).
+    if (staleEpoch === this.staleEpoch) this.forcedStale = false
     batch(() => {
       this.data.set(shared)
       this.error.set(undefined)
@@ -447,10 +491,9 @@ export class Entry<T> {
       this.isLoading.set(false)
       this.isFetching.set(false)
       this.lastUpdatedAt.set(Date.now())
-      this.isStale.set(this.staleTime === 0)
+      this.isStale.set(this.forcedStale || this.staleTime === 0)
     })
-    this.forcedStale = false // fresh data clears a prior markStale() (T3.9)
-    if (this.staleTime > 0) this.scheduleStaleness()
+    if (this.staleTime > 0 && !this.forcedStale) this.scheduleStaleness()
     try {
       this.events.onFetchSuccess?.(
         Date.now() - this.fetchStartTime,
@@ -513,9 +556,16 @@ export class Entry<T> {
    * server timestamp instead of `Date.now()`. Also bumps `currentFetchId`
    * so any in-flight fetch supersedes itself rather than overwriting the
    * fresher hydrated value.
+   *
+   * A row stamped before the entry's `lastUpdatedAt` is older than what the
+   * entry holds, so it is skipped and nothing changes. Returns whether the row
+   * was written; the client reports a `'hydrate'` write only then.
    */
-  applyHydration(data: T, lastUpdatedAt: number): void {
-    if (this.disposed) return
+  applyHydration(data: T, serverUpdatedAt: number): boolean {
+    if (this.disposed) return false
+    const lastUpdatedAt = notInFuture(serverUpdatedAt)
+    const current = this.lastUpdatedAt.peek()
+    if (current !== undefined && lastUpdatedAt < current) return false
     // Bump fetch id: an inflight fetcher will now lose the supersede check
     // in `runWithRetry` and won't write its (likely-stale) result.
     this.currentFetchId += 1
@@ -525,7 +575,11 @@ export class Entry<T> {
       this.staleTimer()
       this.staleTimer = null
     }
-    const alreadyStale = this.staleTime === 0 || Date.now() - lastUpdatedAt >= this.staleTime
+    // A row stamped at or after the latest `markStale()` reconciles it, as a
+    // fetch requested after it does (§5.7). An older row does not.
+    if (lastUpdatedAt >= this.staleSince) this.forcedStale = false
+    const alreadyStale =
+      this.forcedStale || this.staleTime === 0 || Date.now() - lastUpdatedAt >= this.staleTime
     // Hydrated data is server truth, like a fetch result: rebase live
     // optimistic snapshots onto it, so a later rollback restores it rather
     // than a baseline from before it arrived (spec §6.4, as in `applySuccess`).
@@ -549,12 +603,14 @@ export class Entry<T> {
     // Not `onSuccessData`: that reports a fetch, and this is not one. The
     // client reports the write itself, once, as `'hydrate'`. First-value
     // awaiters subscribe to `status`, which the batch above already woke.
+    return true
   }
 
   /**
    * Force this entry stale WITHOUT fetching. `isStaleNow()` returns true until
-   * the next successful fetch clears the flag, so the next subscriber refetches.
-   * Used by `client.invalidate` for subscriber-less entries — spec §5.7 says
+   * data requested after this call lands: a fetch started after it, or a
+   * hydrated row stamped after it. So the next subscriber refetches. Used by
+   * `client.invalidate` for subscriber-less entries — spec §5.7 says
    * invalidate refetches only IF subscribed (T3.9).
    */
   markStale(): void {
@@ -563,6 +619,8 @@ export class Entry<T> {
       this.staleTimer()
       this.staleTimer = null
     }
+    this.staleEpoch += 1
+    this.staleSince = Date.now()
     this.forcedStale = true
     this.isStale.set(true)
   }
@@ -750,12 +808,18 @@ export class Entry<T> {
     }
   }
 
+  /**
+   * Resolves at once when the entry holds data (`!== undefined`, §6.4), even
+   * while a background refetch runs or after one failed. Otherwise it waits for
+   * the first success, and rejects on the first failure or on dispose.
+   */
   firstValue(): Promise<T> {
     if (this.disposed) {
       return Promise.reject(new DOMException('Entry disposed', 'AbortError'))
     }
-    if (this.status.peek() === 'success') {
-      return Promise.resolve(this.data.peek() as T)
+    const data = this.data.peek()
+    if (data !== undefined || this.status.peek() === 'success') {
+      return Promise.resolve(data as T)
     }
     if (this.status.peek() === 'error') {
       return Promise.reject(this.error.peek())
@@ -777,6 +841,54 @@ export class Entry<T> {
         }
       })
     })
+  }
+
+  /**
+   * Settle with the fetch in flight, or with whatever takes it over: resolves
+   * with the data once the entry lands at `success`, rejects with the error at
+   * `error`. A newer fetch that supersedes it keeps the wait going, and so does
+   * a fetch parked for the network. A `cancel()` that leaves the entry without
+   * data rejects with an `AbortError`, since no fetch is coming to fill it.
+   * Called with nothing in flight, it settles with what the entry holds.
+   *
+   * Backs `prefetch`, which must neither resolve with the stale data a refetch
+   * is replacing (as `firstValue()` would) nor wait forever on a cancelled fetch.
+   */
+  settled(): Promise<T> {
+    if (this.disposed) {
+      return Promise.reject(new DOMException('Entry disposed', 'AbortError'))
+    }
+    const now = this.settledOutcome()
+    if (now !== null) return now
+    return new Promise<T>((resolve, reject) => {
+      const tracked = (err: unknown): void => {
+        stop()
+        reject(err)
+      }
+      const stop = (): void => {
+        offFetching()
+        offPaused()
+        this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+      }
+      const check = (): void => {
+        const outcome = this.settledOutcome()
+        if (outcome === null) return
+        stop()
+        outcome.then(resolve, reject)
+      }
+      this.pendingFirstValueRejects.push(tracked)
+      const offFetching = this.isFetching.subscribeChanges(check)
+      const offPaused = this.isPaused.subscribeChanges(check)
+    })
+  }
+
+  /** What `settled()` settles with now, or `null` while a fetch is in flight or parked. */
+  private settledOutcome(): Promise<T> | null {
+    if (this.isFetching.peek() || this.isPaused.peek()) return null
+    const status = this.status.peek()
+    if (status === 'success') return Promise.resolve(this.data.peek() as T)
+    if (status === 'error') return Promise.reject(this.error.peek())
+    return Promise.reject(new DOMException('Cancelled', 'AbortError'))
   }
 
   /**

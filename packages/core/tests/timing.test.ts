@@ -306,3 +306,52 @@ describe('throttled options matrix (T2.7)', () => {
     expect(() => throttled(a, 100, { leading: false, trailing: false })).toThrow(/must be true/)
   })
 })
+
+describe('durations go through scheduleExpiry (§21.5)', () => {
+  // A raw `setTimeout` coerces a non-finite delay to ~1ms and overflows one
+  // past the 32-bit limit into an immediate fire, so the longest windows
+  // behaved as the shortest.
+  test('debounced(source, Infinity) never fires on its own; flush still emits', () => {
+    const a = signal(0)
+    const d = debounced(a, Number.POSITIVE_INFINITY)
+    a.set(1)
+    vi.advanceTimersByTime(60_000)
+    expect(d.value).toBe(0)
+    d.flush()
+    expect(d.value).toBe(1)
+  })
+
+  test('debounced with a delay past the 32-bit limit does not fire early', () => {
+    const a = signal(0)
+    const d = debounced(a, 2 ** 31 + 1_000)
+    a.set(1)
+    vi.advanceTimersByTime(60_000)
+    expect(d.value).toBe(0)
+    vi.advanceTimersByTime(2 ** 31)
+    expect(d.value).toBe(1)
+  })
+
+  test('debounced leading edge with an Infinity cooldown suppresses later writes', () => {
+    const a = signal(0)
+    const d = debounced(a, Number.POSITIVE_INFINITY, { leading: true, trailing: false })
+    a.set(1)
+    expect(d.value).toBe(1)
+    vi.advanceTimersByTime(60_000)
+    // The cooldown never ends, so this write is not a new leading edge.
+    a.set(2)
+    expect(d.value).toBe(1)
+  })
+
+  test('throttled(source, Infinity) emits the leading edge and holds the trailing one', () => {
+    vi.setSystemTime(1000)
+    const a = signal(0)
+    const t = throttled(a, Number.POSITIVE_INFINITY)
+    a.set(1)
+    expect(t.value).toBe(1)
+    a.set(2)
+    vi.advanceTimersByTime(60_000)
+    expect(t.value).toBe(1)
+    t.flush()
+    expect(t.value).toBe(2)
+  })
+})

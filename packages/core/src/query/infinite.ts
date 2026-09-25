@@ -9,6 +9,7 @@ import {
   failureContext,
   followRedirects,
   nextFetchCauseId,
+  notInFuture,
 } from './entry'
 import { subscribeReconnect } from './focus-online'
 import { structuralShare } from './structural-share'
@@ -133,6 +134,10 @@ export type InfiniteQuery<Args extends unknown[], TPage, _TItem> = {
    * Cancel in-flight fetches for every keyed entry of this infinite query.
    */
   cancelAll(): void
+  /**
+   * Like `Query.prefetch`, resolving with the first page. A request already in
+   * flight is joined, not restarted.
+   */
   prefetch(...args: Args): Promise<TPage>
 }
 
@@ -203,6 +208,10 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private staleTimer: (() => void) | null = null
   /** Set by `markStale()` (invalidate without fetch). See `Entry.forcedStale`. */
   private forcedStale = false
+  /** Bumped by every `markStale()`. See `Entry.staleEpoch`. */
+  private staleEpoch = 0
+  /** `Date.now()` of the latest `markStale()`. See `Entry.staleSince`. */
+  private staleSince = 0
   private snapshots: Array<{
     id: number
     prev: TPage[]
@@ -286,11 +295,12 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.pageParams = signal<PageParam[]>([])
     const seeded = opts.initialPages
     if (seeded !== undefined && seeded.length > 0) {
+      const seededAt = notInFuture(opts.initialUpdatedAt)
       this.pages.set(seeded)
       this.pageParams.set(opts.initialPageParams ?? [])
       this.status.set('success')
-      this.lastUpdatedAt.set(opts.initialUpdatedAt)
-      this.settleStaleness(opts.initialUpdatedAt)
+      this.lastUpdatedAt.set(seededAt)
+      this.settleStaleness(seededAt)
     }
     this.data = computed(() => {
       const ps = this.pages.value
@@ -332,7 +342,13 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   startFetch(): Promise<TPage> {
     if (this.disposed) return Promise.reject(new Error('Entry disposed'))
     if (this.networkMode === 'online' && this.isOffline()) {
-      return this.scheduleDeferredFetch('initial') as Promise<TPage>
+      // Supersede the request in flight before parking, as `Entry.startFetch`.
+      let parked: Promise<unknown> | undefined
+      batch(() => {
+        this.cancel()
+        parked = this.scheduleDeferredFetch('initial')
+      })
+      return parked as Promise<TPage>
     }
     const myId = ++this.currentFetchId
     this.currentAbort?.abort()
@@ -353,7 +369,13 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     this.announceFetchStart()
 
     return this.releaseOnSettle(
-      this.runRefetchAll(myId, abort.signal, Math.max(1, previousPages.length), previousPages),
+      this.runRefetchAll(
+        myId,
+        abort.signal,
+        Math.max(1, previousPages.length),
+        previousPages,
+        this.staleEpoch,
+      ),
       abort,
     )
   }
@@ -380,13 +402,15 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
    * retry policy per page. Stops early if the dataset shrank (a page yields
    * `getNextPageParam === null`). Writes pages/params in ONE batch at the end;
    * a per-page failure keeps the existing pages and surfaces the error; a
-   * supersede/dispose throws `AbortError` without writing.
+   * supersede/dispose throws `AbortError` without writing. `staleEpoch` is the
+   * `staleEpoch` the refetch started under (see `Entry.applySuccess`).
    */
   private async runRefetchAll(
     myId: number,
     signal: AbortSignal,
     targetCount: number,
     previousPages: TPage[],
+    staleEpoch: number,
   ): Promise<TPage> {
     const newPages: TPage[] = []
     const newParams: PageParam[] = []
@@ -416,8 +440,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
             // entry until reconnect instead of surfacing the error. The drain
             // re-runs the whole refetch, so the pages fetched so far are dropped.
             if (this.parksOnOffline(err)) {
-              this.settleParked()
-              return (await this.scheduleDeferredFetch('initial')) as TPage
+              return (await this.park('initial')) as TPage
             }
             // Still the latest request, yet it aborted — so the fetcher aborted
             // itself (its own timeout signal, a rethrown stale abort). Every
@@ -460,6 +483,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         s.prev = finalPages
         s.prevParams = newParams
       }
+      // Pages requested after the latest `markStale()` reconcile it; an older
+      // refetch leaves it in force (§5.7, as `Entry.applySuccess`).
+      if (staleEpoch === this.staleEpoch) this.forcedStale = false
       batch(() => {
         this.pages.set(finalPages)
         this.pageParams.set(newParams)
@@ -468,10 +494,9 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         this.isLoading.set(false)
         this.isFetching.set(false)
         this.lastUpdatedAt.set(Date.now())
-        this.isStale.set(this.staleTime === 0)
+        this.isStale.set(this.forcedStale || this.staleTime === 0)
       })
-      this.forcedStale = false // fresh pages clear a prior markStale() (T3.9)
-      if (this.staleTime > 0) this.scheduleStaleness()
+      if (this.staleTime > 0 && !this.forcedStale) this.scheduleStaleness()
       this.announceFetchSuccess()
       this.onSuccessData?.(this.pages.peek())
       return finalPages[0] as TPage
@@ -638,8 +663,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
           // offlineFirst park — see `runRefetchAll`. The drain re-runs this
           // direction once the network is back.
           if (this.parksOnOffline(err)) {
-            this.settleParked()
-            await this.scheduleDeferredFetch(direction)
+            await this.park(direction)
             return this.pages.peek()[
               direction === 'prev' ? 0 : this.pages.peek().length - 1
             ] as TPage
@@ -706,6 +730,8 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.staleTimer()
       this.staleTimer = null
     }
+    this.staleEpoch += 1
+    this.staleSince = Date.now()
     this.forcedStale = true
     this.isStale.set(true)
   }
@@ -881,11 +907,12 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     }
   }
 
+  /** Resolves at once when a page is loaded. Mirrors `Entry.firstValue`. */
   firstValue(): Promise<TPage[]> {
     if (this.disposed) {
       return Promise.reject(new DOMException('Entry disposed', 'AbortError'))
     }
-    if (this.status.peek() === 'success') {
+    if (this.pages.peek().length > 0 || this.status.peek() === 'success') {
       return Promise.resolve(this.pages.peek())
     }
     if (this.status.peek() === 'error') {
@@ -910,6 +937,48 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     })
   }
 
+  /**
+   * Settle with the request in flight, or with whatever takes it over: the
+   * pages at `success`, the error at `error`, an `AbortError` when a `cancel()`
+   * leaves no pages. Mirrors `Entry.settled`; backs `prefetchInfinite`.
+   */
+  settled(): Promise<TPage[]> {
+    if (this.disposed) {
+      return Promise.reject(new DOMException('Entry disposed', 'AbortError'))
+    }
+    const now = this.settledOutcome()
+    if (now !== null) return now
+    return new Promise<TPage[]>((resolve, reject) => {
+      const tracked = (err: unknown): void => {
+        stop()
+        reject(err)
+      }
+      const stop = (): void => {
+        offFetching()
+        offPaused()
+        this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+      }
+      const check = (): void => {
+        const outcome = this.settledOutcome()
+        if (outcome === null) return
+        stop()
+        outcome.then(resolve, reject)
+      }
+      this.pendingFirstValueRejects.push(tracked)
+      const offFetching = this.isFetching.subscribeChanges(check)
+      const offPaused = this.isPaused.subscribeChanges(check)
+    })
+  }
+
+  /** What `settled()` settles with now, or `null` while a request is in flight or parked. */
+  private settledOutcome(): Promise<TPage[]> | null {
+    if (this.isFetching.peek() || this.isPaused.peek()) return null
+    const status = this.status.peek()
+    if (status === 'success') return Promise.resolve(this.pages.peek())
+    if (status === 'error') return Promise.reject(this.error.peek())
+    return Promise.reject(new DOMException('Cancelled', 'AbortError'))
+  }
+
   isStaleNow(): boolean {
     if (this.forcedStale) return true
     const last = this.lastUpdatedAt.peek()
@@ -925,6 +994,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private nextRetryDelay(attempt: number, err: unknown): number | null {
     if (isAbortError(err)) return null
     const retry = this.retry
+    if (retry === false) return null
     const again = typeof retry === 'number' ? attempt < retry : retry(attempt, err)
     return again ? this.computeRetryDelay(attempt) : null
   }
@@ -980,7 +1050,6 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
   private drainDeferred(): void {
     if (this.deferredResolvers.length === 0) return
     if (this.disposed) return
-    this.isPaused.set(false)
     const pending = this.deferredResolvers
     this.deferredResolvers = []
     if (this.reconnectUnsub !== null) {
@@ -1003,7 +1072,14 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
         else await this.fetchPreviousPage()
       }
     }
-    run().then(
+    // `run` starts its first request synchronously. Clearing `isPaused` in the
+    // same batch means no observer sees the entry idle and unpaused before it.
+    let running: Promise<void> | undefined
+    batch(() => {
+      this.isPaused.set(false)
+      running = run()
+    })
+    ;(running as Promise<void>).then(
       () => {
         for (const p of pending) p.resolve()
       },
@@ -1015,11 +1091,15 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
 
   /**
    * Write hydrated pages as the entry's canonical state: supersede any fetch
-   * in flight, honor the server's timestamp for staleness. Mirrors
-   * `Entry.applyHydration`; the client reports the write.
+   * in flight, honor the server's timestamp for staleness. A row older than
+   * the entry's pages is skipped. Mirrors `Entry.applyHydration`, and returns
+   * whether the row was written; the client reports the write.
    */
-  applyHydration(pages: TPage[], pageParams: PageParam[], lastUpdatedAt: number): void {
-    if (this.disposed) return
+  applyHydration(pages: TPage[], pageParams: PageParam[], serverUpdatedAt: number): boolean {
+    if (this.disposed) return false
+    const lastUpdatedAt = notInFuture(serverUpdatedAt)
+    const current = this.lastUpdatedAt.peek()
+    if (current !== undefined && lastUpdatedAt < current) return false
     this.currentFetchId += 1
     this.currentAbort?.abort()
     this.currentAbort = null
@@ -1038,8 +1118,11 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.isFetchingPreviousPage.set(false)
       this.lastUpdatedAt.set(lastUpdatedAt)
     })
-    this.forcedStale = false
+    // A row stamped at or after the latest `markStale()` reconciles it; an
+    // older one leaves it in force (§5.7, as `Entry.applyHydration`).
+    if (lastUpdatedAt >= this.staleSince) this.forcedStale = false
     this.settleStaleness(lastUpdatedAt)
+    return true
   }
 
   /** `isStale` from the payload's real age, and a timer for the remainder. */
@@ -1049,7 +1132,7 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
       this.staleTimer = null
     }
     const age = lastUpdatedAt === undefined ? Number.POSITIVE_INFINITY : Date.now() - lastUpdatedAt
-    const alreadyStale = this.staleTime === 0 || age >= this.staleTime
+    const alreadyStale = this.forcedStale || this.staleTime === 0 || age >= this.staleTime
     this.isStale.set(alreadyStale)
     if (!alreadyStale) {
       this.staleTimer = scheduleExpiry(this.staleTime - age, () => {
@@ -1064,15 +1147,22 @@ export class InfiniteEntry<TPage, TItem, PageParam> {
     return this.networkMode === 'offlineFirst' && this.isOffline() && err instanceof TypeError
   }
 
-  /** Settle the flags for a fetch that parks instead of failing. */
-  private settleParked(): void {
+  /**
+   * Park a fetch that hit a network error offline: settle the flags and wait
+   * for reconnect, in one batch, so no observer sees the entry settled and
+   * unpaused in between (`settled()` would take that for a cancel).
+   */
+  private park(direction: 'initial' | 'next' | 'prev'): Promise<unknown> {
+    let parked: Promise<unknown> | undefined
     batch(() => {
       this.isFetching.set(false)
       this.isLoading.set(false)
       this.isFetchingNextPage.set(false)
       this.isFetchingPreviousPage.set(false)
       this.status.set(this.pages.peek().length > 0 ? 'success' : 'idle')
+      parked = this.scheduleDeferredFetch(direction)
     })
+    return parked as Promise<unknown>
   }
 
   private announceFetchStart(): void {
