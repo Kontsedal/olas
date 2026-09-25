@@ -53,7 +53,7 @@ The transforms run in this order. The type-driven ones run first, while the code
 | `root-options` | `createRoot(app, options)` gains `queries: queryEngine()`. `defaultQueryOptions` and the `refetchOnWindowFocus` and `refetchOnReconnect` flags move into `queryEngine({ defaults })`. The router's `scopes: adapter.scopes` → `plugins: [adapter.plugin]`. The same applies to a `HydrationBoundary`'s `options`, and `createTestController` moves its defaults. |
 | `persist` | `localStorageAdapter` → `localStorageAdapter()`. `clearPersisted(storage, prefix, onError)` → `clearPersisted(storage, { prefix, onError })`. |
 | `renames` | `use` → `useValue`, `KeepAlive` → `SuspendOnUnmount`, `usePersisted` → `createPersisted`, `useRealtimePatcher` → `createRealtimePatcher`, `useLiveStream` → `createLiveStream`, `useRealtimeConnection` → `createConnectionState`, `formFromZod` → `createZodForm` with `initials` → `initial`, `selection` → `createSelection`, `DefaultQueryOptions` → `QueryDefaults`, `UseOptions` → `QuerySubscriptionOptions` and `FormFromZodOptions` → `ZodFormOptions`. |
-| `use-controller` | `useController(root)` → `root.api`, and the import goes. |
+| `use-controller` | `useController(root)` → `root.api`, and the import goes. A namespace member, `OlasReact.useController(root)`, is rewritten the same way, and the namespace import stays. |
 
 Three rewrites change what the code does, on purpose, to keep what it did in 0.8:
 

@@ -5,17 +5,9 @@ import {
   createRule,
   enclosingFunctions,
   isOlasSetData,
-  isOnMutateHook,
+  onMutateHooks,
+  valueParent,
 } from '../utils'
-
-/** The name a function is bound to: `function f() {}` or `const f = () => {}`. */
-function boundName(fn: AnyFunction): string | undefined {
-  if (fn.type === 'FunctionDeclaration') return fn.id?.name
-  const parent = fn.parent
-  if (parent?.type === 'VariableDeclarator' && parent.id.type === 'Identifier')
-    return parent.id.name
-  return undefined
-}
 
 /**
  * `setData` is the optimistic write: it returns a `Snapshot`, and the mutation
@@ -54,13 +46,16 @@ export const optimisticReturnsSnapshot = createRule({
   },
   defaultOptions: [],
   create(context) {
-    /** Names used as an `onMutate` value somewhere in the file. */
-    const hookNames = new Set<string>()
+    const hooks = onMutateHooks()
     const calls: Array<{ node: TSESTree.CallExpression; fns: AnyFunction[] }> = []
 
-    /** Is the call's result used: returned, assigned, passed or put in an array? */
+    /**
+     * Is the call's result used: returned, assigned, passed or put in an
+     * array? Judged past the wrappers that keep the value, so the
+     * `ChainExpression` around `todos?.setData(fn)` is not a use.
+     */
     const resultIsUsed = (node: TSESTree.CallExpression): boolean => {
-      const parent = node.parent
+      const parent = valueParent(node)
       if (parent == null) return false
       if (parent.type === 'ExpressionStatement') return false
       if (parent.type === 'UnaryExpression' && parent.operator === 'void') return false
@@ -68,25 +63,15 @@ export const optimisticReturnsSnapshot = createRule({
     }
 
     return {
-      Property(node) {
-        const isOnMutate =
-          (node.key.type === 'Identifier' && node.key.name === 'onMutate') ||
-          (node.key.type === 'Literal' && node.key.value === 'onMutate')
-        if (isOnMutate && node.value.type === 'Identifier') hookNames.add(node.value.name)
-      },
+      Property: hooks.Property,
       CallExpression(node) {
         if (calleeName(node) !== 'setData' || !isOlasSetData(node)) return
         calls.push({ node, fns: enclosingFunctions(node) })
       },
       'Program:exit'() {
         for (const { node, fns } of calls) {
-          const isHook = (fn: AnyFunction): boolean => {
-            if (isOnMutateHook(fn)) return true
-            const name = boundName(fn)
-            return name !== undefined && hookNames.has(name)
-          }
           if (resultIsUsed(node)) continue
-          context.report({ node, messageId: fns.some(isHook) ? 'dropped' : 'outside' })
+          context.report({ node, messageId: fns.some(hooks.isHook) ? 'dropped' : 'outside' })
         }
       },
     }

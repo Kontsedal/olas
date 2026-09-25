@@ -12,12 +12,12 @@ import {
   type App,
   customRef,
   getCurrentScope,
+  hasInjectionContext,
   type InjectionKey,
   inject,
   onScopeDispose,
   type Ref,
-  computed as vueComputed,
-  type WritableComputedRef,
+  ssrContextKey,
 } from 'vue'
 
 /**
@@ -112,7 +112,7 @@ export type UseValueOptions<T> = {
  * a `Form` or a `FieldArray`. Reading the ref reads the signal's current value,
  * so it never lags a write. The subscription ends with the component (the
  * current effect scope). Outside any scope nothing ends it, and a development
- * build warns.
+ * build warns. A server render reads the signal and does not subscribe.
  *
  * ```ts
  * const count = useValue(api.count)   // count.value in script, {{ count }} in a template
@@ -123,10 +123,14 @@ export function useValue<T>(signal: ReadSignal<T>, options?: UseValueOptions<T>)
   return valueRef(signal, options?.isEqual)
 }
 
-/** `useValue` without the scope check, for the hooks built on it. */
+/**
+ * `useValue` without the scope check, for the hooks built on it. The ref
+ * ignores an assignment unless the hook passes `write`.
+ */
 function valueRef<T>(
   signal: ReadSignal<T>,
   isEqual: (a: T, b: T) => boolean = Object.is,
+  write?: (next: T) => void,
 ): Readonly<Ref<T>> {
   let last = signal.peek()
   let trigger: () => void = () => {}
@@ -137,18 +141,23 @@ function valueRef<T>(
         track()
         return signal.peek()
       },
-      set() {
-        // Read-only: write through the signal (or `field.set`) instead.
+      set(next) {
+        write?.(next)
       },
     }
   })
-  onDispose(
-    signal.subscribeChanges((next) => {
-      if (isEqual(last, next)) return
-      last = next
-      trigger()
-    }),
-  )
+  // Vue never stops a component's effect scope on the server, so a
+  // subscription made during a server render would outlive the request. The
+  // server reads each ref once and needs no updates.
+  if (!(hasInjectionContext() && inject(ssrContextKey, null))) {
+    onDispose(
+      signal.subscribeChanges((next) => {
+        if (isEqual(last, next)) return
+        last = next
+        trigger()
+      }),
+    )
+  }
   return ref as Readonly<Ref<T>>
 }
 
@@ -239,9 +248,10 @@ export function useInfiniteQuery<TPage, TItem>(
 /** What `useField` returns. `value` is writable, for `v-model`. */
 export type UseFieldReturn<T> = {
   /**
-   * Reads the field; assigning writes through `field.set`.
+   * Reads the field, so it never lags a write; assigning writes through
+   * `field.set`.
    */
-  value: WritableComputedRef<T>
+  value: Ref<T>
 } & Refs<{
   errors: string[]
   isValid: boolean
@@ -270,9 +280,8 @@ export type UseFieldReturn<T> = {
  */
 export function useField<T>(field: Field<T>): UseFieldReturn<T> {
   __DEV__ && warnOutsideScope('useField')
-  const current = valueRef(field)
   return {
-    value: vueComputed({ get: () => current.value, set: (next: T) => field.set(next) }),
+    value: valueRef(field, undefined, (next) => field.set(next)) as Ref<T>,
     errors: valueRef(field.errors),
     isValid: valueRef(field.isValid),
     isDirty: valueRef(field.isDirty),

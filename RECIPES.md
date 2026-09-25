@@ -560,7 +560,7 @@ const userRoute = createRoute({
 })
 ```
 
-On the client there is usually one root, and the bare `userQuery.prefetch(...)` still works. The bound form is the one that survives SSR. A server handling concurrent requests has a root per request, and an unbound prefetch there rejects rather than guessing whose cache to warm.
+Use the bound form on the client too. The bare `userQuery.prefetch(...)` knows only the roots that have already touched the query. A loader usually runs before any controller has used it, and the unbound call then rejects with "prefetch called before any root has subscribed". A server handling concurrent requests has a root per request, and the bound form names which cache to warm.
 
 Combined with `useQuery(sub, { suspense: true })`, the suspense fallback is skipped because data is already in cache by the time React reads it.
 

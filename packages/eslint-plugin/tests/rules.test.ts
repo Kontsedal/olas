@@ -132,6 +132,19 @@ tester.run('optimistic-returns-snapshot', rules['optimistic-returns-snapshot'], 
       code: "createMutation(ctx, def, { 'onMutate': function (v) { todos.setData((p) => p) } })",
       errors: [{ messageId: 'dropped' }],
     },
+    {
+      // An optional call sits in a ChainExpression; its result is still discarded.
+      code: 'createMutation(ctx, def, { onMutate(v) { todos?.setData((p) => p) } })',
+      errors: [{ messageId: 'dropped' }],
+    },
+    {
+      code: 'realtime.on((e) => { todos?.setData((p) => fold(p, e)) })',
+      errors: [{ messageId: 'outside' }],
+    },
+    {
+      code: 'function f() { void todos?.setData((p) => p) }',
+      errors: [{ messageId: 'outside' }],
+    },
   ],
 })
 
@@ -148,8 +161,33 @@ tester.run('cancel-before-optimistic', rules['cancel-before-optimistic'], {
     // Not an Olas write: a plain call, and a method call with no updater.
     'createMutation(ctx, def, { onMutate: () => setData(() => 1) })',
     "createMutation(ctx, def, { onMutate: () => store.setData('k') })",
+    // `cancelAll` cancels every entry of the query (spec §5.7).
+    'createMutation(ctx, def, { onMutate(v) { q.cancelAll(); return q.setData(v.id, (p) => p) } })',
+    // A non-null assertion, a cast, `satisfies` or parentheses leave the receiver the same.
+    'createMutation(ctx, def, { onMutate(v) { todos.cancel(); return todos!.setData((p) => p) } })',
+    'createMutation(ctx, def, { onMutate(v) { todos.cancel(); return (todos as Q).setData((p) => p) } })',
+    'createMutation(ctx, def, { onMutate(v) { (todos satisfies Q).cancel(); return (todos).setData((p) => p) } })',
+    'createMutation(ctx, def, { onMutate(v) { this.q!.cancel(); return (this as any).q.setData((p) => p) } })',
+    'createMutation(ctx, def, { onMutate(v) { todos?.cancel(); return todos?.setData((p) => p) } })',
+    'createMutation(ctx, def, { onMutate(v) { lists[v.id]!.cancel(); return (lists[v.id] as Q).setData((p) => p) } })',
+    // A named hook that cancels first.
+    'function apply(v) { todos.cancel(); return todos.setData((p) => p) }\ncreateMutation(ctx, def, { onMutate: apply })',
   ],
   invalid: [
+    {
+      // The hook passed by name is checked like one written in place.
+      code: 'const apply = (v) => todos.setData((p) => p)\ncreateMutation(ctx, def, { onMutate: apply })',
+      errors: [{ messageId: 'missing', data: { target: 'todos' } }],
+    },
+    {
+      code: 'createMutation(ctx, def, { onMutate: apply })\nfunction apply(v) { return todos.setData((p) => p) }',
+      errors: [{ messageId: 'missing', data: { target: 'todos' } }],
+    },
+    {
+      // A cast does not turn a cancel on another query into this one's.
+      code: 'createMutation(ctx, def, { onMutate(v) { (other as Q).cancel(); return todos!.setData((p) => p) } })',
+      errors: [{ messageId: 'missing', data: { target: 'todos' } }],
+    },
     {
       code: 'createMutation(ctx, def, { onMutate: (v) => todos.setData((p) => p) })',
       errors: [{ messageId: 'missing', data: { target: 'todos' } }],

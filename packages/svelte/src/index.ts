@@ -17,7 +17,8 @@ import { getContext, hasContext, setContext } from 'svelte'
  * change, and returns the unsubscribe. So `$signal` works in a component for
  * a `signal`, a `computed`, a `Field`, a `Form` or a `FieldArray`, with no
  * wrapper. A `Field` also has `set`, which makes it a writable store:
- * `<input bind:value={$name} />` writes through `field.set`.
+ * `<input bind:value={$name} />` writes through `field.set`. A `fieldStore`
+ * binds by its member: `bind:value={$state.value}`.
  *
  * This package adds the root context and store-shaped views over the
  * multi-signal objects: queries, fields and mutations.
@@ -178,8 +179,8 @@ export type FieldStore<T> = ReadSignal<FieldState<T>> & {
 
 /**
  * One store over a field's value and validation state, for an input that also
- * shows its errors. For the value alone, bind the field directly:
- * `bind:value={$field}`.
+ * shows its errors: `bind:value={$state.value}`. For the value alone, bind the
+ * field directly: `bind:value={$field}`.
  */
 export function fieldStore<T>(field: Field<T>): FieldStore<T> {
   const state = computed(() => ({
@@ -190,14 +191,26 @@ export function fieldStore<T>(field: Field<T>): FieldStore<T> {
     touched: field.touched.value,
     isValidating: field.isValidating.value,
   }))
-  return withActions(state, {
-    set: (next: T) => field.set(next),
+  // Svelte writes `bind:value={$state.value}` by assigning `value` on the
+  // object `subscribe` handed it, then passing that object to `set`. So each
+  // subscriber gets a copy, which keeps the computed's own object intact, and
+  // `set` writes a copy's `value`.
+  const copies = new WeakSet<object>()
+  const store = withActions(state, {
+    set: (next: T) => field.set(copies.has(next as object) ? (next as FieldState<T>).value : next),
     setAsInitial: (next: T) => field.setAsInitial(next),
     reset: () => field.reset(),
     markTouched: () => field.markTouched(),
     revalidate: () => field.revalidate(),
     setErrors: (errs: ReadonlyArray<string>) => field.setErrors(errs),
   })
+  store.subscribe = (run) =>
+    state.subscribe((s) => {
+      const copy = { ...s }
+      copies.add(copy)
+      run(copy)
+    })
+  return store
 }
 
 /** A mutation's state as one store value. */

@@ -17,4 +17,14 @@ describe('use-controller', () => {
       ],
     })
   })
+
+  it('rewrites a namespace member call and reports its other uses', () => {
+    expectFixture(useController, 'use-controller-namespace', {
+      changed: 1,
+      todos: [
+        [9, USE_CONTROLLER],
+        [10, USE_CONTROLLER],
+      ],
+    })
+  })
 })

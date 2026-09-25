@@ -65,14 +65,15 @@ declare module '@kontsedal/olas-svelte' {
 | `getRoot<Api>()` | The nearest root's api. `Register` types it; a type argument is an unchecked cast. Throws when no ancestor called `setRoot`. |
 | `queryStore(subscription)` | One store over a query's state: `$q.data`, `$q.isLoading` and the rest update together. Carries `refetch`, `reset` and `cancel`. |
 | `infiniteQueryStore(subscription)` | The same, plus `pages`, `flat` and the paging flags, and `fetchNextPage` / `fetchPreviousPage`. |
-| `fieldStore(field)` | One store over a field's value and validation state, plus the field's actions. |
+| `fieldStore(field)` | One store over a field's value and validation state, plus the field's actions. Binds as `bind:value={$state.value}`. |
 | `mutationStore(mutation)` | One store over a mutation's state, plus `mutate`, `run` and `reset`. |
 
 `Register` and `RegisteredApi` type `getRoot()`. Each store's type is exported: `QueryStore`, `InfiniteQueryStore`, `FieldStore` and `MutationStore`, with the matching `…State`.
 
 ## How it behaves
 
-- **A field binds as it is.** `Field` has `set`, which makes it a writable store, so `<input bind:value={$name} />` writes through `field.set`. Reach for `fieldStore` when the input also shows errors.
+- **A field binds as it is.** `Field` has `set`, which makes it a writable store, so `<input bind:value={$name} />` writes through `field.set`. Reach for `fieldStore` when the input also shows errors, and bind its member: `<input bind:value={$state.value} />`. Svelte writes a member binding by assigning the member on the value it holds and passing that whole value to `set`. `fieldStore` hands each subscriber its own copy of the state, and its `set` writes a copy's `value` to the field.
+- **Bind a form's leaf fields, not members of `$form`.** A `Form` and a `FieldArray` have `set` too, so `bind:value={$form.name}` compiles. Svelte then assigns `name` on the form's current value object in place before it calls `form.set`. The form ends right, but a value object you held earlier, such as a last-saved snapshot, changes under you. Bind the field: `<input bind:value={$name} />` with `const name = form.fields.name`.
 - **One store per object, one update per change.** `queryStore` derives its value from every signal on the query, so a `batch` of writes reaches the component once.
 - **Svelte manages the subscriptions.** A `$store` read subscribes when the component mounts and unsubscribes when it is destroyed.
 - **`mutate` is fire-and-forget.** It returns nothing, and a failure lands on `$save.error` and `$save.status`. The adapter catches the rejection, so it does not become an unhandled one. `run` returns the promise, and the caller owns its rejection.

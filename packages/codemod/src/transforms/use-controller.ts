@@ -1,11 +1,30 @@
-import { Node } from 'ts-morph'
-import { runPerFile } from '../edits'
+import { Node, SyntaxKind } from 'ts-morph'
+import { type FileChanges, runPerFile } from '../edits'
 import type { Transform } from '../types'
 import { accessText, localReferences, removeImportSpecifier } from '../util/ast'
-import { importsOf, localNameOf } from '../util/olas'
+import { importsOf, localNameOf, namespacePackage } from '../util/olas'
 
 export const USE_CONTROLLER =
   '`useController` is removed: it returned the root it was given, and `root.api` says the same thing'
+
+/**
+ * Rewrite `ref(root)` to `root.api`, where `ref` names `useController`.
+ * Any other use is reported. Returns whether the rewrite happened.
+ */
+function rewrite(ref: Node, changes: FileChanges): boolean {
+  const call = ref.getParentOrThrow()
+  if (
+    !Node.isCallExpression(call) ||
+    call.getExpression() !== ref ||
+    call.getArguments().length !== 1
+  ) {
+    changes.todo(ref, USE_CONTROLLER)
+    return false
+  }
+  changes.replaceNode(call, accessText(call.getArguments()[0] as Node, 'api'))
+  changes.site()
+  return true
+}
 
 /**
  * `useController(root)` was an identity function over the root, typed as its
@@ -20,20 +39,28 @@ export const useController: Transform = {
       for (const spec of importsOf(file, 'react', 'useController')) {
         let removable = true
         for (const ref of localReferences(localNameOf(spec))) {
-          const call = ref.getParentOrThrow()
-          if (
-            !Node.isCallExpression(call) ||
-            call.getExpression() !== ref ||
-            call.getArguments().length !== 1
-          ) {
-            removable = false
-            changes.todo(ref, USE_CONTROLLER)
-            continue
-          }
-          changes.replaceNode(call, accessText(call.getArguments()[0] as Node, 'api'))
-          changes.site()
+          if (!rewrite(ref, changes)) removable = false
         }
         if (removable) changes.push(removeImportSpecifier(spec))
+      }
+      // `OlasReact.useController(root)` through `import * as OlasReact`. The
+      // namespace import stays: it may name other exports.
+      for (const access of file.getDescendantsOfKind(SyntaxKind.PropertyAccessExpression)) {
+        if (
+          access.getName() === 'useController' &&
+          namespacePackage(access.getExpression()) === 'react'
+        ) {
+          rewrite(access, changes)
+        }
+      }
+      // `typeof OlasReact.useController` in a type.
+      for (const name of file.getDescendantsOfKind(SyntaxKind.QualifiedName)) {
+        if (
+          name.getRight().getText() === 'useController' &&
+          namespacePackage(name.getLeft()) === 'react'
+        ) {
+          changes.todo(name, USE_CONTROLLER)
+        }
       }
     }),
 }

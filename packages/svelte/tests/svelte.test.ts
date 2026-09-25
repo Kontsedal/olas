@@ -22,6 +22,7 @@ import { afterEach, describe, expect, test } from 'vitest'
 import { fieldStore, mutationStore, queryStore } from '../src'
 import Counter from './fixtures/Counter.svelte'
 import Feed from './fixtures/Feed.svelte'
+import FieldMember from './fixtures/FieldMember.svelte'
 import Harness from './fixtures/Harness.svelte'
 import NameField from './fixtures/NameField.svelte'
 import Orphan from './fixtures/Orphan.svelte'
@@ -213,6 +214,54 @@ describe('fields', () => {
     root.api.name.set('Grace')
     flushSync()
     expect(input.value).toBe('Grace')
+  })
+
+  test('bind:value on a fieldStore member writes the value, not the state object', async () => {
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({ name: createField<string>(ctx, '') })),
+        { deps: {} },
+      ),
+    )
+    const el = render(root, FieldMember)
+    const input = el.querySelector('input') as HTMLInputElement
+    input.value = 'a'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    input.value = 'ab'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    expect(root.api.name.value).toBe('ab')
+    expect(el.querySelector('p')?.textContent).toBe('ab|true')
+    root.api.name.set('Grace')
+    flushSync()
+    expect(input.value).toBe('Grace')
+  })
+
+  test('a member write leaves the store’s own state object untouched', () => {
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({ name: createField<string>(ctx, 'a') })),
+        { deps: {} },
+      ),
+    )
+    const store = fieldStore(root.api.name)
+    const cached = store.peek()
+    let handed = cached
+    const stop = store.subscribe((s) => {
+      handed = s
+    })
+    // What Svelte does for `bind:value={$store.value}`: assign the member on
+    // the value it was handed, then pass that value back to `set`.
+    handed.value = 'b'
+    expect(cached.value).toBe('a')
+    store.set(handed as unknown as string)
+    expect(root.api.name.peek()).toBe('b')
+    expect(store.peek().value).toBe('b')
+    // A plain value still goes straight to the field.
+    store.set('c')
+    expect(root.api.name.peek()).toBe('c')
+    stop()
   })
 
   test('fieldStore actions reach the field', async () => {

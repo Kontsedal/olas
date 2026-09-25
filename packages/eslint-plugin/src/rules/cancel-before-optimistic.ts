@@ -1,11 +1,23 @@
 import type { TSESTree } from '@typescript-eslint/utils'
-import { calleeName, createRule, isOlasSetData, isOnMutateHook, receiverText } from '../utils'
+import {
+  calleeName,
+  createRule,
+  enclosingFunctions,
+  isOlasSetData,
+  onMutateHooks,
+  receiverText,
+} from '../utils'
+
+/** The calls that cancel a query's fetches: `cancel(...keyArgs)` and `cancelAll()` (spec §5.7). */
+const CANCELS = new Set(['cancel', 'cancelAll'])
 
 /**
  * The optimistic recipe (spec §6.4) is `cancel()` first, then `setData()`. A
  * fetch already in flight resolves after the patch and overwrites it. "Nothing
  * invalidates this query" is not a reason to skip the cancel: an entry also
  * fetches when a subscriber acquires it while stale, or after `resume()`.
+ *
+ * A function passed by name (`onMutate: applyOptimistic`) counts as the hook.
  */
 export const cancelBeforeOptimistic = createRule({
   name: 'cancel-before-optimistic',
@@ -25,13 +37,15 @@ export const cancelBeforeOptimistic = createRule({
   defaultOptions: [],
   create(context) {
     const source = context.sourceCode
+    const hooks = onMutateHooks()
+    const writes: TSESTree.CallExpression[] = []
 
-    /** Receivers `cancel`led in `fn`'s body before `position`. */
+    /** Receivers cancelled in `fn`'s body before `position`. */
     const cancelledBefore = (fn: TSESTree.Node, position: number): Set<string> => {
       const out = new Set<string>()
       const visit = (node: TSESTree.Node): void => {
         if (node.range[0] >= position) return
-        if (node.type === 'CallExpression' && calleeName(node) === 'cancel') {
+        if (node.type === 'CallExpression' && CANCELS.has(calleeName(node) ?? '')) {
           const target = receiverText(node, source)
           if (target !== undefined) out.add(target)
         }
@@ -52,22 +66,18 @@ export const cancelBeforeOptimistic = createRule({
     }
 
     return {
+      Property: hooks.Property,
       CallExpression(node) {
-        if (calleeName(node) !== 'setData' || !isOlasSetData(node)) return
-        const target = receiverText(node, source)
-        if (target === undefined) return
-        let cursor: TSESTree.Node | null | undefined = node.parent
-        while (cursor != null) {
-          if (
-            (cursor.type === 'ArrowFunctionExpression' || cursor.type === 'FunctionExpression') &&
-            isOnMutateHook(cursor)
-          ) {
-            if (!cancelledBefore(cursor.body, node.range[0]).has(target)) {
-              context.report({ node, messageId: 'missing', data: { target } })
-            }
-            return
+        if (calleeName(node) === 'setData' && isOlasSetData(node)) writes.push(node)
+      },
+      'Program:exit'() {
+        for (const node of writes) {
+          const target = receiverText(node, source)
+          const hook = enclosingFunctions(node).find(hooks.isHook)
+          if (target === undefined || hook === undefined) continue
+          if (!cancelledBefore(hook.body, node.range[0]).has(target)) {
+            context.report({ node, messageId: 'missing', data: { target } })
           }
-          cursor = cursor.parent
         }
       },
     }

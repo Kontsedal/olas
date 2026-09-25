@@ -9,7 +9,7 @@ Reports a `setData` snapshot that nothing will settle. In `recommended`, as an e
 - **Inside `onMutate`, a snapshot that is not returned.** The runner settles only what `onMutate` returns.
 - **Outside `onMutate`, a snapshot that is discarded.** A server push or a realtime fold written with `setData` leaves a live snapshot behind on every call. `write` is the canonical patch for that.
 
-A snapshot the code keeps, returns or settles at once passes: `setData(…).finalize()` is the only canonical patch a `LocalCache` has. A function passed to `onMutate` by name counts as the hook.
+A snapshot the code keeps, returns or settles at once passes: `setData(…).finalize()` is the only canonical patch a `LocalCache` has. A function passed to `onMutate` by name counts as the hook. An optional call, `todos?.setData(…)`, is judged the same way as a plain one.
 
 ## Examples
 

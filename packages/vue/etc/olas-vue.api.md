@@ -14,7 +14,6 @@ import { MutationRun } from '@kontsedal/olas-core';
 import { ReadSignal } from '@kontsedal/olas-core';
 import { Ref } from 'vue';
 import { Root } from '@kontsedal/olas-core';
-import { WritableComputedRef } from 'vue';
 
 // @public
 export type MutateFn<V> = (...args: Parameters<MutationRun<V, unknown>>) => void;
@@ -40,7 +39,7 @@ export function useField<T>(field: Field<T>): UseFieldReturn<T>;
 
 // @public
 export type UseFieldReturn<T> = {
-    value: WritableComputedRef<T>;
+    value: Ref<T>;
 } & Refs<{
     errors: string[];
     isValid: boolean;

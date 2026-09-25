@@ -6,7 +6,9 @@ Reports an optimistic `setData` in `onMutate` with no `cancel` on the same query
 
 The optimistic recipe (SPEC §6.4) is `cancel()` first, then `setData()`. A fetch already in flight resolves after the patch and overwrites it with the server's older state. "Nothing invalidates this query" is not a reason to skip the cancel. An entry also fetches when a subscriber acquires it while stale, and after `resume()`.
 
-The rule compares the receiver as written: `todos.cancel()` covers `todos.setData(…)`, and `this.q.cancel()` covers `this.q.setData(…)`.
+The rule compares the receiver as written: `todos.cancel()` covers `todos.setData(…)`, and `this.q.cancel()` covers `this.q.setData(…)`. `todos.cancelAll()` counts as a cancel too. The comparison ignores what leaves the value alone: a non-null `!`, an `as` or `satisfies` cast, parentheses and `?.`. So `todos.cancel()` covers `todos!.setData(…)` and `(todos as Todos).setData(…)`.
+
+A function passed to `onMutate` by name, as in `onMutate: applyOptimistic`, is checked like one written in place.
 
 ## Examples
 

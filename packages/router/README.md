@@ -236,7 +236,7 @@ const userRoute = createRoute({
 })
 ```
 
-Bind the query to the root you're prefetching *into*. On the client there is one root, and the bare `userQuery.prefetch(...)` still works. A server handling concurrent requests has a root per request, and an unbound prefetch there rejects rather than guessing whose cache to warm.
+Bind the query to the root you're prefetching *into*, on the client and on the server. The bare `userQuery.prefetch(...)` knows only the roots that have already touched the query. A loader usually runs before any controller has used it, and the unbound call then rejects with "prefetch called before any root has subscribed". A server handling concurrent requests has a root per request, and the bound form names which cache to warm.
 
 `prefetch(...)` populates the cache before the route's component mounts. By the time `createQuery(ctx, userQuery, ...)` fires, the entry is already there and `data.value` is non-null on first read.
 

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import {
+  batch,
   createField,
   createMutation,
   createQuery,
@@ -8,11 +9,13 @@ import {
   defineInfiniteQuery,
   defineQuery,
   queryEngine,
+  type ReadSignal,
   required,
   signal,
 } from '@kontsedal/olas-core'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { type App, createApp, defineComponent, h, nextTick } from 'vue'
+import { type App, createApp, createSSRApp, defineComponent, h, nextTick } from 'vue'
+import { renderToString } from 'vue/server-renderer'
 import {
   olasPlugin,
   useField,
@@ -188,6 +191,32 @@ describe('useField', () => {
     expect(el.textContent).toBe('Ada||true')
     root.dispose()
   })
+
+  test('value reads a write at once, inside a batch too', async () => {
+    const root = createRoot(
+      defineController((ctx) => ({ name: createField<string>(ctx, 'a') })),
+      { deps: {} },
+    )
+    let field: ReturnType<typeof useField<string>> | undefined
+    const el = mount(root, () => {
+      field = useField(root.api.name)
+      const f = field
+      return () => h('p', f.value.value)
+    })
+    let inside: string | undefined
+    batch(() => {
+      root.api.name.set('b')
+      inside = field?.value.value
+    })
+    expect(inside).toBe('b')
+    await nextTick()
+    expect(el.textContent).toBe('b')
+    if (field) field.value.value = 'c'
+    expect(root.api.name.peek()).toBe('c')
+    await nextTick()
+    expect(el.textContent).toBe('c')
+    root.dispose()
+  })
 })
 
 describe('useMutation', () => {
@@ -259,6 +288,49 @@ describe('useValue details', () => {
     expect(ref.value).toBe(2)
     expect(warn).toHaveBeenCalledTimes(1)
     warn.mockRestore()
+  })
+})
+
+describe('server render', () => {
+  test('a server render reads each signal and leaves no subscription behind', async () => {
+    const inner = signal(1)
+    let live = 0
+    const counted: ReadSignal<number> = {
+      get value() {
+        return inner.value
+      },
+      peek: () => inner.peek(),
+      subscribe: (handler) => inner.subscribe(handler),
+      subscribeChanges(handler) {
+        live += 1
+        const stop = inner.subscribeChanges(handler)
+        return () => {
+          live -= 1
+          stop()
+        }
+      },
+    }
+    const root = createRoot(
+      defineController((ctx) => ({ count: counted, name: createField<string>(ctx, 'Ada') })),
+      { deps: {} },
+    )
+    // Vue never stops a component's effect scope on the server, so a
+    // subscription made there would outlive the request.
+    for (let i = 0; i < 3; i++) {
+      const ssr = createSSRApp(
+        defineComponent({
+          setup() {
+            const count = useValue(root.api.count)
+            const { value, isDirty } = useField(root.api.name)
+            return () => h('p', `${count.value}|${value.value}|${isDirty.value}`)
+          },
+        }),
+      )
+      ssr.use(olasPlugin(root))
+      expect(await renderToString(ssr)).toBe('<p>1|Ada|false</p>')
+    }
+    expect(live).toBe(0)
+    root.dispose()
   })
 })
 
