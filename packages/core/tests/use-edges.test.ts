@@ -544,3 +544,153 @@ describe('firstValue resolves at once when data is present', () => {
     root.dispose()
   })
 })
+
+// `cancel()` on a first load left the entry idle with no fetch coming, and a
+// `firstValue()` waiting on it never settled: a Suspense boundary kept its
+// fallback up for good (§5.3). It now never waits on nothing.
+describe('firstValue never waits on nothing', () => {
+  /** A query whose first fetch hangs until released; later ones resolve `second`. */
+  function hangingFirst(id: string) {
+    let calls = 0
+    const q = defineQuery({
+      id,
+      key: () => ['k'],
+      fetcher: () => {
+        calls += 1
+        return calls === 1 ? new Promise<string>(() => {}) : Promise.resolve('second')
+      },
+    })
+    return { q, calls: () => calls }
+  }
+
+  test('a cancelled first load fetches again for the waiting firstValue', async () => {
+    const { q, calls } = hangingFirst('use-edges/first-value-cancel')
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const first = root.api.x.firstValue()
+    // The waiter is on the entry before the cancel, as a suspended render's is.
+    await flush()
+    root.api.x.cancel()
+    await expect(first).resolves.toBe('second')
+    expect(calls()).toBe(2)
+    root.dispose()
+  })
+
+  test('a firstValue asked for after the cancel fetches too', async () => {
+    const { q, calls } = hangingFirst('use-edges/first-value-after-cancel')
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    root.api.x.cancel()
+    expect(root.api.x.status.value).toBe('idle')
+    await expect(root.api.x.firstValue()).resolves.toBe('second')
+    expect(calls()).toBe(2)
+    root.dispose()
+  })
+
+  test('the setData that follows a cancel resolves it, and nothing refetches', async () => {
+    const { q, calls } = hangingFirst('use-edges/first-value-cancel-guess')
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const first = root.api.x.firstValue()
+    await flush()
+    const handle = root.bindQuery(q)
+    handle.cancel()
+    handle.setData(() => 'guess')
+    await expect(first).resolves.toBe('guess')
+    await flush()
+    expect(calls()).toBe(1)
+    root.dispose()
+  })
+
+  test('called on an idle entry after a reset of a failed first load, it fetches', async () => {
+    let calls = 0
+    const q = defineQuery({
+      id: 'use-edges/first-value-reset',
+      key: () => ['k'],
+      fetcher: async () => {
+        calls += 1
+        if (calls === 1) throw new Error('first load failed')
+        return 'loaded'
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await expect(root.api.x.firstValue()).rejects.toThrow('first load failed')
+    root.api.x.reset()
+    expect(root.api.x.status.value).toBe('idle')
+    await expect(root.api.x.firstValue()).resolves.toBe('loaded')
+    expect(calls).toBe(2)
+    root.dispose()
+  })
+
+  test('infinite: a cancelled first load fetches again for the waiting firstValue', async () => {
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'use-edges/first-value-cancel-infinite',
+      key: () => ['k'],
+      fetcher: ({ pageParam }: { pageParam: number }) => {
+        calls += 1
+        return calls === 1 ? new Promise<string>(() => {}) : Promise.resolve(`p${pageParam}`)
+      },
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const first = root.api.x.firstValue()
+    await flush()
+    root.api.x.cancel()
+    await expect(first).resolves.toEqual(['p0'])
+    expect(calls).toBe(2)
+    root.dispose()
+  })
+
+  test('infinite: a firstValue asked for after the cancel fetches too', async () => {
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'use-edges/first-value-after-cancel-infinite',
+      key: () => ['k'],
+      fetcher: ({ pageParam }: { pageParam: number }) => {
+        calls += 1
+        return calls === 1 ? new Promise<string>(() => {}) : Promise.resolve(`p${pageParam}`)
+      },
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    root.api.x.cancel()
+    await expect(root.api.x.firstValue()).resolves.toEqual(['p0'])
+    expect(calls).toBe(2)
+    root.dispose()
+  })
+
+  test('a local cache: a cancelled first load fetches again for the waiting firstValue', async () => {
+    let calls = 0
+    const root = createRoot(
+      defineController((ctx) => ({
+        x: createCache(ctx, () => {
+          calls += 1
+          return calls === 1 ? new Promise<string>(() => {}) : Promise.resolve('second')
+        }),
+      })),
+      { deps: emptyDeps },
+    )
+    const first = root.api.x.firstValue()
+    root.api.x.cancel()
+    await expect(first).resolves.toBe('second')
+    root.dispose()
+  })
+})

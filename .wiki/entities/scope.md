@@ -4,13 +4,14 @@ description: Typed cross-tree data slot — defineScope + ctx.provide/inject for
 type: entity
 covers:
   - packages/core/src/scope.ts
-  - packages/core/src/controller/instance.ts:167
-  - packages/core/src/controller/instance.ts:189-232
-  - packages/core/src/controller/instance.ts:653-666
-  - packages/core/src/controller/types.ts:302-303
+  - packages/core/src/controller/instance.ts:168
+  - packages/core/src/controller/instance.ts:190-238
+  - packages/core/src/controller/instance.ts:667-680
+  - packages/core/src/controller/types.ts:308-309
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/scope.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/controller-regressions.test.ts }
   - { type: uses, target: controller-instance.md }
   - { type: related, target: ../modules/controller.md }
 last_verified: 2026-09-25
@@ -60,9 +61,11 @@ See `scope.test.ts:115-138` for the canonical reactive-scope pattern (`{ theme: 
 
 ## Lifecycle
 
-The `scopes: Map<Scope<unknown>, unknown> | null` lives on `ControllerInstance` and is lazily created on the first `provide` call. `dispose()` nulls it out so a long-lived root reference doesn't keep big provided values alive after the providing controller is gone.
+The `scopes: Map<Scope<unknown>, unknown> | null` lives on `ControllerInstance` and is lazily created on the first `provide` call.
 
-Rollback (construction throws) also disposes the partial instance — the scopes map dies with it. Children injecting from a disposed ancestor never happens because the walk-up checks the live `parent` reference and disposed parents are already torn down.
+**`dispose()` keeps the map (1.0).** Spec §4 says reads do not throw after dispose, and `ctx.inject` and `root.inject` are reads. `dispose()` used to null `scopes` and `injectCache`, so an inject through a captured `ctx`, or `root.inject` on a disposed root, threw "no provider". Now a disposed instance returns a memoized value without the version check, so it answers with what the scope resolved to while live, and a scope it never read walks the kept maps. The cost is retention. A disposed instance holds its provided values for as long as something holds it: a captured `ctx`, or a `Root` handle kept after `root.dispose()`. A disposed child with nothing pointing at it is garbage with its map. Pinned by `controller-regressions.test.ts`, "inject after dispose".
+
+Rollback (construction throws) keeps the partial instance's map the same way. Nothing reaches that instance afterwards unless its factory leaked its `ctx`.
 
 ## When to use — see spec §10.3's litmus test
 

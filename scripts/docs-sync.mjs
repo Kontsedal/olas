@@ -105,16 +105,56 @@ execFileSync(
   ],
   { stdio: 'ignore' },
 )
-// api-documenter opens each page with an H2 ("createQuery() function"), so
-// VitePress finds no H1 for the tab title. Lift the heading into frontmatter.
 for (const file of readdirSync(reference)) {
+  if (file === 'index.md') continue
   const path = join(reference, file)
-  const text = readFileSync(path, 'utf8')
-  const heading = /^## (.+)$/m.exec(text)?.[1]
-  if (heading === undefined || text.startsWith('---')) continue
-  const title = heading.replace(/\\/g, '').replace(/"/g, '\\"')
-  writeFileSync(path, `---\ntitle: "${title}"\neditLink: false\n---\n\n${text}`)
+  let text = readFileSync(path, 'utf8')
+  if (text.startsWith('---')) continue
+  // api-documenter opens each page with an H2 ("createQuery() function").
+  // As the H1, it gives VitePress the tab title and the page the guide's
+  // title style.
+  text = text.replace(/^## (.+)$/m, '# $1')
+  // The first crumb is the reference index, not the site's home page.
+  text = text.replace('[Home](./index.md)', '[API reference](./index.md)')
+  // `api-page` lets the theme style the breadcrumb line above the title.
+  writeFileSync(path, `---\npageClass: api-page\neditLink: false\n---\n\n${text}`)
 }
+
+// api-documenter's own index lists the packages under an empty description
+// column, because no package has a TSDoc package comment. The index is
+// written from each package.json instead, so npm and the site describe a
+// package in the same words.
+const isCore = (pkg) => pkg.name.endsWith('/olas-core')
+const referencePackages = readdirSync(join(root, 'packages'))
+  .map((dir) => join(root, 'packages', dir, 'package.json'))
+  .filter((pkg) => existsSync(pkg))
+  .map((pkg) => JSON.parse(readFileSync(pkg, 'utf8')))
+  .filter((pkg) => !pkg.private && existsSync(join(reference, `${pkg.name.split('/')[1]}.md`)))
+  // Core first, then the rest by name.
+  .sort((a, b) => Number(isCore(b)) - Number(isCore(a)) || a.name.localeCompare(b.name))
+writeFileSync(
+  join(reference, 'index.md'),
+  [
+    '---',
+    'title: API reference',
+    'pageClass: api-index',
+    'editLink: false',
+    '---',
+    '',
+    '# API reference',
+    '',
+    'Every export of every package, with its exact signature. These pages are generated from the published type declarations, so they match what your editor shows.',
+    '',
+    `For examples, gotchas and the reasoning behind each API, read the guide or [API.md](${GITHUB}/blob/main/API.md).`,
+    '',
+    '| Package | What it is |',
+    '|---|---|',
+    ...referencePackages.map(
+      (pkg) => `| [${pkg.name}](./${pkg.name.split('/')[1]}) | ${pkg.description ?? ''} |`,
+    ),
+    '',
+  ].join('\n'),
+)
 console.log(
   `[docs-sync] ${synced.size} synced pages, ${readdirSync(reference).length} reference pages (${relative(root, reference)})`,
 )

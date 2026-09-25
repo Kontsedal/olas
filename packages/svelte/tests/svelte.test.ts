@@ -23,6 +23,7 @@ import { fieldStore, mutationStore, queryStore } from '../src'
 import Counter from './fixtures/Counter.svelte'
 import Feed from './fixtures/Feed.svelte'
 import FieldMember from './fixtures/FieldMember.svelte'
+import FieldObject from './fixtures/FieldObject.svelte'
 import Harness from './fixtures/Harness.svelte'
 import NameField from './fixtures/NameField.svelte'
 import Orphan from './fixtures/Orphan.svelte'
@@ -262,6 +263,88 @@ describe('fields', () => {
     store.set('c')
     expect(root.api.name.peek()).toBe('c')
     stop()
+  })
+
+  test('a nested bind on an object-valued fieldStore writes a new value and leaves initial alone', async () => {
+    // Svelte compiles `bind:value={$person.value.first}` to "assign `first` on
+    // the object the store handed out, then `set` the state". On the field's
+    // own object that changed `initial` in place, and `set(sameObject)` was
+    // no change to a signal: no validation, no `isDirty`, and `reset()` gave
+    // back the edited value.
+    type Person = { first: string; last: string }
+    const initial: Person = { first: '', last: 'Lovelace' }
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({
+          person: createField<Person>(ctx, initial, {
+            validators: [(p) => (p.first === '' ? 'First name required' : null)],
+          }),
+        })),
+        { deps: {} },
+      ),
+    )
+    const el = render(root, FieldObject)
+    const input = el.querySelector('input') as HTMLInputElement
+    input.value = 'Ada'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    expect(root.api.person.value).toEqual({ first: 'Ada', last: 'Lovelace' })
+    expect(initial).toEqual({ first: '', last: 'Lovelace' })
+    expect(el.querySelector('p')?.textContent).toBe('Ada|true|')
+    input.value = ''
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    expect(el.querySelector('p')?.textContent).toBe('|false|First name required')
+    input.value = 'Grace'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await settle()
+    root.api.person.reset()
+    flushSync()
+    expect(root.api.person.value).toEqual({ first: '', last: 'Lovelace' })
+    expect(input.value).toBe('')
+  })
+
+  test('fieldStore hands each subscriber a copy of an object value, never the field’s own', () => {
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({
+          tags: createField<string[]>(ctx, ['a']),
+          when: createField<Date>(ctx, new Date(0)),
+        })),
+        { deps: {} },
+      ),
+    )
+    const tags = fieldStore(root.api.tags)
+    let handed: string[] | undefined
+    const stop = tags.subscribe((s) => {
+      handed = s.value
+    })
+    expect(handed).toEqual(['a'])
+    expect(handed).not.toBe(root.api.tags.peek())
+    stop()
+    // A null-prototype object keeps its prototype in the copy.
+    const bare = Object.assign(Object.create(null) as Record<string, number>, { n: 1 })
+    const dict = fieldStore(
+      createRoot(
+        defineController((ctx) => ({ dict: createField<Record<string, number>>(ctx, bare) })),
+        { deps: {} },
+      ).api.dict,
+    )
+    let copied: Record<string, number> | undefined
+    dict.subscribe((s) => {
+      copied = s.value
+    })()
+    expect(copied).not.toBe(bare)
+    expect(copied?.n).toBe(1)
+    expect(Object.getPrototypeOf(copied)).toBeNull()
+    // Not a plain object or array: handed out as it is.
+    const when = fieldStore(root.api.when)
+    let date: Date | undefined
+    const stopWhen = when.subscribe((s) => {
+      date = s.value
+    })
+    expect(date).toBe(root.api.when.peek())
+    stopWhen()
   })
 
   test('fieldStore actions reach the field', async () => {

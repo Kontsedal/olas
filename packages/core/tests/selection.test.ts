@@ -235,6 +235,38 @@ describe('selection — handleClick', () => {
   })
 })
 
+describe('selection — a Map index', () => {
+  test("shift-click ranges by the Map's index values, not its insertion order", () => {
+    // Display order c, a, b, d; the Map was filled in id order.
+    const index: ReadonlyMap<string, number> = new Map([
+      ['a', 1],
+      ['b', 2],
+      ['c', 0],
+      ['d', 3],
+    ])
+    const s = createSelection<string>()
+    s.handleClick('c', {}, index)
+    s.handleClick('a', { shift: true }, index)
+    expect([...s.selectedIds.value].sort()).toEqual(['a', 'c'])
+    s.handleClick('d', { shift: true }, index)
+    expect([...s.selectedIds.value].sort()).toEqual(['a', 'b', 'c', 'd'])
+  })
+
+  test('deselect() of the anchor clears it, while a meta-click off the anchor keeps it', () => {
+    const order = ['a', 'b', 'c', 'd']
+    const s = createSelection<string>()
+    s.handleClick('b', {}, order)
+    s.handleClick('b', { meta: true }, order) // off, and still the anchor
+    s.handleClick('d', { shift: true }, order)
+    expect([...s.selectedIds.value].sort()).toEqual(['b', 'c', 'd'])
+
+    s.handleClick('b', {}, order)
+    s.deselect('b') // the anchor goes with it
+    s.handleClick('d', { shift: true }, order)
+    expect([...s.selectedIds.value]).toEqual(['d'])
+  })
+})
+
 describe('selection — read-only projection', () => {
   test('selectedIds does not expose set/update', () => {
     const s = createSelection<string>()

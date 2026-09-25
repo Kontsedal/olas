@@ -788,3 +788,154 @@ describe('a server clock ahead of the client', () => {
     root.dispose()
   })
 })
+
+// A row whose data is `undefined` ships when its entry reads `'success'`. A
+// buffered one gave the new entry `status: 'idle'` with the server's stamp, so
+// it read `'pending'` and refetched despite `staleTime`; a live one gave
+// `'success'` (§21.9). Both paths give `'success'` now.
+describe('a hydrated row with no data', () => {
+  test('the buffered path reads success and does not refetch, as the live path does', async () => {
+    let calls = 0
+    const q = defineQuery({
+      id: 'ssr/undefined-row',
+      key: () => ['k'],
+      fetcher: async (): Promise<string | undefined> => {
+        calls += 1
+        return undefined
+      },
+      staleTime: 60_000,
+    })
+    const def = defineController((ctx) => ({ x: createQuery(ctx, q) }))
+    const row = { id: 'ssr/undefined-row', key: ['k'], data: undefined, lastUpdatedAt: Date.now() }
+
+    const buffered = createRoot(def, {
+      queries: queryEngine(),
+      deps: emptyDeps,
+      hydrate: { version: 1, entries: [row] },
+    })
+    await flush()
+    expect(buffered.api.x.status.value).toBe('success')
+    expect(calls).toBe(0)
+    await expect(buffered.api.x.firstValue()).resolves.toBeUndefined()
+    buffered.dispose()
+
+    const live = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await live.waitForIdle()
+    live.hydrate({ version: 1, entries: [{ ...row, lastUpdatedAt: Date.now() }] })
+    expect(live.api.x.status.value).toBe('success')
+    live.dispose()
+  })
+})
+
+// `dehydrate()` stamped each row with `lastUpdatedAt`, which an optimistic write
+// moves and its rollback leaves. The stamp is when the server said the shipped
+// data, and a live guess never ships as server truth (§15, §5.9).
+describe('dehydrate ships server truth, stamped by the server clock', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  function postRoot(id: string) {
+    const q = defineQuery({
+      id,
+      key: () => ['post'],
+      fetcher: async () => 'server',
+      staleTime: 60_000,
+    })
+    vi.setSystemTime(1_000)
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    return { root, handle: root.bindQuery(q) }
+  }
+
+  test('the reviewer reproduction: a rolled-back guess does not move the stamp', async () => {
+    const { root, handle } = postRoot('ssr/stamp-rollback')
+    await vi.advanceTimersByTimeAsync(0)
+    vi.setSystemTime(5_000)
+    const snap = handle.setData(() => 'guess')
+    vi.setSystemTime(6_000)
+    snap.rollback()
+    expect(root.dehydrate().entries).toEqual([
+      { id: 'ssr/stamp-rollback', key: ['post'], data: 'server', lastUpdatedAt: 1_000 },
+    ])
+    root.dispose()
+  })
+
+  test('a live guess ships the data under it, stamped when the server said that', async () => {
+    const { root, handle } = postRoot('ssr/stamp-live-guess')
+    await vi.advanceTimersByTimeAsync(0)
+    vi.setSystemTime(5_000)
+    handle.setData(() => 'guess')
+    expect(root.api.x.data.value).toBe('guess')
+    expect(root.dehydrate().entries[0]).toMatchObject({ data: 'server', lastUpdatedAt: 1_000 })
+    root.dispose()
+  })
+
+  test('a canonical write under a live guess ships, stamped when it was written', async () => {
+    const { root, handle } = postRoot('ssr/stamp-live-write')
+    await vi.advanceTimersByTimeAsync(0)
+    vi.setSystemTime(5_000)
+    handle.setData((p) => `${p}+guess`)
+    vi.setSystemTime(7_000)
+    handle.write((p) => `${p}+pushed`)
+    expect(root.api.x.data.value).toBe('server+guess+pushed')
+    expect(root.dehydrate().entries[0]).toMatchObject({
+      data: 'server+pushed',
+      lastUpdatedAt: 7_000,
+    })
+    root.dispose()
+  })
+
+  test('a committed guess ships with the last server stamp, which a commit does not move', async () => {
+    const { root, handle } = postRoot('ssr/stamp-commit')
+    await vi.advanceTimersByTimeAsync(0)
+    vi.setSystemTime(5_000)
+    handle.setData(() => 'guess').finalize()
+    expect(root.dehydrate().entries[0]).toMatchObject({ data: 'guess', lastUpdatedAt: 1_000 })
+    root.dispose()
+  })
+
+  test('a rolled-back guess on an entry the server never answered ships nothing', () => {
+    const q = defineQuery({
+      id: 'ssr/stamp-never-answered',
+      key: () => ['post'],
+      fetcher: async () => 'server',
+    })
+    const root = createRoot(
+      defineController(() => ({})),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    root
+      .bindQuery(q)
+      .setData(() => 'guess')
+      .rollback()
+    expect(root.dehydrate().entries).toEqual([])
+    root.dispose()
+  })
+
+  test('an infinite entry ships the pages under a live guess', async () => {
+    const q = defineInfiniteQuery({
+      id: 'ssr/stamp-infinite',
+      key: () => ['feed'],
+      fetcher: async ({ pageParam }: { pageParam: number }) => `p${pageParam}`,
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      staleTime: 60_000,
+    })
+    vi.setSystemTime(1_000)
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.advanceTimersByTimeAsync(0)
+    vi.setSystemTime(5_000)
+    root.bindQuery(q).setData((pages) => [...(pages ?? []), 'guess'])
+    expect(root.dehydrate().entries[0]).toMatchObject({
+      data: ['p0'],
+      pageParams: [0],
+      lastUpdatedAt: 1_000,
+    })
+    root.dispose()
+  })
+})

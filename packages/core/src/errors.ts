@@ -55,6 +55,23 @@ const defaultHandler: ErrorHandler = (err, context) => {
   console.error('[olas]', context, err)
 }
 
+/**
+ * The errors a controller factory threw. `ControllerInstance.construct` marks
+ * each one before it rethrows. The throw can surface anywhere `ctx.child` or
+ * `ctx.attach` was called: inside an effect, a `ctx.on` handler or a mutation
+ * hook. `dispatchError` then reports it as `kind: 'construction'` rather than
+ * the kind of the callback that caught it (§12.1.6). A thrown primitive cannot
+ * be marked, so it keeps the caller's kind.
+ */
+const constructionErrors = new WeakSet<object>()
+
+/** Internal — record `err` as a controller-construction failure. */
+export function markConstructionError(err: unknown): void {
+  if ((typeof err === 'object' && err !== null) || typeof err === 'function') {
+    constructionErrors.add(err)
+  }
+}
+
 let eventCounter = 0
 function nextEventId(): string {
   // 24 bits of randomness + a monotonic counter. Cheap (no crypto) and
@@ -69,7 +86,9 @@ function nextEventId(): string {
 /**
  * Dispatch an error to a user-provided handler, falling back to console.error.
  * The handler itself is wrapped — if it throws, the throw is swallowed and
- * logged so an `onError` bug never tears down the tree.
+ * logged so an `onError` bug never tears down the tree. An error a controller
+ * factory threw is reported as `kind: 'construction'` whatever kind the call
+ * site passed (see `markConstructionError`).
  *
  * Internal — used by the controller container and query client.
  */
@@ -81,6 +100,12 @@ export function dispatchError(
   const fn = handler ?? defaultHandler
   const full: ErrorContext = {
     ...context,
+    kind:
+      (typeof err === 'object' || typeof err === 'function') &&
+      err !== null &&
+      constructionErrors.has(err)
+        ? 'construction'
+        : context.kind,
     eventId: nextEventId(),
     timestamp: Date.now(),
   }

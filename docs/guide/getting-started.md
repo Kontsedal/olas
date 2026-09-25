@@ -1,21 +1,36 @@
 # Getting started
 
-This page builds one small feature end to end: a todo list that loads from a server, filters itself and renders in React. By the end you have a controller, a root, a component that reads it, and a test that runs the controller in Node with no renderer.
+This page builds one small feature end to end: a todo list that loads from a server, filters itself and renders in React, Vue or Svelte. By the end you have a controller, a root, a component that reads it, and a test that runs the controller in Node with no renderer.
 
 The feature is ordinary on purpose. The point is where each piece lives: the fetching, the state and the rules sit in a controller, and the component only draws what the controller exposes.
 
 ## Install
 
-Olas is one core package, one peer dependency and one adapter for your view layer.
+Olas is one core package, one peer dependency and one adapter for your view layer. Pick your framework, and the code on this page follows the choice.
+
+<FrameworkPicker />
+
+<ForFramework name="react">
 
 ```bash
-# React
 pnpm add @kontsedal/olas-core @preact/signals-core @kontsedal/olas-react react react-dom
-# Vue
+```
+
+</ForFramework>
+<ForFramework name="vue">
+
+```bash
 pnpm add @kontsedal/olas-core @preact/signals-core @kontsedal/olas-vue vue
-# Svelte
+```
+
+</ForFramework>
+<ForFramework name="svelte">
+
+```bash
 pnpm add @kontsedal/olas-core @preact/signals-core @kontsedal/olas-svelte svelte
 ```
+
+</ForFramework>
 
 - `@kontsedal/olas-core` holds controllers, signals, queries, mutations and forms. It imports no UI framework.
 - `@preact/signals-core` is the reactive runtime underneath. Core declares it as a peer dependency and does not bundle it, so your app installs it once.
@@ -117,13 +132,6 @@ export const root = createRoot(todoList, {
   deps: { api: createHttpApi('/api') },
   queries: queryEngine(),
 })
-
-// Register the root's type once, so `useRoot()` needs no type argument.
-declare module '@kontsedal/olas-react' {
-  interface Register {
-    root: typeof root
-  }
-}
 ```
 
 `queries: queryEngine()` gives this root its own query cache. A root without an engine has no cache, and `createQuery` throws an error that names the fix. The engine is opt-in so that an app with no queries does not ship the cache code.
@@ -132,7 +140,11 @@ declare module '@kontsedal/olas-react' {
 
 ## 4. Render it
 
-### React
+The adapter hands the root to your components, and one `Register` declaration types it, so reading the root needs no type argument.
+
+<FrameworkPicker />
+
+<ForFramework name="react">
 
 `OlasProvider` puts the root in React context. The app creates the root and owns its lifetime, so React does not construct or dispose the controller.
 
@@ -151,6 +163,13 @@ createReactRoot(container).render(
     <App />
   </OlasProvider>,
 )
+
+// Register the root's type once, so `useRoot()` needs no type argument.
+declare module '@kontsedal/olas-react' {
+  interface Register {
+    root: typeof root
+  }
+}
 ```
 
 ```tsx file=App.tsx
@@ -183,13 +202,12 @@ export function App() {
 }
 ```
 
-- `useRoot()` returns `root.api`, typed through the `Register` augmentation in `root.ts`.
+- `useRoot()` returns `root.api`, typed through the `Register` augmentation in `main.tsx`.
 - `useValue(signal)` subscribes the component to one signal and returns its current value.
 - `useQuery(state)` returns every field of the query state as a plain value. The component re-renders only when a field it read changes, so this one ignores a background refetch that flips `isFetching`.
 
-The component holds no state of its own and makes no decision the controller could make. That is the whole contract between the two trees.
-
-### Vue
+</ForFramework>
+<ForFramework name="vue">
 
 The Vue adapter installs the root as a plugin and turns signals into read-only refs.
 
@@ -234,7 +252,8 @@ const remaining = useValue(api.remaining)
 
 The [Vue adapter page](/adapters/vue) covers `useField`, `useMutation` and how the refs behave.
 
-### Svelte
+</ForFramework>
+<ForFramework name="svelte">
 
 An Olas signal already satisfies Svelte's store contract, so `$visible` works on a `computed` with no wrapper. The adapter adds the root context and one store over each multi-signal object, such as a query.
 
@@ -249,6 +268,18 @@ An Olas signal already satisfies Svelte's store contract, so `$visible` works on
 </script>
 
 <TodoList />
+```
+
+```ts
+// register.ts
+import type { root } from './root'
+
+// Register the root's type once, so `getRoot()` needs no type argument.
+declare module '@kontsedal/olas-svelte' {
+  interface Register {
+    root: typeof root
+  }
+}
 ```
 
 ```svelte
@@ -273,7 +304,11 @@ An Olas signal already satisfies Svelte's store contract, so `$visible` works on
 {/if}
 ```
 
-`getRoot()` is typed the same way as React's `useRoot()`, through a `Register` augmentation in `@kontsedal/olas-svelte`. The [Svelte adapter page](/adapters/svelte) has the rest.
+`getRoot()` returns `root.api`, typed through the `Register` augmentation in `register.ts`. The [Svelte adapter page](/adapters/svelte) has the rest.
+
+</ForFramework>
+
+The component holds no state of its own and makes no decision the controller could make. That is the whole contract between the two trees.
 
 ## 5. Test the controller
 

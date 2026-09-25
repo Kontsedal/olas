@@ -1,4 +1,10 @@
-import { createRoot, defineController, defineMutation, queryEngine } from '@kontsedal/olas-core'
+import {
+  createMutation,
+  createRoot,
+  defineController,
+  defineMutation,
+  queryEngine,
+} from '@kontsedal/olas-core'
 import { _unregisterMutationById } from '@kontsedal/olas-core/testing'
 import type { StorageAdapter } from '@kontsedal/olas-persist'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -259,6 +265,8 @@ describe('replay lock — localStorage lease fallback', () => {
   test.each([
     ['expired', () => `${Date.now() - 31_000}:crashed-tab`],
     ['unparseable', () => 'garbage-without-a-timestamp'],
+    // Other same-origin code planted it: it would otherwise never expire.
+    ['far-future', () => `${Date.now() + 3_600_000}:planted`],
   ])('an %s lease is taken over and the pass replays', async (label, lease) => {
     const storage = memoryStorage()
     withoutWebLocks(storage)
@@ -373,6 +381,249 @@ describe('replay lock — localStorage lease fallback', () => {
     expect(adapter.store.size).toBe(0)
     expect(storage.getItem(leaseKey)).toBe(theirs)
     root.dispose()
+  })
+})
+
+/**
+ * Two tabs of one app on one storage. Tab B runs `create` and its request
+ * hangs; tab A's replay pass lists B's entry. The replay lock covers replays
+ * only, so A sent the entry while B's run was still live, and the server saw
+ * the write twice. A live run now marks its entry as its tab's.
+ */
+function twoTabs(id: string, prefix: string) {
+  _unregisterMutationById(id)
+  /** Every request, in the order it went out. */
+  const sent: string[] = []
+  const pending: Array<() => void> = []
+  let hang = true
+  const create = defineMutation({
+    id,
+    meta: { persist: true },
+    mutate: (sku: string) => {
+      sent.push(sku)
+      if (!hang) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        pending.push(resolve)
+      })
+    },
+  })
+  const adapter = memoryAdapter()
+  const tab = () =>
+    createRoot(
+      defineController((ctx) => ({ create: createMutation(ctx, create) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        onError: () => {},
+        plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: prefix })],
+      },
+    )
+  return {
+    adapter,
+    sent,
+    tab,
+    /** The server answers every later request at once. */
+    recover() {
+      hang = false
+    },
+    /** The server answers the hanging requests too. */
+    answer() {
+      hang = false
+      for (const resolve of pending.splice(0)) resolve()
+    },
+  }
+}
+
+describe('replay lock — a run live in another tab', () => {
+  test('with Web Locks, a replay skips the entry until its run settles', async () => {
+    vi.stubGlobal('navigator', { onLine: true, locks: fakeLocks() })
+    const { adapter, sent, tab, answer } = twoTabs('cov/live/locks', 'cov/live/locks')
+    const tabA = tab()
+    const tabB = tab()
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+
+    const run = tabB.api.create.run('sku-1')
+    await settle()
+    expect(adapter.store.size).toBe(1)
+    const pass = tabA.inject(MutationQueue).replayNow()
+    await settle()
+    expect(sent).toEqual(['sku-1'])
+
+    answer()
+    await pass
+    await run
+    await settle()
+    expect(sent).toEqual(['sku-1'])
+    expect(adapter.store.size).toBe(0)
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('with Web Locks, a tab that is gone releases its entries to a replay', async () => {
+    vi.stubGlobal('navigator', { onLine: true, locks: fakeLocks() })
+    const { adapter, sent, tab, recover } = twoTabs('cov/live/gone', 'cov/live/gone')
+    const tabA = tab()
+    const tabB = tab()
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+
+    void tabB.api.create.run('sku-1').catch(() => {})
+    await settle()
+    tabB.dispose() // the tab closes, and its locks go with it
+    recover()
+    await tabA.inject(MutationQueue).replayNow()
+    expect(sent).toEqual(['sku-1', 'sku-1'])
+    expect(adapter.store.size).toBe(0)
+    tabA.dispose()
+  })
+
+  test('with the localStorage lease, a replay skips the entry until its run settles', async () => {
+    const storage = memoryStorage()
+    withoutWebLocks(storage)
+    const prefix = 'cov/live/lease'
+    const { adapter, sent, tab, answer } = twoTabs('cov/live/lease', prefix)
+    const tabA = tab()
+    const tabB = tab()
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+
+    const run = tabB.api.create.run('sku-1')
+    await settle()
+    const [entryKey] = [...adapter.store.keys()]
+    expect(storage.getItem(`olas-mq-run:${entryKey}`)).toMatch(/^\d+:[a-z0-9]+$/)
+    const pass = tabA.inject(MutationQueue).replayNow()
+    await settle()
+    expect(sent).toEqual(['sku-1'])
+
+    answer()
+    await pass
+    await run
+    await settle()
+    expect(sent).toEqual(['sku-1'])
+    // The settle hands the lease back.
+    expect(storage.getItem(`olas-mq-run:${entryKey}`)).toBeNull()
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('with the localStorage lease, a settle leaves a lease another tab took over', async () => {
+    const storage = memoryStorage()
+    withoutWebLocks(storage)
+    const prefix = 'cov/live/taken'
+    const { adapter, tab, answer } = twoTabs('cov/live/taken', prefix)
+    const tabB = tab()
+    await tabB.waitForIdle()
+
+    const run = tabB.api.create.run('sku-1')
+    await settle()
+    const [entryKey] = [...adapter.store.keys()]
+    // Tab B stalled past the TTL, and another tab took the entry.
+    const theirs = `${Date.now()}:other-tab`
+    storage.setItem(`olas-mq-run:${entryKey}`, theirs)
+    answer()
+    await run
+    await settle()
+    expect(storage.getItem(`olas-mq-run:${entryKey}`)).toBe(theirs)
+    tabB.dispose()
+  })
+
+  test('with Web Locks refusing the marks, the run goes out and a replay runs uncoordinated', async () => {
+    const locks = fakeLocks()
+    const refusing = {
+      request(
+        name: string,
+        options: { ifAvailable?: boolean },
+        callback: (lock: unknown) => unknown,
+      ) {
+        if (name.startsWith('olas-mq-run:'))
+          return Promise.reject(new DOMException('no', 'SecurityError'))
+        return locks.request(name, options, callback as never)
+      },
+    }
+    vi.stubGlobal('navigator', { onLine: true, locks: refusing })
+    const { adapter, sent, tab, answer } = twoTabs('cov/live/refused', 'cov/live/refused')
+    const tabA = tab()
+    const tabB = tab()
+    await tabA.waitForIdle()
+    await tabB.waitForIdle()
+
+    const run = tabB.api.create.run('sku-1')
+    await settle()
+    const pass = tabA.inject(MutationQueue).replayNow()
+    await settle()
+    // As with a replay lease that cannot be read: at-least-once, not coordinated.
+    expect(sent).toEqual(['sku-1', 'sku-1'])
+    answer()
+    await pass
+    await run
+    await settle()
+    expect(adapter.store.size).toBe(0)
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test('with the localStorage lease, a heartbeat keeps the lease of a long run fresh', async () => {
+    vi.useFakeTimers()
+    const storage = memoryStorage()
+    withoutWebLocks(storage)
+    const prefix = 'cov/live/heartbeat'
+    const { sent, tab, answer } = twoTabs('cov/live/heartbeat', prefix)
+    const tabA = tab()
+    const tabB = tab()
+    await vi.advanceTimersByTimeAsync(0)
+
+    const run = tabB.api.create.run('sku-1')
+    await vi.advanceTimersByTimeAsync(0)
+    const leaseKey = [...storage.data.keys()].find((k) => k.startsWith('olas-mq-run:')) as string
+    const first = Number((storage.getItem(leaseKey) as string).split(':')[0])
+
+    // Past the lease's TTL: without the heartbeat, tab A would take the entry.
+    await vi.advanceTimersByTimeAsync(40_000)
+    expect(Number((storage.getItem(leaseKey) as string).split(':')[0])).toBeGreaterThan(first)
+    const pass = tabA.inject(MutationQueue).replayNow()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sent).toEqual(['sku-1'])
+
+    answer()
+    await pass
+    await run
+    await vi.advanceTimersByTimeAsync(0)
+    expect(storage.getItem(leaseKey)).toBeNull()
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test.each([
+    // The tab that ran it crashed 31 seconds ago, and its heartbeat stopped.
+    ['a lease its tab stopped refreshing expires', () => `${Date.now() - 31_000}:crashed-tab`],
+    // Other same-origin code planted it: it would otherwise never expire.
+    ['a lease dated far in the future is no lease', () => `${Date.now() + 3_600_000}:planted`],
+  ])('with the localStorage lease, %s', async (label, lease) => {
+    const storage = memoryStorage()
+    withoutWebLocks(storage)
+    const prefix = `cov/live/${label.split(' ').slice(-2).join('-')}`
+    const id = `${prefix}/id`
+    const { adapter, sent, tab, recover } = twoTabs(id, prefix)
+    const key = `${prefix}/${id}/r1`
+    adapter.store.set(
+      key,
+      JSON.stringify({
+        v: PROTOCOL_VERSION,
+        mutationId: id,
+        runId: 'r1',
+        variables: 'sku-1',
+        attempts: 0,
+        enqueuedAt: Date.now() - 60_000,
+      } satisfies QueueEntry),
+    )
+    storage.setItem(`olas-mq-run:${key}`, lease())
+    recover()
+    const tabA = tab()
+    await tabA.waitForIdle()
+    expect(sent).toEqual(['sku-1'])
+    expect(adapter.store.size).toBe(0)
+    tabA.dispose()
   })
 })
 

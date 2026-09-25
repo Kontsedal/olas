@@ -423,3 +423,126 @@ describe('infinite query: staleTime + invalidate', () => {
     root.dispose()
   })
 })
+
+// A refetch started at `initialPageParam`, so a list paged backwards came back
+// as the pages after it: [-2, -1, 0] refetched to [0, 1, 2] (§5.11).
+describe('infinite query: a refetch starts from the first loaded page', () => {
+  function bidirectional(id: string, extra: { staleTime?: number } = {}) {
+    const requested: number[] = []
+    const q = defineInfiniteQuery({
+      id,
+      key: () => ['feed'],
+      fetcher: async ({ pageParam }: { pageParam: number }) => {
+        requested.push(pageParam)
+        return pageParam
+      },
+      initialPageParam: 0,
+      getNextPageParam: (last: number) => (last < 5 ? last + 1 : null),
+      getPreviousPageParam: (first: number) => (first > -5 ? first - 1 : null),
+      ...extra,
+    })
+    return { q, requested }
+  }
+
+  test('the reviewer reproduction: pages paged backwards refetch as they are', async () => {
+    const { q, requested } = bidirectional('infinite-edges/refetch-backwards')
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual([0]))
+    await root.api.x.fetchPreviousPage()
+    await root.api.x.fetchPreviousPage()
+    expect(root.api.x.pages.value).toEqual([-2, -1, 0])
+    requested.length = 0
+    await root.api.x.refetch()
+    expect(requested).toEqual([-2, -1, 0])
+    expect(root.api.x.pages.value).toEqual([-2, -1, 0])
+    root.dispose()
+  })
+
+  test('a hydrated entry refetches from its first hydrated param', async () => {
+    const { q, requested } = bidirectional('infinite-edges/refetch-hydrated')
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: emptyDeps,
+        hydrate: {
+          version: 1,
+          entries: [
+            {
+              id: 'infinite-edges/refetch-hydrated',
+              key: ['feed'],
+              data: [3, 4],
+              pageParams: [3, 4],
+              lastUpdatedAt: 0,
+            },
+          ],
+        },
+      },
+    )
+    await vi.waitFor(() => expect(requested).toEqual([3, 4]))
+    expect(root.api.x.pages.value).toEqual([3, 4])
+    root.dispose()
+  })
+
+  test('pages written into an empty entry refetch from initialPageParam', async () => {
+    const { q, requested } = bidirectional('infinite-edges/refetch-written', {
+      staleTime: 60_000,
+    })
+    const enabled = signal(false)
+    const root = createRoot(
+      defineController((ctx) => ({
+        x: createQuery(ctx, q, { key: () => [], enabled: () => enabled.value }),
+      })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    // No param to pad from: the written pages take `initialPageParam`.
+    root.bindQuery(q).write(() => [7, 8])
+    enabled.set(true)
+    expect(root.api.x.pages.value).toEqual([7, 8])
+    await root.api.x.refetch()
+    expect(requested).toEqual([0, 1])
+    root.dispose()
+  })
+})
+
+// `fetchNextPage()` during the first load aborted it and started the first
+// load over: two calls made three requests, two of them aborted.
+describe('infinite query: paging during the first load joins it', () => {
+  test('two fetchNextPage calls during the first load make one request', async () => {
+    let calls = 0
+    let aborts = 0
+    let release: (v: string) => void = () => {}
+    const q = defineInfiniteQuery({
+      id: 'infinite-edges/join-first-load',
+      key: () => ['feed'],
+      fetcher: ({ pageParam, signal: s }: { pageParam: number; signal: AbortSignal }) => {
+        calls += 1
+        s.addEventListener('abort', () => {
+          aborts += 1
+        })
+        return new Promise<string>((resolve) => {
+          release = (v) => resolve(`${v}${pageParam}`)
+        })
+      },
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      getPreviousPageParam: () => null,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const a = root.api.x.fetchNextPage()
+    const b = root.api.x.fetchPreviousPage()
+    expect(calls).toBe(1)
+    release('p')
+    await Promise.all([a, b])
+    expect(calls).toBe(1)
+    expect(aborts).toBe(0)
+    expect(root.api.x.pages.value).toEqual(['p0'])
+    root.dispose()
+  })
+})

@@ -53,9 +53,9 @@ export type PersistQueryCacheOptions = {
   /**
    * Restore the stored cache when the root starts. Default `true`. Pass
    * `false` when the app restored it already with `restoreQueryCache` and
-   * handed the result to `createRoot({ hydrate })`. The plugin still reads
-   * storage at startup then, without hydrating it, so its writes keep the
-   * stored entries this session never binds.
+   * handed the result to `createRoot({ hydrate })`. Every write reads storage
+   * first and merges into it either way, so the stored entries this session
+   * never binds are kept.
    */
   restore?: boolean
   /**
@@ -147,12 +147,12 @@ export async function restoreQueryCache(
 }
 
 /**
- * Persist the query cache across reloads. The plugin writes every canonical
- * write of an opted-in query (a fetch, `write`, `replace` or hydration) to
- * storage, throttled, and restores the stored cache when the root starts.
- * Optimistic writes and rollbacks are guesses the server has not confirmed,
- * so they are not persisted. An entry the cache garbage-collects is dropped
- * from storage too.
+ * Persist the query cache across reloads. The plugin stores each opted-in
+ * entry's server truth, throttled, and restores the stored cache when the
+ * root starts. Server truth is what `dehydrate()` would ship: while an
+ * optimistic write is live, the data beneath it, so a guess is never stored,
+ * whichever write carried it, and a committed one is. An entry the cache
+ * garbage-collects is dropped from storage too.
  *
  * ```ts
  * const user = defineQuery({ id: 'user', key: () => [], fetcher, meta: { persist: true } })
@@ -168,13 +168,20 @@ export async function restoreQueryCache(
  * `restoreQueryCache` before `createRoot` instead when the first render must
  * see the restored data.
  *
- * Every storage write carries the whole cache, so the plugin reads what
- * storage holds at startup even with `restore: false`, and holds its first
- * write until an asynchronous read lands. An entry this session never binds
- * therefore stays in storage until it passes `maxAgeMs`. A read that fails
- * holds the writes: the next flush reads storage again, and writes once a
- * read lands. A session whose reads all fail writes nothing, because its
- * write would delete the entries it could not read.
+ * Every storage write carries the whole cache, and every tab of the app
+ * writes the same key. So each write reads what storage holds first and
+ * merges this session's writes into it. An entry this session never binds
+ * stays in storage until it passes `maxAgeMs`, and so does an entry another
+ * tab wrote. When both hold a copy of one entry, the one with the newer
+ * `lastUpdatedAt` is kept. A read that fails holds the write: the next write
+ * reads storage again, and writes once a read lands. A session whose reads
+ * all fail writes nothing, because its write would delete the entries it
+ * could not read.
+ *
+ * The read and the write are two steps, not one transaction. Two tabs that
+ * write in the same moment can each miss the other's newest entry. The next
+ * write of the tab that lost it puts it back, since each write carries every
+ * entry its tab wrote.
  */
 export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}): OlasPlugin {
   const storage = options.storage ?? LOCAL_STORAGE
@@ -199,15 +206,22 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
         return
       }
 
-      /**
-       * What storage holds, by `${id}\u0000${hash}`. What storage held at
-       * startup seeds it, with or without `restore`: a flush writes the whole
-       * map, so an entry left out of it is deleted from storage.
-       */
-      const cache = new Map<string, DehydratedEntry>()
       const slot = (id: string, key: readonly unknown[]): string =>
         `${id}\u0000${queries.hashKey(key)}`
-      const restoring = options.restore !== false
+      /**
+       * The latest canonical write of each entry this session wrote, by
+       * `${id}\u0000${hash}`. Storage is shared: another tab of the app writes
+       * the same key, so a flush reads what storage holds and merges this map
+       * into it, rather than writing the map over it.
+       */
+      const written = new Map<string, DehydratedEntry>()
+      /**
+       * Entries this session garbage-collected, with the `lastUpdatedAt` of
+       * the copy it dropped. The merge drops a stored row of that age or
+       * older, so it does not bring the entry back. A newer row came from
+       * another tab, and stays.
+       */
+      const removed = new Map<string, number>()
       // A stored entry of a query this root has used and `include` now
       // rejects: the query opted out after the entry was written. An entry of
       // a query the root has not used is kept, since nothing says it opted out.
@@ -217,20 +231,41 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
       }
       let timer: ReturnType<typeof setTimeout> | null = null
       let disposed = false
-      // Until a read of storage lands, `cache` lacks what storage holds, and a
-      // flush would delete the entries it could not read. So a flush reads
-      // first, and waits while a read is in flight. A read that fails holds
-      // the write until the next flush, which reads again: one read per flush.
-      let seeded = false
-      let reading = false
+      // A flush reads storage before it writes, because a write carries the
+      // whole cache and would delete every row it did not read. `held` is a
+      // flush waiting for a read to land. A read that fails leaves it held
+      // until the next flush, which reads again: one read per flush. `reading`
+      // is a read in flight, which a flush waits for rather than read twice.
       let held = false
+      let reading = false
 
-      const flush = (): void => {
-        timer = null
-        if (!seeded && !reading) read()
-        held = !seeded
-        if (held) return
-        const payload: Stored = { v: FORMAT, buster, entries: [...cache.values()].filter(kept) }
+      /**
+       * What a flush writes: every stored row the filters keep, with this
+       * session's writes merged in. When both have a row for one entry, the
+       * newer `lastUpdatedAt` wins, so an older copy this tab restored never
+       * lands over the fresher one another tab fetched. A row this session
+       * removed stays out, unless another tab wrote it again since.
+       */
+      const merge = (stored: DehydratedEntry[] | undefined): DehydratedEntry[] => {
+        const out = new Map<string, DehydratedEntry>()
+        const put = (k: string, e: DehydratedEntry): void => {
+          const prev = out.get(k)
+          if (prev === undefined || prev.lastUpdatedAt <= e.lastUpdatedAt) out.set(k, e)
+        }
+        for (const e of stored ?? []) {
+          if (!kept(e)) continue
+          const k = slot(e.id, e.key)
+          const gone = removed.get(k)
+          if (gone !== undefined && e.lastUpdatedAt <= gone) continue
+          put(k, e)
+        }
+        for (const [k, e] of written) if (kept(e)) put(k, e)
+        return [...out.values()]
+      }
+
+      const write = (stored: DehydratedEntry[] | undefined): void => {
+        held = false
+        const payload: Stored = { v: FORMAT, buster, entries: merge(stored) }
         let json: string
         try {
           json = JSON.stringify(payload)
@@ -239,13 +274,78 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
           return
         }
         try {
-          const written = storage.set(storageKey, json)
-          if (written instanceof Promise) {
-            host.track(written.catch((error: unknown) => onError(error, 'write')))
+          const done = storage.set(storageKey, json)
+          if (done instanceof Promise) {
+            host.track(done.catch((error: unknown) => onError(error, 'write')))
           }
         } catch (error) {
           onError(error, 'write')
         }
+      }
+
+      /**
+       * Hydrate the root with the stored entries. An entry a subscriber bound
+       * already is not filled: its fetch is newer than anything storage holds.
+       */
+      const hydrate = (entries: DehydratedEntry[] | undefined): void => {
+        // A root disposed while the read was in flight takes no hydration.
+        if (entries === undefined || disposed) return
+        const fresh: DehydratedEntry[] = []
+        for (const e of entries) {
+          if (!kept(e)) continue
+          const k = slot(e.id, e.key)
+          if (queries.keys(e.id).some((key) => slot(e.id, key) === k)) continue
+          fresh.push(e)
+        }
+        if (fresh.length > 0) queries.hydrate({ version: 1, entries: fresh })
+      }
+
+      /**
+       * A read landed: restore from it at startup, and write a held flush over
+       * it. A payload that fails to parse counts as read, since writing over
+       * it loses nothing. A parse or restore that throws is reported.
+       */
+      const land = (raw: string | null, restore: boolean): void => {
+        let stored: DehydratedEntry[] | undefined
+        try {
+          stored = parse(raw, buster, maxAgeMs)
+          if (restore) hydrate(stored)
+        } catch (error) {
+          onError(error, 'restore')
+        }
+        if (held) write(stored)
+      }
+      const read = (restore: boolean): void => {
+        let raw: string | null | Promise<string | null>
+        try {
+          raw = storage.get(storageKey)
+        } catch (error) {
+          onError(error, 'restore')
+          return
+        }
+        if (!(raw instanceof Promise)) {
+          land(raw, restore)
+          return
+        }
+        reading = true
+        host.track(
+          raw.then(
+            (value) => {
+              reading = false
+              land(value, restore)
+            },
+            (error: unknown) => {
+              reading = false
+              onError(error, 'restore')
+            },
+          ),
+        )
+      }
+
+      const flush = (): void => {
+        timer = null
+        held = true
+        if (!reading) read(false)
       }
       const schedule = (): void => {
         if (disposed || timer !== null) return
@@ -256,58 +356,7 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
         timer = setTimeout(flush, throttleMs)
       }
 
-      /**
-       * Seed `cache` with what storage holds and, with `restore`, hydrate the
-       * root with it. An entry a subscriber bound already is not hydrated.
-       */
-      const load = (entries: DehydratedEntry[] | undefined): void => {
-        if (entries === undefined) return
-        const fresh: DehydratedEntry[] = []
-        for (const e of entries) {
-          if (!kept(e)) continue
-          const k = slot(e.id, e.key)
-          // A write that landed before the read is newer than storage.
-          if (!cache.has(k)) cache.set(k, e)
-          if (!restoring) continue
-          // Never fill an entry that exists already: a subscriber bound it, and
-          // its fetch is newer than anything storage holds.
-          if (queries.keys(e.id).some((key) => slot(e.id, key) === k)) continue
-          fresh.push(e)
-        }
-        // A root disposed while the read was in flight takes no hydration.
-        if (fresh.length > 0 && !disposed) queries.hydrate({ version: 1, entries: fresh })
-      }
-      // A payload that fails to parse counts as read: writing over it loses
-      // nothing. A parse or restore that throws is reported on both paths.
-      const seed = (raw: string | null): void => {
-        seeded = true
-        try {
-          load(parse(raw, buster, maxAgeMs))
-        } catch (error) {
-          onError(error, 'restore')
-        }
-      }
-      const read = (): void => {
-        try {
-          const raw = storage.get(storageKey)
-          if (raw instanceof Promise) {
-            reading = true
-            host.track(
-              raw
-                .then(seed, (error: unknown) => onError(error, 'restore'))
-                .finally(() => {
-                  reading = false
-                  if (seeded && held) flush()
-                }),
-            )
-          } else {
-            seed(raw)
-          }
-        } catch (error) {
-          onError(error, 'restore')
-        }
-      }
-      read()
+      if (options.restore !== false) read(true)
 
       host.onDispose(() => {
         disposed = true
@@ -320,19 +369,46 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
       return {
         onWrite(event) {
           if (!include(event.query)) return
-          if (event.source === 'optimistic' || event.source === 'rollback') return
-          if (event.data === undefined) return
-          cache.set(slot(event.query.id, event.key), {
+          // The entry's server truth, as `dehydrate()` ships it (§13.1). While
+          // an optimistic write is live, `event.data` holds the guess, whatever
+          // the source: a canonical write under a guess used to store it, and
+          // the rollback that corrected it looked like a guess too. So every
+          // source is read, and the guess never is.
+          const server = event.server
+          if (server === undefined || server.data === undefined) return
+          // Stamped 0: the server never answered for the entry, as after an
+          // optimistic create that committed. `maxAgeMs` has nothing to age it
+          // by, and a restore would drop it; a reload fetches it instead.
+          if (server.updatedAt === 0) return
+          const k = slot(event.query.id, event.key)
+          const prev = written.get(k)
+          // An optimistic write, or its rollback, leaves the truth as it was:
+          // nothing new to write, but a write held by a failed read retries.
+          if (
+            prev !== undefined &&
+            prev.data === server.data &&
+            prev.lastUpdatedAt === server.updatedAt
+          ) {
+            if (held) schedule()
+            return
+          }
+          written.set(k, {
             id: event.query.id,
             key: event.key,
-            data: event.data,
-            lastUpdatedAt: event.updatedAt,
-            ...(event.pageParams !== undefined ? { pageParams: event.pageParams } : {}),
+            data: server.data,
+            lastUpdatedAt: server.updatedAt,
+            ...(server.pageParams !== undefined ? { pageParams: server.pageParams } : {}),
           })
+          removed.delete(k)
           schedule()
         },
         onRemove(event) {
-          if (cache.delete(slot(event.query.id, event.key))) schedule()
+          const k = slot(event.query.id, event.key)
+          const mine = written.get(k)
+          if (mine === undefined) return
+          written.delete(k)
+          removed.set(k, mine.lastUpdatedAt)
+          schedule()
         },
       }
     },

@@ -55,6 +55,9 @@ export type Message = SetDataMessage | InvalidateMessage;
 export const PROTOCOL_VERSION = 1;
 
 // @public
+export type RelayedSource = 'write' | 'replace' | 'optimistic' | 'rollback' | 'commit';
+
+// @public
 export type SetDataMessage = {
     v: typeof PROTOCOL_VERSION;
     type: 'setData';
@@ -64,6 +67,11 @@ export type SetDataMessage = {
     keyArgs: readonly unknown[];
     data: unknown;
     pageParams?: readonly unknown[];
+    source?: RelayedSource;
+    server?: {
+        data: unknown;
+        pageParams?: readonly unknown[];
+    };
 };
 
 // (No @packageDocumentation comment for this package)

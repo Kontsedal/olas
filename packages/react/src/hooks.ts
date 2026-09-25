@@ -300,18 +300,26 @@ const queryState = <T>(s: AsyncState<T>): QueryState<T> => ({
 })
 
 /**
- * Suspense decisions apply ONLY when there's no data to show. A
- * background-refetch failure keeps the last-good `data` but sets
- * `status: 'error'`; this is skipped then, so a transient blip can't nuke a
- * rendered subtree to the ErrorBoundary. The error stays observable through a
- * non-suspense hook's `error` / `status`.
+ * Suspense waits for the subscription's first settled value, not for `data`
+ * to be defined. A load can settle on `undefined`: a `select` that reads an
+ * optional field, a fetcher that resolves nothing, an infinite query replaced
+ * with no pages. `firstValue()` resolves at once then, so suspending on
+ * `data === undefined` made React retry, suspend and retry again, forever.
+ *
+ * Settled means a success now, or data or a `lastUpdatedAt` from an earlier
+ * load. So a background refetch never suspends, even over an `undefined`
+ * result, and a background-refetch failure keeps the last-good value on
+ * screen instead of taking the subtree to the ErrorBoundary. The error stays
+ * observable through a non-suspense hook's `error` / `status`.
  */
 function suspendUntilData(subscription: AsyncState<unknown>, snap: QueryState<unknown>): void {
-  if (snap.data !== undefined) return
-  if (snap.status === 'error') {
-    throw subscription.error.peek() // → ErrorBoundary (no data yet)
+  if (snap.status === 'success' || snap.data !== undefined || snap.lastUpdatedAt !== undefined) {
+    return
   }
-  // No data and not errored → suspend (pending / idle / offline-parked / disabled).
+  if (snap.status === 'error') {
+    throw subscription.error.peek() // → ErrorBoundary (a first load failed)
+  }
+  // Nothing settled yet → suspend (pending / idle / offline-parked / disabled).
   // The thrown promise resolves once data lands; for a disabled query that
   // means once it is enabled and loaded. `firstValue()` returns the same
   // promise while it is pending, so a re-render re-throws the one React holds.
@@ -335,14 +343,15 @@ function suspendUntilData(subscription: AsyncState<unknown>, snap: QueryState<un
  *
  * Pass `{ suspense: true }` to opt into React 18/19 Suspense semantics:
  *
- *  - While `status === 'pending'` (no data yet) the hook **throws**
+ *  - Until the first load settles the hook **throws**
  *    `subscription.firstValue()` — caught by the nearest `<Suspense>` boundary.
- *  - When `status === 'error'` AND there's no data yet, the hook **throws**
- *    `subscription.error` — caught by the nearest `<ErrorBoundary>` (React
- *    itself doesn't ship one; use `react-error-boundary` or your own). A
- *    background-refetch failure that keeps the last-good data does NOT throw.
- *  - On success the hook returns synchronously and `data` is narrowed to
- *    `T` (never `undefined`).
+ *  - When that first load fails, the hook **throws** `subscription.error` —
+ *    caught by the nearest `<ErrorBoundary>` (React itself doesn't ship one;
+ *    use `react-error-boundary` or your own). A background-refetch failure
+ *    that keeps the last-good data does NOT throw.
+ *  - On success the hook returns synchronously and `data` is typed `T`. A
+ *    load that settled on `undefined` (a `select` over an optional field, a
+ *    fetcher that resolves nothing) returns it as it is.
  *  - A disabled (`enabled: () => false`) query suspends until it is enabled
  *    and loads, because `firstValue()` waits for the subscription to attach.
  *    That is what a dependent query wants. A query that is never enabled keeps
@@ -366,7 +375,7 @@ function suspendUntilData(subscription: AsyncState<unknown>, snap: QueryState<un
 export function useQuery<T>(subscription: AsyncState<T>): UseQueryResult<T>
 /**
  * Subscribe a component to an `AsyncState<T>` with Suspense. The hook throws
- * `subscription.firstValue()` while there is no data, for the nearest
+ * `subscription.firstValue()` until the first load settles, for the nearest
  * `<Suspense>`, and throws the error of a first load that fails. On success
  * `data` is `T`. Refetches after the first success do not re-suspend.
  */

@@ -288,7 +288,7 @@ describe('installStreamingIntake — several roots', () => {
 })
 
 describe('createStreamingTransform', () => {
-  test('interleaves flushed scripts after each upstream chunk', async () => {
+  test('writes a pending batch at the first point in a chunk where a script can go', async () => {
     const flushed = ['<script>1</script>', '<script>2</script>', '']
     let i = 0
     const flush = () => flushed[i++] ?? ''
@@ -310,9 +310,11 @@ describe('createStreamingTransform', () => {
       if (done) break
       seen.push(dec.decode(value))
     }
-    // Order: chunk-a, then flushed[0], then chunk-b, then flushed[1], then
-    // final-drain flushed[2] (empty — skipped).
-    expect(seen).toEqual(['<chunk-a/>', '<script>1</script>', '<chunk-b/>', '<script>2</script>'])
+    // Chunk a's only such point is its end. Chunk b starts at one, since the
+    // stream so far ends right after a top-level tag, so its batch goes first:
+    // data before the markup that may read it. The close-time drain,
+    // flushed[2], is empty and skipped.
+    expect(seen).toEqual(['<chunk-a/>', '<script>1</script>', '<script>2</script>', '<chunk-b/>'])
   })
 
   test('drains a final non-empty flush on stream close', async () => {

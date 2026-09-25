@@ -186,7 +186,9 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
   /**
    * Dotted paths of every leaf whose `isDirty` is true. Useful for PATCH
    * payloads and "highlight changed inputs" UIs. Field paths use dot
-   * notation; array items use bracket notation (`items[0].title`).
+   * notation; array items use bracket notation (`items[0].title`). A field
+   * array that `add`, `insert`, `remove`, `move` or `clear` changed is listed
+   * by its own path (`items`) and none of its items: a PATCH sends it whole.
    */
   readonly dirtyFields: ReadSignal<string[]>
 
@@ -252,6 +254,9 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
    * paths through nested forms / field arrays (numeric segments are array
    * indices). Errors land in each field's `serverErrors` channel — kept
    * separate from validator output and auto-cleared on the next user write.
+   * A path that names a nested form or field array, or `''` for this form,
+   * pins the messages on that node's `topLevelErrors` until its value next
+   * changes. `reset()` and an empty list clear them too.
    */
   setErrors(errors: Record<string, ReadonlyArray<string>>): void
   /**

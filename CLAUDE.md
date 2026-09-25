@@ -52,8 +52,8 @@ Internal peer ranges carry an upper bound at the next major (`>=1.0.0 <2.0.0`). 
 
 The pipeline is two workflows, deliberately split:
 
-1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`pnpm version-packages`) through `changesets/action/version`. **Never publishes.**
-2. `.github/workflows/publish.yml` — `workflow_dispatch` only, from `main`, with a typed confirmation. Re-runs the full verify chain, writes the npm token to `~/.npmrc`, then runs `pnpm release` through `changesets/action/publish`.
+1. `.github/workflows/version.yml` — on push to `main`, opens/updates the "Version Packages" PR (`pnpm version-packages`) through `changesets/action/version`. With no changeset pending, it skips. **Never publishes.**
+2. `.github/workflows/publish.yml` — `workflow_dispatch` only, from `main`, with a typed confirmation. It refuses to run while a changeset is still on `main`, because that means the version PR is not merged. Re-runs the full verify chain, writes the npm token to `~/.npmrc`, then runs `pnpm release` through `changesets/action/publish`.
 
 Merging the version PR does **not** release. Someone has to run the publish workflow. That split is the point: merging is routine and reversible, pushing to npm is neither — a version number can never be reused. `changeset publish` skips packages already on npm, so re-running after a partial failure resumes safely.
 

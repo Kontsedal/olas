@@ -8,6 +8,7 @@ import {
   defineController,
   definePlugin,
   defineQuery,
+  defineScope,
   queryEngine,
   type Root,
   signal,
@@ -516,6 +517,151 @@ describe('root.suspend and maxIdleTime', () => {
     expect(disposed).not.toHaveBeenCalled()
     vi.advanceTimersByTime(500)
     expect(disposed).toHaveBeenCalledTimes(1)
+  })
+
+  test('suspend({ maxIdleTime }) after dispose arms no timer', () => {
+    vi.useFakeTimers()
+    const root = createRoot(
+      defineController(() => ({})),
+      { deps: {} },
+    )
+    root.dispose()
+    root.suspend({ maxIdleTime: 1000 })
+    expect(vi.getTimerCount()).toBe(0)
+  })
+})
+
+describe('a rollback does not let a teardown build new primitives', () => {
+  test('an effect created by an onDispose hook during the rollback does not run on', () => {
+    const trigger = signal(0)
+    let runs = 0
+    const onError = vi.fn()
+    expect(() =>
+      createRoot(
+        defineController((ctx) => {
+          ctx.onDispose(() =>
+            ctx.effect(() => {
+              void trigger.value
+              runs++
+            }),
+          )
+          throw new Error('factory boom')
+        }),
+        { deps: {}, onError },
+      ),
+    ).toThrow('factory boom')
+    const after = runs
+    trigger.set(1)
+    trigger.set(2)
+    expect(runs).toBe(after)
+    expect(after).toBe(0)
+    // The refused call reaches onError, as a teardown throw does.
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(String(onError.mock.calls[0]![0])).toMatch(/effect\(\) called after/)
+  })
+})
+
+describe('inject after dispose', () => {
+  const Theme = defineScope<string>({ name: 'theme' })
+  const Locale = defineScope<string>({ name: 'locale', default: 'en' })
+
+  test('ctx.inject and root.inject return what they resolved while live', () => {
+    let captured: { inject<T>(scope: typeof Theme | typeof Locale): T } | undefined
+    const child = defineController((ctx) => {
+      captured = ctx as never
+      void ctx.inject(Theme)
+      return {}
+    })
+    const root = createRoot(
+      defineController((ctx) => {
+        ctx.provide(Theme, 'dark')
+        ctx.child(child, undefined)
+        return {}
+      }),
+      { deps: {}, scopes: [[Locale, 'uk']] },
+    )
+    root.dispose()
+    expect(captured!.inject<string>(Theme)).toBe('dark')
+    // Never read while live: still resolves through the kept providers.
+    expect(captured!.inject<string>(Locale)).toBe('uk')
+    expect(root.inject(Theme)).toBe('dark')
+    expect(root.inject(Locale)).toBe('uk')
+  })
+})
+
+describe('a ctx.child that throws after construction reports kind: construction', () => {
+  const broken = defineController((): { never: true } => {
+    throw new Error('child boom')
+  })
+
+  test('from inside ctx.effect', () => {
+    const onError = vi.fn()
+    const go = signal(false)
+    createRoot(
+      defineController((ctx) => {
+        ctx.effect(() => {
+          if (go.value) ctx.child(broken, undefined)
+        })
+        return {}
+      }),
+      { deps: {}, onError },
+    )
+    go.set(true)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]![1].kind).toBe('construction')
+  })
+
+  test('from inside a ctx.on handler, and through attach', () => {
+    const onError = vi.fn()
+    let fire: (() => void) | undefined
+    createRoot(
+      defineController((ctx) => {
+        const e = ctx.emitter<void>()
+        ctx.on(e, () => {
+          ctx.attach(broken, undefined)
+        })
+        fire = () => e.emit()
+        return {}
+      }),
+      { deps: {}, onError },
+    )
+    fire!()
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]![1].kind).toBe('construction')
+  })
+
+  test('a thrown primitive cannot be marked, so it keeps the kind of the caller', () => {
+    const onError = vi.fn()
+    const throwsString = defineController((): { never: true } => {
+      throw 'plain string'
+    })
+    const go = signal(false)
+    createRoot(
+      defineController((ctx) => {
+        ctx.effect(() => {
+          if (go.value) ctx.child(throwsString, undefined)
+        })
+        return {}
+      }),
+      { deps: {}, onError },
+    )
+    go.set(true)
+    expect(onError.mock.calls[0]![0]).toBe('plain string')
+    expect(onError.mock.calls[0]![1].kind).toBe('effect')
+  })
+
+  test('an effect throw of its own stays kind: effect', () => {
+    const onError = vi.fn()
+    createRoot(
+      defineController((ctx) => {
+        ctx.effect(() => {
+          throw new Error('effect boom')
+        })
+        return {}
+      }),
+      { deps: {}, onError },
+    )
+    expect(onError.mock.calls[0]![1].kind).toBe('effect')
   })
 })
 

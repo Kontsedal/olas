@@ -213,8 +213,10 @@ class SubscriptionImpl<T, U = T> implements QuerySubscription<U> {
     )
   }
 
+  /** `select` over a settled value, skipped for `undefined` as `data` skips it. */
   private project(v: T): U {
-    return this.select === undefined ? (v as unknown as U) : this.select(v)
+    if (this.select === undefined || v === undefined) return v as unknown as U
+    return this.select(v)
   }
 }
 

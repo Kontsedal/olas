@@ -89,6 +89,23 @@ describe('useRoot and useValue', () => {
     expect(String(caught)).toMatch(/app\.use\(olasPlugin\(root\)\)/)
   })
 
+  test("useRoot outside a component's setup throws an olas message, not a TypeError", () => {
+    // Outside an injection context Vue's `inject` returns `undefined`, not
+    // the default, and warns. The check has to come first.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    let caught: unknown
+    try {
+      useRoot()
+    } catch (err) {
+      caught = err
+    }
+    expect(caught).not.toBeInstanceOf(TypeError)
+    expect(String(caught)).toMatch(/^Error: \[olas\] useRoot\(\) found no root/)
+    expect(String(caught)).toMatch(/setup\(\)/)
+    expect(warn).not.toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
   test('unmounting stops the subscription', async () => {
     const count = signal(0)
     const root = createRoot(
@@ -273,6 +290,32 @@ describe('useValue details', () => {
     tags.set(['a', 'b'])
     await nextTick()
     expect(el.textContent).toBe('a,b')
+    root.dispose()
+  })
+
+  test('a value isEqual calls equal keeps the one shown, when the component re-renders for another reason', async () => {
+    // React's semantics: isEqual means "unchanged, keep the previous value".
+    const user = signal({ id: 1, name: 'A' })
+    const tick = signal(0)
+    const root = createRoot(
+      defineController(() => ({ user, tick })),
+      { deps: {} },
+    )
+    const el = mount(root, () => {
+      const u = useValue(root.api.user, { isEqual: (a, b) => a.id === b.id })
+      const t = useValue(root.api.tick)
+      return () => h('p', `${u.value.name}:${t.value}`)
+    })
+    expect(el.textContent).toBe('A:0')
+    user.set({ id: 1, name: 'B' })
+    await nextTick()
+    expect(el.textContent).toBe('A:0')
+    tick.set(1)
+    await nextTick()
+    expect(el.textContent).toBe('A:1')
+    user.set({ id: 2, name: 'C' })
+    await nextTick()
+    expect(el.textContent).toBe('C:1')
     root.dispose()
   })
 

@@ -148,6 +148,9 @@ function buildRootHandle<Api>(
   }
 
   const suspend = (opts?: SuspendOptions): void => {
+    // A disposed root has nothing to suspend, and a `maxIdleTime` timer armed
+    // now would hold a closure over the dead tree until it fired.
+    if (disposed) return
     instance.suspend()
     const maxIdleTime = opts?.maxIdleTime
     // A plain suspend() keeps an armed auto-dispose. A visibility hook that

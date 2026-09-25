@@ -8,8 +8,10 @@ import {
   type ReadSignal,
   type Signal,
   signal,
+  untracked,
 } from '../signals'
-import { abandonAsyncResults, isAbortError } from '../utils'
+import { readOnly } from '../signals/readonly'
+import { abandonAsyncResults, isAbortError, isThenable } from '../utils'
 import type { Validator, ValidatorResult } from './types'
 
 /**
@@ -21,6 +23,50 @@ function messagesFromResult(result: ValidatorResult): string[] {
   if (result == null) return []
   if (typeof result === 'string') return [result]
   return result.map((issue) => issue.message)
+}
+
+/**
+ * The message a validator bug shows on its node. Prod shows a generic one, so
+ * an internal error's text does not leak into form errors; the real error
+ * still reaches the reporter (T5.3). Dev keeps the message.
+ */
+export function thrownMessage(err: unknown): string {
+  return __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed'
+}
+
+/**
+ * Rejections that stand for a bug in a validator rather than a failed check:
+ * a `debouncedValidator` whose `fn` threw synchronously or returned no
+ * promise. An async settle reports them, as a sync validator throw is
+ * reported, besides showing their message.
+ */
+const validatorBugs = new WeakSet<object>()
+
+function markValidatorBug(err: unknown): object {
+  const bug =
+    (typeof err === 'object' && err !== null) || typeof err === 'function'
+      ? (err as object)
+      : new Error(String(err))
+  validatorBugs.add(bug)
+  return bug
+}
+
+/**
+ * What a rejected async validator shows on its node: nothing for an abort, and
+ * the reason's message otherwise. A validator bug also goes to `report`,
+ * which routes it to `onError`; a reporter that throws is ignored.
+ */
+export function rejectionMessage(reason: unknown, report: (err: unknown) => void): string | null {
+  if (isAbortError(reason)) return null
+  if (typeof reason === 'object' && reason !== null && validatorBugs.has(reason)) {
+    try {
+      report(reason)
+    } catch {
+      // The reporter must not propagate.
+    }
+    return thrownMessage(reason)
+  }
+  return reason instanceof Error ? reason.message : String(reason)
 }
 
 /** A validator as one pass calls it: the value and the pass's `AbortSignal`. */
@@ -47,6 +93,8 @@ export function asyncValidatorFlags(validators: ReadonlyArray<unknown>): boolean
  * async validators are not called at all. Otherwise the second round calls
  * them. A validator not yet flagged can return a promise in the first round,
  * before a failure is known; the caller abandons what `pending` holds then.
+ * `skipAsync` leaves out the second round, for a pass that only re-checks the
+ * sync validators.
  */
 export function callValidators<V>(
   validators: ReadonlyArray<PassValidator<V>>,
@@ -55,6 +103,7 @@ export function callValidators<V>(
   signal: AbortSignal,
   onResult: (result: ValidatorResult) => boolean,
   onThrow: (err: unknown) => void,
+  skipAsync = false,
 ): { failed: boolean; pending: Promise<ValidatorResult>[] } {
   const pending: Promise<ValidatorResult>[] = []
   let failed = false
@@ -77,7 +126,7 @@ export function callValidators<V>(
     if (isAsync[i]) secondRound.push(i)
     else call(i)
   }
-  if (!failed) for (const i of secondRound) call(i)
+  if (!failed && !skipAsync) for (const i of secondRound) call(i)
   return { failed, pending }
 }
 
@@ -161,6 +210,66 @@ export function isStructurallyEqual(a: unknown, b: unknown): boolean {
   return true
 }
 
+/** A plain object or an array: the shapes `isStructurallyEqual` walks by content. */
+function isPlainData(value: unknown): value is object {
+  if (Array.isArray(value)) return true
+  if (typeof value !== 'object' || value === null) return false
+  const proto = Object.getPrototypeOf(value)
+  return proto === Object.prototype || proto === null
+}
+
+/**
+ * A structural copy of the plain data in `value`. Plain objects and arrays are
+ * copied at every depth; anything else, such as a class instance, a `Date` or
+ * a `Map`, is kept by reference. That is exactly the part `isStructurallyEqual`
+ * compares by content, so a copy compares equal to its source.
+ *
+ * A field, a form and a field array keep their baselines this way. A Svelte
+ * nested bind edits the value it was handed in place, and with a shared
+ * baseline that edit reached what `reset()` restores. A spread copies an own
+ * `__proto__` key as data, and a null-prototype object keeps its prototype
+ * (`.wiki/pitfalls/proto-key-assignment.md`). A cycle is copied as a cycle.
+ */
+export function copyPlainData<T>(value: T): T {
+  return isPlainData(value) ? (copyPlainNode(value, new Map()) as T) : value
+}
+
+function copyPlainNode(value: object, seen: Map<object, unknown>): unknown {
+  const done = seen.get(value)
+  if (done !== undefined) return done
+  if (Array.isArray(value)) {
+    const out: unknown[] = new Array(value.length)
+    seen.set(value, out)
+    for (let i = 0; i < value.length; i++) {
+      // Keep holes as holes.
+      if (!(i in value)) continue
+      const item: unknown = value[i]
+      out[i] = isPlainData(item) ? copyPlainNode(item, seen) : item
+    }
+    return out
+  }
+  const out: Record<string, unknown> =
+    Object.getPrototypeOf(value) === null
+      ? Object.assign(Object.create(null), value)
+      : { ...(value as Record<string, unknown>) }
+  seen.set(value, out)
+  // Each key is already an own data property of `out`, so the assignment
+  // writes it, `__proto__` included, and calls no setter.
+  for (const k of Object.keys(out)) {
+    const item = out[k]
+    if (isPlainData(item)) out[k] = copyPlainNode(item, seen)
+  }
+  return out
+}
+
+/**
+ * A field's value in a box of its own. A signal skips a write of the value it
+ * holds, and inside a `batch()` it also skips a write that ends where it
+ * started. A new box on every write lets `FieldImpl` decide what counts as a
+ * change: an object written again does, a primitive written again does not.
+ */
+type Held<T> = { readonly v: T }
+
 /**
  * Hook attached by `createField` and `createForm` so a Field can publish
  * `field:validated` devtools events with its owning controller path + the
@@ -205,7 +314,8 @@ export type FieldImplOptions = {
 }
 
 class FieldImpl<T> implements Field<T> {
-  private readonly value$: Signal<T>
+  /** The value, boxed — see `Held`. Written only through `write`. */
+  private readonly value$: Signal<Held<T>>
   /**
    * Validator-produced errors. The public `errors` getter merges this with
    * `serverErrors$` and `formErrors$` so consumers see a single flat array.
@@ -234,6 +344,14 @@ class FieldImpl<T> implements Field<T> {
   private readonly touched$: Signal<boolean>
   private readonly dirty$: Signal<boolean>
   private readonly validating$: Signal<boolean>
+  /**
+   * Read-only views of the three writable signals above, built on first read
+   * and then kept, so each member keeps one identity. The public members are
+   * typed `ReadSignal`, and a cast must not reach `set` (§8.1).
+   */
+  private touchedView: ReadSignal<boolean> | null = null
+  private dirtyView: ReadSignal<boolean> | null = null
+  private validatingView: ReadSignal<boolean> | null = null
   private readonly isValid$: Computed<boolean>
   /**
    * Validity as of the last *settled* validation pass. While a pass is in
@@ -250,7 +368,9 @@ class FieldImpl<T> implements Field<T> {
   /** Which validators count as async — see `asyncValidatorFlags`. */
   private readonly asyncValidators: boolean[]
   /** The value `reset()` returns to. Mutated by `setAsInitial()` so a form
-   * initialized from server data resets to *that* data, not the empty seed. */
+   * initialized from server data resets to *that* data, not the empty seed.
+   * Always the field's own `copyPlainData` copy: an edit of the value in
+   * place, as a Svelte nested bind makes, must not reach it. */
   private initial: T
   private validatorDispose: (() => void) | null = null
   private currentAbort: AbortController | null = null
@@ -272,7 +392,8 @@ class FieldImpl<T> implements Field<T> {
     validators: ReadonlyArray<Validator<T>> = [],
     options?: FieldImplOptions,
   ) {
-    this.initial = initial
+    // The value is the object the caller passed; the baseline is a copy of it.
+    this.initial = copyPlainData(initial)
     this.validators = validators
     this.asyncValidators = asyncValidatorFlags(validators)
     // Capture the reporter BEFORE the validator effect kicks off so a sync
@@ -281,7 +402,7 @@ class FieldImpl<T> implements Field<T> {
     // post-construct hook so it can't catch the first run).
     this.onValidatorError = options?.onValidatorError ?? null
     this.validateOn = options?.validateOn ?? 'change'
-    this.value$ = signal(initial)
+    this.value$ = signal<Held<T>>({ v: initial })
     this.validatorErrors$ = signal<string[]>([])
     this.serverErrors$ = signal<string[]>([])
     this.touched$ = signal(false)
@@ -324,19 +445,32 @@ class FieldImpl<T> implements Field<T> {
 
   // --- ReadSignal<T> ---
   get value(): T {
-    return this.value$.value
+    return this.value$.value.v
   }
 
   peek(): T {
-    return this.value$.peek()
+    return this.value$.peek().v
   }
 
   subscribe(handler: (value: T) => void): () => void {
-    return this.value$.subscribe(handler)
+    return this.value$.subscribe((held) => handler(held.v))
   }
 
   subscribeChanges(handler: (value: T) => void): () => void {
-    return this.value$.subscribeChanges(handler)
+    return this.value$.subscribeChanges((held) => handler(held.v))
+  }
+
+  /**
+   * Store `value`. A primitive equal to the current one (`Object.is`) is no
+   * change and writes nothing. The object the field already holds is a
+   * change when `sameObjectCounts` is set, which only `set` passes.
+   */
+  private write(value: T, sameObjectCounts: boolean): void {
+    if (Object.is(this.value$.peek().v, value)) {
+      const isObject = (typeof value === 'object' && value !== null) || typeof value === 'function'
+      if (!sameObjectCounts || !isObject) return
+    }
+    this.value$.set({ v: value })
   }
 
   // --- Field-only signals ---
@@ -349,15 +483,18 @@ class FieldImpl<T> implements Field<T> {
   }
 
   get isDirty(): ReadSignal<boolean> {
-    return this.dirty$
+    if (this.dirtyView === null) this.dirtyView = readOnly(this.dirty$)
+    return this.dirtyView
   }
 
   get touched(): ReadSignal<boolean> {
-    return this.touched$
+    if (this.touchedView === null) this.touchedView = readOnly(this.touched$)
+    return this.touchedView
   }
 
   get isValidating(): ReadSignal<boolean> {
-    return this.validating$
+    if (this.validatingView === null) this.validatingView = readOnly(this.validating$)
+    return this.validatingView
   }
 
   // --- mutating methods ---
@@ -366,7 +503,13 @@ class FieldImpl<T> implements Field<T> {
   set = (value: T): void => {
     if (this.disposed) return
     batch(() => {
-      this.value$.set(value)
+      // A `set` of the object the field already holds is a change, as it is
+      // to a Svelte store (`safe_not_equal`). Svelte writes a nested bind,
+      // `bind:value={$person.first}`, by assigning the member on this very
+      // object and then calling `set` with it. So validators re-run,
+      // subscribers hear it, and dirty is recomputed below. A primitive equal
+      // to the current one stays no change (spec §8.1).
+      this.write(value, true)
       // Equality-aware dirty: setting back to initial clears dirty, so
       // "Disable Save when unchanged" UIs work without consumer code. Uses
       // a structural comparison for primitive / shallow-object / array
@@ -406,9 +549,11 @@ class FieldImpl<T> implements Field<T> {
    */
   setAsInitial(value: T): void {
     if (this.disposed) return
-    this.initial = value
+    this.initial = copyPlainData(value)
     batch(() => {
-      this.value$.set(value)
+      // The same object again is no change here: a reactive `initial()` that
+      // hands back the objects it handed out before re-seats nothing.
+      this.write(value, false)
       this.dirty$.set(false)
       // Re-seating from a fresh server payload means the previous server
       // response is no longer relevant. Without clearing, errors like
@@ -428,8 +573,8 @@ class FieldImpl<T> implements Field<T> {
    */
   rebaseInitial(value: T): void {
     if (this.disposed) return
-    this.initial = value
-    this.dirty$.set(!isStructurallyEqual(this.value$.peek(), value))
+    this.initial = copyPlainData(value)
+    this.dirty$.set(!isStructurallyEqual(this.value$.peek().v, value))
   }
 
   reset(): void {
@@ -439,8 +584,13 @@ class FieldImpl<T> implements Field<T> {
     // Retire the pass in flight. A validator that ignores its AbortSignal
     // still resolves, and its result must not land on the reset field.
     this.runId++
+    // A value that already matches the baseline stays as it is: no write, so
+    // the validator effect does not wake, and the sync pass below stands in.
+    // Otherwise the field takes a fresh copy of the baseline, never the
+    // baseline itself, so a later in-place edit cannot reach it.
+    const unchanged = isStructurallyEqual(this.value$.peek().v, this.initial)
     batch(() => {
-      this.value$.set(this.initial)
+      if (!unchanged) this.write(copyPlainData(this.initial), false)
       this.dirty$.set(false)
       this.touched$.set(false)
       this.validatorErrors$.set([])
@@ -451,6 +601,16 @@ class FieldImpl<T> implements Field<T> {
       // means we're back to a clean slate, so the user shouldn't immediately
       // see errors again until they re-trigger.
       if (this.validateOn !== 'change') this.validateUnlocked$.set(false)
+      // A reset leaves the field as a fresh one with this value would be. A
+      // changed value re-runs the effect, which runs every validator. An
+      // unchanged one does not, so the sync validators re-run here: a pristine
+      // `required()` field still reads invalid. The async ones do not. A reset
+      // drops the check in flight (§8.1), and re-sending a request for a value
+      // the user did not change is a cost a reset should not add. `revalidate()`,
+      // `validate()` and `submit()` re-run them.
+      else if (unchanged && this.validatorDispose !== null) {
+        untracked(() => this.runValidators(true))
+      }
     })
   }
 
@@ -470,7 +630,14 @@ class FieldImpl<T> implements Field<T> {
     // submit attempt. 'submit' mode uses this as its first activation.
     if (!this.validateUnlocked$.peek()) this.validateUnlocked$.set(true)
     // Bump the trigger to force re-run.
+    const before = this.runId
     this.revalidateTrigger$.update((n) => n + 1)
+    // Inside a `batch()` or an effect, the validator effect runs when that
+    // ends, not here, so `validating$` still reads the previous pass. A
+    // microtask later the batch has flushed and the pass this call asked for
+    // has started, so the wait below sees it. `submit()` validates first in
+    // every calling context this way (§8.6).
+    if (this.validatorDispose !== null && this.runId === before) await Promise.resolve()
     await this.waitUntilSettled()
     return this.isValid$.peek()
   }
@@ -539,11 +706,16 @@ class FieldImpl<T> implements Field<T> {
     })
   }
 
-  private runValidators(): void {
+  /**
+   * One validation pass. The effect runs it with every validator. `reset()`
+   * runs it with `syncOnly`, which calls no async validator and abandons a
+   * promise one returns.
+   */
+  private runValidators(syncOnly = false): void {
     if (this.disposed) return
 
     // Track value and revalidate trigger.
-    const value = this.value$.value
+    const value = this.value$.value.v
     void this.revalidateTrigger$.value
     // Track the gate so the effect re-runs when the field becomes unlocked.
     // While locked, skip the pass entirely — errors stay empty, the field
@@ -595,10 +767,9 @@ class FieldImpl<T> implements Field<T> {
         } catch {
           // The reporter must not propagate.
         }
-        syncErrors.push(
-          __DEV__ ? (err instanceof Error ? err.message : String(err)) : 'Validation failed',
-        )
+        syncErrors.push(thrownMessage(err))
       },
+      syncOnly,
     )
 
     if (failed) {
@@ -612,7 +783,8 @@ class FieldImpl<T> implements Field<T> {
       return
     }
 
-    if (asyncPromises.length === 0) {
+    if (syncOnly) abandonAsyncResults(asyncPromises, abort)
+    if (asyncPromises.length === 0 || syncOnly) {
       batch(() => {
         this.validatorErrors$.set([])
         this.validating$.set(false)
@@ -633,9 +805,9 @@ class FieldImpl<T> implements Field<T> {
       for (const r of results) {
         if (r.status === 'fulfilled') {
           asyncErrors.push(...messagesFromResult(r.value))
-        } else if (!isAbortError(r.reason)) {
-          const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
-          asyncErrors.push(msg)
+        } else {
+          const msg = rejectionMessage(r.reason, (err) => this.onValidatorError?.(err))
+          if (msg !== null) asyncErrors.push(msg)
         }
       }
       batch(() => {
@@ -711,6 +883,10 @@ export type FieldTransform<T> = {
  * `isValidating` is true and `isValid` HOLDS its last settled value (T5.3) — so
  * editing an already-valid field doesn't strobe a submit button to disabled on
  * every keystroke. A field with no prior settled validation defaults to valid.
+ *
+ * A `fn` that throws synchronously, or returns no promise, fails the pass the
+ * way a sync validator that throws does: the message shows on the field and
+ * the error reaches `onError`. The pass settles either way.
  */
 export function debouncedValidator<T>(
   fn: (value: T, signal: AbortSignal) => Promise<string | null>,
@@ -729,7 +905,22 @@ export function debouncedValidator<T>(
       }
       const timer = setTimeout(() => {
         signal.removeEventListener('abort', onAbort)
-        fn(value, signal).then(resolve, reject)
+        // A throw here would escape the timer and leave this promise pending,
+        // and the field validating for good.
+        let result: unknown
+        try {
+          result = fn(value, signal)
+        } catch (err) {
+          reject(markValidatorBug(err))
+          return
+        }
+        if (isThenable(result)) {
+          ;(result as PromiseLike<string | null>).then(resolve, reject)
+        } else {
+          reject(
+            markValidatorBug(new TypeError('[olas] debouncedValidator: fn must return a promise')),
+          )
+        }
       }, ms)
       const onAbort = () => {
         clearTimeout(timer)

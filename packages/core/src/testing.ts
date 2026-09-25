@@ -1,6 +1,6 @@
 import { createRootWithProps } from './controller/root'
 import type { ControllerDef, Field, Root, RootOptions } from './controller/types'
-import { isStructurallyEqual } from './forms/field'
+import { copyPlainData, isStructurallyEqual } from './forms/field'
 import { type QueryEngine, queryEngine } from './query/engine'
 import type { AsyncState, AsyncStatus } from './query/types'
 import { batch, computed, type ReadSignal, type Signal, signal } from './signals'
@@ -112,7 +112,9 @@ export function fakeField<T>(
       ? signal(overrides.isValid)
       : computed(() => validating$.value || errors$.value.length === 0)
 
-  let currentInitial = initial
+  // The baseline is a copy, as a real field's is: an in-place edit of the
+  // value (a Svelte nested bind) must not reach what `reset()` restores.
+  let currentInitial = copyPlainData(initial)
   const set =
     overrides?.set ??
     ((next: T) =>
@@ -124,7 +126,7 @@ export function fakeField<T>(
   const setAsInitial =
     overrides?.setAsInitial ??
     ((next: T) => {
-      currentInitial = next
+      currentInitial = copyPlainData(next)
       batch(() => {
         value$.set(next)
         dirty$.set(false)
@@ -135,7 +137,7 @@ export function fakeField<T>(
     overrides?.reset ??
     (() =>
       batch(() => {
-        value$.set(currentInitial)
+        value$.set(copyPlainData(currentInitial))
         dirty$.set(false)
         touched$.set(false)
         validatorErrors$.set([])

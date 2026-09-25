@@ -458,3 +458,286 @@ describe('ctx.lazyChild', () => {
     expect(log).toEqual(['child:disposed', 'child:disposed', 'child:disposed'])
   })
 })
+
+// ─── one bad item, disposal, and rebuilds ──────────────────────────────────
+
+describe('ctx.collection — one bad item does not stop the reconcile', () => {
+  const row = defineController(
+    (ctx, props: { id: string; log: string[] }) => {
+      ctx.onDispose(() => props.log.push(`dispose:${props.id}`))
+      return { id: props.id }
+    },
+    { name: 'row' },
+  )
+  type Item = { id: string; bad?: boolean }
+
+  test('a throwing propsOf skips that item; the removals and the later items still land', () => {
+    const onError = vi.fn()
+    const log: string[] = []
+    const source = signal<ReadonlyArray<Item>>([{ id: 'a' }])
+    const root = createRoot(
+      defineController((ctx) => ({
+        rows: ctx.collection({
+          source,
+          keyOf: (i) => i.id,
+          controller: row,
+          propsOf: (i) => {
+            if (i.bad) throw new Error(`bad ${i.id}`)
+            return { id: i.id, log }
+          },
+        }),
+      })),
+      { deps: emptyDeps, onError },
+    )
+    source.set([{ id: 'b', bad: true }, { id: 'c' }])
+    expect(root.api.rows.items.value.map((x) => x.key)).toEqual(['c'])
+    expect(root.api.rows.has('a')).toBe(false)
+    expect(log).toEqual(['dispose:a'])
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]![1].kind).toBe('construction')
+
+    // The next reconcile does not stop at the same item either.
+    source.set([{ id: 'b', bad: true }, { id: 'c' }, { id: 'd' }])
+    expect(root.api.rows.items.value.map((x) => x.key)).toEqual(['c', 'd'])
+    root.dispose()
+  })
+
+  test('a throwing factory skips a new item and keeps an existing one', () => {
+    const onError = vi.fn()
+    const log: string[] = []
+    const source = signal<ReadonlyArray<Item>>([{ id: 'a' }])
+    const root = createRoot(
+      defineController((ctx) => ({
+        rows: ctx.collection({
+          source,
+          keyOf: (i) => i.id,
+          factory: (i) => {
+            if (i.bad) throw new Error(`bad ${i.id}`)
+            return { controller: row, props: { id: i.id, log } }
+          },
+        }),
+      })),
+      { deps: emptyDeps, onError },
+    )
+    // `a` now fails its type check, and `b` fails its build; `c` still builds.
+    source.set([{ id: 'a', bad: true }, { id: 'b', bad: true }, { id: 'c' }])
+    expect(root.api.rows.items.value.map((x) => x.key)).toEqual(['a', 'c'])
+    expect(log).toEqual([])
+    expect(onError).toHaveBeenCalledTimes(2)
+    expect(onError.mock.calls.map((c) => c[1].kind)).toEqual(['construction', 'construction'])
+    root.dispose()
+  })
+
+  test('a throwing keyOf skips that item', () => {
+    const onError = vi.fn()
+    const log: string[] = []
+    const source = signal<ReadonlyArray<Item>>([{ id: 'a' }, { id: 'b', bad: true }, { id: 'c' }])
+    const root = createRoot(
+      defineController((ctx) => ({
+        rows: ctx.collection({
+          source,
+          keyOf: (i) => {
+            if (i.bad) throw new Error('no key')
+            return i.id
+          },
+          controller: row,
+          propsOf: (i) => ({ id: i.id, log }),
+        }),
+      })),
+      { deps: emptyDeps, onError },
+    )
+    expect(root.api.rows.items.value.map((x) => x.key)).toEqual(['a', 'c'])
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]![1].kind).toBe('construction')
+    root.dispose()
+  })
+})
+
+describe('ctx.collection — after its owner disposes', () => {
+  test('a propsOf that disposes the owner builds nothing more, and items ends empty', () => {
+    const built: string[] = []
+    const child = defineController((_ctx, p: { id: string }) => {
+      built.push(p.id)
+      return { id: p.id }
+    })
+    let dispose: () => void = () => {}
+    const source = signal<string[]>([])
+    const root = createRoot(
+      defineController((ctx) => ({
+        rows: ctx.collection({
+          source,
+          keyOf: (id) => id,
+          controller: child,
+          propsOf: (id) => {
+            if (id === 'stop') dispose()
+            return { id }
+          },
+        }),
+      })),
+      { deps: emptyDeps },
+    )
+    dispose = () => root.dispose()
+    source.set(['a', 'stop', 'b'])
+    expect(built).toEqual(['a'])
+    expect(root.api.rows.items.value).toEqual([])
+  })
+
+  test('items is empty and has() is false', () => {
+    const child = defineController((_ctx, p: { id: string }) => ({ id: p.id }))
+    const root = createRoot(
+      defineController((ctx) => ({
+        rows: ctx.collection({
+          source: signal([{ id: 'a' }, { id: 'b' }]),
+          keyOf: (i) => i.id,
+          controller: child,
+          propsOf: (i) => ({ id: i.id }),
+        }),
+      })),
+      { deps: emptyDeps },
+    )
+    const { rows } = root.api
+    expect(rows.size.value).toBe(2)
+    root.dispose()
+    expect(rows.items.value).toEqual([])
+    expect(rows.size.value).toBe(0)
+    expect(rows.has('a')).toBe(false)
+    expect(rows.get('a')).toBeUndefined()
+    expect(rows.isItemSuspended('a')).toBe(false)
+  })
+})
+
+describe('ctx.collection — a type rebuild keeps an explicit suspension', () => {
+  test('the rebuilt child starts suspended and a tree resume does not wake it', () => {
+    const tick = signal(0)
+    const runs: string[] = []
+    const make = (name: string) =>
+      defineController(
+        (ctx) => {
+          ctx.effect(() => {
+            void tick.value
+            runs.push(name)
+          })
+          return { name }
+        },
+        { name },
+      )
+    const text = make('text')
+    const code = make('code')
+    type Block = { id: string; type: 'text' | 'code' }
+    const source = signal<ReadonlyArray<Block>>([{ id: 'x', type: 'text' }])
+    const root = createRoot(
+      defineController((ctx) => ({
+        blocks: ctx.collection({
+          source,
+          keyOf: (b) => b.id,
+          factory: (b) => ({ controller: b.type === 'text' ? text : code, props: undefined }),
+        }),
+      })),
+      { deps: emptyDeps },
+    )
+    const { blocks } = root.api
+    blocks.suspendItem('x')
+    source.set([{ id: 'x', type: 'code' }])
+    expect(blocks.get('x')).toEqual({ name: 'code' })
+    expect(blocks.isItemSuspended('x')).toBe(true)
+    runs.length = 0
+    tick.set(1)
+    expect(runs).toEqual([])
+    root.suspend()
+    root.resume()
+    tick.set(2)
+    expect(runs).toEqual([])
+    blocks.resumeItem('x')
+    tick.set(3)
+    expect(runs.at(-1)).toBe('code')
+    root.dispose()
+  })
+})
+
+describe('ctx.lazyChild — the handle follows disposal and loader failures', () => {
+  type Handle = {
+    status: { value: string }
+    api: { value: unknown }
+    error: { value: unknown }
+    load(): Promise<unknown>
+    dispose(): void
+  }
+  function withLazy(
+    loader: () => Promise<unknown>,
+    onError?: (err: unknown, context: { kind: string }) => void,
+  ) {
+    let lazy: Handle | undefined
+    const root = createRoot(
+      defineController((ctx) => {
+        lazy = ctx.lazyChild(loader as never, undefined) as unknown as Handle
+        return {}
+      }),
+      { deps: emptyDeps, onError },
+    )
+    return { root, lazy: lazy as Handle }
+  }
+  const leaf = defineController(() => ({ ok: true }))
+
+  test('dispose() after a load returns the handle to idle with no api', async () => {
+    const { root, lazy } = withLazy(() => Promise.resolve(leaf))
+    await lazy.load()
+    expect(lazy.status.value).toBe('ready')
+    lazy.dispose()
+    expect(lazy.status.value).toBe('idle')
+    expect(lazy.api.value).toBeUndefined()
+    await expect(lazy.load()).rejects.toThrow(/after dispose/)
+    root.dispose()
+  })
+
+  test('a parent dispose after a load returns the handle to idle too', async () => {
+    const { root, lazy } = withLazy(() => Promise.resolve(leaf))
+    await lazy.load()
+    root.dispose()
+    expect(lazy.status.value).toBe('idle')
+    expect(lazy.api.value).toBeUndefined()
+  })
+
+  test('disposed mid-load: load() rejects and the status is idle, not loading', async () => {
+    let settle: (def: typeof leaf) => void = () => {}
+    const { root, lazy } = withLazy(
+      () =>
+        new Promise((resolve) => {
+          settle = resolve
+        }),
+    )
+    const loading = lazy.load()
+    expect(lazy.status.value).toBe('loading')
+    lazy.dispose()
+    settle(leaf)
+    await expect(loading).rejects.toThrow(/disposed during load/)
+    expect(lazy.status.value).toBe('idle')
+    root.dispose()
+  })
+
+  test('a loader that throws synchronously sets error, reports, and rejects', async () => {
+    const onError = vi.fn()
+    const boom = new Error('boom')
+    const { root, lazy } = withLazy(() => {
+      throw boom
+    }, onError)
+    let loading: Promise<unknown> | undefined
+    expect(() => {
+      loading = lazy.load()
+    }).not.toThrow()
+    await expect(loading).rejects.toBe(boom)
+    expect(lazy.status.value).toBe('error')
+    expect(lazy.error.value).toBe(boom)
+    expect(onError).toHaveBeenCalledTimes(1)
+    expect(onError.mock.calls[0]![1].kind).toBe('construction')
+    root.dispose()
+  })
+
+  test('a loader that returns no promise sets error the same way', async () => {
+    const onError = vi.fn()
+    const { root, lazy } = withLazy((() => leaf) as never, onError)
+    await expect(lazy.load()).rejects.toThrow(/must return a promise/)
+    expect(lazy.status.value).toBe('error')
+    expect(onError).toHaveBeenCalledTimes(1)
+    root.dispose()
+  })
+})

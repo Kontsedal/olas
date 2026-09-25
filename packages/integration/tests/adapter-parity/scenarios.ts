@@ -34,20 +34,27 @@ export type UserApi = { user: QuerySubscription<string> }
 export type NameApi = { name: Field<string> }
 export type SaveApi = { save: Mutation<number, number> }
 export type FeedApi = { feed: InfiniteQuerySubscription<number[], number> }
+export type User = { id: number; name: string }
+export type EqualApi = { user: ReadSignal<User>; tick: ReadSignal<number> }
+
+/** The `isEqual` the `equal` view reads `user` with: one user per id. */
+export const sameId = (a: User, b: User): boolean => a.id === b.id
 
 /** The scenarios, by the view each harness renders for them. */
-export type ViewName = 'counter' | 'user' | 'name' | 'save' | 'feed'
+export type ViewName = 'counter' | 'user' | 'name' | 'save' | 'feed' | 'equal'
 
 /**
  * What a framework adapter provides. `mount` renders the named view under a
  * provider for `root` and returns the container. `settle` lets the framework
- * flush whatever it scheduled.
+ * flush whatever it scheduled. `lacks` names the views whose API the adapter
+ * does not have, and their scenarios are skipped for it.
  */
 export type Harness = {
   name: string
   mount(view: ViewName, root: Root<unknown>): HTMLElement
   unmount(): void
   settle(): Promise<void>
+  lacks?: readonly ViewName[]
 }
 
 /** A signal that counts its live subscriptions, of both kinds. */
@@ -230,6 +237,33 @@ export function runParity(harness: Harness): void {
       await harness.settle()
       expect(input.value).toBe('Grace')
     })
+
+    // Svelte reads a signal as a store and has no `isEqual` option to compare.
+    test.skipIf(harness.lacks?.includes('equal') === true)(
+      'a value isEqual calls equal keeps the one shown when the view re-renders for another reason',
+      async () => {
+        const user = signal<User>({ id: 1, name: 'A' })
+        const tick = signal(0)
+        const root = keep(
+          createRoot(
+            defineController((): EqualApi => ({ user, tick })),
+            { deps: {} },
+          ),
+        )
+        const el = harness.mount('equal', root)
+        expect(text(el, 'equal')).toBe('A:0')
+        user.set({ id: 1, name: 'B' })
+        await harness.settle()
+        expect(text(el, 'equal')).toBe('A:0')
+        // An unrelated write re-renders the view, which still shows A.
+        tick.set(1)
+        await harness.settle()
+        expect(text(el, 'equal')).toBe('A:1')
+        user.set({ id: 2, name: 'C' })
+        await harness.settle()
+        expect(text(el, 'equal')).toBe('C:1')
+      },
+    )
 
     test('mutate is fire-and-forget: success and failure both land on the view', async () => {
       const root = keep(

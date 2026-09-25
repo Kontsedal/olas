@@ -3,7 +3,7 @@ import { batch, type Signal, signal } from '../signals'
 import { abortableSleep, isAbortError } from '../utils'
 import { subscribeReconnect } from './focus-online'
 import { structuralShare } from './structural-share'
-import type { AsyncStatus, NetworkMode, RetryDelay, RetryPolicy, Snapshot } from './types'
+import type { AsyncStatus, NetworkMode, RetryDelay, RetryPolicy } from './types'
 
 export type EntryEvents = {
   /**
@@ -79,8 +79,52 @@ export type EntryOptions<T> = {
 
 type SnapshotRecord<T> = {
   id: number
+  /** The layer's baseline: the data before it applied, kept current with server truth. */
   prev: T | undefined
+  /**
+   * What the layer applied. A commit re-runs it on the baselines below (§6.4).
+   * Stored at `unknown` to keep `Entry<T>` covariant in `T`, as `onSuccessData`.
+   */
+  updater: (prev: unknown) => unknown
+  /** `serverEpoch` when the layer was pushed. */
+  epoch: number
   live: boolean
+}
+
+/**
+ * What settling an optimistic layer asks the client to report: `'commit'` when the
+ * entry has no live layer left and a layer committed since the last server read,
+ * so the data on screen is committed truth. `null` otherwise.
+ */
+export type SettleReport = 'commit' | null
+
+/**
+ * The `Snapshot` an entry hands out, whose settles say what to report. Assignable to
+ * `Snapshot`; the client wraps it before an app sees it.
+ */
+export type EntrySnapshot = {
+  rollback: () => SettleReport
+  finalize: () => SettleReport
+}
+
+/** What a disposed entry and a canonical write return. */
+export const NO_SNAPSHOT: EntrySnapshot = Object.freeze({
+  rollback: () => null,
+  finalize: () => null,
+})
+
+/**
+ * Warn, in development, that an updater threw on an optimistic layer's baseline.
+ * Shared by `Entry` and `InfiniteEntry`.
+ */
+export function warnBaselineThrow(err: unknown): void {
+  if (__DEV__) {
+    console.warn(
+      '[olas] an updater threw on the baseline under an optimistic write (§6.4). The ' +
+        'entry is marked stale and refetches once its optimistic writes settle.',
+      err,
+    )
+  }
 }
 
 /**
@@ -221,6 +265,19 @@ export class Entry<T> {
   private readonly hasSubscribers: () => boolean
   private snapshots: Array<SnapshotRecord<T>> = []
   private nextSnapshotId = 0
+  /**
+   * Bumped by every server read that rebases the live layers: a fetch success or a
+   * hydrated row. A layer pushed before the latest one may already be in that read,
+   * so its commit does not re-run it on the baselines below (§6.4).
+   */
+  private serverEpoch = 0
+  /**
+   * A layer committed while others were still live. The data on screen then held
+   * guesses, so the commit was not reported; the last settle reports it.
+   */
+  private commitPending = false
+  /** `firstValue()` promises waiting for the first data. */
+  private firstValueWaiters = 0
   private disposed = false
   /** Subscribers to reconnect — installed lazily when a deferred fetch lands. */
   private reconnectUnsub: (() => void) | null = null
@@ -263,7 +320,10 @@ export class Entry<T> {
     this.data = signal<T | undefined>(options.initialData)
     const initialUpdatedAt = notInFuture(options.initialUpdatedAt)
     this.serverUpdatedAt = initialUpdatedAt
-    if (options.initialData !== undefined) {
+    // A hydrated row seeds `success` even when its data is `undefined`, as
+    // `applyHydration` does on a bound entry (§21.9): the stamp says the
+    // server answered.
+    if (options.initialData !== undefined || initialUpdatedAt !== undefined) {
       this.status = signal<AsyncStatus>('success')
       // For hydrated data, derive `isStale` from the *actual* age of the
       // payload, not the timer alone — otherwise a payload older than
@@ -294,7 +354,7 @@ export class Entry<T> {
     if (this.networkMode === 'online' && this.isOffline()) {
       let parked: Promise<T> | undefined
       batch(() => {
-        this.cancel()
+        this.cancelInFlight()
         parked = this.scheduleDeferredFetch()
       })
       return parked as Promise<T>
@@ -322,7 +382,12 @@ export class Entry<T> {
 
     const request = this.runWithRetry(myId, abort, this.staleEpoch)
     this.currentRequest = request
-    return this.releaseOnSettle(request, abort)
+    const work = this.releaseOnSettle(request, abort)
+    // A park no `online` event ended: the network came back and this request
+    // was made online. It serves the parked waiters, so no later event makes
+    // another request, or aborts this one (§5.9).
+    if (this.deferredResolvers.length > 0) this.adoptPark(work)
+    return work
   }
 
   /**
@@ -377,14 +442,9 @@ export class Entry<T> {
   private drainDeferred(): void {
     if (this.deferredResolvers.length === 0) return
     if (this.disposed) return
-    const pending = this.deferredResolvers
-    this.deferredResolvers = []
     // One real fetch fans out to every pending resolver. Tearing down the
     // reconnect listener avoids accumulating listeners across many deferrals.
-    if (this.reconnectUnsub !== null) {
-      this.reconnectUnsub()
-      this.reconnectUnsub = null
-    }
+    const pending = this.takePark()
     this.startFetch().then(
       (value) => {
         for (const p of pending) p.resolve(value)
@@ -393,6 +453,43 @@ export class Entry<T> {
         for (const p of pending) p.reject(err)
       },
     )
+  }
+
+  /** Take the parked waiters, and stop listening for reconnect. */
+  private takePark(): Array<{ resolve: (value: unknown) => void; reject: (err: unknown) => void }> {
+    const pending = this.deferredResolvers
+    this.deferredResolvers = []
+    if (this.reconnectUnsub !== null) {
+      this.reconnectUnsub()
+      this.reconnectUnsub = null
+    }
+    return pending
+  }
+
+  /** End the park with `request`: its waiters settle as the request does. */
+  private adoptPark(request: Promise<T>): void {
+    const pending = this.takePark()
+    request.then(
+      (value) => {
+        for (const p of pending) p.resolve(value)
+      },
+      (err: unknown) => {
+        for (const p of pending) p.reject(err)
+      },
+    )
+  }
+
+  /**
+   * End the park without running it, for `cancel()`: its waiters reject with an
+   * `AbortError`, as a cancelled request's callers do, and its result can never
+   * land (§5.5).
+   */
+  private dropPark(): void {
+    const pending = this.takePark()
+    this.isPaused.set(false)
+    if (pending.length === 0) return
+    const cancelled = new DOMException('Cancelled', 'AbortError')
+    for (const p of pending) p.reject(cancelled)
   }
 
   private async runWithRetry(myId: number, abort: AbortController, staleEpoch: number): Promise<T> {
@@ -502,6 +599,11 @@ export class Entry<T> {
     if (this.snapshots.length > 0) {
       for (const s of this.snapshots) s.prev = shared
     }
+    // The read may already hold a live layer's change, so a later commit does
+    // not re-run that layer on the baselines. Plugins hear this data as a
+    // `'fetch'`, so a commit before it has nothing left to report.
+    this.serverEpoch += 1
+    this.commitPending = false
     // Data requested after the latest `markStale()` reconciles it (T3.9). A
     // response requested before it does not: the invalidation asked for data
     // newer than this, so the entry stays stale, and a held entry catches up
@@ -649,6 +751,9 @@ export class Entry<T> {
     // optimistic snapshots onto it, so a later rollback restores it rather
     // than a baseline from before it arrived (spec §6.4, as in `applySuccess`).
     for (const s of this.snapshots) s.prev = data
+    // A server read, as in `applySuccess`.
+    this.serverEpoch += 1
+    this.commitPending = false
     batch(() => {
       this.data.set(data)
       this.error.set(undefined)
@@ -712,13 +817,27 @@ export class Entry<T> {
    * Cancel an in-flight fetch without touching `data`. Aborts the current
    * request and supersedes it (bumps `currentFetchId` so its result can never
    * land), then restores a settled status: `'success'` if data exists, else
-   * `'idle'`. No-op when nothing is fetching. This is the primitive behind
-   * `query.cancel(...)` / `subscription.cancel()`: the canonical optimistic
-   * recipe cancels outgoing refetches before an optimistic `setData` so a
-   * stale response can't clobber the optimistic value (spec §5, §6.4). T3.4.
+   * `'idle'`. A fetch parked for the network is dropped too: `isPaused` clears,
+   * the reconnect listener goes, and its waiters reject with an `AbortError`,
+   * as a cancelled request's callers do. No-op when nothing is fetching or
+   * parked. This is the primitive behind `query.cancel(...)` /
+   * `subscription.cancel()`: the canonical optimistic recipe cancels outgoing
+   * refetches before an optimistic `setData` so a stale response can't clobber
+   * the optimistic value (spec §5.5, §6.4). T3.4.
    */
   cancel(): void {
-    if (this.disposed || !this.isFetching.peek()) return
+    const parked = this.deferredResolvers.length > 0 || this.isPaused.peek()
+    if (this.disposed || (!this.isFetching.peek() && !parked)) return
+    batch(() => {
+      this.cancelInFlight()
+      if (parked) this.dropPark()
+    })
+    this.recoverFirstValue()
+  }
+
+  /** The in-flight half of `cancel()`. A no-op when nothing is fetching. */
+  private cancelInFlight(): void {
+    if (!this.isFetching.peek()) return
     this.currentFetchId += 1
     this.currentAbort?.abort()
     this.currentAbort = null
@@ -727,6 +846,32 @@ export class Entry<T> {
       this.isLoading.set(false)
       this.status.set(this.data.peek() !== undefined ? 'success' : 'idle')
     })
+  }
+
+  /**
+   * A cancel left the entry with no data and nothing coming while `firstValue()`
+   * waits. One microtask later, unless data arrived meanwhile (the `setData`
+   * that usually follows a cancel), the entry fetches again for the waiter:
+   * `firstValue()` never hangs, and a Suspense boundary recovers by loading
+   * rather than by showing an error for a cancel (§5.3).
+   */
+  private recoverFirstValue(): void {
+    if (this.firstValueWaiters === 0) return
+    queueMicrotask(() => {
+      if (this.disposed || this.firstValueWaiters === 0 || !this.idleWithoutData()) return
+      // The outcome settles on the entry, and the waiter follows `status`.
+      this.startFetch().catch(() => {})
+    })
+  }
+
+  /** No data, no request in flight or parked, and none settled: nothing is coming. */
+  private idleWithoutData(): boolean {
+    return (
+      this.data.peek() === undefined &&
+      this.status.peek() === 'idle' &&
+      !this.isFetching.peek() &&
+      !this.isPaused.peek()
+    )
   }
 
   /**
@@ -754,7 +899,7 @@ export class Entry<T> {
     // One batch: `isFetching` never reads false between the cancel and the
     // catch-up, so an awaiter such as `waitForIdle()` cannot resolve early.
     batch(() => {
-      this.cancel()
+      this.cancelInFlight()
       this.catchUpIfStillStale(discarded)
     })
   }
@@ -772,30 +917,38 @@ export class Entry<T> {
    * backprop, realtime patches (spec §6.4). It updates the data signal but
    * pushes NO snapshot and does NOT flip `hasPendingMutations`, so a
    * fire-and-forget plugin write can't wedge the pending flag at `true`
-   * forever. Returns a no-op `Snapshot`.
+   * forever. Returns a no-op `Snapshot`. `whole: true` marks a canonical write
+   * whose updater ignores `prev` (a `replace`): its value becomes every live
+   * baseline as it is, where a patch is re-run on each one.
    */
-  setData(updater: (prev: T | undefined) => T, opts?: { track?: boolean }): Snapshot {
-    if (this.disposed) {
-      return { rollback: () => {}, finalize: () => {} }
-    }
+  setData(
+    updater: (prev: T | undefined) => T,
+    opts?: { track?: boolean; whole?: boolean },
+  ): EntrySnapshot {
+    if (this.disposed) return NO_SNAPSHOT
     const prev = this.data.peek()
     const next = updater(prev)
     const track = opts?.track ?? true
+    // A CANONICAL write patches every live layer's baseline with its own updater
+    // (spec §6.4): a later rollback must restore server truth, and server truth
+    // now includes this write. Setting each baseline to `next` instead made the
+    // guesses on screen permanent, since `next` holds them. A whole value, a
+    // `replace`, still becomes every baseline. Tracked writes do not rebase: an
+    // optimistic layer is a guess.
+    if (!track && this.snapshots.length > 0) {
+      if (opts?.whole === true) for (const r of this.snapshots) r.prev = next
+      else this.rebaseOnto(this.snapshots, updater as (prev: unknown) => unknown)
+    }
     const record: SnapshotRecord<T> | null = track
-      ? { id: this.nextSnapshotId++, prev, live: true }
+      ? {
+          id: this.nextSnapshotId++,
+          prev,
+          updater: updater as (prev: unknown) => unknown,
+          epoch: this.serverEpoch,
+          live: true,
+        }
       : null
     if (record) this.snapshots.push(record)
-    // A CANONICAL write rebases live optimistic snapshots onto itself, exactly as a
-    // successful fetch does (`applySuccess`) and for the same stated reason (spec §6.4):
-    // a later rollback must restore server truth, not a baseline captured before that
-    // truth arrived. Without this, a canonical write landing mid-mutation is silently undone
-    // by the mutation's own rollback — and undone to a value older still when the caller was
-    // `replace`, which supersedes the in-flight fetch that would otherwise have rebased.
-    // Tracked writes are excluded: an optimistic layer is a guess, and rebasing onto a
-    // guess is what the baseline exists to protect against.
-    if (!track && this.snapshots.length > 0) {
-      for (const sn of this.snapshots) sn.prev = next
-    }
 
     batch(() => {
       const now = Date.now()
@@ -813,18 +966,15 @@ export class Entry<T> {
       if (record) this.hasPendingMutations.set(true)
     })
 
-    if (!record) {
-      return { rollback: () => {}, finalize: () => {} }
-    }
+    if (!record) return NO_SNAPSHOT
     try {
       this.events.onSnapshotPush?.()
     } catch {
       // devtools handlers must not break the program.
     }
-    const id = record.id
     return {
       rollback: () => {
-        if (!record.live || this.disposed) return
+        if (!record.live || this.disposed) return null
         record.live = false
         batch(() => {
           const i = this.snapshots.indexOf(record)
@@ -834,41 +984,141 @@ export class Entry<T> {
               // the current data.
               this.data.set(record.prev as T)
             } else {
-              // Not the top: leave the currently-displayed value alone and
-              // thread this layer's baseline down onto the next layer, so a
-              // later top-rollback lands on the correct pre-everything value
-              // instead of resurrecting this layer's delta (chain-splice —
-              // T3.1, spec §6.4). Out-of-order rollback of all layers now
-              // returns to the original pre-mutation value.
-              const below = this.snapshots[i + 1] as SnapshotRecord<T>
-              below.prev = record.prev
+              // Not the top: thread this layer's baseline onto the layer above
+              // it (chain-splice — T3.1, spec §6.4), then replay the layers
+              // above over it. Their baselines and the data on screen still
+              // hold this layer's delta, and a commit above would otherwise
+              // report the failed guess as committed truth.
+              const above = this.snapshots[i + 1] as SnapshotRecord<T>
+              above.prev = record.prev
             }
             this.snapshots.splice(i, 1)
+            if (i < this.snapshots.length) this.replayFrom(i)
           }
-          this.hasPendingMutations.set(this.snapshots.some((s) => s.live))
+          this.hasPendingMutations.set(this.snapshots.length > 0)
         })
         try {
           this.events.onSnapshotRollback?.()
         } catch {
           // devtools handlers must not break the program.
         }
+        const report = this.settleReport(false)
         this.runHeldBackFetch()
+        return report
       },
       finalize: () => {
-        if (!record.live || this.disposed) return
+        if (!record.live || this.disposed) return null
         record.live = false
-        this.snapshots = this.snapshots.filter((s) => s.id !== id)
-        if (!this.snapshots.some((s) => s.live)) {
-          this.hasPendingMutations.set(false)
+        // A live layer is on the stack.
+        const i = this.snapshots.indexOf(record)
+        // The layer is server truth now, and the baselines below it predate
+        // it: fold it in by re-running its updater there, so a lower layer's
+        // rollback keeps the commit (§6.4). A server read since the layer was
+        // pushed rebased those baselines and may already hold the change, so
+        // re-running it could apply it twice; the read stands then.
+        if (i > 0 && record.epoch === this.serverEpoch) {
+          this.rebaseOnto(this.snapshots.slice(0, i), record.updater)
         }
+        this.snapshots.splice(i, 1)
+        if (this.snapshots.length === 0) this.hasPendingMutations.set(false)
         try {
           this.events.onSnapshotFinalize?.()
         } catch {
           // devtools handlers must not break the program.
         }
+        const report = this.settleReport(true)
         this.runHeldBackFetch()
+        return report
       },
     }
+  }
+
+  /**
+   * Re-derive each baseline in `records` with `updater`, for a canonical patch
+   * or a commit (§6.4). A baseline the updater throws on keeps its value, and
+   * the entry reconciles instead of leaving a known-wrong rollback target.
+   */
+  private rebaseOnto(
+    records: readonly SnapshotRecord<T>[],
+    updater: (prev: unknown) => unknown,
+  ): void {
+    let failure: { err: unknown } | null = null
+    for (const r of records) {
+      try {
+        r.prev = updater(r.prev) as T
+      } catch (err) {
+        failure = { err }
+      }
+    }
+    if (failure !== null) {
+      warnBaselineThrow(failure.err)
+      this.reconcileLater()
+    }
+  }
+
+  /**
+   * A layer under the ones from index `from` up was removed, and their
+   * baselines and the data on screen still hold its change. Rebuild them from
+   * the baseline at `from`: each layer's baseline is the one below it with that
+   * layer's updater applied, and the data on screen is the top layer's result
+   * (§6.4). A layer that a fetch or a hydrated row has since replaced passes
+   * its baseline through, as the read left the screen. Two cases cannot be
+   * replayed exactly, and the entry reconciles for them: a plain value (an
+   * updater that takes no `prev`) may hold the removed change it captured, and
+   * an updater can throw. A throw leaves the screen as it was. The result is
+   * structurally shared with the data on screen, so a replay that changes
+   * nothing keeps its reference and reports no write.
+   */
+  private replayFrom(from: number): void {
+    const layers = this.snapshots
+    let value = (layers[from] as SnapshotRecord<T>).prev
+    let exact = true
+    for (let j = from; j < layers.length; j++) {
+      const r = layers[j] as SnapshotRecord<T>
+      if (j > from) r.prev = value
+      if (r.epoch !== this.serverEpoch) continue
+      if (r.updater.length === 0) exact = false
+      try {
+        value = r.updater(value) as T
+      } catch (err) {
+        warnBaselineThrow(err)
+        this.reconcileLater()
+        return
+      }
+    }
+    const shown = this.data.peek()
+    this.data.set(
+      shown === undefined || !this.structuralShareEnabled
+        ? (value as T)
+        : structuralShare(shown, value as T),
+    )
+    if (!exact) this.reconcileLater()
+  }
+
+  /**
+   * A baseline could not be re-derived, so a rollback may restore a value known
+   * to be wrong. Mark the entry stale, as an invalidation does, and fetch once
+   * the last live layer settles, if someone holds the entry (§5.7, §5.9).
+   */
+  private reconcileLater(): void {
+    this.markStale()
+    this.fetchHeldBack = true
+  }
+
+  /**
+   * What a settle reports. A commit is reported once no layer is live, so a
+   * plugin that takes canonical sources only never sees a pending guess as
+   * committed, and a commit made under another live layer is reported by the
+   * settle that clears the last one, even a rollback (§13.1).
+   */
+  private settleReport(committed: boolean): SettleReport {
+    if (this.snapshots.length > 0) {
+      if (committed) this.commitPending = true
+      return null
+    }
+    const report: SettleReport = committed || this.commitPending ? 'commit' : null
+    this.commitPending = false
+    return report
   }
 
   /**
@@ -901,6 +1151,11 @@ export class Entry<T> {
    * Resolves at once when the entry holds data (`!== undefined`, §6.4), even
    * while a background refetch runs or after one failed. Otherwise it waits for
    * the first success, and rejects on the first failure or on dispose.
+   *
+   * It never waits on nothing. Called on an idle entry with no data and no
+   * request in flight or parked, such as after a cancelled first load or a
+   * `reset()` of a failed one, it starts a fetch. A cancel while it waits makes
+   * the entry fetch again, unless data arrives first (`recoverFirstValue`).
    */
   firstValue(): Promise<T> {
     if (this.disposed) {
@@ -913,23 +1168,34 @@ export class Entry<T> {
     if (this.status.peek() === 'error') {
       return Promise.reject(this.error.peek())
     }
-    return new Promise<T>((resolve, reject) => {
-      const tracked = (err: unknown): void => {
+    const fetchNow = this.idleWithoutData()
+    const waiting = new Promise<T>((resolve, reject) => {
+      this.firstValueWaiters += 1
+      let unsub = (): void => {}
+      // Settling unsubscribes and drops the dispose hook, so it runs once.
+      const leave = (): void => {
+        unsub()
+        this.firstValueWaiters -= 1
         this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+      }
+      const tracked = (err: unknown): void => {
+        leave()
         reject(err)
       }
       this.pendingFirstValueRejects.push(tracked)
-      const unsub = this.status.subscribe((s) => {
+      // Called at once with `'idle'` or `'pending'`: success and error returned above.
+      unsub = this.status.subscribe((s) => {
         if (s === 'success') {
-          unsub()
-          this.pendingFirstValueRejects = this.pendingFirstValueRejects.filter((f) => f !== tracked)
+          leave()
           resolve(this.data.peek() as T)
         } else if (s === 'error') {
-          unsub()
           tracked(this.error.peek())
         }
       })
     })
+    // The outcome settles on the entry, and the waiter follows `status`.
+    if (fetchNow) this.startFetch().catch(() => {})
+    return waiting
   }
 
   /**
@@ -1005,6 +1271,29 @@ export class Entry<T> {
   private isServerStale(): boolean {
     const at = this.serverUpdatedAt
     return at === undefined || Date.now() - at >= this.staleTime
+  }
+
+  /**
+   * When the server last said what the entry holds: its last fetch, hydrated
+   * row or canonical write. `undefined` when none happened. An optimistic write
+   * and its commit leave it alone (§5.9).
+   */
+  serverStamp(): number | undefined {
+    return this.serverUpdatedAt
+  }
+
+  /**
+   * What `dehydrate()` ships (§15): the data under any live optimistic layer, so
+   * a guess never travels as server truth, stamped with `serverStamp()`, or `0`
+   * when the server never answered (a committed guess alone). `null` when there
+   * is nothing to ship: no data, and no server answer either.
+   */
+  serverState(): { data: T | undefined; updatedAt: number } | null {
+    const bottom = this.snapshots[0]
+    const data = bottom !== undefined ? bottom.prev : this.data.peek()
+    const at = this.serverUpdatedAt
+    if (data === undefined && at === undefined) return null
+    return { data, updatedAt: at ?? 0 }
   }
 
   dispose(): void {

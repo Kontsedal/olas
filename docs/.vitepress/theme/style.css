@@ -1,0 +1,553 @@
+/*
+ * The Olas docs theme.
+ *
+ * The colours are the house palette from examples/_shared/ui/tokens.css, the
+ * one the devtools panel and the flagship examples carry: a sea teal accent
+ * at hue 196 and cool neutrals at hue 240. They are written here in hex,
+ * because VitePress mixes some of them with alpha. Each foreground clears
+ * 4.5:1 on every surface it lands on, in both themes. The accent marks a link,
+ * the current page and the next step, and nothing decorative.
+ *
+ * The type is Atkinson Hyperlegible, from the Braille Institute: one family
+ * for prose and code, drawn so that l, I and 1, or O and 0, never look alike.
+ * A page full of identifiers is where that pays.
+ *
+ * .wiki/decisions/docs-site.md has the reasoning. Read it before changing a
+ * value.
+ */
+
+/* ── Type and palette, light ──────────────────────────────────────────── */
+
+:root {
+  --vp-font-family-base: 'Atkinson Hyperlegible Next Variable', ui-sans-serif, system-ui,
+    -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --vp-font-family-mono: 'Atkinson Hyperlegible Mono Variable', ui-monospace, 'SF Mono', Menlo,
+    Consolas, monospace;
+
+  --vp-c-bg: #ffffff;
+  --vp-c-bg-alt: #f5f8fa;
+  --vp-c-bg-elv: #ffffff;
+  --vp-c-bg-soft: #f5f8fa;
+
+  --vp-c-divider: #d5dade;
+  --vp-c-gutter: #d5dade;
+  --vp-c-border: #7a8187;
+
+  --vp-c-text-1: #172128;
+  --vp-c-text-2: #4a545c;
+  --vp-c-text-3: #5c646b;
+
+  --vp-c-gray-1: #d5dade;
+  --vp-c-gray-2: #e2e7eb;
+  --vp-c-gray-3: #e9edf0;
+  --vp-c-gray-soft: rgb(92 100 107 / 0.1);
+
+  --vp-c-indigo-1: #026f70;
+  --vp-c-indigo-2: #015c5d;
+  --vp-c-indigo-3: #026f70;
+  --vp-c-indigo-soft: rgb(2 111 112 / 0.1);
+
+  --vp-c-green-1: #007439;
+  --vp-c-green-2: #005f2e;
+  --vp-c-green-3: #007439;
+  --vp-c-green-soft: rgb(0 116 57 / 0.1);
+
+  --vp-c-yellow-1: #8a5b00;
+  --vp-c-yellow-2: #784a00;
+  --vp-c-yellow-3: #8a5b00;
+  --vp-c-yellow-soft: rgb(199 139 40 / 0.14);
+
+  --vp-c-red-1: #b4353c;
+  --vp-c-red-2: #9a282f;
+  --vp-c-red-3: #b4353c;
+  --vp-c-red-soft: rgb(180 53 60 / 0.1);
+
+  /* "important" callouts take the info blue, so no violet is left anywhere. */
+  --vp-c-purple-1: #0068a5;
+  --vp-c-purple-2: #005587;
+  --vp-c-purple-3: #0068a5;
+  --vp-c-purple-soft: rgb(0 104 165 / 0.1);
+
+  --vp-c-brand-1: var(--vp-c-indigo-1);
+  --vp-c-brand-2: var(--vp-c-indigo-2);
+  --vp-c-brand-3: var(--vp-c-indigo-3);
+  --vp-c-brand-soft: var(--vp-c-indigo-soft);
+
+  /* Inline code is ink on a grey wash. The accent stays for links. */
+  --vp-code-color: var(--vp-c-text-1);
+  --vp-code-bg: rgb(92 100 107 / 0.1);
+  --vp-code-font-size: 0.875em;
+  --vp-code-line-height: 1.65;
+  --vp-code-block-bg: var(--vp-c-bg-alt);
+
+  --vp-button-brand-text: #ffffff;
+  --vp-button-brand-hover-text: #ffffff;
+  --vp-button-brand-active-text: #ffffff;
+  --vp-button-alt-bg: var(--vp-c-bg);
+  --vp-button-alt-border: var(--vp-c-divider);
+  --vp-button-alt-hover-bg: var(--vp-c-bg-alt);
+  --vp-button-alt-hover-border: var(--vp-c-border);
+  --vp-button-alt-active-bg: var(--vp-c-gray-3);
+  --vp-button-alt-active-border: var(--vp-c-border);
+
+  --vp-custom-block-font-size: 15px;
+  --vp-custom-block-code-font-size: 14px;
+
+  --vp-sidebar-bg-color: var(--vp-c-bg-alt);
+  --vp-nav-logo-height: 26px;
+  --vp-home-hero-name-color: var(--vp-c-text-1);
+}
+
+/* ── Palette, dark ────────────────────────────────────────────────────── */
+
+.dark {
+  --vp-c-bg: #181f25;
+  --vp-c-bg-alt: #0c1115;
+  --vp-c-bg-elv: #20292f;
+  --vp-c-bg-soft: #0c1115;
+
+  --vp-c-divider: #2b3339;
+  --vp-c-gutter: #05090c;
+  --vp-c-border: #70777c;
+
+  --vp-c-text-1: #eceff1;
+  --vp-c-text-2: #a8b3ba;
+  --vp-c-text-3: #8c959c;
+
+  --vp-c-gray-1: #3a444b;
+  --vp-c-gray-2: #2b3339;
+  --vp-c-gray-3: #20292f;
+  --vp-c-gray-soft: rgb(168 179 186 / 0.12);
+
+  --vp-c-indigo-1: #5ecbcc;
+  --vp-c-indigo-2: #73dfe0;
+  --vp-c-indigo-3: #5ecbcc;
+  --vp-c-indigo-soft: rgb(94 203 204 / 0.12);
+
+  --vp-c-green-1: #6ad18a;
+  --vp-c-green-2: #86e0a2;
+  --vp-c-green-3: #6ad18a;
+  --vp-c-green-soft: rgb(106 209 138 / 0.12);
+
+  --vp-c-yellow-1: #f0b04f;
+  --vp-c-yellow-2: #f6c476;
+  --vp-c-yellow-3: #f0b04f;
+  --vp-c-yellow-soft: rgb(240 176 79 / 0.12);
+
+  --vp-c-red-1: #fb817f;
+  --vp-c-red-2: #fc9c9a;
+  --vp-c-red-3: #fb817f;
+  --vp-c-red-soft: rgb(251 129 127 / 0.12);
+
+  --vp-c-purple-1: #6fb6f0;
+  --vp-c-purple-2: #8ec6f4;
+  --vp-c-purple-3: #6fb6f0;
+  --vp-c-purple-soft: rgb(111 182 240 / 0.12);
+
+  --vp-code-bg: rgb(168 179 186 / 0.12);
+
+  /* The dark accent is light, so the label on a filled button is dark. */
+  --vp-button-brand-text: #031010;
+  --vp-button-brand-hover-text: #031010;
+  --vp-button-brand-active-text: #031010;
+}
+
+/* ── Base type ────────────────────────────────────────────────────────── */
+
+body {
+  font-feature-settings: normal;
+}
+
+::selection {
+  background: var(--vp-c-brand-soft);
+}
+
+.VPNavBarTitle .title {
+  gap: 10px;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ── Doc pages ────────────────────────────────────────────────────────── */
+
+.vp-doc h1 {
+  font-size: 40px;
+  font-weight: 750;
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+
+/* The paragraph under a page title says what the page is for. Most guides
+   already open with one, so it gets a size of its own. */
+.vp-doc h1 + p {
+  margin-top: 20px;
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+}
+
+.vp-doc h2 {
+  margin-top: 56px;
+  padding-top: 28px;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+}
+
+.vp-doc h3 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.vp-doc p,
+.vp-doc li {
+  line-height: 1.75;
+}
+
+.vp-doc strong {
+  font-weight: 700;
+}
+
+.vp-doc a {
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  text-decoration-color: color-mix(in srgb, var(--vp-c-brand-1) 40%, transparent);
+  transition: text-decoration-color 120ms;
+}
+
+.vp-doc a:hover {
+  text-decoration-color: currentColor;
+}
+
+.vp-doc a:has(> code:only-child) {
+  text-decoration: none;
+}
+
+.vp-doc :not(pre) > code {
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.vp-doc a > code {
+  color: var(--vp-c-brand-1);
+}
+
+/* Code blocks take an edge on the white page, where the grey ground alone
+   is too faint to read as a block. */
+.vp-doc div[class*='language-'] {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}
+
+.dark .vp-doc div[class*='language-'] {
+  border-color: transparent;
+}
+
+.vp-doc .vp-code-group .tabs {
+  border: 1px solid var(--vp-c-divider);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+}
+
+.vp-doc .vp-code-group div[class*='language-'] {
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+
+.dark .vp-doc .vp-code-group .tabs {
+  border-color: transparent;
+}
+
+@media (max-width: 639px) {
+  .vp-doc div[class*='language-'],
+  .vp-doc .vp-code-group .tabs {
+    border-radius: 0;
+    border-left: 0;
+    border-right: 0;
+  }
+}
+
+/* Tables are rules between rows, with no stripes and no box. */
+.vp-doc table {
+  display: table;
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.vp-doc tr,
+.vp-doc tr:nth-child(2n) {
+  border: 0;
+  background: transparent;
+}
+
+.vp-doc th,
+.vp-doc td {
+  padding: 10px 16px 10px 0;
+  border: 0;
+  border-bottom: 1px solid var(--vp-c-divider);
+  vertical-align: top;
+}
+
+.vp-doc th {
+  background: transparent;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--vp-c-text-1);
+  border-bottom-color: var(--vp-c-border);
+}
+
+.vp-doc th:last-child,
+.vp-doc td:last-child {
+  padding-right: 0;
+}
+
+.vp-doc .custom-block {
+  border-radius: 8px;
+}
+
+.vp-doc .custom-block p {
+  line-height: 1.65;
+}
+
+.vp-doc .custom-block-title {
+  font-weight: 700;
+}
+
+.vp-doc .for-framework > :first-child {
+  margin-top: 16px;
+}
+
+/* ── Sidebar and outline ──────────────────────────────────────────────── */
+
+.VPSidebarItem.level-0 > .item > .text {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--vp-c-text-1);
+}
+
+.VPSidebarItem.level-1 .text {
+  font-size: 15px;
+}
+
+.VPDocAsideOutline .outline-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+/* ── Home ─────────────────────────────────────────────────────────────── */
+
+.VPHome .vp-doc h2 {
+  margin-top: 96px;
+  padding-top: 40px;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+}
+
+.VPHome .vp-doc h2:first-of-type {
+  margin-top: 32px;
+}
+
+.VPHome .vp-doc h2 + p {
+  max-width: 40em;
+  font-size: 18px;
+  color: var(--vp-c-text-2);
+}
+
+/* Three steps, a sequence, so they carry numbers. */
+.home-steps {
+  counter-reset: step;
+}
+
+/* Every home grid starts as one `minmax(0, 1fr)` column, so a long code line
+   scrolls inside its block instead of widening the page. */
+.home-step {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px 48px;
+  margin-top: 40px;
+}
+
+.home-step h3 {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 0;
+}
+
+.home-step h3::before {
+  counter-increment: step;
+  content: counter(step);
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--vp-c-border);
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.home-step-text p {
+  color: var(--vp-c-text-2);
+}
+
+.home-step-code > div[class*='language-']:first-child,
+.home-step-code .framework-picker + .for-framework > div[class*='language-']:first-child {
+  margin-top: 0;
+}
+
+.home-step-code .framework-picker {
+  margin: 0 0 12px;
+}
+
+@media (min-width: 960px) {
+  .home-step {
+    grid-template-columns: minmax(0, 4fr) minmax(0, 8fr);
+    align-items: start;
+  }
+
+  .home-step-code div[class*='language-'] {
+    margin: 0;
+  }
+}
+
+/* What the core does: a list with rules between items, not a card grid. */
+.home-features {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0 48px;
+  margin-top: 32px;
+}
+
+.home-features > div {
+  padding: 20px 0 8px;
+  border-top: 1px solid var(--vp-c-divider);
+}
+
+.home-features h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.home-features h3 a {
+  text-decoration: none;
+  color: var(--vp-c-text-1);
+}
+
+.home-features h3 a:hover {
+  color: var(--vp-c-brand-1);
+}
+
+.home-features p {
+  margin: 6px 0 0;
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--vp-c-text-2);
+}
+
+@media (min-width: 640px) {
+  .home-features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 960px) {
+  .home-features {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* The package list: a name and one line of what it adds. */
+.home-packages {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px 48px;
+  margin-top: 16px;
+}
+
+.home-packages h3 {
+  margin: 24px 0 4px;
+  font-size: 15px;
+  color: var(--vp-c-text-2);
+}
+
+.home-packages ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.home-packages li {
+  display: grid;
+  gap: 0 16px;
+  margin: 0;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--vp-c-divider);
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--vp-c-text-2);
+}
+
+.home-packages li + li {
+  margin-top: 0;
+}
+
+.home-packages li > a:first-child {
+  font-family: var(--vp-font-family-mono);
+  font-size: 14px;
+  text-decoration: none;
+}
+
+@media (min-width: 640px) {
+  .home-packages li {
+    grid-template-columns: 11.5em minmax(0, 1fr);
+  }
+}
+
+@media (min-width: 960px) {
+  .home-packages {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.home-next {
+  margin-top: 64px;
+  font-size: 18px;
+}
+
+/* ── API reference ────────────────────────────────────────────────────── */
+
+/* The breadcrumb api-documenter writes above each title. */
+.api-page .vp-doc > div > p:first-child {
+  margin: 0 0 12px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--vp-c-text-2);
+}
+
+.api-page .vp-doc > div > p:first-child a {
+  font-weight: 500;
+}
+
+/* api-documenter puts a paragraph in every table cell, which doubled the
+   height of each row. */
+.vp-doc td > p:first-child,
+.vp-doc th > p:first-child {
+  margin-top: 0;
+}
+
+.vp-doc td > p:last-child,
+.vp-doc th > p:last-child {
+  margin-bottom: 0;
+}
+
+.api-index .vp-doc td:first-child {
+  white-space: nowrap;
+}

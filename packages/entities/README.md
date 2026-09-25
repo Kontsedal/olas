@@ -132,12 +132,13 @@ The plugin's `onWrite` hook sees every cache write. For each one:
 
 On `entities.update(Post, id, patch)`:
 
-1. Compute `next = { ...current, ...patch }`.
-2. Write `next` into the entity slot.
-3. For each query entry the reverse index lists, find every node `idOf` claims as `id` in the entry's current data, and replace it with `next`. The plugin writes the rebuilt data with `host.queries.write`. All writes happen inside one `batch(...)`, so subscribers see one notification per affected query, not one per path.
-4. Re-walk each patched entry, so a nested entity the patch brought in (a new author, say) is normalized too.
+1. Compute `next = { ...current, ...patch }` from the store, and write it into the entity slot.
+2. For each query entry the reverse index lists, find every node `idOf` claims as `id` in the entry's current data. Patch the entity as that entry holds it, and put the result at every one of those nodes. The plugin writes it with `host.queries.write`, as a patch the engine re-runs on each live optimistic baseline. All writes happen inside one `batch(...)`, so subscribers see one notification per affected query, not one per path.
+3. Re-walk each patched entry, so a nested entity the patch brought in (a new author, say) is normalized too.
 
-Step 3 reads the data at the time of the call, not the paths the last walk recorded. Another plugin can change an entry before this plugin walks it. One earlier in the plugin list reacts to a write first, and one that reacts to a backprop write can rewrite another entry mid-update. The patch then lands where the entity is now, and never on whatever took its old place. An entry that no longer holds the entity gets no write, and its binding is dropped. The rebuild keeps every unchanged subtree by reference.
+Step 2 patches each query's own copy, not `next`. The store follows the data on screen, so while a like is pending it holds the like. Writing `next` into every query carried the pending like into queries that never showed it, and into the value a rollback restores, so a failed like stayed everywhere. The per-copy patch keeps the guess where it was made, and the rollback removes it. An updater therefore runs once per entry and once per live baseline, and must be pure. Each object the patch rebuilds keeps its prototype: a class instance a fetcher returned is still that class afterwards.
+
+Step 2 reads the data at the time of the call, not the paths the last walk recorded. Another plugin can change an entry before this plugin walks it. One earlier in the plugin list reacts to a write first, and one that reacts to a backprop write can rewrite another entry mid-update. The patch then lands where the entity is now, and never on whatever took its old place. An entry that no longer holds the entity gets no write, and its binding is dropped. The rebuild keeps every unchanged subtree by reference.
 
 The backprop writes carry `origin: 'olas-entities'`, and the plugin's `onWrite` skips its own origin, so an update does not re-trigger itself. When the cache garbage-collects an entry, the plugin drops that entry's bindings but keeps the entity values in the store. A detail view subscribed through `signal(Post, id)` keeps working, and a later fetch re-establishes the bindings.
 

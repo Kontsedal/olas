@@ -9,6 +9,7 @@ import {
 } from '@kontsedal/olas-core'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import { createStreamingHydrator, createStreamingTransform, STREAMING_GLOBAL } from '../src'
+import { htmlBoundary } from '../src/streaming'
 import { entriesOf } from './_streaming'
 
 afterEach(() => {
@@ -91,6 +92,29 @@ describe('createStreamingHydrator — which writes it ships', () => {
     root.dispose()
   })
 
+  test('a committed optimistic layer is captured, and the guess before it is not', async () => {
+    const q = defineQuery({
+      id: 'cov-streaming/commit',
+      key: () => [],
+      fetcher: async () => 'fetched',
+      staleTime: 60_000,
+    })
+    const def = defineController((ctx) => ({ v: createQuery(ctx, q) }))
+    const { plugin, flush, dispose } = createStreamingHydrator()
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    await root.waitForIdle()
+    flush() // drain the initial fetch
+
+    const snapshot = q.setData(() => 'saved')
+    expect(flush()).toBe('')
+    // A mutation's success commits its layer: the server now renders 'saved'.
+    snapshot.finalize()
+    expect(entriesOf(flush())).toMatchObject([{ queryId: 'cov-streaming/commit', data: 'saved' }])
+
+    dispose()
+    root.dispose()
+  })
+
   test('flush returns the empty string when every pending entry is un-serializable', async () => {
     const bad = defineQuery({
       id: 'cov-streaming/all-bad',
@@ -136,5 +160,39 @@ describe('createStreamingTransform — nothing pending', () => {
     expect(seen).toEqual(['<a/>', '<b/>'])
     // Once per chunk, plus the final drain on close.
     expect(flush).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('htmlBoundary — markup React rarely writes', () => {
+  const after = (html: string) => {
+    const b = htmlBoundary()
+    b.feed(html)
+    return b
+  }
+
+  test('a literal < in text starts no tag', () => {
+    expect(after('<p>a < b</p>').canInsert).toBe(true)
+    expect(after('<p>a < b').canClose).toBe(false)
+  })
+
+  test("a single-quoted attribute value may hold '>' and '/'", () => {
+    expect(after("<p title='x>y/'>").canClose).toBe(false)
+    expect(after("<p title='x>y/'>z</p>").canInsert).toBe(true)
+    expect(after("<p title='x>y").canClose).toBe(false)
+  })
+
+  test('a processing instruction ends at its >, and a long doctype marks a document', () => {
+    expect(after('<?xml version="1.0"?><p>a</p>').canInsert).toBe(true)
+    const doc = after('<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN"><p>a</p>')
+    // A whole document takes a batch only inside <body>.
+    expect(doc.canInsert).toBe(false)
+    expect(doc.canClose).toBe(true)
+  })
+
+  test('an unmatched end tag changes nothing, and a long comment is not a marker', () => {
+    expect(after('</div><p>a</p>').canInsert).toBe(true)
+    expect(after('<!-- a comment longer than a marker --><p>a</p>').canInsert).toBe(true)
+    expect(after('<!--&--><p>a</p>').canInsert).toBe(false)
+    expect(after('<!--&--><p>a</p><!--/&-->').canInsert).toBe(true)
   })
 })

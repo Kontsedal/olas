@@ -157,7 +157,7 @@ The payload's `lastUpdatedAt` still counts against `staleTime`. With the default
 
 ### Or let `HydrationBoundary` own the client root
 
-`HydrationBoundary` builds the client root from a controller def and root options, provides it, and disposes it on unmount:
+`HydrationBoundary` builds the client root from a controller def and root options, and provides it:
 
 ```tsx
 import { queryEngine } from '@kontsedal/olas-core'
@@ -178,7 +178,9 @@ hydrateRoot(
 )
 ```
 
-It reads `options` once, on mount, and it survives a StrictMode remount. By default it also installs the streaming intake; pass `streaming={false}` for a one-shot payload. Full props: [`HydrationBoundary`](/reference/olas-react.hydrationboundary).
+It reads `options` once, on mount, and it keeps one root through a StrictMode remount. By default it also takes the streamed batches; pass `streaming={false}` for a one-shot payload. Full props: [`HydrationBoundary`](/reference/olas-react.hydrationboundary).
+
+React runs the same effect cleanups on an unmount as when an `<Activity>` above hides the boundary, and tells the boundary nothing about which one it is. So the cleanup suspends the root, and the boundary disposes it a minute later unless it shows again first. A hide shorter than a minute keeps the root and its state. After a longer one, showing builds a fresh root from `options`. A root that must outlive a long hide belongs outside React, under `<OlasProvider>`.
 
 ## Infinite queries
 
@@ -228,9 +230,9 @@ Four pieces, all in `@kontsedal/olas-react`:
 | Piece | Side | What it does |
 |---|---|---|
 | `createStreamingHydrator({ nonce })` | server | Returns `{ plugin, flush, dispose }`. The plugin records the root's committed writes, and `flush()` drains them as one `<script>` tag. |
-| `createStreamingTransform(flush)` | server | A `TransformStream` over React's HTML stream that writes each batch only between elements. |
+| `createStreamingTransform(flush)` | server | A `TransformStream` over React's HTML stream that writes each batch only where React's hydration never sees it. |
 | `OLAS_BOOTSTRAP_SCRIPT` | client, sent by the server | Primes a push-only queue before React hydrates. |
-| `HydrationBoundary` | client | On mount, applies the queued batches to its root, then each later batch as it arrives. |
+| `HydrationBoundary` | client | Builds its root with the queued batches in its `hydrate`, then applies each later batch as it arrives. |
 
 ### The server
 
@@ -289,11 +291,11 @@ export async function handle(request: Request): Promise<Response> {
 }
 ```
 
-The plugin records the writes that the server confirmed: a fetch resolving, a canonical `write` or a `replace`. It keeps the latest value per query `id` and key. It skips `'hydrate'` writes, which are data the client already has, and optimistic writes and rollbacks, which are guesses the server has not confirmed. An infinite entry carries its `pageParams`.
+The plugin records the writes that the server confirmed: a fetch resolving, a canonical `write` or a `replace`, and an optimistic write the server kept, reported as a `'commit'` once no guess is left. It keeps the latest value per query `id` and key. It skips `'hydrate'` writes, which are data the client already has, and optimistic writes and rollbacks, which are guesses the server has not confirmed. An infinite entry carries its `pageParams`.
 
 `nonce` goes on every tag the hydrator emits, and the same value passed to `renderToReadableStream` goes on React's own scripts, so one `script-src 'nonce-…'` policy admits both.
 
-The transform drains once more when the stream closes, so entries that settle after the last chunk still reach the client. `Document` in this example renders the whole page, `<html>` included.
+The transform drains once more when the stream closes, so entries that settle after the last chunk still reach the client. `Document` in this example renders the whole page, `<html>` included, so each batch goes directly inside `<body>`. A fragment render puts them at its top level instead, and your template goes around the transform's output.
 
 ### Dispose after the response
 
@@ -319,25 +321,25 @@ hydrateRoot(
 )
 ```
 
-Batches can arrive before React hydrates. `OLAS_BOOTSTRAP_SCRIPT` queues them, and each flushed tag checks that the global is a real intake before it pushes, so a page element with the id `__OLAS_HYDRATION__` cannot clobber it. When the boundary mounts, it calls `installStreamingIntake(root)`:
+Batches can arrive before React hydrates. `OLAS_BOOTSTRAP_SCRIPT` queues them, and each flushed tag checks that the global is a real intake before it pushes, so a page element with the id `__OLAS_HYDRATION__` cannot clobber it. The boundary builds its root with the queued batches in `hydrate`, so the hydrating render reads their data and no fetch starts for it. Once it commits, it connects the root to the intake:
 
 1. It upgrades the queue into an intake that keeps every batch it has seen.
-2. It applies the batches that arrived before mount to this root.
+2. It applies the batches that arrived since the root was built.
 3. It applies each later batch to every installed root.
 
-A second boundary, or the fresh root of a StrictMode remount, therefore catches up on the stream instead of taking it from the first root. Each batch goes through `root.hydrate` inside one signal `batch`, so subscribers see one notification per batch. A bound entry takes its row at once, and the row supersedes any fetch in flight for it. A row stamped before the entry's last fetch, hydrated row or canonical write is older than what the server last said, so the entry skips it. An optimistic `setData` does not count, so a newer row still lands under a pending mutation and becomes its rollback baseline. A row stamped before an invalidation leaves the entry stale, and an entry with a subscriber fetches once more. An unbound key waits in the buffer until its first bind, which keeps the newest row per key. A client root that no `HydrationBoundary` builds connects with [`installStreamingIntake(root)`](/reference/olas-react.installstreamingintake), which returns the uninstall.
+A second boundary therefore catches up on the stream instead of taking it from the first root. A root the boundary builds for a new `def` takes no streamed batch, since the stream described the first root's tree. Each batch goes through `root.hydrate` inside one signal `batch`, so subscribers see one notification per batch. A bound entry takes its row at once, and the row supersedes any fetch in flight for it. A row stamped before the entry's last fetch, hydrated row or canonical write is older than what the server last said, so the entry skips it. An optimistic `setData` does not count, so a newer row still lands under a pending mutation and becomes its rollback baseline. A row stamped before an invalidation leaves the entry stale, and an entry with a subscriber fetches once more. An unbound key waits in the buffer until its first bind, which keeps the newest row per key. A client root that no `HydrationBoundary` builds connects with [`installStreamingIntake(root)`](/reference/olas-react.installstreamingintake), which returns the uninstall.
 
 ### Why the transform places the tags
 
-React writes its stream in fixed-size chunks. React 19 uses 2,048-byte views, so a chunk boundary falls wherever the byte count lands: inside a tag, an attribute name or an attribute value. A `<script>` written at a boundary inside an attribute value becomes part of that value, and the first `"` in the script closes it.
+React writes its stream in fixed-size chunks. React 19.3 uses 2,048-byte views in its browser build and 4,096-byte views in its Node and edge builds, so a chunk boundary falls wherever the byte count lands: inside a tag, an attribute value or a text node. A `<script>` written at a boundary inside an attribute value becomes part of that value, and the first `"` in the script closes it.
 
-`createStreamingTransform` did that before 1.0, and the security review reproduced an XSS with it. Query data `{ bio: ' onfocus=alert(1) autofocus x=' }` became real attributes on an `<a>`, with no `<` in the payload at all. The transform now runs a small HTML tokenizer over the bytes it passes through. It writes a batch only when a chunk ends in text, between elements. Otherwise it holds the batch, and the entries keep collecting in the hydrator until a chunk ends at a boundary. Behind that, `serializeForScript` escapes every quote, angle bracket and `=` in the payload, so data that did land in the wrong place still could not form attributes. [The stream-chunks pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/stream-chunks-split-tags.md) has the detail.
+`createStreamingTransform` did that before 1.0, and the security review reproduced an XSS with it. Query data `{ bio: ' onfocus=alert(1) autofocus x=' }` became real attributes on an `<a>`, with no `<` in the payload at all. Between two tags is not enough either. React hydrates every element it rendered and every `<Suspense>` boundary's content, and a `<script>` inside a list item, or inside a completed segment that React's reveal moves into its boundary, breaks hydration. The transform runs a small HTML tokenizer over the bytes it passes through, and writes a batch only directly inside `<body>`, or at the top level of a fragment, outside every boundary and right after a tag or a comment. It writes it at the first such point in a chunk, so the data arrives before the markup that reads it, and holds it through a chunk with no such point. Behind that, `serializeForScript` escapes every quote, angle bracket and `=` in the payload, so data that did land in the wrong place still could not form attributes. [The stream-chunks pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/stream-chunks-split-tags.md) has the detail.
 
 ### Why not flush from a Node `Transform`
 
 A hand-written Node `Transform` that calls `flush()` after each chunk writes wherever the chunk boundary lands, which is the unsafe case above. Deferring the write by a macrotask does not fix it. Under backpressure a pipe reads one React flush across several tasks, and `renderToPipeableStream` stops mid-flush when `write` returns `false`.
 
-On Node, render with `renderToReadableStream`, since Node has Web Streams, and pipe through `createStreamingTransform`. Otherwise, write `flush()` output only after the stream has ended, where it is known to sit between elements.
+On Node, render with `renderToReadableStream`, since Node has Web Streams, and pipe through `createStreamingTransform`. Otherwise, write `flush()` output only after the stream has ended, where it cannot land inside React's tree.
 
 ## Render with `OlasProvider` on the server
 

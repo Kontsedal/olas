@@ -12,7 +12,7 @@ edges:
   - { type: tested-by, target: ../../packages/core/tests/signals.test.ts }
   - { type: uses, target: ../decisions/signals-runtime-wrapped.md }
   - { type: related, target: ../pitfalls/preact-signals-overload-return.md }
-last_verified: 2026-09-20
+last_verified: 2026-09-25
 confidence: high
 ---
 
@@ -63,3 +63,5 @@ type Computed<T>   = ReadSignal<T>
 - `effect`'s callback can return a cleanup — that cleanup runs **before the next re-run AND on dispose**. Symmetric with React effects.
 - `untracked(fn)` reads inside `fn` are excluded from the surrounding tracking scope. For a single read, `signal.peek()` is more idiomatic.
 - `computed` is lazy + memoized. It recomputes only when read after a tracked dep changed.
+- A write of the value a signal holds is no change (`!==`). So is a pair of writes inside one `batch()` that ends on the value the batch started with, because `@preact/signals-core` reconciles it and fast-forwards the subscribers. A stand-in value written and then replaced therefore cannot force a notification. `FieldImpl` boxes its value (`Held<T>`) so that `set` of the object it holds can count as a change (`forms.md`, "An object value edited in place").
+- Inside `batch()` or an effect body, an effect that a write wakes runs when the outermost batch ends; see `../pitfalls/batched-effect-not-run-yet.md`.

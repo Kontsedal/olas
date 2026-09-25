@@ -5,7 +5,7 @@ type: module
 covers:
   - packages/core/src/errors.ts
   - packages/core/src/plugin/host.ts:173-175
-  - packages/core/src/query/client.ts:1572-1615
+  - packages/core/src/query/client.ts:1644-1687
 edges:
   - { type: documented-in, target: ../../SPEC.md }
   - { type: tested-by, target: ../../packages/core/tests/errors.test.ts }
@@ -37,14 +37,18 @@ confidence: high
 ## Where each kind comes from
 
 - **`'effect'`**: an effect body or its cleanup, a lifecycle hook, a teardown throw during dispose or rollback, and a throwing field validator (`controller/instance.ts`, `forms/bind.ts:41`).
-- **`'emitter'`**: a `ctx.emitter()` handler or a `ctx.on(...)` handler (`instance.ts:629-682`).
-- **`'construction'`**: a `ctx.collection` item or a `ctx.lazyChild` that fails after the root is alive (spec §12.1).
+- **`'emitter'`**: a `ctx.emitter()` handler or a `ctx.on(...)` handler (`instance.ts:643-696`).
+- **`'construction'`**: a `ctx.collection` item or a `ctx.lazyChild` that fails after the root is alive (spec §12.1). A collection item covers a throw from `keyOf`, `propsOf`, `factory` or the child's own factory. So does any controller factory throw that surfaces after construction, whatever callback caught it; see below.
 - **`'mutation'`**: a throwing `onError`, `onSuccess` or `onSettled` hook, through `MutationImpl.safeCall` (`query/mutation.ts:754-763`). A failed `mutate` goes to the mutation's `error` signal instead.
-- **`'cache'`**: the refetch an `invalidate` started failed, or the catch-up a `replace` started in its place. `invalidateEntry` reports it with `queryId` and `key` and resolves the caller's promise (`query/client.ts:1596-1610`). It adds `attempt` and `cause` from `entry.failureOf(err)`. Each entry records its latest failure, in `Entry.applyFailure` or `InfiniteEntry.settleFailure`, and `failureOf` returns the fields only when `err` is that failure. Pinned by `mutants-client.test.ts`, "a failing refetch an invalidate started reports a cache error naming the entry", and `retry-policy-throws.test.ts`, "ErrorContext.attempt and cause on an invalidation failure".
+- **`'cache'`**: the refetch an `invalidate` started failed, or the catch-up a `replace` started in its place. `invalidateEntry` reports it with `queryId` and `key` and resolves the caller's promise (`query/client.ts:1668-1682`). It adds `attempt` and `cause` from `entry.failureOf(err)`. Each entry records its latest failure, in `Entry.applyFailure` or `InfiniteEntry.settleFailure`, and `failureOf` returns the fields only when `err` is that failure. Pinned by `mutants-client.test.ts`, "a failing refetch an invalidate started reports a cache error naming the entry", and `retry-policy-throws.test.ts`, "ErrorContext.attempt and cause on an invalidation failure".
 - **`'plugin'`**: a plugin hook threw, or a plugin called `host.reportError`. `PluginSet.report` adds `pluginName` and `controllerPath: []` (`plugin/host.ts:173-175`). Delivery isolates each hook, so the next plugin still runs. Pinned by `plugin-host.test.ts` and `coverage-core-plugins.test.ts`.
+
+## A construction throw keeps its kind (1.0)
+
+`ControllerInstance.construct` passes a factory's throw to `markConstructionError`, which adds it to a `WeakSet` (`errors.ts:66-74`). `dispatchError` reports a marked error as `kind: 'construction'`, whatever kind the call site passed. A `ctx.child` inside `ctx.effect` whose factory throws is the case §12.1.6 names, and it reached `onError` as `'effect'` before. The same holds for a `ctx.on` handler, which reported `'emitter'`, and for a mutation hook, without a change in `query/`. A thrown primitive, such as a string, cannot go in a `WeakSet` and keeps the caller's kind. Pinned by `controller-regressions.test.ts`, "a ctx.child that throws after construction reports kind: construction".
 
 ## `dispatchError`
 
-`dispatchError(handler, err, context)` (`errors.ts:76-99`) calls the root's `onError` if one is set, else `console.error`. If the handler itself throws, the dispatcher logs both errors and swallows the throw. The rule from spec §12 is that `onError` never breaks the program. Pinned by `errors.test.ts`.
+`dispatchError(handler, err, context)` (`errors.ts:95-124`) calls the root's `onError` if one is set, else `console.error`. If the handler itself throws, the dispatcher logs both errors and swallows the throw. The rule from spec §12 is that `onError` never breaks the program. Pinned by `errors.test.ts`.
 
 Every primitive that runs a user callback routes its throws through here, so reporting is the same everywhere. That covers `effect` bodies, `on` handlers, the lifecycle hooks, mutation hooks and plugin hooks.

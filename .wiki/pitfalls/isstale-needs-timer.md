@@ -3,9 +3,9 @@ name: isstale-needs-timer
 description: Expiry cannot be a computed of Date.now() — its deps don't change as time passes. Use a Signal with a timer, and don't hand that timer a raw delay.
 type: pitfall
 covers:
-  - packages/core/src/query/entry.ts:159-277
-  - packages/core/src/query/entry.ts:584-604
-  - packages/core/src/query/entry.ts:983-1008
+  - packages/core/src/query/entry.ts:203-337
+  - packages/core/src/query/entry.ts:686-706
+  - packages/core/src/query/entry.ts:1249-1274
   - packages/core/src/expiry-timer.ts
   - packages/core/src/utils.ts
   - packages/core/src/controller/root.ts
@@ -91,11 +91,11 @@ Plus:
 
 Subscribers to `isStale` now see the flip happen at the right moment.
 
-The snippet above is the original fix. Today one helper, `settleStaleness(at)` (`entry.ts:584-604`), sets the signal from the age of `at` and arms the timer for the remainder. Every write of server truth calls it: a fetch, a hydrated row, a canonical write, and in `InfiniteEntry` a page fetch too.
+The snippet above is the original fix. Today one helper, `settleStaleness(at)` (`entry.ts:686-706`), sets the signal from the age of `at` and arms the timer for the remainder. Every write of server truth calls it: a fetch, a hydrated row, a canonical write, and in `InfiniteEntry` a page fetch too.
 
 ## A separate helper for "check stale right now"
 
-When code needs the imperative answer ("should this refetch RIGHT NOW, on subscribe?"), use `entry.isStaleNow()` (`entry.ts:983-1008`). It computes the age on the spot. This is what a subscribe, `resume()`, the focus and reconnect triggers and `prefetch` use; the reactive `isStale` signal is for UI or consumer subscriptions.
+When code needs the imperative answer ("should this refetch RIGHT NOW, on subscribe?"), use `entry.isStaleNow()` (`entry.ts:1249-1274`). It computes the age on the spot. This is what a subscribe, `resume()`, the focus and reconnect triggers and `prefetch` use; the reactive `isStale` signal is for UI or consumer subscriptions.
 
 ```ts
 isStaleNow(): boolean {
@@ -128,7 +128,7 @@ This is a *silent* failure — data still renders, it refetches constantly — w
 
 Every user-supplied duration in core routes through it: the staleness timer in `Entry` and `InfiniteEntry`, the gc timer in `ClientEntry` and `InfiniteClientEntry`, the `refetchInterval` chain in `ClientEntry.armIntervalTick` and its infinite twin, the retry backoff in `abortableSleep` fed by user `retryDelay`, and `suspend({ maxIdleTime })` in `controller/root.ts`.
 
-`refetchInterval` is worth calling out, because it looks guarded and is not quite. `resolveRefetchInterval` at `client.ts:62-93` rejects non-finite and non-positive gaps and stops the chain loudly, which covers `Infinity`. A *finite* gap above the 32-bit limit sails through that guard and overflows anyway, turning the longest interval you can ask for into a ~1ms poll storm. Rejecting `Infinity` is not the same as handling overflow; both halves need the scheduler.
+`refetchInterval` is worth calling out, because it looks guarded and is not quite. `resolveRefetchInterval` at `client.ts:69-100` rejects non-finite and non-positive gaps and stops the chain loudly, which covers `Infinity`. A *finite* gap above the 32-bit limit sails through that guard and overflows anyway, turning the longest interval you can ask for into a ~1ms poll storm. Rejecting `Infinity` is not the same as handling overflow; both halves need the scheduler.
 
 ## When to be careful
 

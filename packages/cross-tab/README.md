@@ -74,7 +74,7 @@ type CrossTabOptions = {
 | `onWarn` | `console.warn` | Called on non-fatal conditions: `DataCloneError` while broadcasting (the data isn't structured-cloneable), an oversized payload, a malformed inbound message, or one `validate` rejected. |
 | `channelFactory` | `defaultChannelFactory` (wraps `BroadcastChannel` in a browser tab or worker) | Override the channel constructor, for tests or a runtime the default skips. Return `undefined` to disable cross-tab (the plugin installs no hooks). See [SSR and servers](#ssr-and-servers). |
 | `maxPayloadBytes` | `512 * 1024` | Soft cap on one outbound message, estimated by its JSON length. Over the cap, the plugin warns and still posts. `Infinity` turns the warning off. |
-| `optimistic` | `true` | Also mirror optimistic `setData` writes and their rollbacks, so peers show a pending edit before the server confirms it. With `false`, only canonical writes and invalidations cross. |
+| `optimistic` | `true` | Also mirror optimistic `setData` writes and their rollbacks, so peers show a pending edit before the server confirms it. A peer shows it as a guess of its own. With `false`, only canonical writes, commits and invalidations cross, and a canonical write made under a guess sends the data beneath it. |
 | `origins` | `[]` | Origins whose writes and invalidations are mirrored too: a plugin's name, or the `origin` a `bindQuery` handle was given. See [Whose writes cross](#whose-writes-cross). |
 | `validate` | accept every payload | Check a peer's data before this tab writes it. Return `false` to drop the message, which is reported through `onWarn`. A `validate` that throws rejects the message. |
 
@@ -99,13 +99,20 @@ Tab B: channel listener → validate(queryId, data) → host.queries.write(...)
 
 | Change | Crosses? |
 |---|---|
-| `write` and `replace` (canonical) | Yes |
-| `setData` (optimistic) and its rollback | Yes, unless `optimistic: false` |
+| `write` and `replace` (canonical) | Yes. A `replace` is applied as a `replace`, so it supersedes a fetch the receiving tab has in flight. |
+| `setData` (optimistic) and its rollback | Yes, unless `optimistic: false`. The receiving tab shows the guess as a guess of its own. |
+| A commit, when a mutation succeeds | Yes. The receiving tab ends on the committed value. |
 | `invalidate` | Yes. The receiving tab marks the entry stale, and refetches it only if it has subscribers. |
 | A fetch result | No. Every tab runs its own fetcher, so rebroadcasting results would be noise that changes nobody's cache. |
 | Hydration | No. It is a per-tab concern too. |
 
 A receiving tab applies a write only to an entry it already holds for that key, and creates no new entries. A subscriber that mounts later fetches as usual.
+
+### A peer's guess stays a guess
+
+Each message carries the write's source, and the receiving tab applies it as what it is. A peer's optimistic write is shown through `host.queries.setData`, the way `onMutate` shows one. So in the receiving tab it restarts no stale clock, `hasPendingMutations` reads `true`, and `persistQueryCachePlugin` does not store it. The peer's rollback removes it, and the peer's commit makes the committed value the tab's own data, as a commit does: the stale clock stays where the server set it. A peer that closes before its mutation settles never sends either, so a guess its peer says nothing more about for 30 seconds is rolled back.
+
+A canonical write made while the sender shows a guess carries the data beneath the guess too. The receiving tab writes that as server truth, and shows the rest as the peer's guess. A message from a version before 1.0 carries no source, and is applied as a `write`.
 
 ### Whose writes cross
 
@@ -174,8 +181,8 @@ const crossTab = crossTabPlugin({
 In a development build, the plugin reports every message on its lane in `@kontsedal/olas-devtools`, through `host.debug`. A tab reports each message it posts, and each message a peer sent on this protocol version:
 
 ```ts nocheck
-{ kind: 'send', type: 'setData', queryId: 'app/user', outcome: 'posted', from: 'lq3k-7f2a', msgId: 4, key: ['user', 'me'] }
-{ kind: 'receive', type: 'setData', queryId: 'app/user', outcome: 'applied', from: 'lq3k-7f2a', msgId: 4, key: ['user', 'me'] }
+{ kind: 'send', type: 'setData', source: 'write', queryId: 'app/user', outcome: 'posted', from: 'lq3k-7f2a', msgId: 4, key: ['user', 'me'] }
+{ kind: 'receive', type: 'setData', source: 'write', queryId: 'app/user', outcome: 'applied', from: 'lq3k-7f2a', msgId: 4, key: ['user', 'me'] }
 ```
 
 `from` is the sending root's `sourceId`, so `from` and `msgId` name one message in the sender's lane and in every receiver's.
@@ -240,7 +247,8 @@ That something is a server refetch, and it's a one-liner: after a write that mat
 
 - **No structural diffs.** Every write broadcasts the full post-update value. For chunky cache entries this is fine because `BroadcastChannel` is in-memory; for very large arrays it's a known cost.
 - **No pending-mutation arbitration.** If two tabs run optimistic mutations on the same entry concurrently, the last write to arrive wins on both sides. Your mutation `onError` and `onSuccess` then re-syncs from the server, which restores convergence at the cost of a temporary divergence.
-- **Optimistic writes cross tabs by default.** Optimistic state and its rollback are visible in other tabs. Pass `optimistic: false` to keep them local.
+- **Optimistic writes cross tabs by default.** Optimistic state and its rollback are visible in other tabs, as guesses. Pass `optimistic: false` to keep them local.
+- **A peer's guess can expire before its mutation settles.** It is rolled back after 30 seconds without a word from the peer. A mutation that takes longer shows its commit in the receiving tab when it lands.
 
 ## Further reading
 

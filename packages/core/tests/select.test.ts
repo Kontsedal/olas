@@ -173,3 +173,27 @@ describe('createQuery(ctx, query, { select })', () => {
     root.dispose()
   })
 })
+
+// `data` skips `select` while the value is `undefined`, and `firstValue()` and
+// `refetch()` did not: a fetcher that resolved `undefined` made both reject
+// with the projection's TypeError.
+describe('select is not called with undefined', () => {
+  test('firstValue() and refetch() resolve undefined, as data reads', async () => {
+    type User = { name: string }
+    const q = defineQuery({
+      id: 'select-test/undefined',
+      key: () => ['u'],
+      fetcher: async () => undefined as unknown as User,
+    })
+    const select = vi.fn((u: User) => u.name)
+    const root = createRoot(
+      defineController((ctx) => ({ name: createQuery(ctx, q, { key: () => [], select }) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await expect(root.api.name.firstValue()).resolves.toBeUndefined()
+    await expect(root.api.name.refetch()).resolves.toBeUndefined()
+    expect(root.api.name.data.value).toBeUndefined()
+    expect(select).not.toHaveBeenCalled()
+    root.dispose()
+  })
+})

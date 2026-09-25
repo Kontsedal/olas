@@ -3,12 +3,13 @@ name: render-phase-root-leak
 description: A root built during render and disposed in an effect leaks whenever React discards the render before it commits. A retry must reuse it, and something other than an effect must dispose it.
 type: pitfall
 covers:
-  - packages/react/src/context.ts:177-357
-  - packages/react/src/context.ts:411-479
+  - packages/react/src/context.ts:179-467
+  - packages/react/src/context.ts:532-612
 edges:
   - { type: tested-by, target: ../../packages/react/tests/hydration-boundary.test.tsx }
   - { type: uses, target: ../modules/react.md }
   - { type: related, target: ../flows/ssr.md }
+  - { type: related, target: effect-cleanup-not-unmount.md }
 last_verified: 2026-09-25
 confidence: medium
 ---
@@ -42,10 +43,10 @@ Measured against the pre-fix boundary under React 19.2:
 The rules, implemented in `packages/react/src/context.ts`:
 
 1. **A render never disposes and never takes ownership.** Only the commit writes `ownedRef`, claims a root, and disposes the root it replaces.
-2. **A retry reuses the root of its earlier attempt.** `acquireRoot` keys unclaimed roots by the props object, which a retry of the same element shares (`context.ts:256-305`). The server builds a root per render instead, because nothing there commits.
-3. **Something other than an effect disposes a root that never commits.** `armSweep` disposes a root still unclaimed ten seconds after its work goes idle (`context.ts:313-333`). The countdown waits for idle because a child suspended on the root's own fetch retries only when that fetch settles. A minute bounds that wait, for a root that never goes idle.
-4. **A commit that cannot claim its root rebuilds it.** The root may have been swept, claimed by another fiber rendering the same element, or disposed by StrictMode's simulated unmount. The claim effect builds a fresh one and renders again before paint (`context.ts:447-454`).
-5. **Dispose on unmount in a passive effect, never a layout effect.** React runs layout-effect cleanups when a `<Suspense>` above hides content it already showed. A layout-effect dispose treated that hide as an unmount and killed the live root. The second review round caught this regression in the first version of the fix.
+2. **A retry reuses the root of its earlier attempt.** `acquireRoot` keys unclaimed roots by the props object, which a retry of the same element shares (`context.ts:326-382`). A reused root that takes the stream first applies the batches that arrived since it was built, through `catchUp`, so the retry reads them. The server builds a root per render instead, because nothing there commits.
+3. **Something other than an effect disposes a root that never commits.** `armSweep` disposes a root still unclaimed ten seconds after its work goes idle (`context.ts:388-408`). The countdown waits for idle because a child suspended on the root's own fetch retries only when that fetch settles. A minute bounds that wait, for a root that never goes idle.
+4. **A commit that cannot claim its root rebuilds it.** The root may have been swept, or claimed by another fiber rendering the same element. The claim effect builds a fresh one through `buildRoot` and renders again before paint (`context.ts:568-579`). The same path rebuilds a root whose release ran out while the boundary was hidden.
+5. **Release in a passive cleanup, never a layout one.** React runs layout-effect cleanups when a `<Suspense>` above hides content it already showed. A layout-effect dispose treated that hide as an unmount and killed the live root. The second review round caught this regression in the first version of the fix. The passive cleanup no longer disposes at once either: an `<Activity>` hide runs it too, so it suspends the root and disposes it a minute later unless the effect runs again (`effect-cleanup-not-unmount.md`). StrictMode's replay takes the same root back, where it used to dispose it and rebuild.
 
 React gives no signal for a discarded render, so a timer is the only deterministic way to catch one. A `FinalizationRegistry` on the fiber would never dispose too early, but it disposes at an unknown time, and its effects keep running until then.
 

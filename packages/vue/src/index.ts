@@ -60,11 +60,20 @@ export function olasPlugin(root: Root<unknown>): { install(app: App): void } {
 /**
  * The root's api, from the nearest `olasPlugin`. Typed by the registered
  * root (`Register`), or by `useRoot<Api>()` as an unchecked cast. Throws when
- * no plugin provided a root.
+ * no plugin provided a root, and when called outside a component's `setup()`,
+ * where there is no app to ask.
  */
 export function useRoot<Api = RegisteredApi>(): Api {
+  // Outside an injection context `inject` returns `undefined`, not the
+  // default, and Vue warns. Check first, so both cases throw an olas message.
+  if (!hasInjectionContext()) {
+    throw new Error(
+      "[olas] useRoot() found no root: it was called outside a component's setup(). " +
+        'Call it during setup(), or inside app.runWithContext().',
+    )
+  }
   const root = inject(ROOT_KEY, null)
-  if (root === null) {
+  if (root == null) {
     throw new Error('[olas] useRoot() found no root: install it with app.use(olasPlugin(root))')
   }
   return root.api as Api
@@ -110,9 +119,12 @@ export type UseValueOptions<T> = {
 /**
  * A read-only ref over any `ReadSignal`: a `signal`, a `computed`, a `Field`,
  * a `Form` or a `FieldArray`. Reading the ref reads the signal's current value,
- * so it never lags a write. The subscription ends with the component (the
- * current effect scope). Outside any scope nothing ends it, and a development
- * build warns. A server render reads the signal and does not subscribe.
+ * so it never lags a write. With `isEqual`, a value equal to the one the ref
+ * last returned counts as unchanged: the ref keeps returning the earlier
+ * value, as React's `useValue` does. The subscription ends with the component
+ * (the current effect scope). Outside any scope nothing ends it, and a
+ * development build warns. A server render reads the signal and does not
+ * subscribe.
  *
  * ```ts
  * const count = useValue(api.count)   // count.value in script, {{ count }} in a template
@@ -132,14 +144,23 @@ function valueRef<T>(
   isEqual: (a: T, b: T) => boolean = Object.is,
   write?: (next: T) => void,
 ): Readonly<Ref<T>> {
-  let last = signal.peek()
+  // `shown` is what the ref last returned. A value `isEqual` calls equal to it
+  // is unchanged, so the ref keeps returning `shown`: a component that
+  // re-renders for another reason shows the value it showed before, as in
+  // React. `seen` is the value the subscription last triggered for. It is
+  // kept apart because a read inside a `batch` moves `shown` before the
+  // notification arrives, and that notification must still trigger.
+  let shown = signal.peek()
+  let seen = shown
   let trigger: () => void = () => {}
   const ref = customRef<T>((track, triggerRef) => {
     trigger = triggerRef
     return {
       get() {
         track()
-        return signal.peek()
+        const next = signal.peek()
+        if (!Object.is(next, shown) && !isEqual(shown, next)) shown = next
+        return shown
       },
       set(next) {
         write?.(next)
@@ -152,8 +173,8 @@ function valueRef<T>(
   if (!(hasInjectionContext() && inject(ssrContextKey, null))) {
     onDispose(
       signal.subscribeChanges((next) => {
-        if (isEqual(last, next)) return
-        last = next
+        if (isEqual(seen, next)) return
+        seen = next
         trigger()
       }),
     )

@@ -1,4 +1,6 @@
 import {
+  bindQuery,
+  type Ctx,
   createQuery,
   createRoot,
   defineController,
@@ -450,13 +452,245 @@ describe('persistQueryCachePlugin — a read that fails', () => {
     expect(ids()).toEqual(['qc/page-a', 'qc/page-b'])
   })
 
-  test('sync storage: the first flush reads storage again before it writes', async () => {
+  test('sync storage: a flush whose read throws writes nothing, and the next flush reads again', async () => {
     const { storage, failure, ids } = flaky(false)
     const onError = vi.fn()
     const root = mount(storage, onError)
     await root.waitForIdle()
     expect(onError).toHaveBeenCalledWith(failure, 'restore')
+    expect(ids()).toEqual(['qc/page-a'])
+    await root.api.b.refetch()
     expect(ids()).toEqual(['qc/page-a', 'qc/page-b'])
+    root.dispose()
+  })
+})
+
+describe('persistQueryCachePlugin — two tabs on one storage', () => {
+  // Two tabs of one app write one storage key. A flush that wrote this tab's
+  // own map over the key deleted every entry the other tab had stored since,
+  // and wrote this tab's older copy of an entry over the other tab's fresher one.
+  const two = (prefix: string, opts: { staleTime?: number; gcTime?: number } = {}) => {
+    const served = new Map<string, number>()
+    const mk = (id: string) =>
+      defineQuery({
+        id: `${prefix}/${id}`,
+        key: () => [],
+        fetcher: async () => {
+          const n = (served.get(id) ?? 0) + 1
+          served.set(id, n)
+          return `${id}${n}`
+        },
+        staleTime: opts.staleTime ?? 60_000,
+        ...(opts.gcTime !== undefined ? { gcTime: opts.gcTime } : {}),
+        meta: { persist: true },
+      })
+    return {
+      a: mk('a'),
+      b: mk('b'),
+      x: mk('x'),
+      id: (name: 'a' | 'b' | 'x') => `${prefix}/${name}`,
+    }
+  }
+  const tab = <T>(storage: StorageAdapter, api: (ctx: Ctx) => T) =>
+    createRoot(defineController(api), {
+      queries: queryEngine(),
+      deps: {},
+      plugins: [persistQueryCachePlugin({ storage, throttleMs: 0 })],
+    })
+  const rows = (storage: { store: Map<string, string> }) =>
+    stored(storage)?.entries.map((e) => [e.id, e.data])
+
+  test.each([
+    ['sync', false],
+    ['async', true],
+  ])('%s storage: a flush keeps the entries another tab wrote', async (_label, async) => {
+    const storage = memory({ async })
+    const { a, b, id } = two(`qc/tabs-${_label}`)
+    const tabB = tab(storage, (ctx) => ({ b: createQuery(ctx, b) }))
+    await tabB.waitForIdle()
+    const tabA = tab(storage, (ctx) => ({ a: createQuery(ctx, a) }))
+    await tabA.waitForIdle()
+    expect(rows(storage)).toEqual([
+      [id('b'), 'b1'],
+      [id('a'), 'a1'],
+    ])
+
+    await tabB.api.b.refetch()
+    await tabB.waitForIdle()
+    expect(rows(storage)).toEqual([
+      [id('b'), 'b2'],
+      [id('a'), 'a1'],
+    ])
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test("an older copy this tab restored never lands over another tab's fresher one", async () => {
+    const storage = memory()
+    const { a, x, id } = two('qc/tabs-older')
+    storage.store.set(
+      KEY,
+      JSON.stringify({
+        v: 1,
+        buster: '',
+        entries: [{ id: id('x'), key: [], data: 'stored', lastUpdatedAt: Date.now() - 10_000 }],
+      }),
+    )
+    // Both tabs restore the stored copy, and neither refetches it: it is fresh.
+    const tabB = tab(storage, (ctx) => ({ x: createQuery(ctx, x), a: createQuery(ctx, a) }))
+    const tabA = tab(storage, (ctx) => ({ x: createQuery(ctx, x) }))
+    await tabB.waitForIdle()
+    await tabA.waitForIdle()
+    expect(tabB.api.x.data.value).toBe('stored')
+
+    await tabA.api.x.refetch()
+    await tabA.waitForIdle()
+    // Tab B flushes for an unrelated entry. It still holds the old copy.
+    await tabB.api.a.refetch()
+    await tabB.waitForIdle()
+    expect(tabB.api.x.data.value).toBe('stored')
+    expect(rows(storage)).toEqual([
+      [id('x'), 'x1'],
+      [id('a'), 'a2'],
+    ])
+    tabA.dispose()
+    tabB.dispose()
+  })
+
+  test("an entry this tab collects leaves storage, but another tab's newer copy stays", async () => {
+    const storage = memory()
+    const { x, id } = two('qc/tabs-gc', { gcTime: 0 })
+    const open = (ctx: Ctx) => ({
+      open: () =>
+        ctx.attach(
+          defineController((c) => ({ x: createQuery(c, x) })),
+          undefined,
+        ),
+    })
+    const tabB = tab(storage, open)
+    const tabA = tab(storage, open)
+    const inB = tabB.api.open()
+    await tabB.waitForIdle()
+    await new Promise((r) => setTimeout(r, 2)) // tab A's copy is the newer one
+    const inA = tabA.api.open()
+    await tabA.waitForIdle()
+    expect(rows(storage)).toEqual([[id('x'), 'x2']])
+
+    inB.dispose() // gcTime 0: tab B collects its older copy at once
+    expect(rows(storage)).toEqual([[id('x'), 'x2']])
+    inA.dispose() // tab A collects the copy storage holds
+    expect(rows(storage)).toEqual([])
+    tabA.dispose()
+    tabB.dispose()
+  })
+})
+
+describe('persistQueryCachePlugin — server truth under optimistic writes', () => {
+  const post = (id: string) =>
+    defineQuery({
+      id,
+      key: () => [],
+      fetcher: async () => ({ title: 'Hello', likes: 0 }),
+      staleTime: 60_000,
+      meta: { persist: true },
+    })
+  const mount = (q: ReturnType<typeof post>, storage: StorageAdapter) =>
+    createRoot(
+      defineController((ctx) => ({ q: createQuery(ctx, q), qs: bindQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0 })],
+      },
+    )
+
+  // A canonical write made while a guess is live carries the guess in `data`.
+  // The plugin stored it, and the rollback that corrected it is a source the
+  // plugin skips, so a reload brought the failed guess back.
+  test('a write under a live guess stores the data beneath it, and a reload has no guess', async () => {
+    const storage = memory()
+    const q = post('qc/opt-write')
+    const root = mount(q, storage)
+    await root.waitForIdle()
+    const like = root.api.qs.setData((p) => ({ ...p!, likes: 1 }))
+    root.api.qs.write((p) => ({ ...p!, title: 'Renamed' }))
+    expect(stored(storage)?.entries[0]?.data).toEqual({ title: 'Renamed', likes: 0 })
+    like.rollback()
+    expect(stored(storage)?.entries[0]?.data).toEqual({ title: 'Renamed', likes: 0 })
+    root.dispose()
+
+    const reload = mount(q, storage)
+    expect(reload.api.q.data.peek()).toEqual({ title: 'Renamed', likes: 0 })
+    reload.dispose()
+  })
+
+  // A commit keeps the stamp of the fetch before it, so its row ties with the
+  // row that fetch stored. The tie goes to this session, or the commit would
+  // never replace the row it changed.
+  test('a commit is stored over the row its fetch stored, with the fetch stamp', async () => {
+    const storage = memory()
+    const q = post('qc/opt-commit')
+    const root = mount(q, storage)
+    await root.waitForIdle()
+    const fetchedAt = stored(storage)?.entries[0]?.lastUpdatedAt
+    const like = root.api.qs.setData((p) => ({ ...p!, likes: 1 }))
+    expect(stored(storage)?.entries[0]?.data).toEqual({ title: 'Hello', likes: 0 })
+    like.finalize()
+    expect(stored(storage)?.entries[0]).toMatchObject({
+      data: { title: 'Hello', likes: 1 },
+      lastUpdatedAt: fetchedAt,
+    })
+    root.dispose()
+  })
+
+  // An optimistic create into an entry nothing fetched: its commit has no
+  // server time to age it by, so `maxAgeMs` could not bound it. It is not stored.
+  test('a commit the server never answered for is not stored', () => {
+    const storage = memory()
+    const q = post('qc/opt-create')
+    const root = createRoot(
+      defineController((ctx) => ({ qs: bindQuery(ctx, q) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0 })],
+      },
+    )
+    root.api.qs.setData(() => ({ title: 'New', likes: 0 })).finalize()
+    expect(storage.store.has(KEY)).toBe(false)
+    root.dispose()
+  })
+
+  test('an infinite page fetched under a live guess is stored without the guess', async () => {
+    const storage = memory()
+    const feed = defineInfiniteQuery({
+      id: 'qc/opt-feed',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => [`p${pageParam}`],
+      initialPageParam: 0,
+      getNextPageParam: (_last: string[], all: string[][]) => (all.length < 3 ? all.length : null),
+      staleTime: 60_000,
+      meta: { persist: true },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ f: createQuery(ctx, feed), fs: bindQuery(ctx, feed) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0 })],
+      },
+    )
+    await root.waitForIdle()
+    const guess = root.api.fs.setData((pages = []) => [
+      ['draft', ...(pages[0] ?? [])],
+      ...pages.slice(1),
+    ])
+    await root.api.f.fetchNextPage()
+    const row = stored(storage)?.entries[0]
+    expect(row).toBeDefined()
+    expect(JSON.stringify(row!.data)).not.toContain('draft')
+    expect(row!.pageParams).toHaveLength((row!.data as unknown[]).length)
+    guess.rollback()
     root.dispose()
   })
 })

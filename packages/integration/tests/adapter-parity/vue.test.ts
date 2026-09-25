@@ -14,10 +14,12 @@ import {
 import { type App, type Component, createApp, defineComponent, h, nextTick } from 'vue'
 import {
   type CounterApi,
+  type EqualApi,
   type FeedApi,
   type NameApi,
   runParity,
   type SaveApi,
+  sameId,
   type UserApi,
   type ViewName,
 } from './scenarios'
@@ -86,12 +88,20 @@ const Save = defineComponent(() => {
   ]
 })
 
+const Equal = defineComponent(() => {
+  const { user, tick } = useRoot<EqualApi>()
+  const u = useValue(user, { isEqual: sameId })
+  const t = useValue(tick)
+  return () => h('p', { 'data-testid': 'equal' }, `${u.value.name}:${t.value}`)
+})
+
 const VIEWS: Record<ViewName, Component> = {
   counter: Counter,
   user: User,
   feed: Feed,
   name: Name,
   save: Save,
+  equal: Equal,
 }
 
 let app: App | undefined

@@ -68,6 +68,7 @@ function directHooks(plugin: OlasPlugin) {
       peek: () => undefined,
       write() {},
       replace() {},
+      setData: () => undefined,
       invalidate: async () => {},
       hydrate() {},
       dehydrate: () => ({ version: 1, entries: [] }),
@@ -729,7 +730,7 @@ describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T
       onError: () => {},
       plugins: [plugin],
     })
-    await settle()
+    await root.waitForIdle() // the startup pass is tracked
     // First replay failed transiently; entry retained for another attempt.
     expect(calls).toBe(1)
     expect(adapter.store.size).toBe(1)
@@ -935,7 +936,7 @@ describe('mutationQueuePlugin — option surface (T6.2)', () => {
       deps: {},
       plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix: 'test/mq/seq' })],
     })
-    await settle()
+    await root.waitForIdle()
     expect(order).toEqual(['A', 'B'])
     root.dispose()
   })

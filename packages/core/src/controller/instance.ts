@@ -1,12 +1,13 @@
 import type { DevtoolsEmitter } from '../devtools'
 import { createEmitter, type Emitter } from '../emitter'
-import { dispatchError, type ErrorHandler } from '../errors'
+import { dispatchError, type ErrorHandler, markConstructionError } from '../errors'
 import type { QueryClient } from '../query/client'
 import { missingQueryEngine } from '../query/missing-engine'
 import type { QueryDefaults } from '../query/types'
 import type { Scope } from '../scope'
-import { computed, signal, effect as standaloneEffect, untracked } from '../signals'
+import { batch, computed, signal, effect as standaloneEffect, untracked } from '../signals'
 import { readOnly } from '../signals/readonly'
+import { isThenable } from '../utils'
 import { getFactory, getName } from './define'
 import { CTX_INTERNALS, type CtxInternals, type LocalWork } from './internals'
 import type {
@@ -201,12 +202,17 @@ export class ControllerInstance {
   /**
    * Resolve a scope from this instance up through its ancestors, falling back
    * to the scope's default. Backs both `ctx.inject` and `root.inject`.
-   * Memoized per scope, invalidated tree-wide by any `provide`.
+   * Memoized per scope, invalidated tree-wide by any `provide`. A disposed
+   * controller answers with what it resolved while live, whatever a live
+   * ancestor provided since, and walks its kept maps for a scope it never
+   * read (§4: reads do not throw after dispose).
    */
   resolveScope<T>(scope: Scope<T>, caller: string): T {
     const version = this.rootShared.scopesVersion.value
     const cached = this.injectCache?.get(scope)
-    if (cached !== undefined && cached.version === version) return cached.value as T
+    if (cached !== undefined && (cached.version === version || this.isTerminal())) {
+      return cached.value as T
+    }
     const remember = (value: unknown): void => {
       if (this.injectCache === null) this.injectCache = new Map()
       this.injectCache.set(scope, { value, version })
@@ -259,6 +265,10 @@ export class ControllerInstance {
     try {
       api = factory(ctx, props)
     } catch (err) {
+      // Wherever this throw is caught and reported later, it is a
+      // construction failure: an effect or a `ctx.on` handler that called
+      // `ctx.child` reports it as `kind: 'construction'` (§12.1.6).
+      markConstructionError(err)
       beforeRollback?.()
       this.rollbackPartialConstruction()
       throw err
@@ -279,6 +289,10 @@ export class ControllerInstance {
   }
 
   private rollbackPartialConstruction(): void {
+    // Disposed first, as in `dispose()`: a teardown that calls `ctx.effect` or
+    // `ctx.child` then throws at `assertLive` instead of registering into the
+    // list `clear()` drops below, where the new primitive would run on.
+    this.state = 'disposed'
     // Tear down what was built before the throw, in reverse order.
     for (const entry of this.entries.reverse()) {
       try {
@@ -294,7 +308,6 @@ export class ControllerInstance {
       }
     }
     this.entries.clear()
-    this.state = 'disposed'
   }
 
   dispose(): void {
@@ -312,8 +325,9 @@ export class ControllerInstance {
       }
     }
     this.entries.clear()
-    this.scopes = null
-    this.injectCache = null
+    // The scope maps stay. `ctx.inject` and `root.inject` are reads, and a
+    // read after dispose does not throw (§4): it returns what the scope
+    // resolved to while this controller was live.
 
     if (__DEV__) {
       this.rootShared.devtools.emit({ type: 'controller:disposed', path: this.path })
@@ -793,47 +807,68 @@ export class ControllerInstance {
         const isFactoryForm =
           (options as CollectionFactoryOptions<Item, K, R>).factory !== undefined
 
-        const buildChild = (
-          item: Item,
-        ): {
-          instance: ControllerInstance
-          api: Api
-          def: ControllerDef<unknown, unknown>
-        } | null => {
-          let def: ControllerDef<unknown, unknown>
-          let childProps: unknown
-          if (isFactoryForm) {
-            const factoryOpts = options as CollectionFactoryOptions<Item, K, R>
-            const result = factoryOpts.factory(item) as CollectionFactoryResult
-            def = result.controller as ControllerDef<unknown, unknown>
-            childProps = result.props
-          } else {
+        // SPEC §12.1.6: a throw from one item's callbacks — `keyOf`, `propsOf`,
+        // the factory, or the child controller's own factory — is a
+        // construction error for that item. It routes to onError and the item
+        // is skipped, so the rest of the reconcile, and `items`, still land.
+        const reportItem = (err: unknown): void => {
+          dispatchError(self.rootShared.onError, err, {
+            kind: 'construction',
+            controllerPath: self.path,
+          })
+        }
+
+        type ChildSpec = { def: ControllerDef<unknown, unknown>; props: unknown }
+        /** The controller and props `item` asks for; `null` when its callback threw. */
+        const specOf = (item: Item): ChildSpec | null => {
+          try {
+            if (isFactoryForm) {
+              const result = (options as CollectionFactoryOptions<Item, K, R>).factory(
+                item,
+              ) as CollectionFactoryResult
+              return {
+                def: result.controller as ControllerDef<unknown, unknown>,
+                props: result.props,
+              }
+            }
             const homoOpts = options as CollectionHomogeneousOptions<Item, K, Props, Api>
-            def = homoOpts.controller as unknown as ControllerDef<unknown, unknown>
-            childProps = homoOpts.propsOf(item)
+            return {
+              def: homoOpts.controller as unknown as ControllerDef<unknown, unknown>,
+              props: homoOpts.propsOf(item),
+            }
+          } catch (err) {
+            reportItem(err)
+            return null
           }
+        }
+
+        /**
+         * Build `key`'s child and register it. `explicitlySuspended` carries a
+         * `suspendItem(key)` over a type rebuild: the new child is built
+         * suspended, so a scrolled-out block that changes type stays still.
+         */
+        const buildChild = (key: K, spec: ChildSpec, explicitlySuspended: boolean): void => {
           // An earlier item's factory can dispose the owner mid-reconcile.
-          if (self.isTerminal()) return null
-          const segment = self.makeChildSegment(getFactory(def), getName(def))
+          if (self.isTerminal()) return
+          const segment = self.makeChildSegment(getFactory(spec.def), getName(spec.def))
           const childDeps =
             options.deps !== undefined ? { ...self.deps, ...options.deps } : self.deps
           const instance = new ControllerInstance(self, self.rootShared, segment, childDeps)
+          let built: { api: Api; live: boolean }
           try {
-            const { api, live } = self.constructChild(
+            built = self.constructChild(
               instance,
-              getFactory(def) as (ctx: Ctx, props: unknown) => Api,
-              childProps,
+              getFactory(spec.def) as (ctx: Ctx, props: unknown) => Api,
+              spec.props,
             )
-            return live ? { instance, api, def } : null
           } catch (err) {
-            // SPEC §12.1.6: runtime construction errors in collection items
-            // route to onError; the bad item is skipped.
-            dispatchError(self.rootShared.onError, err, {
-              kind: 'construction',
-              controllerPath: self.path,
-            })
-            return null
+            reportItem(err)
+            return
           }
+          if (!built.live) return
+          if (explicitlySuspended) instance.suspend()
+          const node = self.entries.push({ kind: 'child', instance, explicitlySuspended })
+          childMap.set(key, { instance, api: built.api, node, def: spec.def })
         }
 
         const removeKey = (key: K): void => {
@@ -859,10 +894,19 @@ export class ControllerInstance {
           // untracked bind in ctx.use.
           const source = options.source.value
           untracked(() => {
-            const itemByKey = new Map<K, Item>()
+            // Key each item once, in source order. A duplicate key keeps its
+            // first item, and an item whose `keyOf` threw is skipped.
+            const ordered: Array<{ key: K; item: Item }> = []
+            const keys = new Set<K>()
             for (const item of source) {
-              const key = options.keyOf(item)
-              if (itemByKey.has(key)) {
+              let key: K
+              try {
+                key = options.keyOf(item)
+              } catch (err) {
+                reportItem(err)
+                continue
+              }
+              if (keys.has(key)) {
                 if (__DEV__) {
                   // eslint-disable-next-line no-console
                   console.warn(
@@ -873,55 +917,55 @@ export class ControllerInstance {
                 }
                 continue
               }
-              itemByKey.set(key, item)
+              keys.add(key)
+              ordered.push({ key, item })
             }
 
             // Drop removed keys.
             for (const key of [...childMap.keys()]) {
-              if (!itemByKey.has(key)) removeKey(key)
+              if (!keys.has(key)) removeKey(key)
             }
 
-            // Add new keys + rebuild factory-form type changes.
-            for (const [key, item] of itemByKey) {
+            // Add new keys + rebuild factory-form type changes. The homogeneous
+            // form never re-applies `propsOf` to a kept key.
+            for (const { key, item } of ordered) {
               const existing = childMap.get(key)
-              if (existing !== undefined) {
-                if (isFactoryForm) {
-                  const result = (options as CollectionFactoryOptions<Item, K, R>).factory(
-                    item,
-                  ) as CollectionFactoryResult
-                  if ((result.controller as unknown) !== existing.def) {
-                    removeKey(key)
-                    const built = buildChild(item)
-                    if (built !== null) {
-                      const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
-                      const node = self.entries.push(entry)
-                      childMap.set(key, { ...built, node })
-                    }
-                  }
-                }
+              if (existing !== undefined && !isFactoryForm) continue
+              // A kept key whose factory threw keeps its child: the factory
+              // named no controller to rebuild it as.
+              const spec = specOf(item)
+              if (spec === null) continue
+              if (existing === undefined) {
+                buildChild(key, spec, false)
                 continue
               }
-              const built = buildChild(item)
-              if (built !== null) {
-                const entry: LifecycleEntry = { kind: 'child', instance: built.instance }
-                const node = self.entries.push(entry)
-                childMap.set(key, { ...built, node })
-              }
+              if (spec.def === existing.def) continue
+              const entry = existing.node.entry
+              const suspended = entry.kind === 'child' && entry.explicitlySuspended === true
+              removeKey(key)
+              buildChild(key, spec, suspended)
             }
 
             // Project to items signal in source order, deduped, skipping failures.
             const next: Array<{ key: K; api: Api }> = []
-            const seen = new Set<K>()
-            for (const item of source) {
-              const key = options.keyOf(item)
-              if (seen.has(key)) continue
-              seen.add(key)
+            for (const { key } of ordered) {
               const info = childMap.get(key)
               if (info !== undefined) next.push({ key, api: info.api })
             }
             items$.set(next)
           })
         }
+
+        // After the owner disposes, the handle lists nothing: `items` is empty
+        // and `has()` is false. This entry is registered before the first
+        // reconcile, so the reverse dispose pass reaches it after the children.
+        self.entries.push({
+          kind: 'cleanup',
+          dispose: () => {
+            childMap.clear()
+            items$.set([])
+          },
+        })
 
         // Register the diff loop as an 'effect' entry so it pauses on suspend
         // and re-runs on resume — mirrors how `ctx.effect` is wired.
@@ -991,12 +1035,26 @@ export class ControllerInstance {
         let pendingLoad: Promise<Api> | null = null
         let disposed = false
 
+        // A disposed handle, by `dispose()` or by the parent's, reads as idle
+        // with no api: the controller it pointed at is gone. `status` has no
+        // separate disposed value, and `load()` still refuses to start again.
+        const toIdle = (): void => {
+          batch(() => {
+            status$.set('idle')
+            api$.set(undefined)
+            error$.set(undefined)
+          })
+        }
+
         // Parent dispose flag; the child entry (when present) is disposed
-        // via the parent's normal cascade, so we don't double-tear-down.
+        // via the parent's normal cascade, so we don't double-tear-down. The
+        // child entry is pushed after this one, so the reverse pass reaches
+        // the child first.
         const flagEntry: LifecycleEntry = {
           kind: 'onDispose',
           fn: () => {
             disposed = true
+            toIdle()
           },
         }
         const flagNode = self.entries.push(flagEntry)
@@ -1020,7 +1078,21 @@ export class ControllerInstance {
           // rejections trap consumers on a transient import-failure.
           if (pendingLoad !== null) return pendingLoad
           status$.set('loading')
-          const attempt = loader().then(
+          // A loader that throws, or returns no promise, fails the load the
+          // way a rejected import does: `status` reads 'error', onError hears
+          // it, and `load()` returns a rejected promise instead of throwing.
+          let loaded: Promise<ControllerDef<Props, Api>>
+          try {
+            const result: unknown = loader()
+            loaded = isThenable(result)
+              ? Promise.resolve(result as PromiseLike<ControllerDef<Props, Api>>)
+              : Promise.reject(
+                  new TypeError('[olas] ctx.lazyChild: the loader must return a promise'),
+                )
+          } catch (err) {
+            loaded = Promise.reject(err)
+          }
+          const attempt = loaded.then(
             (def) => {
               if (disposed) {
                 throw new Error('[olas] ctx.lazyChild: disposed during load')
@@ -1086,6 +1158,7 @@ export class ControllerInstance {
           // already true. Leaving it behind leaks one closure per ever-
           // disposed lazyChild for the parent's remaining lifetime.
           self.entries.unlink(flagNode)
+          toIdle()
         }
 
         return {

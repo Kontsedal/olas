@@ -5,13 +5,14 @@ type: decision
 covers:
   - packages/core/src/query/infinite.ts
   - packages/core/src/query/client.ts
-  - packages/core/src/query/types.ts:128-162
+  - packages/core/src/query/types.ts:134-168
   - packages/core/src/plugin/types.ts
   - packages/react/src/streaming.ts
   - packages/cross-tab/src/plugin.ts
 edges:
   - { type: tested-by, target: ../../packages/core/tests/infinite-parity.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/infinite-rebase.test.ts }
+  - { type: tested-by, target: ../../packages/core/tests/infinite-edges.test.ts }
   - { type: tested-by, target: ../../packages/react/tests/streaming.test.tsx }
   - { type: tested-by, target: ../../packages/cross-tab/tests/plugin.test.ts }
   - { type: uses, target: ../modules/query.md }
@@ -36,7 +37,7 @@ An infinite entry's state is two aligned arrays, `pages` and `pageParams`. Every
 
 **The payload is validated before it seeds anything** (`infinitePayload` in `client.ts`). `data` must be an array, `pageParams` an array of the same length, and neither empty. Anything else under an infinite query's id is ignored, and the entry fetches for itself, so a stale or regular-shaped payload cannot put the cursors out of line.
 
-**The params are bookkeeping, today.** `fetchNextPage` and `fetchPreviousPage` derive the next param from the page data through `getNextPageParam`, and a refetch re-derives every param from page one. The stored params keep a dehydrate, a persisted cache or a cross-tab relay faithful to the entry. They are also what lets a future param-driven refetch work. The cross-tab test pins that the receiver stores the sender's params, `[0, 1, 2]`; padding its own would have given `[0, 0, 0]`.
+**The first param drives a refetch (1.0, fourth pass).** `fetchNextPage` and `fetchPreviousPage` derive the next param from the page data through `getNextPageParam`. A refetch starts from `pageParams[0]` and re-derives the rest, as TanStack does. It used to start at `initialPageParam`, so a list paged backwards to `[-2, -1, 0]` refetched as `[0, 1, 2]` (SPEC §5.11, which said both). The stored params therefore matter beyond bookkeeping: a hydrated, persisted or relayed entry refetches from its own first param. A write that adds pages to an entry with no params pads with `initialPageParam`, not `undefined`, so the refetch that follows starts where a first load would. The cross-tab test pins that the receiver stores the sender's params, `[0, 1, 2]`; padding its own would have given `[0, 0, 0]`. Pinned by `infinite-edges.test.ts`, "a refetch starts from the first loaded page".
 
 ## Hydration
 

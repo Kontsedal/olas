@@ -1,9 +1,17 @@
 ---
 name: docs-site
-description: The VitePress docs site and the api-extractor reports — why the site syncs the repo docs instead of owning copies, how the reference is generated, what CI checks, and why deploying is manual.
+description: The VitePress docs site and the api-extractor reports — why the site syncs the repo docs instead of owning copies, how the reference is generated, what the theme changes and why, what CI checks, and why deploying is manual.
 type: decision
 covers:
   - docs/.vitepress/config.mts
+  - docs/.vitepress/theme/index.ts
+  - docs/.vitepress/theme/style.css
+  - docs/.vitepress/theme/framework.ts
+  - docs/.vitepress/theme/components/HomeHero.vue
+  - docs/.vitepress/theme/components/TwoTrees.vue
+  - docs/.vitepress/theme/components/FrameworkPicker.vue
+  - docs/.vitepress/theme/components/ForFramework.vue
+  - docs/index.md
   - scripts/docs-sync.mjs
   - scripts/api-report.mjs
   - .github/workflows/docs.yml
@@ -12,6 +20,7 @@ edges:
   - { type: related, target: typechecked-doc-snippets.md }
   - { type: related, target: esm-only-build.md }
   - { type: related, target: toolchain.md }
+  - { type: related, target: ui-rules.md }
 last_verified: 2026-09-25
 confidence: medium
 ---
@@ -24,7 +33,7 @@ The site is VitePress, in `docs/`. It has three kinds of page:
 
 | Kind | Where it comes from | In git |
 |---|---|---|
-| Guides | written in `docs/guide/` (getting-started, concepts, queries, mutations, forms, ssr, testing, performance) and `docs/index.md` | yes |
+| Guides | written in `docs/guide/` (what-is-olas, getting-started, concepts, queries, mutations, forms, ssr, testing, performance) and `docs/index.md` | yes |
 | Synced pages | `scripts/docs-sync.mjs` copies RECIPES, PLUGINS, MIGRATING and every package README into `docs/guide/`, `docs/adapters/` and `docs/packages/` | no |
 | Reference | `api-documenter` renders the doc model that api-extractor writes, into `docs/reference/` | no |
 
@@ -37,6 +46,14 @@ The repo docs are what npm and GitHub readers see. `pnpm check:doc-snippets` kee
 The sync rewrites relative links, because a link written for `packages/react/README.md` is wrong on `/adapters/react` (`scripts/docs-sync.mjs`, `rewriteLink`). A link to another synced doc becomes that page's route. Any other link points at the file on GitHub. Code blocks are set aside first, so a link-shaped string in code stays as written. The guides themselves are checked by the snippet checker, which skips the synced copies.
 
 API.md stays. The plan named the generated reference as a replacement for its reference sections, but API.md carries checked examples, gotchas and prose that api-documenter cannot produce. The two now sit side by side: API.md is the narrative reference, and `/reference/` has every export's exact signature.
+
+## The reference pages
+
+`scripts/docs-sync.mjs` edits api-documenter's output in three ways:
+
+- **The title.** api-documenter opens each page with an H2, such as `createRoot() function`. The sync makes it the H1, so VitePress takes the tab title from it and the page gets the guide's title style.
+- **The breadcrumb.** The first crumb reads "API reference" instead of "Home", because it links to the reference index. Each page gets `pageClass: api-page`, which the theme uses to set the breadcrumb small and quiet.
+- **The index.** api-documenter's own index listed the packages under an empty description column, because no package has a TSDoc package comment. The sync writes the index from each `package.json` `description`, so npm and the site describe a package in the same words.
 
 ## The API reports
 
@@ -56,6 +73,21 @@ API.md stays. The plan named the generated reference as a replacement for its re
 
 - **Vue templates.** VitePress compiles every page as a Vue template, so `{{ … }}` in inline code, such as JSX's `options={{ deps }}`, broke the build. The config marks every inline code span `v-pre`, as VitePress already does for fenced blocks.
 - **Dead links.** The dead-link check stays on. Only the reference's member links are exempt (`ignoreDeadLinks` in the config), because api-documenter writes them and every one exists.
+
+## The theme
+
+`docs/.vitepress/theme/` extends the default theme. The goal was a site that reads as Olas rather than as stock VitePress, and a shorter path for a new reader. It changes five things.
+
+- **Palette.** The site takes the house palette from `examples/_shared/ui/tokens.css`: sea teal at hue 196 and cool neutrals at hue 240, which the devtools panel carries too (`ui-rules.md`). `style.css` writes the values in hex, because VitePress mixes some of them with alpha. The accent marks a link, the current page and the primary button. Inline code is ink on a grey wash, so the accent keeps that one meaning. VitePress reads its "indigo" slot for the brand and its "purple" slot for `important` callouts. The theme points the first at the teal and the second at the info blue, so no violet is left.
+- **Type.** The site sets prose in Atkinson Hyperlegible Next and code in Atkinson Hyperlegible Mono. The fonts come from the `@fontsource-variable` packages in the root devDependencies. The site serves them itself and requests no font from another host. The Braille Institute drew the family so that `l`, `I` and `1` differ, and `O` and `0` differ, which suits pages full of identifiers. It has two costs. Its zero is slashed in prose as well as in code, and the font has no alternate glyph. Its mono is wider than most, about 0.63em a character, so a code line longer than about 72 characters scrolls on a guide page.
+- **The home page.** `HomeHero.vue` replaces the default hero through the `home-hero-before` slot, so `index.md` has no `hero` frontmatter. The hero's figure is `TwoTrees.vue`, the two-trees diagram that also opens Concepts and What is Olas. The rows line up across its three columns, and the headers share one grid row, so a header that wraps on a phone moves both trees together. The rest of the home page is Markdown in `index.md`, so its code is highlighted at build time and checked by `pnpm check:doc-snippets`.
+- **The framework picker.** `<FrameworkPicker />` and `<ForFramework name="react">` show one framework's code, on the home page and in Getting started. One `ref` in `framework.ts` holds the choice for the whole site, and `localStorage` keeps it across visits. The server renders React and the saved choice is read after mount, so the first client render matches the server HTML. `ForFramework` uses `v-show`, so every framework stays in the HTML for search and for readers without JavaScript. The snippet checker scans fences line by line, so it still checks every block inside a `ForFramework`. Put headings outside one, or the page outline lists each framework's copy.
+- **Navigation.** The nav has four items: Guide, Packages, API and a `1.0` menu. The guide and the adapter pages share one sidebar, ordered the way a new reader meets the library: Introduction, Essentials, Your framework, Going further, Upgrading. The packages sidebar groups them by job.
+
+Two things bit during the work:
+
+- **A bare `display: grid` widens the page.** A single implicit column sizes to its widest child's min-content, so one long code line pushed the home page past a phone's width. Every home grid starts as `grid-template-columns: minmax(0, 1fr)`.
+- **Headless Chrome cannot screenshot a phone.** Chrome keeps a window at least about 500px wide. With `--window-size=390,…` it lays the page out at 500px and crops the image, which looks like an overflow that is not there. A narrow check needs viewport emulation, such as puppeteer's `setViewport({ width: 390 })`. Comparing `document.documentElement.scrollWidth` with `clientWidth` gives the overflow as a number.
 
 ## Why deploying is manual
 

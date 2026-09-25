@@ -17,7 +17,7 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **Ambient deps.** The `AmbientDeps` interface (in `controller/types.ts`). Users module-augment it to add app-wide services; every `ctx.deps` carries that type. Default has an index signature so `ctx.deps.anything` compiles as `unknown`.
 
-**AsyncState.** What every cache subscription exposes: the ten signals `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`, `isPaused` and `isEnabled`, plus the methods `refetch`, `reset`, `cancel` and `firstValue`. Defined in `query/types.ts:35-70`.
+**AsyncState.** What every cache subscription exposes: the ten signals `data`, `error`, `status`, `isLoading`, `isFetching`, `isStale`, `lastUpdatedAt`, `hasPendingMutations`, `isPaused` and `isEnabled`, plus the methods `refetch`, `reset`, `cancel` and `firstValue`. Defined in `query/types.ts:38-74`.
 
 **Brand.** A value's kind, stored under core's non-exported `BRAND` symbol (`packages/core/src/brand.ts`). A `ControllerDef` carries `'controller'`, a `Query` `'query'`, an `InfiniteQuery` `'infiniteQuery'`, a `QueryEngine` `'queryEngine'`, a `Scope` `'scope'`, and a `defineMutation` result `'mutation'`, non-enumerable. `createQuery` dispatches on it. See `decisions/brand-markers-not-classes.md`.
 
@@ -65,12 +65,12 @@ Terms used across the spec, code, and wiki. Alphabetical.
 
 **RootShared.** The shared context for a tree: `devtools`, `onError`, `queryClient` (`null` without a query engine), `queryDefaults` and `scopesVersion`. Passed to every `ControllerInstance` constructor and propagated to descendants.
 
-**Snapshot.** An object `{ rollback, finalize }` returned by `setData` (and produced by `onMutate`). The Entry stores the pre-update value; rollback restores it, and finalize commits the update. Multiple live snapshots stack (§6.4).
+**Snapshot.** An object `{ rollback, finalize }` returned by `setData` (and produced by `onMutate`). The Entry stores the pre-update value; rollback restores it, and finalize commits the update. Multiple live snapshots stack (§6.4). A commit is folded into the baselines of the snapshots still live below it, a canonical `write` patches every live baseline, and a rollback below the top replays the snapshots above it.
 
 **Stale time and GC time.** `staleTime` — how long data is considered fresh; influences refetch-on-subscribe. `gcTime` — after the last subscriber leaves, how long the entry sticks around before being dropped.
 
-**Suspend and Resume vs Dispose.** Suspend stops effects, recurses into children, and releases each query subscription's entry, which `gcTime` then governs (`query/use.ts:323-333`). The controllers and their state survive. Resume re-instantiates effects and rebinds the subscriptions, and a stale entry refetches. Dispose tears down. Use suspend for "definitely coming back soon", such as tab UIs. Use dispose for "user navigated away", where gcTime carries cached data forward.
+**Suspend and Resume vs Dispose.** Suspend stops effects, recurses into children, and releases each query subscription's entry, which `gcTime` then governs (`query/use.ts:325-335`). The controllers and their state survive. Resume re-instantiates effects and rebinds the subscriptions, and a stale entry refetches. Dispose tears down. Use suspend for "definitely coming back soon", such as tab UIs. Use dispose for "user navigated away", where gcTime carries cached data forward.
 
 **Validators.** Functions `(value, signal) => ValidatorResult | Promise<ValidatorResult>`, where `ValidatorResult` is `string | null | FormIssue[]` (`forms/types.ts:22-33`). Run in a tracking scope so reading signals inside re-runs the validator when those signals change. Sync validators run first, and the async ones are not called when a sync one fails (spec §8.1).
 
-**WriteEvent.** What a plugin's `onWrite` receives: the query ref, key, data, `updatedAt`, `origin`, and a `source` of `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'` or `'replace'`. The devtools `cache:set-data` event uses the same sources.
+**WriteEvent.** What a plugin's `onWrite` receives: the query ref, key, data, `updatedAt`, `origin`, and a `source` of `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'commit'`, `'write'` or `'replace'`. The devtools `cache:set-data` event uses the same sources.

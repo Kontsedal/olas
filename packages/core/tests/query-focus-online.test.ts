@@ -780,3 +780,283 @@ describe('offline and reconnect scheduling', () => {
     root.dispose()
   })
 })
+
+// `cancel()` returned early when nothing was in flight, so a fetch parked for
+// the network survived it: the reconnect ran it, and its response landed over
+// the optimistic value the recipe had just written (§5.5, §6.4).
+describe('cancel() drops a fetch parked for the network', () => {
+  const setOnline = (v: boolean): void => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => v })
+  }
+  afterEach(() => setOnline(true))
+
+  test('the reviewer reproduction: the reconnect does not land over the guess', async () => {
+    let calls = 0
+    const q = defineQuery({
+      id: 'query-focus-online/cancel-parked',
+      key: () => [],
+      fetcher: async () => {
+        calls += 1
+        return 'server'
+      },
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe('server'))
+    setOnline(false)
+    const refetched = root.api.x.refetch()
+    expect(root.api.x.isPaused.value).toBe(true)
+    const handle = root.bindQuery(q)
+    handle.cancel()
+    expect(root.api.x.isPaused.value).toBe(false)
+    const snap = handle.setData(() => 'optimistic')
+    // The parked request settles as a cancelled one does.
+    await expect(refetched).resolves.toBe('optimistic')
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await flushAll()
+    expect(calls).toBe(1)
+    expect(root.api.x.data.value).toBe('optimistic')
+    snap.finalize()
+    expect(root.api.x.data.value).toBe('optimistic')
+    root.dispose()
+  })
+
+  test('a parked first load rejects its waiters with an AbortError', async () => {
+    const q = defineQuery({
+      id: 'query-focus-online/cancel-parked-first',
+      key: () => [],
+      fetcher: async () => 'server',
+    })
+    setOnline(false)
+    const root = createRoot(
+      defineController(() => ({})),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    const handle = root.bindQuery(q)
+    const prefetched = handle.prefetch()
+    handle.cancel()
+    await expect(prefetched).rejects.toMatchObject({ name: 'AbortError' })
+    root.dispose()
+  })
+
+  test('an infinite query: a parked refetch and page request are both dropped', async () => {
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'query-focus-online/cancel-parked-infinite',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => {
+        calls += 1
+        return `server ${pageParam}`
+      },
+      initialPageParam: 0,
+      getNextPageParam: (_last: string, all: string[]) => (all.length < 3 ? all.length : null),
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual(['server 0']))
+    setOnline(false)
+    void root.api.x.refetch().catch(() => {})
+    const next = root.api.x.fetchNextPage()
+    expect(root.api.x.isPaused.value).toBe(true)
+    const handle = root.bindQuery(q)
+    handle.cancel()
+    expect(root.api.x.isPaused.value).toBe(false)
+    await expect(next).rejects.toMatchObject({ name: 'AbortError' })
+    handle.setData(() => ['optimistic'])
+    setOnline(true)
+    window.dispatchEvent(new Event('online'))
+    await flushAll()
+    expect(calls).toBe(1)
+    expect(root.api.x.pages.value).toEqual(['optimistic'])
+    root.dispose()
+  })
+})
+
+// A fetch made online, once the network was back but before any `online`
+// event reached the entry, left the park in place: its waiters never settled,
+// and the later event made one more request and aborted work in flight (§5.9).
+describe('a fetch made online ends a park no online event reached', () => {
+  const setOnline = (v: boolean): void => {
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => v })
+  }
+  afterEach(() => setOnline(true))
+
+  test('the reviewer reproduction: the parked invalidate() settles, and the event fetches nothing', async () => {
+    let calls = 0
+    let aborts = 0
+    const q = defineQuery({
+      id: 'query-focus-online/park-served-online',
+      key: () => [],
+      fetcher: ({ signal: s }) => {
+        calls += 1
+        s.addEventListener('abort', () => {
+          aborts += 1
+        })
+        return Promise.resolve(calls)
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe(1))
+    setOnline(false)
+    let invalidated = false
+    void root
+      .bindQuery(q)
+      .invalidate()
+      .then(() => {
+        invalidated = true
+      })
+    expect(root.api.x.isPaused.value).toBe(true)
+    // The network is back, and no `online` event reached the entry.
+    setOnline(true)
+    await expect(root.api.x.refetch()).resolves.toBe(2)
+    await flushAll()
+    expect(invalidated).toBe(true)
+    window.dispatchEvent(new Event('online'))
+    await flushAll()
+    expect(calls).toBe(2)
+    expect(aborts).toBe(0)
+    root.dispose()
+  })
+
+  test('a failed online fetch rejects the parked waiters with its error', async () => {
+    let calls = 0
+    const q = defineQuery({
+      id: 'query-focus-online/park-served-online-error',
+      key: () => [],
+      fetcher: async () => {
+        calls += 1
+        if (calls > 1) throw new Error('down')
+        return 'first'
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.data.value).toBe('first'))
+    setOnline(false)
+    const parked = root.bindQuery(q).prefetch()
+    setOnline(true)
+    await expect(root.api.x.refetch()).rejects.toThrow('down')
+    await expect(parked).rejects.toThrow('down')
+    root.dispose()
+  })
+
+  test('an infinite query: an online refetch serves the parked refetch and page request', async () => {
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'query-focus-online/park-served-online-infinite',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => {
+        calls += 1
+        return pageParam
+      },
+      initialPageParam: 0,
+      getNextPageParam: (last: number) => (last < 3 ? last + 1 : null),
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual([0]))
+    setOnline(false)
+    let settled = 0
+    void root
+      .bindQuery(q)
+      .invalidate()
+      .then(() => {
+        settled += 1
+      })
+    void root.api.x.fetchNextPage().then(() => {
+      settled += 1
+    })
+    setOnline(true)
+    await root.api.x.refetch()
+    await vi.waitFor(() => expect(settled).toBe(2))
+    expect(root.api.x.pages.value).toEqual([0, 1])
+    const before = calls
+    window.dispatchEvent(new Event('online'))
+    await flushAll()
+    expect(calls).toBe(before)
+    root.dispose()
+  })
+
+  test('an infinite query: a page request leaves the parked refetch parked, and a failure reaches its own waiters', async () => {
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'query-focus-online/park-served-online-partial',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => {
+        calls += 1
+        if (pageParam === 1) throw new Error('page 1 failed')
+        return pageParam
+      },
+      initialPageParam: 0,
+      getNextPageParam: (last: number) => (last < 3 ? last + 1 : null),
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual([0]))
+    setOnline(false)
+    void root.bindQuery(q).invalidate()
+    const parkedNext = root.api.x.fetchNextPage()
+    setOnline(true)
+    await expect(root.api.x.fetchNextPage()).rejects.toThrow('page 1 failed')
+    await expect(parkedNext).rejects.toThrow('page 1 failed')
+    // The refetch is still parked for the network.
+    expect(root.api.x.isPaused.value).toBe(true)
+    window.dispatchEvent(new Event('online'))
+    await vi.waitFor(() => expect(root.api.x.isPaused.value).toBe(false))
+    await vi.waitFor(() => expect(calls).toBe(3))
+    root.dispose()
+  })
+
+  test('an infinite query: an online page request serves the parked one of its direction', async () => {
+    let calls = 0
+    const q = defineInfiniteQuery({
+      id: 'query-focus-online/park-served-online-next',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => {
+        calls += 1
+        return pageParam
+      },
+      initialPageParam: 0,
+      getNextPageParam: (last: number) => (last < 3 ? last + 1 : null),
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ x: createQuery(ctx, q) })),
+      { queries: queryEngine(), deps: emptyDeps },
+    )
+    await vi.waitFor(() => expect(root.api.x.pages.value).toEqual([0]))
+    setOnline(false)
+    const parked = root.api.x.fetchNextPage()
+    expect(root.api.x.isPaused.value).toBe(true)
+    setOnline(true)
+    await root.api.x.fetchNextPage()
+    await parked
+    expect(root.api.x.isPaused.value).toBe(false)
+    window.dispatchEvent(new Event('online'))
+    await flushAll()
+    expect(calls).toBe(2)
+    expect(root.api.x.pages.value).toEqual([0, 1])
+    root.dispose()
+  })
+})
+
+async function flushAll(): Promise<void> {
+  for (let i = 0; i < 20; i++) await Promise.resolve()
+}

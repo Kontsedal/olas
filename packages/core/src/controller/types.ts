@@ -102,7 +102,8 @@ export type CtrlApi<C> = C extends ControllerDef<unknown, infer A> ? A : never
  * The reactive surface returned by `ctx.collection(...)`. `items` is the
  * canonical ordered view (source-order, with any construction-failed items
  * filtered out); `size` mirrors `items.length`; `get` / `has` are
- * imperative key lookups. SPEC §11.1.
+ * imperative key lookups. Once the owner disposes, `items` is empty and `has`
+ * is false. SPEC §11.1.
  */
 export type Collection<K, Api> = {
   readonly items: ReadSignal<ReadonlyArray<{ readonly key: K; readonly api: Api }>>
@@ -118,7 +119,8 @@ export type Collection<K, Api> = {
    * No-op if the key isn't in the collection. Neither the collection
    * reconcile nor a whole-tree `suspend()`/`resume()` cascade (e.g.
    * SuspendOnUnmount) will auto-resume a suspended item — call `resumeItem(key)`
-   * to bring it back (spec §4.1).
+   * to bring it back (spec §4.1). A factory-form item rebuilt for a new
+   * controller type stays suspended: the new child is built suspended.
    */
   suspendItem(key: K): void
   /**
@@ -180,7 +182,9 @@ export type CollectionFactoryApi<R> = R extends {
 
 /**
  * Handle returned by `ctx.lazyChild(...)`. `status` walks `idle → loading →
- * (ready | error)`; `api` becomes defined once `status === 'ready'`. SPEC §16.5.
+ * (ready | error)`; `api` becomes defined once `status === 'ready'`. A
+ * disposed handle, by `dispose()` or by its parent's, reads `'idle'` with no
+ * `api`, and its `load()` rejects. SPEC §16.5.
  */
 export type LazyChild<Api> = {
   readonly status: ReadSignal<'idle' | 'loading' | 'ready' | 'error'>
@@ -248,10 +252,11 @@ export type Ctx<TDeps = AmbientDeps> = {
    * For per-item type-discriminated children, use the `factory` form —
    * type changes for an existing key dispose and reconstruct.
    *
-   * Construction errors (factory or controller throw) are routed to
-   * `onError` with `kind: 'construction'` and the item is **skipped** —
-   * the collection's surface shows one fewer entry. The diff loop does
-   * not re-throw. SPEC §11.1, §12.1.6.
+   * Construction errors (a `keyOf`, `propsOf`, factory or controller
+   * throw) are routed to `onError` with `kind: 'construction'` and the item
+   * is **skipped** — the collection's surface shows one fewer entry, and the
+   * rest of the diff still lands. A kept key whose factory throws keeps its
+   * child. The diff loop does not re-throw. SPEC §11.1, §12.1.6.
    */
   collection<Item, K, Props, Api>(
     options: CollectionHomogeneousOptions<Item, K, Props, Api, TDeps>,
@@ -269,7 +274,8 @@ export type Ctx<TDeps = AmbientDeps> = {
    * Parent disposal disposes the loaded child (if any) and flags any
    * in-flight load so its eventual settle is dropped on the floor.
    * Construction or import failures route through `onError` with
-   * `kind: 'construction'`. SPEC §16.5.
+   * `kind: 'construction'`, and so does a loader that throws or returns no
+   * promise: `status` reads `'error'` and `load()` rejects. SPEC §16.5.
    */
   lazyChild<Props, Api>(
     loader: () => Promise<ControllerDef<Props, Api>>,
@@ -387,7 +393,8 @@ export type Root<Api> = {
   /**
    * Resolve a scope as the root controller would through `ctx.inject(...)`:
    * a value it provided, a value seeded through `RootOptions.scopes` or a
-   * plugin, else the scope's default. Throws when none exists.
+   * plugin, else the scope's default. Throws when none exists. After
+   * `dispose()` it still answers, with what the scope resolved to (§4).
    */
   inject<T>(scope: Scope<T>): T
   /**
@@ -397,7 +404,8 @@ export type Root<Api> = {
   /**
    * Freeze the tree: effects stop, subscriptions release their entries,
    * `onSuspend` handlers run. With `maxIdleTime`, the root disposes itself if it
-   * is not resumed within that many milliseconds. Spec §4.1, §4.3.
+   * is not resumed within that many milliseconds. A no-op after `dispose()`.
+   * Spec §4.1, §4.3.
    */
   suspend(options?: SuspendOptions): void
   /**

@@ -194,7 +194,7 @@ describe('Timeline cause groups', () => {
 })
 
 describe('Timeline cache:set-data detail', () => {
-  const write = (data: unknown, source: 'fetch' | 'write' = 'write'): DebugEvent => ({
+  const write = (data: unknown, source: 'fetch' | 'write' | 'commit' = 'write'): DebugEvent => ({
     type: 'cache:set-data',
     queryKey: ['u'],
     source,
@@ -211,6 +211,16 @@ describe('Timeline cache:set-data detail', () => {
     expect(detail.querySelector('.olas-devtools-tl-source')?.textContent).toBe('source: fetch')
     expect(detail.textContent).toContain('name:"Ada"')
     expect(detail.querySelector('.olas-devtools-diff-change')).toBeNull()
+  })
+
+  test('a committed optimistic layer shows its source like any other write', () => {
+    const bus = fakeRoot()
+    render(<DevtoolsPanel root={bus.root} />)
+    bus.emit(write({ name: 'Ada' }, 'fetch'), write({ name: 'Grace' }, 'commit'))
+    expandNewestWrite()
+    const detail = body().querySelector('.olas-devtools-payload-json') as HTMLElement
+    expect(detail.querySelector('.olas-devtools-tl-source')?.textContent).toBe('source: commit')
+    expect(detail.querySelector('.olas-devtools-diff-change')).not.toBeNull()
   })
 
   test('a write with identical content reads "no change"', () => {

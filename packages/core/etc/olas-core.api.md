@@ -282,8 +282,8 @@ export type DebugEventBody = {
 * A value was written to a cache entry. `data` is the post-write value —
 * carried so the devtools cache inspector and timeline diff show *current*
 * data without polling. `source` is the plugins' `WriteSource` vocabulary:
-* `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'write'`,
-* `'replace'`.
+* `'fetch'`, `'hydrate'`, `'optimistic'`, `'rollback'`, `'commit'`,
+* `'write'`, `'replace'`.
 */
     {
     type: 'cache:set-data';
@@ -886,6 +886,7 @@ export type QueryHost = {
     peek(id: string, key: readonly unknown[]): unknown;
     write(id: string, key: readonly unknown[], updater: (prev: unknown) => unknown, options?: WriteOptions): void;
     replace(id: string, key: readonly unknown[], value: unknown, options?: WriteOptions): void;
+    setData(id: string, key: readonly unknown[], updater: (prev: unknown) => unknown, options?: WriteOptions): Snapshot | undefined;
     invalidate(id: string, key: readonly unknown[]): Promise<void>;
     hydrate(state: DehydratedState): void;
     dehydrate(): DehydratedState;
@@ -1133,6 +1134,11 @@ export type WriteEvent = {
     readonly source: WriteSource;
     readonly origin: string | undefined;
     readonly pageParams?: readonly unknown[];
+    readonly server?: {
+        readonly data: unknown;
+        readonly updatedAt: number;
+        readonly pageParams?: readonly unknown[];
+    };
 };
 
 // @public
@@ -1141,7 +1147,7 @@ export type WriteOptions = {
 };
 
 // @public
-export type WriteSource = 'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'write' | 'replace';
+export type WriteSource = 'fetch' | 'hydrate' | 'optimistic' | 'rollback' | 'commit' | 'write' | 'replace';
 
 // (No @packageDocumentation comment for this package)
 

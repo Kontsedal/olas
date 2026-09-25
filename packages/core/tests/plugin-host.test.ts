@@ -353,7 +353,163 @@ describe('onWrite', () => {
     keep(createRoot(userRootDef, { queries: queryEngine(), deps: {}, plugins: [plugin] }))
     log.host?.queries?.write('plugin-host/user', ['user', 'nope'], () => 'x')
     log.host?.queries?.write('unknown/id', ['k'], () => 'x')
+    expect(log.host?.queries?.setData('plugin-host/user', ['user', 'nope'], () => 'x')).toBe(
+      undefined,
+    )
     expect(log.host?.queries?.peek('plugin-host/user', ['user', 'nope'])).toBeUndefined()
+  })
+})
+
+describe('onWrite — the server truth under a guess (`server`)', () => {
+  // A canonical write made while an optimistic write is live carries the guess
+  // in `data`. A plugin that keeps server truth, such as a persister, stored
+  // it, and the correction came as a rollback it skips.
+  test('each write carries the data beneath any live guess, stamped when the server said it', async () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(userRootDef, { queries: queryEngine(), deps: {}, plugins: [plugin] }),
+    )
+    await root.waitForIdle()
+    const fetched = log.writes[0]
+    expect(fetched?.server).toEqual({ data: fetched?.data, updatedAt: fetched?.updatedAt })
+    const fetchedAt = fetched?.updatedAt as number
+
+    const snap = root.api.users.setData('1', (u) => ({ ...u!, name: 'guess' }))
+    const optimistic = log.writes.at(-1)
+    expect(optimistic?.data).toEqual({ id: '1', name: 'guess' })
+    expect(optimistic?.server).toEqual({ data: { id: '1', name: 'User 1' }, updatedAt: fetchedAt })
+
+    root.api.users.write('1', (u) => ({ ...u!, tag: 'pushed' }))
+    const written = log.writes.at(-1)
+    expect(written?.data).toEqual({ id: '1', name: 'guess', tag: 'pushed' })
+    expect(written?.server?.data).toEqual({ id: '1', name: 'User 1', tag: 'pushed' })
+    expect(written?.server?.updatedAt).toBe(written?.updatedAt)
+
+    snap.rollback()
+    const rolledBack = log.writes.at(-1)
+    expect(rolledBack?.source).toBe('rollback')
+    expect(rolledBack?.data).toEqual({ id: '1', name: 'User 1', tag: 'pushed' })
+    expect(rolledBack?.server).toEqual({ data: rolledBack?.data, updatedAt: written?.updatedAt })
+  })
+
+  test('an infinite write carries the pages and params beneath the guess', async () => {
+    const feed = defineInfiniteQuery({
+      id: 'plugin-host/server-feed',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => [pageParam],
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      staleTime: 60_000,
+    })
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({ f: createQuery(ctx, feed), fs: bindQuery(ctx, feed) })),
+        { queries: queryEngine(), deps: {}, plugins: [plugin] },
+      ),
+    )
+    await root.waitForIdle()
+    root.api.fs.setData((pages = []) => [...pages, [99]])
+    const optimistic = log.writes.at(-1)
+    expect(optimistic?.data).toEqual([[0], [99]])
+    expect(optimistic?.server).toMatchObject({ data: [[0]], pageParams: [0] })
+  })
+
+  test('an entry with neither data nor a server answer carries none', () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({ users: bindQuery(ctx, userQuery) })),
+        { queries: queryEngine(), deps: {}, plugins: [plugin] },
+      ),
+    )
+    // An optimistic create into an entry nothing has fetched.
+    root.api.users.setData('9', () => ({ id: '9', name: 'new' }))
+    expect(log.writes.at(-1)?.source).toBe('optimistic')
+    expect(log.writes.at(-1)?.server).toBeUndefined()
+  })
+})
+
+describe('host.queries.setData — a plugin-owned optimistic write', () => {
+  test('pushes a guess the plugin settles, and never restarts the stale clock', async () => {
+    vi.useFakeTimers()
+    try {
+      const q = defineQuery({
+        id: 'plugin-host/host-set-data',
+        key: () => [],
+        fetcher: async () => ({ name: 'server' }),
+        staleTime: 1_000,
+      })
+      const { log, plugin } = recorder('mirror')
+      const root = keep(
+        createRoot(
+          defineController((ctx) => ({ q: createQuery(ctx, q) })),
+          { queries: queryEngine(), deps: {}, plugins: [plugin] },
+        ),
+      )
+      await vi.advanceTimersByTimeAsync(0)
+      await vi.advanceTimersByTimeAsync(2_000)
+      expect(root.api.q.isStale.peek()).toBe(true)
+      const fetchedAt = log.writes[0]?.updatedAt as number
+      log.writes.length = 0
+
+      const host = log.host?.queries
+      const guess = host?.setData('plugin-host/host-set-data', [], () => ({ name: 'guess' }))
+      expect(root.api.q.data.peek()).toEqual({ name: 'guess' })
+      expect(root.api.q.hasPendingMutations.peek()).toBe(true)
+      expect(root.api.q.isStale.peek()).toBe(true)
+      expect(log.writes.map((w) => [w.source, w.origin])).toEqual([['optimistic', 'mirror']])
+
+      guess?.rollback()
+      expect(root.api.q.data.peek()).toEqual({ name: 'server' })
+      expect(root.api.q.hasPendingMutations.peek()).toBe(false)
+
+      const committed = host?.setData('plugin-host/host-set-data', [], () => ({ name: 'done' }))
+      committed?.finalize()
+      expect(root.api.q.data.peek()).toEqual({ name: 'done' })
+      expect(root.api.q.isStale.peek()).toBe(true)
+      expect(log.writes.map((w) => w.source)).toEqual([
+        'optimistic',
+        'rollback',
+        'optimistic',
+        'commit',
+      ])
+      // A commit is stamped with the server's time, not the guess's.
+      expect(log.writes.at(-1)?.updatedAt).toBe(fetchedAt)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('an infinite entry takes the pages with their params', async () => {
+    const feed = defineInfiniteQuery({
+      id: 'plugin-host/host-set-infinite',
+      key: () => [],
+      fetcher: async ({ pageParam }: { pageParam: number }) => [pageParam],
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      staleTime: 60_000,
+    })
+    const { log, plugin } = recorder('mirror')
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({ f: createQuery(ctx, feed) })),
+        { queries: queryEngine(), deps: {}, plugins: [plugin] },
+      ),
+    )
+    await root.waitForIdle()
+    const guess = log.host?.queries?.setData(
+      'plugin-host/host-set-infinite',
+      [],
+      () => [[0], [5]],
+      {
+        pageParams: [0, 5],
+      },
+    )
+    expect(root.api.f.pages.peek()).toEqual([[0], [5]])
+    expect(log.writes.at(-1)?.pageParams).toEqual([0, 5])
+    guess?.rollback()
+    expect(root.api.f.pages.peek()).toEqual([[0]])
   })
 })
 
@@ -808,5 +964,147 @@ describe('isolation and lifecycle', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+})
+
+// `finalize()` reported nothing, so a plugin that takes canonical sources only,
+// as a cache persister does, never saw the committed value: after a reload the
+// value from before the mutation came back (§13.1).
+describe('onWrite — commit', () => {
+  /** What a plugin that keeps canonical sources only would hold. */
+  const canonical = (writes: WriteEvent[]) =>
+    writes.filter((w) => w.source !== 'optimistic' && w.source !== 'rollback')
+
+  test('a finalize with no other live layer reports one commit, on the server clock', async () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(userRootDef, { queries: queryEngine(), deps: {}, plugins: [plugin] }),
+    )
+    await root.waitForIdle()
+    const fetchedAt = log.writes[0]?.updatedAt
+    log.writes.length = 0
+    const snap = root.api.users.setData('1', (u) => ({ ...u!, name: 'opt' }))
+    snap.finalize()
+    snap.finalize()
+    expect(log.writes.map((w) => w.source)).toEqual(['optimistic', 'commit'])
+    expect(log.writes[1]).toMatchObject({
+      key: ['user', '1'],
+      data: { id: '1', name: 'opt' },
+      updatedAt: fetchedAt,
+      origin: undefined,
+    })
+  })
+
+  test('a commit under another live layer waits for the last settle, even a rollback', async () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(userRootDef, { queries: queryEngine(), deps: {}, plugins: [plugin] }),
+    )
+    await root.waitForIdle()
+    log.writes.length = 0
+    const a = root.api.users.setData('1', (u) => ({ ...u!, name: 'A' }))
+    const b = root.api.users.setData('1', (u) => ({ ...u!, name: `${u!.name}!` }))
+    b.finalize()
+    // A's guess is still on screen, so nothing is reported as committed yet.
+    expect(log.writes.map((w) => w.source)).toEqual(['optimistic', 'optimistic'])
+    a.rollback()
+    // The data is committed truth now: B's change over the server value.
+    expect(log.writes.map((w) => w.source)).toEqual(['optimistic', 'optimistic', 'commit'])
+    expect(log.writes[2]?.data).toEqual({ id: '1', name: 'User 1!' })
+    const kept = canonical(log.writes)
+    expect(kept.map((w) => (w.data as { name: string }).name)).toEqual(['User 1!'])
+  })
+
+  test('the last layer committing reports the data on screen', async () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(userRootDef, { queries: queryEngine(), deps: {}, plugins: [plugin] }),
+    )
+    await root.waitForIdle()
+    log.writes.length = 0
+    const a = root.api.users.setData('1', (u) => ({ ...u!, name: 'A' }))
+    const b = root.api.users.setData('1', (u) => ({ ...u!, name: `${u!.name}!` }))
+    a.finalize()
+    expect(canonical(log.writes)).toEqual([])
+    b.finalize()
+    expect(canonical(log.writes).map((w) => [w.source, w.data])).toEqual([
+      ['commit', { id: '1', name: 'A!' }],
+    ])
+  })
+
+  test('a server read after the commit reports it, and the last settle has nothing to add', async () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(userRootDef, { queries: queryEngine(), deps: {}, plugins: [plugin] }),
+    )
+    await root.waitForIdle()
+    log.writes.length = 0
+    const a = root.api.users.setData('1', (u) => ({ ...u!, name: 'A' }))
+    root.api.users.setData('1', (u) => ({ ...u!, name: 'B' })).finalize()
+    await root.api.users.invalidate('1')
+    a.rollback()
+    expect(log.writes.map((w) => w.source)).toEqual(['optimistic', 'optimistic', 'fetch'])
+  })
+
+  test('an infinite commit reports the pages with their params', async () => {
+    const { log, plugin } = recorder()
+    const feed = defineInfiniteQuery({
+      id: 'plugin-host/commit-feed',
+      key: () => ['feed'],
+      fetcher: async ({ pageParam }: { pageParam: number }) => `p${pageParam}`,
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+      staleTime: 60_000,
+    })
+    const root = keep(
+      createRoot(
+        defineController((ctx) => ({ f: createQuery(ctx, feed), feed: bindQuery(ctx, feed) })),
+        { queries: queryEngine(), deps: {}, plugins: [plugin] },
+      ),
+    )
+    await root.waitForIdle()
+    log.writes.length = 0
+    root.api.feed.setData((pages) => [...(pages ?? []), 'guess']).finalize()
+    expect(log.writes.at(-1)).toMatchObject({
+      source: 'commit',
+      data: ['p0', 'guess'],
+      pageParams: [0, 0],
+    })
+  })
+
+  test('a commit on an entry the server never answered is stamped 0', () => {
+    const { log, plugin } = recorder()
+    const root = keep(
+      createRoot(
+        defineController(() => ({})),
+        { queries: queryEngine(), deps: {}, plugins: [plugin] },
+      ),
+    )
+    const users = root.bindQuery(userQuery)
+    users.setData('9', () => ({ id: '9', name: 'new' })).finalize()
+    expect(log.writes.at(-1)).toMatchObject({ source: 'commit', updatedAt: 0 })
+    const feed = defineInfiniteQuery({
+      id: 'plugin-host/commit-never-answered',
+      key: () => ['feed'],
+      fetcher: async () => 'server',
+      initialPageParam: 0,
+      getNextPageParam: () => null,
+    })
+    root
+      .bindQuery(feed)
+      .setData(() => ['new'])
+      .finalize()
+    expect(log.writes.at(-1)).toMatchObject({ source: 'commit', updatedAt: 0, pageParams: [0] })
+  })
+
+  test('devtools see the commit as a cache:set-data', async () => {
+    const root = keep(createRoot(userRootDef, { queries: queryEngine(), deps: {} }))
+    await root.waitForIdle()
+    const sources: string[] = []
+    root.debug.subscribe((e) => {
+      if (e.type === 'cache:set-data') sources.push(e.source)
+    })
+    root.api.users.setData('1', (u) => ({ ...u!, name: 'opt' })).finalize()
+    expect(sources).toEqual(['optimistic', 'commit'])
   })
 })

@@ -301,6 +301,11 @@ type Cell = {
    * Stamp of this cell's latest dispose; matches its live queue entry.
    */
   disposeSeq: number
+  /**
+   * A `controller:constructed` arrived for it. A cell made only as the
+   * ancestor of one that did is not a controller the store has seen yet.
+   */
+  constructed: boolean
 }
 
 function makeCell(path: readonly string[], parent: Cell | null): Cell {
@@ -319,6 +324,7 @@ function makeCell(path: readonly string[], parent: Cell | null): Cell {
     snap: null,
     removed: false,
     disposeSeq: 0,
+    constructed: false,
   }
 }
 
@@ -461,6 +467,17 @@ export class DevtoolsStore {
    */
   private paused = false
 
+  /**
+   * Set while `attach` takes the bus's replay of the live tree, which the bus
+   * delivers synchronously inside `subscribe`.
+   */
+  private replaying = false
+  /**
+   * Controllers the current replay found already live and suspended here: the
+   * replayed `controller:suspended` that follows repeats what the tree shows.
+   */
+  private readonly replayedSuspended = new Set<string>()
+
   constructor(options?: DevtoolsStoreOptions) {
     const maxEntries = options?.maxEntries ?? DEFAULT_MAX_ENTRIES
     this.maxTimelineEntries = options?.maxTimelineEntries ?? DEFAULT_MAX_TIMELINE_ENTRIES
@@ -537,7 +554,18 @@ export class DevtoolsStore {
    * on unmount.
    */
   attach(root: Pick<Root<unknown>, 'debug'>): () => void {
-    const unsub = root.debug.subscribe((event) => this.handle(event))
+    // The bus replays the live tree to each new subscriber. A store attached
+    // again, as StrictMode's effect replay does to a panel's store, already
+    // shows that tree: the replay then keeps the tree in step but adds no
+    // timeline rows for what the timeline already has.
+    this.replaying = true
+    let unsub: () => void
+    try {
+      unsub = root.debug.subscribe((event) => this.handle(event))
+    } finally {
+      this.replaying = false
+      this.replayedSuspended.clear()
+    }
     // Seed the live cache snapshot ONCE (no interval); it's refreshed from
     // events thereafter — see `refreshCacheState`. This is what lets the
     // inspector be event-driven instead of polling every 800ms.
@@ -573,6 +601,11 @@ export class DevtoolsStore {
       })
       return
     }
+    if (this.replaying && this.repeatsTree(event)) {
+      this.route(event)
+      this.publishTree()
+      return
+    }
     // The subscriber count moves first: a synchronous flush inside
     // `pushTimeline` re-seeds it from the snapshot, which already includes
     // this event, and a delta applied after that would count it twice.
@@ -587,18 +620,44 @@ export class DevtoolsStore {
     // which specialized view (tree / cache / mutations / fields) it also feeds.
     this.pushTimeline(event)
     this.route(event)
-    // The tree publishes at once, one notification per event however many
-    // cells it touched: its lifecycle view never waits for a frame.
+    this.publishTree()
+  }
+
+  /**
+   * The tree publishes at once, one notification per event however many
+   * cells it touched: its lifecycle view never waits for a frame.
+   */
+  private publishTree(): void {
     if (this.treeDirty) {
       this.treeDirty = false
       this.treeRev.set(this.treeRev.peek() + 1)
     }
   }
 
+  /**
+   * A replayed event that tells the store nothing new: a `controller:constructed`
+   * for a controller the tree already has live, or the `controller:suspended`
+   * that follows one for a controller it already has suspended.
+   */
+  private repeatsTree(event: DebugEvent): boolean {
+    if (event.type === 'controller:constructed') {
+      const key = pathKey(event.path)
+      const cell = this.cells.get(key)
+      if (cell === undefined || !cell.constructed || cell.state === 'disposed') return false
+      if (cell.state === 'suspended') this.replayedSuspended.add(key)
+      return true
+    }
+    if (event.type === 'controller:suspended') {
+      return this.replayedSuspended.delete(pathKey(event.path))
+    }
+    return false
+  }
+
   private route(event: DebugEvent): void {
     switch (event.type) {
       case 'controller:constructed': {
         const cell = this.ensureCell(event.path)
+        cell.constructed = true
         cell.props = event.props
         // A re-construction after a dispose is a new instance: the frozen
         // variables belong to the old one.

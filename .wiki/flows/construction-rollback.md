@@ -3,7 +3,7 @@ name: construction-rollback
 description: When a controller factory throws, the partially-built state tears itself down — siblings stay alive.
 type: flow
 covers:
-  - packages/core/src/controller/instance.ts:252-298
+  - packages/core/src/controller/instance.ts:258-311
   - packages/core/src/controller/root.ts:88-103
 edges:
   - { type: documented-in, target: ../../SPEC.md }
@@ -25,11 +25,12 @@ Spec §12.1 has the formal semantics. Summary:
 3. **The throw propagates up.** If the parent's factory called `ctx.child` and didn't catch, the parent's factory now throws too.
 4. **Partially-constructed parents are rolled back.** When a parent's factory throws, every primitive and child the parent already created is disposed in reverse order of creation.
 5. **`createRoot` does NOT swallow.** Bootstrap failures throw out of `createRoot` — `root.onError` is NOT invoked.
-6. **`root.onError` only fires for construction errors AFTER the root is alive** — e.g. inside an effect that creates a lazy child, or inside a `ctx.collection`'s factory. Those go through `onError` with `kind: 'construction'`.
+6. **`root.onError` only fires for construction errors AFTER the root is alive** — e.g. inside an effect that creates a lazy child, or inside a `ctx.collection`'s factory. Those go through `onError` with `kind: 'construction'`. The kind follows the throw: `construct` marks it, and `dispatchError` reports a marked error as `'construction'` whichever callback caught it (1.0). A factory that throws a string cannot be marked and keeps the caller's kind.
+7. **A teardown during the rollback cannot build.** The rollback sets `'disposed'` first, so a hook that calls `ctx.effect` or `ctx.child` throws at `assertLive`, and the throw reaches `onError` (1.0).
 
 ## Implementation
 
-`ControllerInstance.construct(factory, props, beforeRollback?)` (`instance.ts:252-279`):
+`ControllerInstance.construct(factory, props, beforeRollback?)` (`instance.ts:258-289`):
 
 ```ts nocheck
 construct(factory, props, beforeRollback?): Api {
@@ -38,6 +39,7 @@ construct(factory, props, beforeRollback?): Api {
   try {
     api = factory(ctx, props)
   } catch (err) {
+    markConstructionError(err)   // dispatchError reports it as 'construction' later
     beforeRollback?.()
     this.rollbackPartialConstruction()
     throw err
@@ -48,16 +50,18 @@ construct(factory, props, beforeRollback?): Api {
 }
 
 rollbackPartialConstruction(): void {
+  this.state = 'disposed'        // first, as in dispose(): a teardown cannot register
   for (const entry of this.entries.reverse()) {
     try { this.disposeEntry(entry) }
     catch (err) { dispatchError(onError, err, { kind: 'effect', controllerPath }) }
   }
   this.entries.clear()
-  this.state = 'disposed'
 }
 ```
 
 A teardown throw during the rollback reaches `onError` and the rollback carries on, so it neither masks the construction error nor stops the rest (T2.8).
+
+The state moves to `'disposed'` before the loop (1.0). It used to move after it. A teardown that built a primitive, such as `ctx.onDispose(() => ctx.effect(...))` in a factory that then threw, pushed into the list `clear()` dropped, and the effect ran on for good. Pinned by `controller-regressions.test.ts`, "a rollback does not let a teardown build new primitives".
 
 `createRoot` passes a `beforeRollback` that calls `plugins.close()` and `queryClient.close()` (`root.ts:93-103`). Plugin delivery and the client therefore close before the rollback, so a failed bootstrap tears down in the order `root.dispose()` uses. Without it, a plugin heard the rollback's events, such as a query entry deactivating, and only then got disposed. Pinned by `controller-regressions.test.ts`, "plugins stop hearing events before the rollback, as they do on dispose".
 

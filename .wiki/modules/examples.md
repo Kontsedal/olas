@@ -157,7 +157,7 @@ they imply a library change.
    (`examples/kanban/src/features/board/board.controller.ts:331-334`).
 2. **Infinite queries in `root.dehydrate()`.** Resolved in 1.0 (W10): an
    infinite entry dehydrates with its pages in `data` and its `pageParams`
-   (`packages/core/src/query/client.ts:1369-1380`). The kanban archive drawer
+   (`packages/core/src/query/client.ts:1436-1448`). The kanban archive drawer
    keeps cursor-paged history per tab and does not use SSR.
 3. **Array-level `.min(N)` rules in a `createZodForm` schema.** Resolved in
    1.0: an array rule lands in that `FieldArray`'s `topLevelErrors`, and a root

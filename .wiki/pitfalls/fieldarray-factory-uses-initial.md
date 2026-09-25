@@ -3,8 +3,8 @@ name: fieldarray-factory-uses-initial
 description: FieldArray.add(x) only does something useful if the factory uses its `initial` argument.
 type: pitfall
 covers:
-  - packages/core/src/forms/form.ts:983-995
-  - packages/core/src/forms/form.ts:1078-1092
+  - packages/core/src/forms/form.ts:1079-1096
+  - packages/core/src/forms/form.ts:1201-1206
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: documented-in, target: ../../SPEC.md }
@@ -51,6 +51,8 @@ createFieldArray(ctx, (initial) => createForm(ctx, schema, { initial }))        
 createFieldArray(ctx, (initial: { sku?: string }) =>                           # form with typed initial
   createForm(ctx, { sku: createField<string>(ctx, '', { validators: [required()] }) }, { initial }))
 ```
+
+The form pattern passes a row's value through as it is, `null` included: a reactive `initial` whose record carries `lines: [{ sku: 'A' }, null]` calls the factory with `null`. `createForm` reads an `initial` of `null` as none (1.0), so that row builds from its schema defaults. Before, `applyPartial(null)` threw out of the signal write that re-ran the thunk. The field pattern's `initial ?? ''` covers `null` on its own.
 
 ## The bug we hit
 

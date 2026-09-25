@@ -143,6 +143,19 @@ describe('fakeField', () => {
     const f = fakeField('a')
     expect(() => f.dispose()).not.toThrow()
   })
+
+  test('an in-place edit of the value does not reach what reset() restores', () => {
+    const f = fakeField<{ first: string }>({ first: 'Ada' })
+    f.peek().first = 'Grace'
+    f.set(f.peek())
+    f.reset()
+    expect(f.value).toEqual({ first: 'Ada' })
+
+    f.setAsInitial({ first: 'Alan' })
+    f.peek().first = 'Edsger'
+    f.reset()
+    expect(f.value).toEqual({ first: 'Alan' })
+  })
 })
 
 describe('fakeAsyncState', () => {

@@ -19,19 +19,30 @@ export type StorageAdapter = {
   keys?(): Iterable<string> | Promise<Iterable<string>>
 }
 
+/**
+ * The global `localStorage`, or `undefined` where there is none. Reading the
+ * global throws a SecurityError in a sandboxed iframe and in a browser that
+ * blocks site data, and `typeof` does not guard a getter that throws. Such a
+ * storage counts as missing, as on a server.
+ */
+function webStorage(): Storage | undefined {
+  try {
+    return typeof localStorage === 'undefined' ? undefined : localStorage
+  } catch {
+    return undefined
+  }
+}
+
 /** The localStorage adapter. One object; every `localStorageAdapter()` call returns it. */
 export const LOCAL_STORAGE: StorageAdapter = {
   get(key: string): string | null {
-    if (typeof localStorage === 'undefined') return null
-    return localStorage.getItem(key)
+    return webStorage()?.getItem(key) ?? null
   },
   set(key: string, value: string): void {
-    if (typeof localStorage === 'undefined') return
-    localStorage.setItem(key, value)
+    webStorage()?.setItem(key, value)
   },
   delete(key: string): void {
-    if (typeof localStorage === 'undefined') return
-    localStorage.removeItem(key)
+    webStorage()?.removeItem(key)
   },
   onChange(handler) {
     if (typeof window === 'undefined') return () => {}
@@ -43,10 +54,11 @@ export const LOCAL_STORAGE: StorageAdapter = {
     return () => window.removeEventListener('storage', listener)
   },
   keys(): string[] {
-    if (typeof localStorage === 'undefined') return []
+    const ls = webStorage()
+    if (ls === undefined) return []
     const out: string[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)
+    for (let i = 0; i < ls.length; i++) {
+      const k = ls.key(i)
       if (k !== null) out.push(k)
     }
     return out
@@ -56,8 +68,9 @@ export const LOCAL_STORAGE: StorageAdapter = {
 /**
  * The browser's `localStorage`, as a `StorageAdapter` — the default storage.
  * SSR-safe: without `localStorage` every read is `null` and every write a
- * no-op. A factory, like `indexedDbAdapter()`, so both adapters are chosen
- * the same way.
+ * no-op. A `localStorage` that throws when the page reads it, as in a
+ * sandboxed iframe, counts as missing. A factory, like `indexedDbAdapter()`,
+ * so both adapters are chosen the same way.
  */
 export function localStorageAdapter(): StorageAdapter {
   return LOCAL_STORAGE

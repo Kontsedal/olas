@@ -80,7 +80,7 @@ A leaf's rules run in its own `zodValidator`. A rule on an object or an array is
 
 The leaf check re-runs the leaf's schema on the leaf's value, once for each issue the parse reported at that leaf. A root refine is async-safe: the parse goes through Standard Schema, which returns a promise for an async schema. The old `safeParse` threw `$ZodAsyncError` on one. The design, and the options rejected, are in `decisions/zod-schema-rules.md`.
 
-The routing is core's `routeFormIssues` (`packages/core/src/forms/form.ts:173-202`): a routed message sits in a field's form-errors channel, or in a `Form`'s or `FieldArray`'s `parentFormErrors`, one list per routing form. The routing form owns that list, so a `reset()` leaves it standing until the form's validators run again.
+The routing is core's `routeFormIssues` (`packages/core/src/forms/form.ts:194-223`): a routed message sits in a field's form-errors channel, or in a `Form`'s or `FieldArray`'s `parentFormErrors`, one list per routing form. The routing form owns that list, so a `reset()` leaves it standing until the form's validators run again.
 
 `zod.test.ts` pins each row, both documented examples, the recursive-schema walk, the async paths, and the cost. For the cost it spies on the root schema's `_zod.run`: a plain schema's is not called, and a refined one's runs once per change.
 

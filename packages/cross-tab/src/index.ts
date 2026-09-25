@@ -21,5 +21,6 @@ export {
   type InvalidateMessage,
   type Message,
   PROTOCOL_VERSION,
+  type RelayedSource,
   type SetDataMessage,
 } from './protocol'

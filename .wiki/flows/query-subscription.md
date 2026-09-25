@@ -42,7 +42,7 @@ if (brand === 'infiniteQuery') return createInfiniteUse(...)
 return createUse(...)
 ```
 
-### 2. `createUse(client, query, keyOrOptions)` — `use.ts:233`
+### 2. `createUse(client, query, keyOrOptions)` — `use.ts:235`
 
 Builds a `SubscriptionImpl<T>` and an `effect` that owns the binding:
 
@@ -85,7 +85,7 @@ Key tricks:
 - `isStaleNow()` measures from the last fetch, hydrated row or canonical write, never from an optimistic write. It answers `false` while an optimistic write is live, and the entry runs the fetch once that write settles (spec §5.9, `../entities/entry.md`).
 - Joining can pick up a fetch requested before a subscriber-less invalidation. The entry, not `use.ts`, handles that: when such a response lands while someone holds the entry, it fetches once more (`Entry.catchUpIfStillStale`, see `../entities/entry.md`). `resume()` and `prefetch` join the same way and get the same catch-up.
 
-### 3. `client.bindEntry(query, args)` — `client.ts:1469`
+### 3. `client.bindEntry(query, args)` — `client.ts:1537`
 
 Looks up the entry in `client.maps`. If absent:
 
@@ -98,7 +98,7 @@ Looks up the entry in `client.maps`. If absent:
 
 `ClientEntry`'s constructor builds an `Entry<T>` with a fetcher closure that captures the original `args` (the user's call args, not the hash key — these are distinct, see `../pitfalls/callargs-vs-keyargs.md`).
 
-### 4. `entry.acquire(subscriberPath)` — `client.ts:395`
+### 4. `entry.acquire(subscriberPath)` — `client.ts:419`
 
 Subscriber count goes up. Cancels any pending `gcTimer`. If count just became 1 and there's a `refetchInterval`, starts the interval timer. The subscribing controller's path, which `createQuery` reads from `ctxInternals.path`, moves the entry's `subscriptions` count and sends the devtools `cache:subscribed`. Every `release` passes the same path and sends `cache:unsubscribed`: a key change, a disable, a suspend and dispose each release (1.0).
 
@@ -125,7 +125,7 @@ Subscribers downstream see one notification pass.
 
 ## On suspend / resume (§4.1)
 
-`suspend()` releases the current entry and sets a closure `suspended = true`; `resume()` clears it and imperatively rebinds to the current key. The binding effect must read the tracked signals (`enabled`, then `key` when enabled) **before** its `if (suspended) return`, so its dependency set survives a key change that fires during suspension. Reordering these was the T2.1 fix — see `../pitfalls/suspended-effects-lose-deps.md` for the empty-dependency-set trap. `resume()` skips the stale-refetch when a fetch is already in flight, as the effect does (`use.ts:335-368`); a suspend and resume during a first fetch used to abort it and fetch again.
+`suspend()` releases the current entry and sets a closure `suspended = true`; `resume()` clears it and imperatively rebinds to the current key. The binding effect must read the tracked signals (`enabled`, then `key` when enabled) **before** its `if (suspended) return`, so its dependency set survives a key change that fires during suspension. Reordering these was the T2.1 fix — see `../pitfalls/suspended-effects-lose-deps.md` for the empty-dependency-set trap. `resume()` skips the stale-refetch when a fetch is already in flight, as the effect does (`use.ts:337-370`); a suspend and resume during a first fetch used to abort it and fetch again.
 
 ## On disposal
 

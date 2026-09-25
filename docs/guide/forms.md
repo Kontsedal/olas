@@ -71,7 +71,7 @@ A [`Field<T>`](/reference/olas-core.field) carries five state signals and six ac
 | `touched` | `markTouched()` has run, normally on blur. |
 | `isValidating` | An async validator is pending. |
 
-`set(value)` writes and re-validates. `reset()` restores the initial value and clears dirty, touched, the validator errors and the server errors. A message a form-level rule routed onto the field stays until that rule runs again. `markTouched()` records a blur. `revalidate()` re-runs the validators and resolves with the new `isValid`. `setAsInitial(value)` moves the baseline without marking the field dirty. `setErrors(messages)` pins server errors, covered [below](#server-errors).
+`set(value)` writes and re-validates. `reset()` restores the initial value and clears dirty, touched and the server errors. It leaves the validation state a fresh field with that value would have: a pristine `required()` field still reads invalid. An async validator is not re-sent for a value the reset did not change. A message a form-level rule routed onto the field stays until that rule runs again. `markTouched()` records a blur. `revalidate()` re-runs the validators and resolves with the new `isValid`. `setAsInitial(value)` moves the baseline without marking the field dirty. `setErrors(messages)` pins server errors, covered [below](#server-errors).
 
 **Annotate the type when you pass validators.** `createField` infers `T` from the initial value. With a `validators` array, `createField(ctx, '', { validators })` infers `Field<''>`, and the first `set('ada')` fails to compile far from the declaration. `createField(ctx, null)` gives a `Field<null>` for the same reason. Write `createField<string>(...)` and `createField<string | null>(...)`. The [literal-type pitfall](https://github.com/Kontsedal/olas/blob/main/.wiki/pitfalls/literal-type-narrowing.md) explains the inference.
 
@@ -160,7 +160,7 @@ export const profileForm = defineController((ctx) => {
 - `flatErrors`, a list of `{ path, errors }` for an error summary at the top of the form.
 - `isDirty`, `touched` and `isValidating`, each true when any leaf is.
 - `isValid`, true when every leaf is valid and no form-level rule failed.
-- `dirtyFields`, the paths of the dirty leaves, such as `address.city`, for a PATCH payload.
+- `dirtyFields`, the paths of the dirty leaves, such as `address.city`, for a PATCH payload. A field array whose rows were added, removed or moved is listed by its own path, such as `lines`, because a PATCH has to send it whole.
 - `topLevelErrors`, the messages of form-level validators.
 
 `set(partial)` deep-merges a partial value in one batch. `setAsInitial(partial)` loads a new baseline and leaves the form clean. `reset()` returns every leaf to its initial value. `clearSubtree('address')` resets one subtree. `markAllTouched()` reveals every error, and `validate()` runs every validator and resolves with the result.
@@ -271,7 +271,7 @@ form.fields.username.setErrors(['That name is taken'])
 form.setErrors({ username: ['That name is taken'], 'lines.0.sku': ['Unknown SKU'] })
 ```
 
-A form path uses dots through nested forms and a numeric segment for an array item, and `lines[0].sku` works too. A validator re-run leaves server errors in place. The user's next `set` on that field clears them, and so do `reset()`, `setAsInitial()` and `setErrors([])`.
+A form path uses dots through nested forms and a numeric segment for an array item, and `lines[0].sku` works too. A validator re-run leaves server errors in place. The user's next `set` on that field clears them, and so do `reset()`, `setAsInitial()` and `setErrors([])`. A path that names a nested form or an array, such as `lines`, or `''` for the form, pins the messages on that node's `topLevelErrors`. They go once anything in that node changes.
 
 ## Submit
 

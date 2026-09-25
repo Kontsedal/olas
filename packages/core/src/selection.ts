@@ -33,9 +33,12 @@ export type Selection<T = unknown> = {
  *
  * `handleClick` encapsulates the standard click semantics:
  * - plain click → select only `id` (anchor moves to `id`)
- * - meta-click  → toggle `id` (anchor moves to `id` on add)
+ * - meta-click  → toggle `id`. The anchor moves to `id` on add and stays on
+ *   remove, so the row last clicked stays the anchor, as in a file manager.
+ *   `deselect(id)` of the anchor clears it instead.
  * - shift-click → range from anchor to `id` along `ordered` (anchor sticks,
- *   so subsequent shift-clicks extend from the same origin)
+ *   so subsequent shift-clicks extend from the same origin). With a `Map`,
+ *   the range is the ids whose index lies between the two.
  *
  * Spec §16.5.
  */
@@ -134,10 +137,10 @@ export function createSelection<T = unknown>(options?: {
   ): void => {
     if (mods.shift && anchor !== null) {
       // Accept either a positional array (back-compat, O(n) lookup) OR a
-      // precomputed `Map<id, index>` for O(1) shift-click on large lists
-      // (a 100k-row virtualized table doesn't want to scan the array twice
-      // per click). The caller decides which to pass — `Map` is cheap to
-      // build once when the row list changes.
+      // precomputed `Map<id, index>` for O(1) lookup of the two ends on large
+      // lists. The Map needs no particular insertion order: the range is read
+      // from its index values. The caller decides which to pass — `Map` is
+      // cheap to build once when the row list changes.
       let anchorIdx: number
       let targetIdx: number
       let slice: readonly string[]
@@ -164,16 +167,13 @@ export function createSelection<T = unknown>(options?: {
           return
         }
         const [lo, hi] = anchorIdx < targetIdx ? [anchorIdx, targetIdx] : [targetIdx, anchorIdx]
-        // The Map gives O(1) index lookup. To materialise the range we
-        // still need keys at [lo, hi]; iterate the insertion-ordered Map
-        // once and bail when we've collected enough. The 0..hi prefix is
-        // O(hi) — bounded by the range length, not the full list.
+        // The Map's values are the display order; its insertion order is
+        // whatever the caller built it in. So the range is every id whose
+        // index lies in [lo, hi], which takes one pass over the Map. The
+        // lookups above stay O(1).
         const keys: string[] = []
-        let i = 0
-        for (const k of map.keys()) {
-          if (i >= lo && i <= hi) keys.push(k)
-          if (i >= hi) break
-          i += 1
+        for (const [k, idx] of map) {
+          if (idx >= lo && idx <= hi) keys.push(k)
         }
         slice = keys
       }

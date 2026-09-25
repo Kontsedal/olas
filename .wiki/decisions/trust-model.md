@@ -51,7 +51,7 @@ It reproduced each finding against the built `dist` with probe scripts outside t
 
 | # | Severity | Finding | Fix | Test |
 |---|---|---|---|---|
-| H1 | high | `createStreamingTransform` wrote a batch mid-tag, so query data could become attributes (XSS) | `HtmlBoundary` tokenizer; a batch goes out only between elements | `streaming-security.test.tsx` |
+| H1 | high | `createStreamingTransform` wrote a batch mid-tag, so query data could become attributes (XSS) | `htmlBoundary` tokenizer; a batch goes out only outside every tag, text node and element React hydrates (tightened 2026-09-25, `pitfalls/stream-chunks-split-tags.md`) | `streaming-security.test.tsx` |
 | H2 | high | the mutation queue replayed any registered mutation storage named, and a key/contents mismatch replayed forever | replay only `meta.persist` definitions (new `host.mutations.get`); key must match contents; migrated entries rewritten; full validation | `mutation-queue/tests/security.test.ts` |
 | M1 | medium | the streamed payload was an object literal, so an own `__proto__` key became the prototype on the client | `serializeForScript`: `JSON.parse("…")` with everything risky escaped | `streaming-security.test.tsx` |
 | M2 | medium | no CSP nonce for the streamed scripts | `createStreamingHydrator({ nonce })` | `streaming-security.test.tsx` |
@@ -80,6 +80,12 @@ A third pass, the second 1.0 review, found two gaps in R1's rule. Each fix has a
 |---|---|---|---|---|
 | R3 | low | the factory checked the Deno and Bun names before the `document`, and HTML named access makes an element with the id `Bun` the global `Bun`, so such a page ran with cross-tab off | the `document` check comes first | `cross-tab/tests/channel.test.ts` |
 | R4 | low | persist's `indexedDbAdapter` opened a `BroadcastChannel` wherever one was defined, so a server with an IndexedDB polyfill passed one request's writes to another's `onChange` | the adapter copies R1's browser-scope rule; its `broadcastChannel` option opts in anywhere | `persist/tests/coverage-indexeddb.test.ts` |
+
+The third 1.0 review of persist and the mutation queue added one more, found while writing the queue's run leases. Its test failed on the old comparison.
+
+| # | Severity | Finding | Fix | Test |
+|---|---|---|---|---|
+| R5 | low | the mutation queue's `localStorage` replay lease counted any timestamp that was not older than the TTL as fresh, so a lease dated in the future held the lock forever | `leaseIsFresh` takes a timestamp within the TTL of now in either direction; the new per-entry run leases use it too | `mutation-queue/tests/coverage-replay-lock.test.ts` ("far-future") |
 
 R1 changes what "same-origin script" means on a server: there it is every request's root, and requests do not trust each other. The trust model above assumes one user per process, which a browser gives and a server does not. `../modules/cross-tab.md` has the detection rule and why it asks for a browser scope instead of a `BroadcastChannel` constructor.
 

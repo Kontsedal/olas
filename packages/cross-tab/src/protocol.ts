@@ -20,8 +20,26 @@
 export const PROTOCOL_VERSION = 1
 
 /**
+ * The write sources a tab relays. A fetch and a hydration are per tab, and
+ * never cross.
+ */
+export type RelayedSource = 'write' | 'replace' | 'optimistic' | 'rollback' | 'commit'
+
+/**
  * What a tab posts when the app writes a synced query's data outside a fetch
- * or hydration. A receiving tab writes `data` into the same entry.
+ * or hydration. A receiving tab applies `data` to the same entry, as what
+ * `source` says it is:
+ *
+ * - `'write'` and `'replace'` are canonical. The receiver writes the server
+ *   truth, `server.data` when the sender's data held a guess and `data`
+ *   otherwise, as a patch or as a replace that supersedes its own fetch.
+ * - `'optimistic'` is a guess. The receiver shows `data` as a guess of its
+ *   own, which leaves its stale clock alone and waits for the sender's
+ *   rollback or commit.
+ * - `'rollback'` removes that guess. `server` present means the sender still
+ *   shows other guesses, and the receiver shows `data` as one.
+ * - `'commit'` makes `data` the receiver's data as a commit does: the guess
+ *   is committed, and the stale clock is left alone.
  */
 export type SetDataMessage = {
   v: typeof PROTOCOL_VERSION
@@ -35,6 +53,24 @@ export type SetDataMessage = {
    * Present for an infinite query: the params of `data`'s pages, one per page.
    */
   pageParams?: readonly unknown[]
+  /**
+   * What produced the write in the sending tab. Absent from the messages of
+   * versions before 1.0, which a receiver applies as a `'write'`. A value a
+   * receiver does not know drops the message.
+   */
+  source?: RelayedSource
+  /**
+   * The sender's server truth beneath the guesses its `data` holds, sent with
+   * a `'write'`, `'replace'` or `'rollback'` made while an optimistic write
+   * was live there.
+   */
+  server?: {
+    data: unknown
+    /**
+     * For an infinite query, the params of the server pages.
+     */
+    pageParams?: readonly unknown[]
+  }
 }
 
 /**

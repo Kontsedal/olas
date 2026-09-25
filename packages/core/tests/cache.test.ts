@@ -439,3 +439,81 @@ describe('LocalCache.cancel', () => {
     root.dispose()
   })
 })
+
+// The key effect started a fetch on every run, so a thunk that re-ran to an
+// equal key refetched and aborted the request in flight, `staleTime` or not.
+// `createQuery` compares key hashes; a local cache does too now (§5.4).
+describe('ctx.cache — an equal key does nothing', () => {
+  test('the reviewer reproduction: a new user object with the same id', async () => {
+    const user = signal({ id: 'u1', name: 'Ann' })
+    const signals: AbortSignal[] = []
+    const def = defineController((ctx) => ({
+      profile: createCache(
+        ctx,
+        async ({ signal: s }) => {
+          signals.push(s)
+          return `profile of ${user.peek().id}`
+        },
+        { key: () => [user.value.id], staleTime: 60_000 },
+      ),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await flush()
+    expect(signals).toHaveLength(1)
+
+    user.set({ id: 'u1', name: 'Anna' })
+    await flush()
+    expect(signals).toHaveLength(1)
+    expect(signals[0]?.aborted).toBe(false)
+    expect(root.api.profile.data.value).toBe('profile of u1')
+
+    user.set({ id: 'u2', name: 'Bob' })
+    await flush()
+    expect(signals).toHaveLength(2)
+    expect(root.api.profile.data.value).toBe('profile of u2')
+    root.dispose()
+  })
+
+  test('a structurally equal key built afresh on each run', async () => {
+    const filter = signal({ q: 'a', page: 1 })
+    let calls = 0
+    const def = defineController((ctx) => ({
+      results: createCache(ctx, async () => ++calls, {
+        key: () => [{ q: filter.value.q, page: filter.value.page }],
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await flush()
+    filter.set({ q: 'a', page: 1 })
+    await flush()
+    expect(calls).toBe(1)
+    filter.set({ q: 'a', page: 2 })
+    await flush()
+    expect(calls).toBe(2)
+    root.dispose()
+  })
+
+  test('a key the hash cannot encode still compares by element', async () => {
+    class Token {
+      constructor(readonly v: string) {}
+    }
+    const a = new Token('a')
+    const tokens = signal<Token[]>([a])
+    let calls = 0
+    const def = defineController((ctx) => ({
+      x: createCache(ctx, async () => ++calls, { key: () => [...tokens.value] }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    await flush()
+    tokens.set([a])
+    await flush()
+    expect(calls).toBe(1)
+    tokens.set([new Token('a')])
+    await flush()
+    expect(calls).toBe(2)
+    tokens.set([a, a])
+    await flush()
+    expect(calls).toBe(3)
+    root.dispose()
+  })
+})

@@ -326,7 +326,7 @@ export const feed = defineController((ctx, props: { channel: string }) => {
 The subscription is an `AsyncState` of the pages array, plus `pages`, `flat`, `hasNextPage`, `hasPreviousPage`, `isFetchingNextPage`, `isFetchingPreviousPage`, `fetchNextPage()` and `fetchPreviousPage()`. `flat` holds the items that `itemsOf` pulls out of each page, and equals `pages` without it. `getPreviousPageParam` makes the list bidirectional.
 
 - `getNextPageParam` returns `null` to say there are no more pages. `hasNextPage` compares against `null`, so an `undefined` return counts as a next page. Write `?? null` when your cursor can be missing.
-- A refetch reloads every loaded page in order, from `initialPageParam`, and swaps them in at the end (§5.11). A list scrolled 20 pages deep costs 20 requests per invalidation or interval tick.
+- A refetch reloads every loaded page in order, from the first loaded page's param, and swaps them in at the end (§5.11). A list paged backwards refetches as it is. A list scrolled 20 pages deep costs 20 requests per invalidation or interval tick.
 - An infinite query has the regular query's integrations. It dehydrates for [SSR](/guide/ssr) with its page params, so the client continues paging where the server stopped. It honours focus and reconnect refetch and the `offlineFirst` park. It has `peek`, `write`, `replace`, `cancel` and `cancelAll` over the pages array.
 
 In React, `useInfiniteQuery(sub)` reads it with `useQuery`'s rules.

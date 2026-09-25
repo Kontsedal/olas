@@ -48,6 +48,7 @@ function fakeServer() {
   const accepted: string[] = []
   const pending = new Map<string, () => void>()
   const failing = new Map<string, () => void>()
+  const refusing = new Map<string, () => void>()
   const server = {
     accepted,
     hold: true,
@@ -57,6 +58,10 @@ function fakeServer() {
     /** Fail a held request, as a 500 would: a failure worth a retry. */
     fail(body: string) {
       failing.get(body)?.()
+    },
+    /** Refuse a held request, as a 422 would: a failure no retry can fix. */
+    refuse(body: string) {
+      refusing.get(body)?.()
     },
     request(body: string, signal: AbortSignal): Promise<string> {
       if (!server.hold) {
@@ -69,6 +74,7 @@ function fakeServer() {
           resolve(body)
         })
         failing.set(body, () => reject(new Error('500')))
+        refusing.set(body, () => reject(new Error('422')))
         signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), {
           once: true,
         })
@@ -81,11 +87,16 @@ function fakeServer() {
 function autosaveRoot(
   id: string,
   keyPrefix: string,
-  options: { dedupeBy?: (mutationId: string, variables: unknown) => string | undefined } = {},
+  options: {
+    dedupeBy?: (mutationId: string, variables: unknown) => string | undefined
+    isRetryable?: (err: unknown) => boolean
+  } = {},
+  /** Another tab of the same app: the storage and the server it shares. */
+  shared?: { adapter: MemoryAdapter; server: ReturnType<typeof fakeServer> },
 ) {
   _unregisterMutationById(id)
-  const adapter = memoryAdapter()
-  const server = fakeServer()
+  const adapter = shared?.adapter ?? memoryAdapter()
+  const server = shared?.server ?? fakeServer()
   const autosave = defineMutation({
     id,
     concurrency: 'latest-wins',
@@ -106,7 +117,9 @@ function autosaveRoot(
       queries: queryEngine(),
       deps: {},
       onError: () => {},
-      plugins: [mutationQueuePlugin({ storage: adapter, keyPrefix, ...options })],
+      plugins: [
+        mutationQueuePlugin({ storage: adapter, keyPrefix, onReplayError: () => {}, ...options }),
+      ],
     },
   )
   return {
@@ -302,6 +315,147 @@ describe('mutationQueuePlugin — latest-wins + dedupeBy: the entry holds the ne
     await root.inject(MutationQueue).replayNow()
     await settle()
     expect(server.accepted).toEqual(['ad'])
+    root.dispose()
+  })
+
+  // A replay of a kept entry is sending the old draft when the user saves a
+  // new one. The new run collapses onto the entry and rewrites it. The
+  // replay's success then deleted the rewritten entry, so a failure of the
+  // new run left nothing for the next load.
+  test("a replay's success keeps an entry a collapse rewrote while it was sending", async () => {
+    const { adapter, server, root, save } = autosaveRoot(
+      'mq-rider/replaying',
+      'test/mq/rider-replaying',
+      byKey,
+    )
+    await settle()
+
+    const first = save.run({ key: 'doc', body: 'v1' }).catch(() => {})
+    await settle()
+    server.fail('v1') // kept for a replay, with its key
+    await first
+    await settle()
+
+    const replay = root.inject(MutationQueue).replayNow()
+    await settle() // the replay's request for 'v1' is out
+    const second = save.run({ key: 'doc', body: 'v2' }).catch(() => {})
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.accept('v1')
+    await replay
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.fail('v2')
+    await second
+    await settle()
+    // What a reload finds: the newer draft.
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.accepted).toEqual(['v1', 'v2'])
+    expect(adapter.store.size).toBe(0)
+    root.dispose()
+  })
+
+  test('a replay that fails for good keeps an entry a collapse rewrote while it was sending', async () => {
+    const { adapter, server, root, save } = autosaveRoot(
+      'mq-rider/replay-refused',
+      'test/mq/rider-replay-refused',
+      { ...byKey, isRetryable: (err) => (err as Error).message !== '422' },
+    )
+    await settle()
+
+    const first = save.run({ key: 'doc', body: 'v1' }).catch(() => {})
+    await settle()
+    server.fail('v1')
+    await first
+    await settle()
+
+    const replay = root.inject(MutationQueue).replayNow()
+    await settle()
+    const second = save.run({ key: 'doc', body: 'v2' }).catch(() => {})
+    await settle()
+    server.refuse('v1') // the queue gives up on v1, not on the v2 riding on its entry
+    await replay
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.accept('v2')
+    await second
+    await settle()
+    expect(adapter.store.size).toBe(0)
+    expect(server.accepted).toEqual(['v2'])
+    root.dispose()
+  })
+
+  // The same window across tabs: tab A replays the entry tab B kept, and the
+  // user saves again in tab B, whose key it is. Tab A's memory never sees
+  // tab B's rewrite, so the check reads the entry's `seq` back from storage.
+  test("another tab's replay keeps an entry this tab rewrote while it was sending", async () => {
+    const tabB = autosaveRoot('mq-rider/tabs', 'test/mq/rider-tabs', byKey)
+    const { adapter, server } = tabB
+    await settle()
+    const first = tabB.save.run({ key: 'doc', body: 'v1' }).catch(() => {})
+    await settle()
+    server.fail('v1') // tab B keeps it for a replay, with its key
+    await first
+    await settle()
+
+    const tabA = autosaveRoot('mq-rider/tabs', 'test/mq/rider-tabs', byKey, { adapter, server })
+    await settle() // tab A's startup pass: v1's request is out
+    const second = tabB.save.run({ key: 'doc', body: 'v2' }).catch(() => {})
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.accept('v1')
+    await tabA.root.waitForIdle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.fail('v2')
+    await second
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+    tabA.root.dispose()
+    tabB.root.dispose()
+  })
+
+  // The same window with the owner live: two screens save one document, so
+  // the second run collapses onto the first run's entry while the first is
+  // still sending. The owner's success deleted the entry, and the rider went
+  // on with nothing on disk.
+  test("an owner's success hands the entry to a rider still sending", async () => {
+    const { adapter, server, root, save, other } = autosaveRoot(
+      'mq-rider/live-owner',
+      'test/mq/rider-live-owner',
+      byKey,
+    )
+    await settle()
+
+    const first = save.run({ key: 'doc', body: 'v1' })
+    await settle()
+    const second = other.api.save.run({ key: 'doc', body: 'v2' }).catch(() => {})
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v1'])
+
+    server.accept('v1')
+    await first
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.fail('v2')
+    await second
+    await settle()
+    expect(storedBodies(adapter)).toEqual(['v2'])
+
+    server.hold = false
+    await root.inject(MutationQueue).replayNow()
+    await settle()
+    expect(server.accepted).toEqual(['v1', 'v2'])
+    expect(adapter.store.size).toBe(0)
     root.dispose()
   })
 

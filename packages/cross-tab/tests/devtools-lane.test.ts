@@ -137,6 +137,7 @@ describe('cross-tab devtools lane', () => {
       {
         kind: 'send',
         type: 'setData',
+        source: 'optimistic',
         queryId: id,
         outcome: 'posted',
         from: expect.any(String),

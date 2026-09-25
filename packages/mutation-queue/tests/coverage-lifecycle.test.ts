@@ -90,6 +90,7 @@ function directHooks(plugin: OlasPlugin) {
       peek: () => undefined,
       write() {},
       replace() {},
+      setData: () => undefined,
       invalidate: async () => {},
       hydrate() {},
       dehydrate: () => ({ version: 1, entries: [] }),
@@ -443,7 +444,7 @@ describe('mutationQueuePlugin — replay outcomes', () => {
     root.dispose()
   })
 
-  test('a throwing onReplayAttempt does not stop the rest of the bucket', async () => {
+  test('a throwing onReplayAttempt is contained: the pass ends as for any failure worth a retry', async () => {
     const id = 'cov/attempt-throws'
     _unregisterMutationById(id)
     const calls: unknown[] = []
@@ -459,10 +460,12 @@ describe('mutationQueuePlugin — replay outcomes', () => {
     const adapter = memoryAdapter()
     seed(adapter, prefix, entryOf({ mutationId: id, runId: 'a', variables: 'A', seq: 1 }))
     seed(adapter, prefix, entryOf({ mutationId: id, runId: 'b', variables: 'B', seq: 2 }))
+    const warnings: string[] = []
     const root = queueRoot(
       mutationQueuePlugin({
         storage: adapter,
         keyPrefix: prefix,
+        onWarn: (message) => warnings.push(message),
         onReplayAttempt: () => {
           throw new Error('buggy indicator')
         },
@@ -470,12 +473,14 @@ describe('mutationQueuePlugin — replay outcomes', () => {
     )
     await root.waitForIdle()
 
-    expect(calls).toEqual(['A', 'B'])
-    // Both retained for the next load, each with its attempt counted.
+    // A stays for a retry, so B waits behind it for the next pass.
+    expect(calls).toEqual(['A'])
     expect(stored(adapter).map((e) => [e.runId, e.attempts])).toEqual([
       ['a', 1],
-      ['b', 1],
+      ['b', 0],
     ])
+    // The throw did not escape the pass.
+    expect(warnings).toEqual([])
     root.dispose()
   })
 

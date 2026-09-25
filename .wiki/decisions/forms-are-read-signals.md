@@ -4,9 +4,9 @@ description: Why Form and FieldArray are ReadSignals of their value, like Field,
 type: decision
 covers:
   - packages/core/src/controller/types.ts:38
-  - packages/core/src/forms/form-types.ts:139-304
-  - packages/core/src/forms/form.ts:336-458
-  - packages/core/src/forms/form.ts:998-1153
+  - packages/core/src/forms/form-types.ts:139-309
+  - packages/core/src/forms/form.ts:419-502
+  - packages/core/src/forms/form.ts:1019-1271
 edges:
   - { type: tested-by, target: ../../packages/core/tests/form.test.ts }
   - { type: tested-by, target: ../../packages/core/tests/form-submit.test.ts }
@@ -19,7 +19,7 @@ confidence: medium
 
 ## The decision
 
-`Field<T>`, `Form<S>` and `FieldArray<I>` are all `ReadSignal`s of their value (`packages/core/src/controller/types.ts:38`, `packages/core/src/forms/form-types.ts:177` and `form-types.ts:271`):
+`Field<T>`, `Form<S>` and `FieldArray<I>` are all `ReadSignal`s of their value (`packages/core/src/controller/types.ts:38`, `packages/core/src/forms/form-types.ts:177` and `form-types.ts:276`):
 
 ```ts
 field.value            // T
@@ -29,7 +29,7 @@ useValue(form)         // re-renders when any leaf changes
 form.subscribe(fn)     // same
 ```
 
-The three node kinds also share `set` and `setAsInitial`, each taking its own value shape. `Form.resetWithInitial` was renamed `setAsInitial`, and `FieldArray` gained both methods (`packages/core/src/forms/form.ts:1126-1153`).
+The three node kinds also share `set` and `setAsInitial`, each taking its own value shape. `Form.resetWithInitial` was renamed `setAsInitial`, and `FieldArray` gained both methods (`packages/core/src/forms/form.ts:1249-1271`).
 
 ## Why
 
@@ -41,9 +41,10 @@ The old reason for the asymmetry was that a form-level `subscribe` "would fire o
 
 ## What it bought
 
-- `computeValue` reads `(child as ReadSignal<unknown>).value` for every child, with no brand branch (`packages/core/src/forms/form.ts:390-397`). `FieldArrayImpl`'s aggregate does the same.
+- `computeValue` reads `(child as ReadSignal<unknown>).value` for every child, with no brand branch (`packages/core/src/forms/form.ts:435-442`). `FieldArrayImpl`'s aggregate does the same.
 - `applyPartial` calls `set` or `setAsInitial` on any child. The array branch, with its cast to reach the internal `replaceInitialItems`, moved into `FieldArrayImpl.set` / `setAsInitial`.
 - Brands are still needed wherever the node kinds differ: errors, touched, validation, path resolution.
+- The state members beside the value are `ReadSignal`s in fact as well as in type (1.0). `touched`, `isDirty`, `isValidating`, `isSubmitting`, `submitCount`, `submitError` and `items` are `readOnly` views of their backing signals, so a cast finds no `set`. See `../modules/forms.md`.
 
 ## `submit` resolves a union
 
