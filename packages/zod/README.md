@@ -65,7 +65,7 @@ const profileForm = defineController((ctx) => {
 - `z.array(...)` → `FieldArray<...>` (recurses on element type).
 - Anything else → `Field<...>` with `zodValidator(...)` attached.
 
-Each leaf's initial value comes from the Zod schema's `.default(...)` if present, otherwise the empty value for the type (`''` for string, `0` for number, etc.). Override any of them with the `initial` option, a partial value. `initial` can also be a function that reads signals: the form re-seats when they change, while it is not dirty, as `createForm`'s tracked `initial` does. `resetOnInitialChange` picks the policy.
+Each leaf's initial value comes from the Zod schema's `.default(...)` if present, otherwise the empty value for the type (`''` for string, `0` for number, etc.). A `.default(...)` on an object or an array seeds that nested form or field array as a whole, so `z.array(z.string()).default(['inbox'])` starts with one item, as `schema.parse({})` would. Override any of them with the `initial` option, a partial value. `initial` can also be a function that reads signals: the form re-seats when they change, while it is not dirty, as `createForm`'s tracked `initial` does. `resetOnInitialChange` picks the policy.
 
 The return type follows the schema: `form.fields.address.fields.city` is a `Field<string>`, and `form.fields.tags` is a `FieldArray` of `Field<string>`. `form.submit(handler)` resolves a `SubmitResult`: `{ ok: true, data }` or `{ ok: false, reason }`, where `reason` is `'invalid'`, `'busy'`, `'disposed'` or `'error'` (the last with the `error`).
 

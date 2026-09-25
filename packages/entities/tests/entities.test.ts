@@ -4,6 +4,7 @@ import {
   defineController,
   defineInfiniteQuery,
   defineQuery,
+  effect,
   type OlasPlugin,
   type Query,
   queryEngine,
@@ -1128,6 +1129,66 @@ describe('entitiesPlugin', () => {
     expect(entities.get(Item, 'b')).toBeUndefined()
     expect(entities.get(Item, 'c')).toEqual({ id: 'c', title: 'C' })
 
+    root.dispose()
+  })
+
+  test('maxSlots never evicts a slot a subscriber holds, even with no query binding it', async () => {
+    type Item = { id: string; title: string }
+    const Item = defineEntity<Item>({
+      name: 'LRUItemWatched',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'title' in v
+          ? v.id
+          : null,
+      maxSlots: 2,
+    })
+    const detailQuery = defineQuery({
+      id: 'ent-test/lru-watched',
+      key: () => [],
+      fetcher: async (): Promise<Item> => ({ id: 'p1', title: 'Detail' }),
+      staleTime: 60_000,
+      gcTime: 0,
+    })
+    const plugin = entitiesPlugin({ entities: [Item] })
+    const def = defineController((ctx) => ({
+      open: () =>
+        ctx.attach(
+          defineController((c) => ({ q: createQuery(c, detailQuery, () => []) })),
+          undefined,
+        ),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: {}, plugins: [plugin] })
+    const entities = root.inject(Entities)
+    const child = root.api.open()
+    await settle()
+
+    // A detail view subscribes to p1; then its query is collected.
+    const handle = entities.signal(Item, 'p1')
+    const seen: Array<string | undefined> = []
+    const off = handle.subscribe((v) => seen.push(v?.title))
+    child.dispose() // gcTime 0: the query and its binding are gone
+    expect(entities.bindings(Item, 'p1')).toEqual([])
+
+    // Two more ids overflow the cap. p1 is the oldest orphan, but it is watched.
+    entities.upsert(Item, { id: 'p2', title: 'B' })
+    entities.upsert(Item, { id: 'p3', title: 'C' })
+    expect(entities.get(Item, 'p1')).toEqual({ id: 'p1', title: 'Detail' })
+    expect(entities.get(Item, 'p2')).toBeUndefined()
+    expect(seen).toEqual(['Detail'])
+
+    // Once the view lets go, p1 can be evicted, and its handle comes back to
+    // life when p1 returns.
+    off()
+    entities.upsert(Item, { id: 'p4', title: 'D' })
+    expect(entities.get(Item, 'p1')).toBeUndefined()
+    const read: Array<string | undefined> = []
+    const stop = effect(() => {
+      read.push(handle.value?.title)
+    })
+    entities.upsert(Item, { id: 'p1', title: 'Back' })
+    expect(read).toEqual([undefined, 'Back'])
+    expect(entities.signal(Item, 'p1')).toBe(handle)
+    stop()
     root.dispose()
   })
 

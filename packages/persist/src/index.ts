@@ -43,7 +43,11 @@ export type PersistOptions<T> = {
   deserialize?: (raw: string) => T
   /**
    * Apply another tab's write to the same key. Needs a storage adapter with
-   * `onChange`. Default `false`.
+   * `onChange`. Default `false`. Another tab's value is read as a load is: a
+   * payload of another version goes through `migrate`, and is dropped without
+   * one. A migrated value is not written back, because the tab that wrote it
+   * still reads that key. A throttled write still waiting here is dropped,
+   * since the other tab's value is newer.
    */
   crossTab?: boolean
   /**
@@ -66,7 +70,9 @@ export type PersistOptions<T> = {
    * version stamp existed, i.e. the legacy raw shape). Return the migrated
    * payload AS A `T` value (post-deserialize); `createPersisted` re-serializes
    * it before writing. Return `undefined` to drop the entry (the source
-   * keeps its current value).
+   * keeps its current value). A cross-tab change of another version goes
+   * through it too, and an async result applies only if no newer change or
+   * local write came first.
    */
   migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
   /**
@@ -75,7 +81,8 @@ export type PersistOptions<T> = {
    * the value current when it closes is what lands). Useful for
    * high-frequency sources (cursor position, scroll, every-keystroke field)
    * where "write on every change" is too chatty. Defaults to `0`, a write per
-   * change. A pending write is flushed when the controller disposes.
+   * change. A pending write is flushed when the controller disposes, and
+   * dropped when a cross-tab change arrives first.
    */
   throttleMs?: number
   /**
@@ -404,40 +411,131 @@ export function createPersisted<T>(
       : [raw, undefined]
   }
 
-  // Apply a cross-tab raw value to the source (a null → `undefined` delete;
-  // otherwise parse/deserialize, honoring the version envelope). Shared by the
-  // live `onChange` path and the buffered-until-ready replay (T6.1).
-  const applyRemote = (rawValue: string | null): void => {
-    if (rawValue == null) {
-      writingFromLoad = true
-      try {
-        source.set(undefined as T)
-      } finally {
-        writingFromLoad = false
-      }
+  // Optional throttled writer. State is captured per-`createPersisted` call so
+  // multiple persisted signals in the same controller don't interfere.
+  let pendingWriteValue: T | undefined
+  let hasPendingWrite = false
+  let writeTimer: ReturnType<typeof setTimeout> | null = null
+
+  const flushWrite = (): void => {
+    if (!hasPendingWrite) return
+    const value = pendingWriteValue as T
+    hasPendingWrite = false
+    pendingWriteValue = undefined
+    writeTimer = null
+    // Encode and write are separate failure domains: encoding is a 'serialize'
+    // error; `storage.set` (sync for localStorage — quota throws here) is a
+    // 'write' error. The old single try mislabeled every write throw as
+    // 'serialize' (T6.1).
+    let raw: string
+    try {
+      raw = encodeForStorage(value)
+    } catch (err) {
+      reportError(err, 'serialize')
       return
     }
     try {
-      const [payload, from] = decode(rawValue)
-      // A peer on a different schema; ignore. Without `version`, every
-      // payload is read.
-      if (version !== undefined && from !== undefined && from !== version) return
-      const value = deserialize(payload) as T
-      writingFromLoad = true
-      try {
-        source.set(value)
-      } finally {
-        writingFromLoad = false
-      }
+      const writeResult = storage.set(key, raw)
+      if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
+    } catch (err) {
+      reportError(err, 'write')
+    }
+  }
+
+  // A peer's change supersedes a throttled write still waiting here: that
+  // write holds an older value, and flushing it would put it back in storage
+  // while this tab shows the peer's.
+  const dropPendingWrite = (): void => {
+    if (writeTimer !== null) clearTimeout(writeTimer)
+    writeTimer = null
+    hasPendingWrite = false
+    pendingWriteValue = undefined
+  }
+
+  const scheduleWrite = (value: T): void => {
+    if (throttleMs <= 0) {
+      pendingWriteValue = value
+      hasPendingWrite = true
+      flushWrite()
+      return
+    }
+    pendingWriteValue = value
+    hasPendingWrite = true
+    if (writeTimer === null) {
+      writeTimer = setTimeout(flushWrite, throttleMs)
+    }
+  }
+
+  // Bumped by every cross-tab change and every local write after ready. A
+  // peer's payload that is still migrating applies only if nothing came since.
+  let lastChange = 0
+
+  // Put a peer's value in the source, and drop the throttled write it
+  // supersedes. `writingFromLoad` keeps the write from echoing to storage.
+  const setFromRemote = (value: T): void => {
+    writingFromLoad = true
+    try {
+      source.set(value)
     } catch (err) {
       reportError(err, 'remoteChange')
+      return
+    } finally {
+      writingFromLoad = false
+    }
+    dropPendingWrite()
+  }
+
+  // Apply a cross-tab raw value to the source: a null is a delete, mirrored
+  // as `undefined`. Anything else is read as the load path reads it, so a
+  // payload of another version, or a raw one from a build before versioning,
+  // goes through `migrate`, and without a migrator it is dropped. A migrated
+  // peer value is not written back: the build that wrote it still reads that
+  // key. Shared by the live `onChange` path and the buffered-until-ready
+  // replay (T6.1).
+  const applyRemote = (rawValue: string | null): void => {
+    const change = ++lastChange
+    if (rawValue == null) {
+      setFromRemote(undefined as T)
+      return
+    }
+    const [payload, from] = decode(rawValue)
+    if (
+      version === undefined ||
+      from === version ||
+      (from === undefined && migrate === undefined)
+    ) {
+      let value: T
+      try {
+        value = deserialize(payload) as T
+      } catch (err) {
+        reportError(err, 'remoteChange')
+        return
+      }
+      setFromRemote(value)
+      return
+    }
+    if (migrate === undefined) return
+    const settle = (migrated: T | undefined): void => {
+      if (migrated === undefined || change !== lastChange) return
+      setFromRemote(migrated)
+    }
+    let migrated: T | undefined | Promise<T | undefined>
+    try {
+      migrated = migrate(payload, from)
+    } catch (err) {
+      reportError(err, 'migrate')
+      return
+    }
+    if (migrated instanceof Promise) {
+      migrated.then(settle, (err: unknown) => reportError(err, 'migrate'))
+    } else {
+      settle(migrated)
     }
   }
 
   // Flip `ready` and reconcile anything that raced the initial load: a local
   // user write wins outright (and is flushed to storage); otherwise a buffered
-  // cross-tab change (the freshest one) is applied. `scheduleWrite` is only
-  // reached in the async-load path, where it is already defined below.
+  // cross-tab change (the freshest one) is applied.
   const settleReady = (): void => {
     ready$.set(true)
     if (userWroteBeforeReady) {
@@ -550,51 +648,6 @@ export function createPersisted<T>(
     applyLoaded(loaded)
   }
 
-  // Optional throttled writer. State is captured per-`createPersisted` call so
-  // multiple persisted signals in the same controller don't interfere.
-  let pendingWriteValue: T | undefined
-  let hasPendingWrite = false
-  let writeTimer: ReturnType<typeof setTimeout> | null = null
-
-  const flushWrite = (): void => {
-    if (!hasPendingWrite) return
-    const value = pendingWriteValue as T
-    hasPendingWrite = false
-    pendingWriteValue = undefined
-    writeTimer = null
-    // Encode and write are separate failure domains: encoding is a 'serialize'
-    // error; `storage.set` (sync for localStorage — quota throws here) is a
-    // 'write' error. The old single try mislabeled every write throw as
-    // 'serialize' (T6.1).
-    let raw: string
-    try {
-      raw = encodeForStorage(value)
-    } catch (err) {
-      reportError(err, 'serialize')
-      return
-    }
-    try {
-      const writeResult = storage.set(key, raw)
-      if (writeResult instanceof Promise) writeResult.catch((e) => reportError(e, 'write'))
-    } catch (err) {
-      reportError(err, 'write')
-    }
-  }
-
-  const scheduleWrite = (value: T): void => {
-    if (throttleMs <= 0) {
-      pendingWriteValue = value
-      hasPendingWrite = true
-      flushWrite()
-      return
-    }
-    pendingWriteValue = value
-    hasPendingWrite = true
-    if (writeTimer === null) {
-      writeTimer = setTimeout(flushWrite, throttleMs)
-    }
-  }
-
   // Persist on every CHANGE. A signal's `subscribe` calls the handler at once,
   // inside `subscribe()`, with the current value. That call is not a change:
   // writing it would store what we just loaded, or the source's default
@@ -613,6 +666,7 @@ export function createPersisted<T>(
       pendingUserValueBeforeReady = value
       return
     }
+    lastChange += 1
     scheduleWrite(value)
   })
   subscribing = false

@@ -72,7 +72,7 @@ type CrossTabOptions = {
 |---|---|---|
 | `channelName` | required | Name of the `BroadcastChannel`. Include a version suffix (`my-app/v2`) for clean cross-deploy isolation — receivers from a different deploy with a different channel name simply don't see each other's traffic. |
 | `onWarn` | `console.warn` | Called on non-fatal conditions: `DataCloneError` while broadcasting (the data isn't structured-cloneable), an oversized payload, a malformed inbound message, or one `validate` rejected. |
-| `channelFactory` | `defaultChannelFactory` (wraps `BroadcastChannel`) | Override the channel constructor. Mainly for tests. Return `undefined` to disable cross-tab (the plugin installs no hooks). |
+| `channelFactory` | `defaultChannelFactory` (wraps `BroadcastChannel` in a browser tab or worker) | Override the channel constructor, for tests or a runtime the default skips. Return `undefined` to disable cross-tab (the plugin installs no hooks). See [SSR and servers](#ssr-and-servers). |
 | `maxPayloadBytes` | `512 * 1024` | Soft cap on one outbound message, estimated by its JSON length. Over the cap, the plugin warns and still posts. `Infinity` turns the warning off. |
 | `optimistic` | `true` | Also mirror optimistic `setData` writes and their rollbacks, so peers show a pending edit before the server confirms it. With `false`, only canonical writes and invalidations cross. |
 | `origins` | `[]` | Origins whose writes and invalidations are mirrored too: a plugin's name, or the `origin` a `bindQuery` handle was given. See [Whose writes cross](#whose-writes-cross). |
@@ -136,7 +136,7 @@ A write the plugin applied from a peer is not mirrored back, even with the plugi
 
 1. **Origin:** a write the plugin applied from a peer carries `origin: 'olas-cross-tab'`, and the send side skips it.
 2. **Own-source drop:** receivers filter messages by `sourceId`. Every root picks a random one when the plugin sets up. If the transport echoes the message back, the sender ignores it.
-3. **`(sourceId, msgId)` dedup:** monotonic `msgId` per `sourceId` lets receivers drop out-of-order or duplicate messages.
+3. **`(sourceId, msgId)` dedup:** monotonic `msgId` per `sourceId` lets receivers drop out-of-order or duplicate messages. A receiver moves a peer's cursor only for a message it applied.
 
 ### Protocol versioning
 
@@ -150,7 +150,8 @@ Messages carry `v: PROTOCOL_VERSION`. Receivers drop messages with a `v` they do
 
 Any same-origin script can post on the channel, so a receiving tab treats a message as possibly corrupt (SPEC §22):
 
-- It drops a message whose protocol version, `sourceId` or `msgId` is wrong. A `msgId` has to be a safe non-negative integer, so a planted `Number.MAX_VALUE` cannot silence a real peer.
+- It drops a message whose protocol version, `sourceId` or `msgId` is wrong. A `msgId` has to be a safe non-negative integer.
+- It moves a peer's cursor only for a message it applied. A forged message with a huge `msgId` under a real peer's `sourceId` therefore moves nothing unless it is one the tab would apply. If it is, the real peer's next message lands far below the cursor. The receiver takes that as a wrong cursor, applies the message and restarts the cursor from it. One planted message cannot silence a peer.
 - It warns about a message with a bad `queryId`, `keyArgs` or `pageParams`, and does not apply it.
 - It reports a message it cannot apply, such as a key the engine cannot hash, through `onWarn`. Nothing throws out of the channel's handler.
 - It passes each payload to `validate`, when one is given.
@@ -184,7 +185,7 @@ In a development build, the plugin reports every message on its lane in `@kontse
 | `posted` | Sent. |
 | `not-cloneable` | `postMessage` threw, and the message was dropped. |
 | `applied` | Written or invalidated in this tab. |
-| `duplicate` | Its `msgId` is not above the last one this tab saw from that peer. |
+| `duplicate` | Its `msgId` is at most the last one this tab applied from that peer, and less than 64 below it. |
 | `malformed` | A field has the wrong shape, or the message type is unknown. |
 | `ignored` | This tab has not bound the query, or has not opted it in. |
 | `rejected` | `validate` returned `false` or threw. |
@@ -201,9 +202,24 @@ Two fields on the definition gate cross-tab behavior:
 
 Infinite queries opt in the same way. Their pages travel with their `pageParams`, so the receiving tab keeps paging from them. Page arrays can be large, and `maxPayloadBytes` warns about them.
 
-## SSR
+## SSR and servers
 
-When `BroadcastChannel === undefined` (Node, older browsers) and no `channelFactory` override is supplied, the plugin installs no hooks. The root still constructs cleanly; cross-tab is disabled. This means you can wire the plugin unconditionally in shared code paths.
+Without a `channelFactory`, the plugin opens a channel only in a browser tab (a scope with a `document`) or a web worker. Everywhere else it installs no hooks, the root still constructs, and cross-tab is off. So you can wire the plugin unconditionally in code the server and the browser share.
+
+Servers are the reason for the rule. Node, Bun and Deno all define a global `BroadcastChannel`, and there it reaches every root in the process, plus other worker threads or isolates. A server that builds a root per request would put one user's writes into another user's render. The default therefore rules out Node, Bun and Deno, including their workers.
+
+A server that installs a global `document`, such as through `global-jsdom`, looks like a browser tab to this check. Pass `channelFactory: () => undefined` there.
+
+To open a channel where the default does not, pass a factory. `BroadcastChannel` fits `ChannelLike` as it is:
+
+```ts
+import { crossTabPlugin } from '@kontsedal/olas-cross-tab'
+
+const crossTab = crossTabPlugin({
+  channelName: 'my-app/cache/v1',
+  channelFactory: (name) => new BroadcastChannel(name),
+})
+```
 
 ## Interaction with `@kontsedal/olas-persist`
 

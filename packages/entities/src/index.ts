@@ -55,11 +55,14 @@ export type EntityDef<T> = {
   /**
    * Soft cap on the number of unique ids retained in this entity's slot
    * partition. When set and the partition exceeds the cap, the plugin
-   * evicts **orphans** (entity ids no longer referenced by any query)
-   * in LRU order on the next slot insertion. Slots with active bindings
-   * are never evicted — call sites that subscribed via
-   * `entities.signal(...)` keep working. If all slots have bindings the
-   * cap is exceeded silently (no other safe option).
+   * evicts **orphans** in LRU order on the next slot insertion: ids no query
+   * holds and no `subscribe` on their `entities.signal(...)` handle holds, so
+   * a mounted view keeps its entity. If every slot is held the cap is
+   * exceeded silently (no other safe option).
+   *
+   * A handle read through `.value` in a `computed` or an `effect` does not
+   * hold its slot. Eviction reads as `undefined` through it, and the handle
+   * follows the entity again once a query or `upsert` brings it back.
    *
    * Untuned partitions still emit a one-shot dev warning at the
    * `SLOT_BLOAT_WARN_AT` threshold so you notice unbounded growth without
@@ -157,6 +160,15 @@ export type EntityBinding = {
   readonly paths: ReadonlyArray<ReadonlyArray<string | number>>
 }
 
+/** A handle `signal(entity, id)` gave out, and the `subscribe` calls open on it. */
+type HandleEntry = { ref: WeakRef<ReadSignal<unknown>>; watchers: number }
+
+/**
+ * What a slot holds once it has left its partition. Setting it notifies the
+ * handles that read the slot, even when its value was already `undefined`.
+ */
+const DETACHED: unique symbol = Symbol('olas-entities.detached')
+
 /**
  * Per-entity threshold beyond which we warn (once) that the store has
  * accumulated many unique ids — past it, set `maxSlots` on the entity so
@@ -225,7 +237,10 @@ export type EntityStore = {
    * explicit `upsert`.
    *
    * Stable across calls — `signal(Post, '123')` twice returns the same
-   * handle (lazy per-id allocation, interned in a `Map`).
+   * handle for as long as anything holds it. The handle survives `remove`
+   * and `maxSlots` eviction: it reads `undefined` while the entity is out of
+   * the store, and follows the entity again once a query or `upsert` brings
+   * it back.
    *
    * Throws if `entity` wasn't passed to `entitiesPlugin({ entities })` —
    * without the partition slot, the signal would be orphaned and updates
@@ -282,6 +297,8 @@ export type EntityStore = {
    * Remove the entity from the normalized store. Does NOT patch queries — a
    * query still holding the entity in its data stays as-is, and nothing
    * refetches. Pair with a query `write` to remove the entity from a list too.
+   * A handle from `signal(entity, id)` reads `undefined` until a query or
+   * `upsert` brings the entity back, and then follows it again.
    */
   remove<T>(entity: EntityDef<T>, id: string): void
   /**
@@ -428,6 +445,35 @@ function createEntityStore(
   const store = new Map<string, Map<string, Signal<unknown>>>()
   for (const name of byName.keys()) store.set(name, new Map())
 
+  // Per-entity counter bumped each time a slot is allocated. A handle whose id
+  // has no slot reads it, so it picks the new slot up when the entity returns.
+  const arrivals = new Map<string, Signal<number>>()
+  for (const name of byName.keys()) arrivals.set(name, signal(0))
+
+  // The handles `signal(entity, id)` gave out, held weakly: an id a view
+  // looked at once must not pin a handle forever. `watchers` counts the
+  // `subscribe` calls open on a handle; eviction never takes a watched slot.
+  const handles = new Map<string, Map<string, HandleEntry>>()
+  for (const name of byName.keys()) handles.set(name, new Map())
+  const collected = new FinalizationRegistry<{ name: string; id: string; entry: HandleEntry }>(
+    ({ name, id, entry }) => {
+      const perEntity = handles.get(name)
+      if (perEntity?.get(id) === entry) perEntity.delete(id)
+    },
+  )
+  const isWatched = (entityName: string, id: string): boolean =>
+    (handles.get(entityName)?.get(id)?.watchers ?? 0) > 0
+
+  /**
+   * Take a slot out of its partition. The slot is set to `DETACHED` after it
+   * leaves the map, so a handle that read it re-evaluates, finds no slot, and
+   * waits on `arrivals` instead of holding a signal nothing writes again.
+   */
+  const detach = (part: Map<string, Signal<unknown>>, id: string, slot: Signal<unknown>): void => {
+    part.delete(id)
+    slot.set(DETACHED)
+  }
+
   // Per-entity "list version" signal — bumps every time a slot is added,
   // removed, or its value changes. Powers the reactive `list()` API
   // without forcing every consumer to walk the full store on each read.
@@ -485,9 +531,10 @@ function createEntityStore(
   }
 
   /**
-   * Evict orphan slots (no bindings in the reverse index) in LRU order
-   * until `part.size <= cap` or no more orphans exist. Bound slots are
-   * never evicted — callers subscribed to their signals stay live.
+   * Evict orphan slots in LRU order until `part.size <= cap` or no more
+   * orphans exist. An orphan has no bindings in the reverse index and no
+   * `subscribe` open on its handle, so neither a query nor a mounted view
+   * loses its entity.
    *
    * Map iteration is insertion order; combined with `getSlot`'s LRU-touch
    * (delete + set on every hit), the head of the Map is the least-recently
@@ -509,7 +556,7 @@ function createEntityStore(
       // definition — never evict it in the same call that touched it.
       if (id === protectedId) continue
       const bindings = perEntity?.get(id)
-      if (bindings === undefined || bindings.size === 0) {
+      if ((bindings === undefined || bindings.size === 0) && !isWatched(entityName, id)) {
         toEvict.push(id)
         projected -= 1
       }
@@ -518,11 +565,9 @@ function createEntityStore(
     for (const id of toEvict) {
       const slot = part.get(id)
       if (slot === undefined) continue
-      // Settle subscribers to `undefined` before dropping the slot — anyone
-      // still holding the signal handle sees the eviction explicitly rather
-      // than a silently-stuck stale value.
-      slot.set(undefined)
-      part.delete(id)
+      // A handle still held reads `undefined` now, and follows the entity
+      // again when it returns.
+      detach(part, id, slot)
     }
     bumpListVersion(entityName)
   }
@@ -540,6 +585,9 @@ function createEntityStore(
       // here even though the value is `undefined` because the next walker
       // / upsert pass usually populates it within the same batch.
       bumpListVersion(entityName)
+      // A handle waiting for this id picks the slot up.
+      const arrived = arrivals.get(entityName)
+      if (arrived !== undefined) arrived.set(arrived.peek() + 1)
       if (__DEV__ && part.size > SLOT_BLOAT_WARN_AT && !bloatWarned.has(entityName)) {
         bloatWarned.add(entityName)
         // eslint-disable-next-line no-console
@@ -796,10 +844,61 @@ function createEntityStore(
     return { data: visit(root), matched }
   }
 
+  /**
+   * The handle for one id: a read of whatever slot the partition holds for it
+   * now. `remove` and eviction drop a slot, and a later walk or `upsert`
+   * allocates a new one, so the handle looks the slot up on every evaluation
+   * instead of keeping the first one. With no slot it reads `undefined` and
+   * waits on `arrivals`. It is cached weakly, and counts the `subscribe`
+   * calls open on it for `trimOrphans`.
+   */
+  const handleFor = (
+    entityName: string,
+    part: Map<string, Signal<unknown>>,
+    id: string,
+  ): ReadSignal<unknown> => {
+    const perEntity = handles.get(entityName) as Map<string, HandleEntry>
+    const cached = perEntity.get(id)?.ref.deref()
+    if (cached !== undefined) return cached
+    const arrived = arrivals.get(entityName) as Signal<number>
+    const read = computed<unknown>(() => {
+      const slot = part.get(id)
+      if (slot !== undefined) return slot.value
+      void arrived.value
+      return undefined
+    })
+    const entry = { watchers: 0 } as HandleEntry
+    const watch = (off: () => void): (() => void) => {
+      entry.watchers += 1
+      let open = true
+      return () => {
+        if (!open) return
+        open = false
+        entry.watchers -= 1
+        off()
+      }
+    }
+    const handle: ReadSignal<unknown> = {
+      get value() {
+        return read.value
+      },
+      peek: () => read.peek(),
+      subscribe: (fn) => watch(read.subscribe(fn)),
+      subscribeChanges: (fn) => watch(read.subscribeChanges(fn)),
+    }
+    entry.ref = new WeakRef(handle)
+    perEntity.set(id, entry)
+    collected.register(handle, { name: entityName, id, entry })
+    return handle
+  }
+
   const entityStore: EntityStore = {
     signal<T>(entity: EntityDef<T>, id: string): ReadSignal<T | undefined> {
       const part = assertRegistered(entity, 'signal')
-      return getSlot(part, entity.name, id) as unknown as ReadSignal<T | undefined>
+      // Allocate the slot, or LRU-touch it: asking for an entity counts as a
+      // recent use under `maxSlots`.
+      getSlot(part, entity.name, id)
+      return handleFor(entity.name, part, id) as ReadSignal<T | undefined>
     },
 
     get<T>(entity: EntityDef<T>, id: string): T | undefined {
@@ -918,8 +1017,9 @@ function createEntityStore(
       const part = assertRegistered(entity, 'remove')
       const slot = part.get(id)
       if (slot === undefined) return
-      slot.set(undefined)
-      part.delete(id)
+      // A handle reads `undefined` now, and follows the entity again when a
+      // query or `upsert` brings it back.
+      detach(part, id, slot)
       bumpListVersion(entity.name)
       // Drop reverse-index entries for this id across every binding.
       // Forward-index entries that reference it stay (cheap; next walk
@@ -1018,6 +1118,7 @@ function createEntityStore(
     store.clear()
     reverseIndex.clear()
     forwardIndex.clear()
+    handles.clear()
     bloatWarned.clear()
   }
 

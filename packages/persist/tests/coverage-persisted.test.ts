@@ -5,7 +5,7 @@
  * `clearPersisted` over async and failing enumerations.
  */
 import { createRoot, defineController, queryEngine, signal } from '@kontsedal/olas-core'
-import { describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { clearPersisted, createPersisted, type PersistErrorOp, type StorageAdapter } from '../src'
 
 const memoryStorage = (
@@ -79,6 +79,147 @@ describe('createPersisted — cross-tab payloads under a version', () => {
     const root = mount(storage)
     storage.emitChange('k', JSON.stringify('legacy-peer'))
     expect(root.api.s.value).toBe('legacy-peer')
+    root.dispose()
+  })
+})
+
+describe('createPersisted — a throttled write and a newer cross-tab change', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  test('the pending write is dropped, so it cannot put the older value back', async () => {
+    // Tab A throttles its writes; tab B writes storage directly.
+    const storage = memoryStorage()
+    const def = defineController((ctx) => {
+      const s = signal<string>('')
+      createPersisted(ctx, 'k', s, { storage, crossTab: true, throttleMs: 1000 })
+      return { s }
+    })
+    const tabA = createRoot(def, { queries: queryEngine(), deps: {} })
+    tabA.api.s.set('a')
+    await vi.advanceTimersByTimeAsync(500)
+    // Tab B's write lands in storage, and the storage event reaches tab A.
+    storage.store.set('k', JSON.stringify('b'))
+    storage.emitChange('k', JSON.stringify('b'))
+    expect(tabA.api.s.value).toBe('b')
+    await vi.advanceTimersByTimeAsync(1000)
+    // Storage still agrees with both tabs.
+    expect(storage.store.get('k')).toBe(JSON.stringify('b'))
+    // A later local write still persists, on its own throttle window.
+    tabA.api.s.set('c')
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(storage.store.get('k')).toBe(JSON.stringify('c'))
+    tabA.dispose()
+  })
+
+  test('a cross-tab delete drops the pending write too', async () => {
+    const storage = memoryStorage()
+    const def = defineController((ctx) => {
+      const s = signal<string | undefined>('')
+      createPersisted(ctx, 'k', s, { storage, crossTab: true, throttleMs: 1000 })
+      return { s }
+    })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
+    root.api.s.set('a')
+    storage.emitChange('k', null)
+    expect(root.api.s.value).toBeUndefined()
+    root.dispose() // dispose flushes a pending write; there is none
+    expect(storage.store.has('k')).toBe(false)
+  })
+})
+
+describe('createPersisted — cross-tab payloads that need migrating', () => {
+  type V2 = { theme: { mode: string } }
+  const mountV2 = (
+    storage: StorageAdapter,
+    migrate: (raw: string, from: number | undefined) => V2 | undefined | Promise<V2 | undefined>,
+  ) => {
+    const errors: Array<[unknown, PersistErrorOp]> = []
+    const def = defineController((ctx) => {
+      const s = signal<V2>({ theme: { mode: 'light' } })
+      createPersisted(ctx, 'prefs', s, {
+        storage,
+        crossTab: true,
+        version: 2,
+        migrate,
+        onError: (err, op) => errors.push([err, op]),
+      })
+      return { s }
+    })
+    return { root: createRoot(def, { queries: queryEngine(), deps: {} }), errors }
+  }
+  const upgrade = (raw: string): V2 => {
+    const old = JSON.parse(raw) as { theme: string }
+    return { theme: { mode: old.theme } }
+  }
+
+  test('a legacy payload from an old-build tab is migrated, as the load path does', () => {
+    const storage = memoryStorage()
+    const { root } = mountV2(storage, upgrade)
+    storage.emitChange('prefs', JSON.stringify({ theme: 'dark' }))
+    expect(root.api.s.value).toEqual({ theme: { mode: 'dark' } })
+    // The old build owns what it wrote: this tab does not rewrite it.
+    expect(storage.store.has('prefs')).toBe(false)
+    root.dispose()
+  })
+
+  test('an older envelope is migrated, and a migrator returning undefined drops the change', () => {
+    const storage = memoryStorage()
+    const seen: Array<number | undefined> = []
+    const { root } = mountV2(storage, (raw, from) => {
+      seen.push(from)
+      return from === 1 ? upgrade(raw) : undefined
+    })
+    storage.emitChange('prefs', marked(1, { theme: 'dark' }))
+    expect(root.api.s.value).toEqual({ theme: { mode: 'dark' } })
+    storage.emitChange('prefs', marked(3, { theme: { mode: 'newer' }, extra: true }))
+    expect(root.api.s.value).toEqual({ theme: { mode: 'dark' } })
+    expect(seen).toEqual([1, 3])
+    root.dispose()
+  })
+
+  test('a migrator that throws reports "migrate" and leaves the value', () => {
+    const storage = memoryStorage()
+    const boom = new Error('cannot migrate')
+    const { root, errors } = mountV2(storage, () => {
+      throw boom
+    })
+    storage.emitChange('prefs', JSON.stringify({ theme: 'dark' }))
+    expect(root.api.s.value).toEqual({ theme: { mode: 'light' } })
+    expect(errors).toEqual([[boom, 'migrate']])
+    root.dispose()
+  })
+
+  test('an async migrate applies unless a newer change or a local write came first', async () => {
+    const storage = memoryStorage()
+    const pending: Array<(v: V2) => void> = []
+    const { root } = mountV2(
+      storage,
+      () =>
+        new Promise<V2>((resolve) => {
+          pending.push(resolve)
+        }),
+    )
+    storage.emitChange('prefs', JSON.stringify({ theme: 'dark' }))
+    expect(root.api.s.value).toEqual({ theme: { mode: 'light' } })
+    pending[0]?.({ theme: { mode: 'dark' } })
+    await flush()
+    expect(root.api.s.value).toEqual({ theme: { mode: 'dark' } })
+
+    // A second legacy change is still migrating when the user edits locally.
+    storage.emitChange('prefs', JSON.stringify({ theme: 'sepia' }))
+    root.api.s.set({ theme: { mode: 'mine' } })
+    pending[1]?.({ theme: { mode: 'sepia' } })
+    await flush()
+    expect(root.api.s.value).toEqual({ theme: { mode: 'mine' } })
+
+    // A newer same-version change outranks a migration still in flight.
+    storage.emitChange('prefs', JSON.stringify({ theme: 'old' }))
+    storage.emitChange('prefs', marked(2, { theme: { mode: 'current' } }))
+    expect(root.api.s.value).toEqual({ theme: { mode: 'current' } })
+    pending[2]?.({ theme: { mode: 'old' } })
+    await flush()
+    expect(root.api.s.value).toEqual({ theme: { mode: 'current' } })
     root.dispose()
   })
 })

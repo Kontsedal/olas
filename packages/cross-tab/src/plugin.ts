@@ -21,7 +21,10 @@ export type CrossTabOptions = {
    */
   onWarn?: (message: string, cause?: unknown) => void
   /**
-   * Override the channel constructor. Mainly for tests sharing an in-memory bus.
+   * Override the channel constructor, for tests sharing an in-memory bus or a
+   * runtime the default does not open a channel in. The default,
+   * `defaultChannelFactory`, opens a `BroadcastChannel` only in a browser tab
+   * or a web worker. Return `undefined` to turn cross-tab off.
    */
   channelFactory?: (name: string) => ChannelLike | undefined
   /**
@@ -71,7 +74,8 @@ function makeSourceId(): string {
 /**
  * What became of a peer's message, as the devtools lane reports it:
  * - `applied`: written or invalidated here;
- * - `duplicate`: its `msgId` is not above the last one seen from that peer;
+ * - `duplicate`: its `msgId` is at most the last one applied from that peer,
+ *   and less than 64 below it;
  * - `malformed`: a field has the wrong shape, or the type is unknown;
  * - `ignored`: this root has not bound the query, or has not opted it in;
  * - `rejected`: `validate` returned `false` or threw;
@@ -99,9 +103,12 @@ type Received = 'applied' | 'duplicate' | 'malformed' | 'ignored' | 'rejected' |
  * large, and `maxPayloadBytes` warns about them. Fetches and hydration are a
  * per-tab concern — every tab runs its own fetcher — so they never cross.
  *
- * **SSR safety.** Where `BroadcastChannel` is not defined and no
- * `channelFactory` is supplied, the plugin installs no hooks; the root boots
- * cleanly with cross-tab off.
+ * **Server safety.** Without a `channelFactory`, the plugin opens a channel
+ * only in a browser tab or a web worker. On a Node, Bun or Deno server, and
+ * where `BroadcastChannel` is not defined, it installs no hooks and the root
+ * boots with cross-tab off. A server's `BroadcastChannel` reaches every root
+ * in the process, so per-request roots would otherwise read each other's
+ * writes. A `channelFactory` opens a channel wherever it returns one.
  *
  * **Non-cloneable data.** `BroadcastChannel` uses structured clone. Cache
  * data containing a function or a symbol throws a
@@ -130,7 +137,7 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         )
       }
       const channel = factory(channelName)
-      // SSR / unsupported environment: nothing to sync with.
+      // A server, or a runtime without BroadcastChannel: nothing to sync with.
       if (!channel) return
 
       const sourceId = makeSourceId()
@@ -138,8 +145,13 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
       // Per-peer monotonic-id cursor for out-of-order / duplicate drops. Capped
       // so a long-lived root that sees many short-lived peers doesn't grow it
       // without bound; the oldest peers are evicted first. A peer we later hear
-      // from again simply starts over at `-1`.
+      // from again simply starts over.
       const MAX_PEERS = 64
+      // How far below a peer's cursor a `msgId` still counts as a duplicate or
+      // a late delivery. A `msgId` further below means the cursor is wrong: a
+      // forged message under the peer's `sourceId` pushed it ahead. That
+      // message is applied, and the cursor restarts from it.
+      const REORDER_WINDOW = 64
       const seenByPeer = new Map<string, number>()
       const recordPeerMsg = (peerId: string, msgId: number): void => {
         if (seenByPeer.has(peerId)) seenByPeer.delete(peerId)
@@ -179,17 +191,33 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
         }
       }
 
+      /**
+       * Apply a message that passed every check, and only then move its
+       * peer's cursor. A message this tab ignores, rejects or cannot apply
+       * leaves the cursor alone, so a forged `msgId` has to arrive on a message
+       * this tab would apply before it can push the cursor ahead.
+       */
+      const commit = (peer: string, msgId: number, apply: () => void): Received => {
+        const outcome = applying(apply)
+        if (outcome === 'applied') recordPeerMsg(peer, msgId)
+        return outcome
+      }
+
       /** Check and apply one message a peer sent. Returns what became of it. */
       const receive = (msg: Partial<Message>): Received => {
         // Layer 3 — out-of-order / duplicate drop.
-        // A `msgId` that is not a counter value, such as `Number.MAX_VALUE` posted
-        // under a real peer's `sourceId`, would silence that peer for good.
+        // A `msgId` that is not a counter value, such as `Number.MAX_VALUE`, is
+        // malformed. A forged high one on a well-formed message only moves the
+        // cursor until the real peer speaks again: its `msgId` lands more than
+        // `REORDER_WINDOW` below the cursor and restarts it.
         const msgId = msg.msgId
-        if (typeof msg.sourceId !== 'string' || typeof msgId !== 'number') return 'malformed'
+        const peer = msg.sourceId
+        if (typeof peer !== 'string' || typeof msgId !== 'number') return 'malformed'
         if (!Number.isSafeInteger(msgId) || msgId < 0) return 'malformed'
-        const last = seenByPeer.get(msg.sourceId) ?? -1
-        if (msgId <= last) return 'duplicate'
-        recordPeerMsg(msg.sourceId, msgId)
+        const last = seenByPeer.get(peer)
+        if (last !== undefined && msgId <= last && last - msgId < REORDER_WINDOW) {
+          return 'duplicate'
+        }
 
         if (typeof msg.queryId !== 'string' || !Array.isArray(msg.keyArgs)) {
           onWarn(`[olas/cross-tab] malformed ${String(msg.type)} message`)
@@ -210,7 +238,7 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
           }
           // An infinite query's pages arrive with their params, so this tab can
           // keep paging from them.
-          return applying(() =>
+          return commit(peer, msgId, () =>
             queries.write(
               msg.queryId as string,
               msg.keyArgs as unknown[],
@@ -220,7 +248,9 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin {
           )
         }
         if (msg.type === 'invalidate') {
-          return applying(
+          return commit(
+            peer,
+            msgId,
             () => void queries.invalidate(msg.queryId as string, msg.keyArgs as unknown[]),
           )
         }

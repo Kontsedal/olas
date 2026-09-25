@@ -57,11 +57,14 @@ export type PersistQueryCacheOptions = {
   /**
    * Restore the stored cache when the root starts. Default `true`. Pass
    * `false` when the app restored it already with `restoreQueryCache` and
-   * handed the result to `createRoot({ hydrate })`.
+   * handed the result to `createRoot({ hydrate })`. The plugin still reads
+   * storage at startup then, without hydrating it, so its writes keep the
+   * stored entries this session never binds.
    */
   restore?: boolean
   /**
-   * A failed read, parse or write. Default: a warning in development.
+   * A failed read, parse or write. A failed read at startup reports
+   * `'restore'`, with or without `restore`. Default: a warning in development.
    */
   onError?: (error: unknown, op: QueryCacheErrorOp) => void
 }
@@ -168,6 +171,11 @@ export async function restoreQueryCache(
  * one a fetch is already filling. `root.waitForIdle()` waits for it. Await
  * `restoreQueryCache` before `createRoot` instead when the first render must
  * see the restored data.
+ *
+ * Every storage write carries the whole cache, so the plugin reads what
+ * storage holds at startup even with `restore: false`, and holds its first
+ * write until an asynchronous read lands. An entry this session never binds
+ * therefore stays in storage until it passes `maxAgeMs`.
  */
 export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}): OlasPlugin {
   const storage = options.storage ?? LOCAL_STORAGE
@@ -192,15 +200,28 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
         return
       }
 
-      /** What storage holds, by `${id}\u0000${hash}`. Restored entries seed it. */
+      /**
+       * What storage holds, by `${id}\u0000${hash}`. What storage held at
+       * startup seeds it, with or without `restore`: a flush writes the whole
+       * map, so an entry left out of it is deleted from storage.
+       */
       const cache = new Map<string, DehydratedEntry>()
       const slot = (id: string, key: readonly unknown[]): string =>
         `${id}\u0000${queries.hashKey(key)}`
+      const restoring = options.restore !== false
       let timer: ReturnType<typeof setTimeout> | null = null
       let disposed = false
+      // While an asynchronous read of storage is in flight, `cache` lacks what
+      // storage holds, and a flush would write over it. The flush waits.
+      let reading = false
+      let flushAfterRead = false
 
       const flush = (): void => {
         timer = null
+        if (reading) {
+          flushAfterRead = true
+          return
+        }
         const payload: Stored = { v: FORMAT, buster, entries: [...cache.values()] }
         let json: string
         try {
@@ -227,46 +248,62 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
         timer = setTimeout(flush, throttleMs)
       }
 
-      const restore = (entries: DehydratedEntry[] | undefined, bound: QueryHost | null): void => {
-        if (entries === undefined || disposed) return
+      /**
+       * Seed `cache` with what storage holds and, with `restore`, hydrate the
+       * root with it. `bound` is the host to ask which entries a subscriber
+       * bound already, or `null` when nothing can be bound yet.
+       */
+      const load = (entries: DehydratedEntry[] | undefined, bound: QueryHost | null): void => {
+        if (entries === undefined) return
         const fresh: DehydratedEntry[] = []
         for (const e of entries) {
           const k = slot(e.id, e.key)
-          // A write that landed before the restore is newer than storage.
+          // A write that landed before the read is newer than storage.
           if (!cache.has(k)) cache.set(k, e)
+          if (!restoring) continue
           // Never fill an entry that exists already: a subscriber bound it, and
           // its fetch is newer than anything storage holds.
           if (bound?.keys(e.id).some((key) => slot(e.id, key) === k)) continue
           fresh.push(e)
         }
-        if (fresh.length > 0) queries.hydrate({ version: 1, entries: fresh })
+        // A root disposed while the read was in flight takes no hydration.
+        if (fresh.length > 0 && !disposed) queries.hydrate({ version: 1, entries: fresh })
+      }
+      const readSettled = (): void => {
+        reading = false
+        if (flushAfterRead) {
+          flushAfterRead = false
+          flush()
+        }
       }
 
-      if (options.restore !== false) {
-        try {
-          const raw = storage.get(storageKey)
-          if (raw instanceof Promise) {
-            // `.catch` after `.then`, so a parse or restore that throws is
-            // reported too, as it is on the synchronous path.
-            host.track(
-              raw
-                .then((value) => restore(parse(value, buster, maxAgeMs), queries))
-                .catch((error: unknown) => onError(error, 'restore')),
-            )
-          } else {
-            // Synchronous: setup runs before any controller binds, so nothing
-            // is bound to protect.
-            restore(parse(raw, buster, maxAgeMs), null)
-          }
-        } catch (error) {
-          onError(error, 'restore')
+      try {
+        const raw = storage.get(storageKey)
+        if (raw instanceof Promise) {
+          reading = true
+          // `.catch` after `.then`, so a parse or restore that throws is
+          // reported too, as it is on the synchronous path. A failed read
+          // releases the held flush all the same.
+          host.track(
+            raw
+              .then((value) => load(parse(value, buster, maxAgeMs), queries))
+              .catch((error: unknown) => onError(error, 'restore'))
+              .finally(readSettled),
+          )
+        } else {
+          // Synchronous: setup runs before any controller binds, so nothing
+          // is bound to protect.
+          load(parse(raw, buster, maxAgeMs), null)
         }
+      } catch (error) {
+        onError(error, 'restore')
       }
 
       host.onDispose(() => {
         disposed = true
         if (timer !== null) {
           clearTimeout(timer)
+          // During a read this waits for it, and writes once it lands.
           flush()
         }
       })

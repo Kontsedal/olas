@@ -22,8 +22,8 @@ import {
 /**
  * Edge coverage for `crossTabPlugin` (SPEC §13.2): the inbound guards
  * (malformed / foreign / echoed messages), the per-peer cursor cap, the
- * outbound size estimate, the origin gate, the default `onWarn`, and the
- * default `BroadcastChannel` factory.
+ * outbound size estimate, the origin gate and the default `onWarn`.
+ * `channel.test.ts` covers the default `BroadcastChannel` factory.
  *
  * Most tests use a probe channel: it records what the plugin posts and lets
  * the test hand-deliver raw inbound messages, so each guard is exercised in
@@ -427,45 +427,5 @@ describe('crossTabPlugin — default onWarn', () => {
     // The sender's cache keeps the write.
     expect(root.api.user.data.peek()).toEqual({ id: '1', name: 'local' })
     root.dispose()
-  })
-})
-
-describe('crossTabPlugin — default channel factory', () => {
-  test('without a channelFactory, two roots sync over the platform BroadcastChannel', async () => {
-    expect(typeof BroadcastChannel).toBe('function')
-    const channelName = `xtab-cov/real/${Date.now()}`
-    // One query value per "tab", sharing only the id — as two real tabs would.
-    const a = makeQuery()
-    const b = defineQuery({
-      id: a.id,
-      meta: { crossTab: true },
-      key: (userId: string) => ['user', userId],
-      fetcher: async (_ctx, userId: string) => ({ id: userId, name: 'fetcher' }),
-      staleTime: 60_000,
-    })
-    const mk = (q: Query<[string], User>) =>
-      createRoot(
-        defineController((ctx) => ({ user: createQuery(ctx, q, () => ['1' as string]) })),
-        { queries: queryEngine(), deps: {}, plugins: [crossTabPlugin({ channelName })] },
-      )
-    const tabA = mk(a.query)
-    const tabB = mk(b)
-    try {
-      await vi.waitFor(
-        () => expect(tabB.api.user.data.peek()).toEqual({ id: '1', name: 'fetcher' }),
-        {
-          interval: 5,
-          timeout: 1000,
-        },
-      )
-      a.query.setData('1', () => ({ id: '1', name: 'over the wire' }))
-      await vi.waitFor(
-        () => expect(tabB.api.user.data.peek()).toEqual({ id: '1', name: 'over the wire' }),
-        { interval: 5, timeout: 1000 },
-      )
-    } finally {
-      tabA.dispose()
-      tabB.dispose()
-    }
   })
 })

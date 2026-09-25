@@ -94,6 +94,36 @@ describe('cross-tab receiving hostile messages', () => {
     root.dispose()
   })
 
+  test('a malformed message with the highest safe msgId cannot silence the peer it claims', async () => {
+    const { root, probe } = await tab()
+    const { queryId: _dropped, ...noQueryId } = setData(Number.MAX_SAFE_INTEGER, [], ['forged'])
+    probe.deliver(noQueryId)
+    probe.deliver(setData(1, [], ['from the real peer']))
+    expect(root.api.list.data.value).toEqual(['from the real peer'])
+    root.dispose()
+  })
+
+  test('a well-formed message with the highest safe msgId silences the peer only until it speaks', async () => {
+    const { root, probe } = await tab()
+    probe.deliver(setData(Number.MAX_SAFE_INTEGER, [], ['forged']))
+    expect(root.api.list.data.value).toEqual(['forged'])
+    // The real peer's counter is far below the forged cursor: it restarts it.
+    probe.deliver(setData(1, [], ['from the real peer']))
+    expect(root.api.list.data.value).toEqual(['from the real peer'])
+    probe.deliver(setData(2, [], ['and again']))
+    expect(root.api.list.data.value).toEqual(['and again'])
+    root.dispose()
+  })
+
+  test('a message this tab ignores or rejects does not move the cursor', async () => {
+    const { root, probe } = await tab({ validate: (_id, data) => Array.isArray(data) })
+    probe.deliver({ ...setData(Number.MAX_SAFE_INTEGER, [], ['x']), queryId: 'sec-ct/not-here' })
+    probe.deliver(setData(Number.MAX_SAFE_INTEGER - 1, [], 'not an array'))
+    probe.deliver(setData(1, [], ['from the real peer']))
+    expect(root.api.list.data.value).toEqual(['from the real peer'])
+    root.dispose()
+  })
+
   test('validate rejects a payload shape the tab does not expect', async () => {
     const { root, probe, onWarn } = await tab({ validate: (_id, data) => Array.isArray(data) })
     probe.deliver(setData(1, [], 5))

@@ -316,6 +316,46 @@ describe('remove()', () => {
     root.dispose()
   })
 
+  test('a handle given out before remove follows the entity when it returns', async () => {
+    const q = defineQuery({
+      id: 'ent-cov/remove-handle',
+      key: () => [],
+      fetcher: async () => ({ posts: [{ id: 'p1', title: 'A', likes: 0 }] }),
+      staleTime: 60_000,
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ q: createQuery(ctx, q, () => []) })),
+      { queries: queryEngine(), deps: {}, plugins: [entitiesPlugin({ entities: [Post] })] },
+    )
+    const entities = root.inject(Entities)
+    await settle()
+    const handle = entities.signal(Post, 'p1')
+    const seen: Array<string | undefined> = []
+    const off = handle.subscribe((p) => seen.push(p?.title))
+
+    entities.remove(Post, 'p1')
+    expect(handle.value).toBeUndefined()
+    expect(entities.list(Post).value).toEqual([])
+
+    // A refetch brings p1 back.
+    q.write(() => ({ posts: [{ id: 'p1', title: 'A2', likes: 0 }] }))
+    expect(handle.value).toEqual({ id: 'p1', title: 'A2', likes: 0 })
+    expect(seen).toEqual(['A', undefined, 'A2'])
+    expect(entities.signal(Post, 'p1')).toBe(handle)
+
+    // An effect that reads the handle follows it the same way.
+    const read: Array<string | undefined> = []
+    const stop = effect(() => {
+      read.push(handle.value?.title)
+    })
+    entities.remove(Post, 'p1')
+    entities.upsert(Post, { id: 'p1', title: 'A3', likes: 0 })
+    expect(read).toEqual(['A2', undefined, 'A3'])
+    stop()
+    off()
+    root.dispose()
+  })
+
   test('a re-walk after remove rebuilds the binding and re-populates the store', async () => {
     const q = defineQuery({
       id: 'ent-cov/remove-rewalk',

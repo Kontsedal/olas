@@ -270,6 +270,115 @@ describe('persistQueryCachePlugin — restore', () => {
   })
 })
 
+describe('persistQueryCachePlugin — restore: false keeps what this session never bound', () => {
+  // Session 1 visits page A. Session 2 restores ahead of `createRoot`, as the
+  // docs show, and visits only page B. Core buffers A's hydrated entry and
+  // tells plugins about it only when something binds it, so the plugin must
+  // learn about A from storage, or its first flush writes B alone.
+  const pages = () => ({
+    a: defineQuery({
+      id: 'qc/page-a',
+      key: () => [],
+      fetcher: async () => 'A',
+      staleTime: 60_000,
+      meta: { persist: true },
+    }),
+    b: defineQuery({
+      id: 'qc/page-b',
+      key: () => [],
+      fetcher: async () => 'B',
+      staleTime: 60_000,
+      meta: { persist: true },
+    }),
+  })
+
+  test.each([
+    ['sync', false],
+    ['async', true],
+  ])('%s storage: page A survives a session that visits only page B', async (_label, async) => {
+    const storage = memory({ async })
+    const { a, b } = pages()
+    const first = createRoot(
+      defineController((ctx) => ({ a: createQuery(ctx, a) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0 })],
+      },
+    )
+    await first.waitForIdle()
+    first.dispose()
+    expect(stored(storage)?.entries.map((e) => e.id)).toEqual(['qc/page-a'])
+
+    const hydrate = await restoreQueryCache({ storage })
+    const second = createRoot(
+      defineController((ctx) => ({ b: createQuery(ctx, b) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        hydrate,
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0, restore: false })],
+      },
+    )
+    await second.waitForIdle()
+    second.dispose()
+    expect(
+      stored(storage)
+        ?.entries.map((e) => [e.id, e.data])
+        .sort(),
+    ).toEqual([
+      ['qc/page-a', 'A'],
+      ['qc/page-b', 'B'],
+    ])
+  })
+
+  test('async storage: a write before the read lands waits for it, then keeps both', async () => {
+    const store = new Map<string, string>()
+    store.set(
+      KEY,
+      JSON.stringify({
+        v: 1,
+        buster: '',
+        entries: [{ id: 'qc/page-a', key: [], data: 'A', lastUpdatedAt: Date.now() }],
+      }),
+    )
+    let finishRead: () => void = () => {}
+    const storage: StorageAdapter = {
+      get: (k) =>
+        new Promise<string | null>((resolve) => {
+          finishRead = () => resolve(store.get(k) ?? null)
+        }),
+      set: (k, v) => {
+        store.set(k, v)
+      },
+      delete: (k) => {
+        store.delete(k)
+      },
+    }
+    const { b } = pages()
+    const root = createRoot(
+      defineController((ctx) => ({ b: createQuery(ctx, b) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0, restore: false })],
+      },
+    )
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(root.api.b.data.value).toBe('B')
+    // Storage has not answered: writing now would drop page A.
+    expect(JSON.parse(store.get(KEY) as string).entries.map((e: { id: string }) => e.id)).toEqual([
+      'qc/page-a',
+    ])
+    finishRead()
+    await root.waitForIdle()
+    const written = JSON.parse(store.get(KEY) as string) as { entries: Array<{ id: string }> }
+    expect(written.entries.map((e) => e.id).sort()).toEqual(['qc/page-a', 'qc/page-b'])
+    root.dispose()
+  })
+})
+
 describe('persistQueryCachePlugin — infinite queries and gc', () => {
   test('an infinite query persists its pages with their params and restores them', async () => {
     const storage = memory()

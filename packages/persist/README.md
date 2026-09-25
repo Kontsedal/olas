@@ -55,7 +55,7 @@ Defaults: `JSON.stringify` and `JSON.parse`. Override `serialize` and `deseriali
 
 **Custom sources.** A source's `subscribe` may call the handler at once with the current value, as a signal does, or only on a change, as an event emitter does. `createPersisted` skips a call made while `subscribe()` runs, because it is the current value and not a change. It writes every later call, so a source that does not call back on subscribe keeps its first change.
 
-**Schema versioning.** Set `version: N` to wrap writes in the envelope `{"$olas":1,"v":N,"d":<serialized>}`. On load, a payload with a different `version` is handed to `migrate(raw, fromVersion)`, and so is a legacy un-versioned one, which arrives as `fromVersion: undefined`. The migrator returns the upgraded value, re-persisted as an envelope, or `undefined` to drop the entry.
+**Schema versioning.** Set `version: N` to wrap writes in the envelope `{"$olas":1,"v":N,"d":<serialized>}`. On load, a payload with a different `version` is handed to `migrate(raw, fromVersion)`, and so is a legacy un-versioned one, which arrives as `fromVersion: undefined`. The migrator returns the upgraded value, re-persisted as an envelope, or `undefined` to drop the entry. A cross-tab change goes through the same migrator, so a tab still running an old build cannot put an old-shaped value into this tab's signal.
 
 **Builds that disagree on `version`.** A tab left open across a deploy runs the old build next to the new one, on the same key. A reader without `version` unwraps an envelope a newer build wrote, and deserializes the value inside it. The `$olas` marker keeps that safe: a value of yours with the same shape reads back as itself. Without `version`, `createPersisted` writes a value raw, and wraps it only when a reader could take it for an envelope. Data that versions before 1.0 stored reads as it did. Their envelope, `{"v":N,"d":…}`, has no marker, so a reader with `version` unwraps it, and a reader without one takes it as the value.
 
@@ -88,6 +88,9 @@ type StorageAdapter = {
 ## Cross-tab sync
 
 `{ crossTab: true }` wires the adapter's `onChange(...)` callback. `localStorageAdapter()` wires it to the browser's `storage` event. Updates from other tabs deserialize and call `source.set(value)` without echoing the write back.
+
+- **Versions.** Another tab's value is read as a load is. With `version` set, a payload of another version, or a raw one from a build before versioning, goes through `migrate`, and is dropped when there is no migrator. The migrated value is not written back, because the tab that wrote it still reads that key.
+- **Throttled writes.** With `throttleMs`, a write can still be waiting when another tab's change arrives. The other tab's value is newer, so the waiting write is dropped. Flushed later, it would put the older value back in storage, and the tabs would disagree from then on.
 
 ## Clearing on log-out
 
@@ -138,7 +141,7 @@ const root = createRoot(app, {
 
 The opt-in is deliberate, because a cache can hold data that must not outlive the session. `include(query)` replaces the rule when the app needs another one.
 
-**What is written.** The plugin keeps the latest entry per query and key, and writes the whole set under one storage key (`'olas/query-cache'` by default). Writes are throttled to one per `throttleMs` (default 1000), and dispose flushes a pending write. It writes canonical data only: a fetch, `write`, `replace` or hydration. An optimistic `setData` and its rollback are guesses the server has not confirmed, so they are skipped. An entry the cache garbage-collects is dropped from storage too. Infinite queries keep their `pageParams`, so a restored list keeps paging.
+**What is written.** The plugin keeps the latest entry per query and key, and writes the whole set under one storage key (`'olas/query-cache'` by default). It reads what storage holds when the root starts, with or without `restore`, so a write keeps the entries this session never bound until they pass `maxAgeMs`. With asynchronous storage, the first write waits for that read. Writes are throttled to one per `throttleMs` (default 1000), and dispose flushes a pending write. It writes canonical data only: a fetch, `write`, `replace` or hydration. An optimistic `setData` and its rollback are guesses the server has not confirmed, so they are skipped. An entry the cache garbage-collects is dropped from storage too. Infinite queries keep their `pageParams`, so a restored list keeps paging.
 
 **When it restores.** With synchronous storage (the default, localStorage) the restore runs during plugin setup, before any controller subscribes, so a restored entry is there on the first read. With asynchronous storage the restore lands later. It fills only entries nothing has subscribed to yet, because a subscriber's fetch is newer than anything storage holds, and `root.waitForIdle()` waits for it. When the first render must see the restored data, read it ahead of `createRoot` with `restoreQueryCache` and turn the plugin's own restore off:
 
@@ -170,8 +173,8 @@ const root = createRoot(app, {
 | `maxAgeMs` | 24 hours | Entries whose data is older than this are not restored. |
 | `throttleMs` | `1000` | At most one storage write per window, carrying the latest cache. |
 | `include` | `meta.persist === true` | Which queries persist. |
-| `restore` | `true` | Restore when the root starts. Pass `false` after `restoreQueryCache`. |
-| `onError` | a warning in development | `(error, op)` for a failed read, parse or write. `op` is `'restore'` or `'write'`. |
+| `restore` | `true` | Restore when the root starts. Pass `false` after `restoreQueryCache`. The plugin still reads storage then, so its writes keep what it holds. |
+| `onError` | a warning in development | `(error, op)` for a failed read, parse or write. `op` is `'restore'` or `'write'`; a failed read at startup is `'restore'` even with `restore: false`. |
 
 **What a restore checks.** Storage is same-origin state that a user, an extension or an old build can write, so the plugin treats it as possibly corrupt (SPEC §22):
 

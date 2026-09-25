@@ -833,6 +833,37 @@ describe('createZodForm — initial values match what Zod parses', () => {
     root.dispose()
   })
 
+  test('a default on an array or an object seeds the FieldArray or the nested Form', () => {
+    const schema = z.object({
+      tags: z.array(z.string()).default(['inbox']),
+      address: z.object({ city: z.string() }).default({ city: 'Kyiv' }),
+      optionalTags: z.array(z.string()).default(['a', 'b']).optional(),
+    })
+    const def = defineController((ctx) => ({ form: createZodForm(ctx, schema) }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.form.value).toEqual(schema.parse({}))
+    expect(root.api.form.fields.tags.items.value).toHaveLength(1)
+    // The default is where reset goes back to.
+    root.api.form.fields.tags.add('extra')
+    root.api.form.fields.address.fields.city.set('Lviv')
+    root.api.form.reset()
+    expect(root.api.form.value).toEqual(schema.parse({}))
+    root.dispose()
+  })
+
+  test('an initial value still wins over an array or object default', () => {
+    const schema = z.object({
+      tags: z.array(z.string()).default(['inbox']),
+      address: z.object({ city: z.string() }).default({ city: 'Kyiv' }),
+    })
+    const def = defineController((ctx) => ({
+      form: createZodForm(ctx, schema, { initial: { tags: [], address: { city: 'Odesa' } } }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    expect(root.api.form.value).toEqual({ tags: [], address: { city: 'Odesa' } })
+    root.dispose()
+  })
+
   test('a numeric enum seeds its first option', () => {
     const schema = z.object({ level: z.enum({ Low: 1, High: 2 }) })
     const def = defineController((ctx) => ({ form: createZodForm(ctx, schema) }))

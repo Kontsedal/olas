@@ -303,9 +303,13 @@ function schemaRulesValidator(root: z.ZodObject<z.ZodRawShape>): Validator<unkno
   }
 }
 
-function defaultInitial(schema: AnyZodType): unknown {
-  // Honor a Zod default, including one under `.optional()` / `.nullable()`:
-  // a missing key reaches the inner default, as `schema.parse({})` shows.
+/**
+ * The schema's Zod default, boxed so a default of `undefined` still counts,
+ * or `undefined` when it has none. A default under `.optional()` /
+ * `.nullable()` counts too: a missing key reaches the inner default, as
+ * `schema.parse({})` shows. Leaves, objects and arrays all read it here.
+ */
+function zodDefault(schema: AnyZodType): { value: unknown } | undefined {
   let s: AnyZodType = schema
   const seen = new Set<AnyZodType>()
   while (!seen.has(s)) {
@@ -313,12 +317,18 @@ function defaultInitial(schema: AnyZodType): unknown {
     if (s instanceof z.ZodDefault) {
       // Zod 4's `def.defaultValue` is a getter that already runs a function
       // default, so this is the default itself — even when it is a function.
-      return (s as unknown as { def: { defaultValue: unknown } }).def.defaultValue
+      return { value: (s as unknown as { def: { defaultValue: unknown } }).def.defaultValue }
     }
     if (s instanceof z.ZodOptional) s = (s as z.ZodOptional<AnyZodType>).unwrap() as AnyZodType
     else if (s instanceof z.ZodNullable) s = (s as z.ZodNullable<AnyZodType>).unwrap() as AnyZodType
     else break
   }
+  return undefined
+}
+
+function defaultInitial(schema: AnyZodType): unknown {
+  const zodDefaulted = zodDefault(schema)
+  if (zodDefaulted !== undefined) return zodDefaulted.value
   const inner = unwrap(schema)
   // A `.transform(...)` / `.pipe(...)` is a `ZodPipe`. The form field holds the
   // INPUT the user edits (the transform runs on parse), so seed from the input
@@ -441,7 +451,9 @@ export type ZodFormOptions<T extends z.ZodObject<z.ZodRawShape>> = {
  * - leaf schemas    → `Field` with `zodValidator(...)` attached
  *
  * Each leaf's initial value is the Zod default if present, otherwise an empty
- * value for that type (`''` for strings, `0` for numbers, etc.).
+ * value for that type (`''` for strings, `0` for numbers, etc.). A
+ * `.default(...)` on an object or an array seeds that nested form or field
+ * array as a whole, as `schema.parse({})` fills the key.
  *
  * A rule on an object or an array is enforced too. A root `.refine(fn)`
  * lands in `form.topLevelErrors`, a `.refine(fn, { path: ['confirm'] })`
@@ -537,12 +549,18 @@ function buildLeaf(
   extras: ExtraValidators | undefined,
 ): Field<unknown> | Form<any> | FieldArray<any> {
   const inner = unwrap(schema)
+  // A `.default(...)` on an object or an array seeds it as a whole, the way
+  // `schema.parse({})` fills the key. An initial value the caller passed wins.
+  const seed =
+    initial === undefined && (inner instanceof z.ZodObject || inner instanceof z.ZodArray)
+      ? zodDefault(schema)?.value
+      : initial
 
   if (inner instanceof z.ZodObject) {
     return buildForm(
       ctx,
       inner as z.ZodObject<z.ZodRawShape>,
-      initial as Record<string, unknown> | undefined,
+      seed as Record<string, unknown> | undefined,
       path,
       extras,
     )
@@ -558,7 +576,7 @@ function buildLeaf(
       // `zodValidator`).
       (itemInitial) =>
         buildLeaf(ctx, elementSchema, itemInitial, path, extras) as Field<unknown> | Form<any>,
-      initial !== undefined ? { initial: initial as Array<unknown> } : undefined,
+      seed !== undefined ? { initial: seed as Array<unknown> } : undefined,
     )
   }
 
