@@ -50,12 +50,14 @@ export type RootShared = {
   readonly scopesVersion: { value: number }
 }
 
+type EffectEntry = {
+  kind: 'effect'
+  factory: () => void | (() => void)
+  dispose: (() => void) | null
+}
+
 type LifecycleEntry =
-  | {
-      kind: 'effect'
-      factory: () => void | (() => void)
-      dispose: (() => void) | null
-    }
+  | EffectEntry
   | { kind: 'cleanup'; dispose: () => void }
   | {
       /**
@@ -351,6 +353,21 @@ export class ControllerInstance {
   }
 
   /**
+   * Run `entry`'s effect and keep its disposer. The run can dispose or suspend
+   * this controller: a `ctx.effect` first run, a collection's first reconcile,
+   * or any re-run on resume. That pass found no disposer on the entry and
+   * skipped it, so a run that ends the active state stops the effect here. A
+   * suspended controller re-runs it on its next resume. A nested
+   * suspend-and-resume inside the run may have restarted the entry already,
+   * and that copy stays.
+   */
+  private startEffect(entry: EffectEntry): void {
+    const dispose = standaloneEffect(entry.factory)
+    if (this.isTerminal() || this.isSuspended() || entry.dispose !== null) dispose()
+    else entry.dispose = dispose
+  }
+
+  /**
    * Run a new child's factory, then settle the child against this parent's
    * state now. The factory runs untracked, so a child built inside an effect
    * does not make that effect depend on what the factory reads; `collection`
@@ -361,8 +378,10 @@ export class ControllerInstance {
    * for one because the child's factory disposed the root. The child is
    * disposed then, and the caller must not register it: in the parent's
    * cleared list its `onDispose` hooks would never run. A parent suspended by
-   * then gets the child suspended, so the child's effects do not run inside a
-   * frozen tree. The parent's next resume wakes it.
+   * then gets the child suspended once its factory returns. By then the
+   * child's effects have run once and its queries may have started fetching
+   * (§4.1); from then on it stays still until the parent's next resume wakes
+   * it.
    */
   private constructChild<Props, Api>(
     child: ControllerInstance,
@@ -439,9 +458,7 @@ export class ControllerInstance {
             // would run twice per change and one copy would survive dispose().
             // Only re-activate effects that `suspend()` cleared (dispose null).
             // (T2.2)
-            if (entry.dispose === null) {
-              entry.dispose = standaloneEffect(entry.factory)
-            }
+            if (entry.dispose === null) this.startEffect(entry)
             break
           case 'subscription-cache':
             // Re-acquire the entry, restart `refetchInterval`, and re-check
@@ -545,7 +562,7 @@ export class ControllerInstance {
 
       effect(fn) {
         assertLive('effect')
-        const entry: LifecycleEntry = {
+        const entry: EffectEntry = {
           kind: 'effect',
           factory: () => fn(),
           dispose: null,
@@ -581,17 +598,9 @@ export class ControllerInstance {
         entry.factory = wrapped
         // If we're suspended, register the entry but defer activation to
         // `resume()` — otherwise the resume loop would overwrite a live
-        // `dispose` ref (the just-activated effect), leaking it.
-        if (self.state !== 'suspended') {
-          entry.dispose = standaloneEffect(wrapped)
-          // The first run can dispose or suspend this controller. That pass
-          // ran before this entry held its disposer, so it missed the effect:
-          // stop it here. A suspended controller re-runs it on resume.
-          if (self.isTerminal() || self.isSuspended()) {
-            entry.dispose()
-            entry.dispose = null
-          }
-        }
+        // `dispose` ref (the just-activated effect), leaking it. The first run
+        // can end this controller; `startEffect` settles that.
+        if (self.state !== 'suspended') self.startEffect(entry)
         if (!self.isTerminal()) self.entries.push(entry)
       },
 
@@ -630,7 +639,14 @@ export class ControllerInstance {
             })
           },
         })
-        self.entries.push({ kind: 'cleanup', dispose: () => e.dispose() })
+        const node = self.entries.push({ kind: 'cleanup', dispose: () => e.dispose() })
+        // An emitter disposed early drops its entry, so a controller that
+        // makes and drops emitters for its whole life does not grow (§3.4).
+        const disposeEmitter = e.dispose
+        e.dispose = () => {
+          self.entries.unlink(node)
+          disposeEmitter()
+        }
         return e
       },
 
@@ -919,20 +935,14 @@ export class ControllerInstance {
             })
           }
         }
-        const effectEntry: LifecycleEntry = {
+        const effectEntry: EffectEntry = {
           kind: 'effect',
           factory: wrapped,
           dispose: null,
         }
-        if (self.state !== 'suspended') {
-          effectEntry.dispose = standaloneEffect(wrapped)
-          // The first reconcile can dispose or suspend the owner, as a
-          // `ctx.effect`'s first run can. Settle it the same way.
-          if (self.isTerminal() || self.isSuspended()) {
-            effectEntry.dispose()
-            effectEntry.dispose = null
-          }
-        }
+        // The first reconcile can end the owner, as a `ctx.effect`'s first run
+        // can; `startEffect` settles it the same way.
+        if (self.state !== 'suspended') self.startEffect(effectEntry)
         if (!self.isTerminal()) self.entries.push(effectEntry)
 
         return {

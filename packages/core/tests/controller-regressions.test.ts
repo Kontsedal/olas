@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test, vi } from 'vitest'
 import {
   type ControllerDef,
+  createCache,
+  createMutation,
   createQuery,
   createRoot,
   defineController,
@@ -10,6 +12,7 @@ import {
   type Root,
   signal,
 } from '../src'
+import { ctxInternals } from '../src/controller/internals'
 
 afterEach(() => {
   vi.useRealTimers()
@@ -241,6 +244,171 @@ describe('an effect whose first run disposes its owner', () => {
     expect(built).toBe(1)
     source.set(['a', 'b'])
     expect(built).toBe(1)
+  })
+})
+
+describe('an effect whose re-run on resume ends its owner', () => {
+  test('a re-run that disposes the root stops the effect', () => {
+    const expired = signal(false)
+    let runs = 0
+    let root: Root<object> | undefined
+    root = createRoot(
+      defineController((ctx) => {
+        ctx.effect(() => {
+          runs++
+          if (expired.value) root?.dispose()
+        })
+        return {}
+      }),
+      { deps: {} },
+    )
+    root.suspend()
+    expired.set(true)
+    root.resume()
+    expect(runs).toBe(2)
+    expired.set(false)
+    expired.set(true)
+    expect(runs).toBe(2)
+  })
+
+  test('a re-run that suspends the root waits for the next resume', () => {
+    const source = signal(0)
+    let runs = 0
+    let root: Root<object> | undefined
+    root = createRoot(
+      defineController((ctx) => {
+        ctx.effect(() => {
+          void source.value
+          runs++
+          if (runs === 2) root?.suspend()
+        })
+        return {}
+      }),
+      { deps: {} },
+    )
+    root.suspend()
+    root.resume()
+    expect(runs).toBe(2)
+    source.set(1)
+    expect(runs).toBe(2)
+    root.resume()
+    expect(runs).toBe(3)
+    source.set(2)
+    expect(runs).toBe(4)
+    root.dispose()
+    source.set(3)
+    expect(runs).toBe(4)
+  })
+
+  test("a collection's reconcile on resume that disposes the root stops reconciling", () => {
+    const source = signal<string[]>(['a'])
+    const built: string[] = []
+    let keyed = 0
+    let root: Root<unknown> | undefined
+    const item = defineController((_ctx, props: { id: string }) => {
+      built.push(props.id)
+      if (props.id === 'b') root?.dispose()
+      return {}
+    })
+    root = createRoot(
+      defineController((ctx) => ({
+        rows: ctx.collection({
+          source,
+          keyOf: (id) => {
+            keyed++
+            return id
+          },
+          controller: item,
+          propsOf: (id) => ({ id }),
+        }),
+      })),
+      { deps: {} },
+    )
+    root.suspend()
+    source.set(['a', 'b'])
+    root.resume()
+    expect(built).toEqual(['a', 'b'])
+    const afterResume = keyed
+    source.set(['a', 'b', 'c'])
+    expect(keyed).toBe(afterResume)
+  })
+
+  test("an attach handle's resume whose child effect disposes the root stops the effect", () => {
+    const expired = signal(false)
+    let runs = 0
+    let root: Root<{ handle: { suspend: () => void; resume: () => void } }> | undefined
+    const child = defineController((ctx) => {
+      ctx.effect(() => {
+        runs++
+        if (expired.value) root?.dispose()
+      })
+      return {}
+    })
+    root = createRoot(
+      defineController((ctx) => ({ handle: ctx.attach(child, undefined) })),
+      { deps: {} },
+    )
+    root.api.handle.suspend()
+    expired.set(true)
+    root.api.handle.resume()
+    expect(runs).toBe(2)
+    expired.set(false)
+    expired.set(true)
+    expect(runs).toBe(2)
+  })
+})
+
+describe('primitives disposed early release their controller registration', () => {
+  test('a cache, a mutation and an emitter disposed early are not disposed again with the root', () => {
+    const disposals: Array<{ dispose: () => void }> = []
+    let make: () => void = () => {}
+    const root = createRoot(
+      defineController((ctx) => {
+        make = () => {
+          const cache = createCache(ctx, async () => 1)
+          const mutation = createMutation(ctx, { mutate: async () => 1 })
+          const emitter = ctx.emitter<void>()
+          for (const primitive of [cache, mutation, emitter]) {
+            vi.spyOn(primitive, 'dispose')
+            disposals.push(primitive)
+            primitive.dispose()
+          }
+        }
+        return {}
+      }),
+      { deps: {}, queries: queryEngine() },
+    )
+    for (let i = 0; i < 50; i++) make()
+    root.dispose()
+    expect(disposals).toHaveLength(150)
+    for (const primitive of disposals) expect(primitive.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  test("a cache disposed early leaves the root's local-cache set at once", () => {
+    const live = new Set<unknown>()
+    let make: () => void = () => {}
+    const root = createRoot(
+      defineController((ctx) => {
+        // Observe the root's local-cache set through the internals the
+        // binding uses; nothing public exposes it.
+        const internals = ctxInternals(ctx, 'test')
+        const track = internals.trackLocalCache
+        internals.trackLocalCache = (cache) => {
+          live.add(cache)
+          const untrack = track(cache)
+          return () => {
+            live.delete(cache)
+            untrack()
+          }
+        }
+        make = () => createCache(ctx, async () => 1).dispose()
+        return {}
+      }),
+      { deps: {} },
+    )
+    for (let i = 0; i < 50; i++) make()
+    expect(live.size).toBe(0)
+    root.dispose()
   })
 })
 

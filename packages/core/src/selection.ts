@@ -85,9 +85,11 @@ export function createSelection<T = unknown>(options?: {
   }
 
   const deselect = (id: string): void => {
+    // Ends the shift run even when `id` is not selected, as every other
+    // programmatic call does (spec §16.5).
+    preShiftSelection = null
     const prev = ids.peek()
     if (!prev.has(id)) return
-    preShiftSelection = null
     const next = new Set(prev)
     next.delete(id)
     ids.set(next)

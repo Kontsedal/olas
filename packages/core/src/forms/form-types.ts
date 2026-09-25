@@ -89,10 +89,11 @@ export type FormOptions<S extends FormSchema> = {
    * Initial values for the form. A function form is **tracked** — if the
    * function reads reactive signals (e.g. a query's `data`), the form re-seats
    * itself when those signals change, but only while the form is not dirty
-   * (so a user mid-edit isn't clobbered by a background refetch). The guard
-   * covers the first defined value too. A throw from the function reaches the
-   * root's `onError` as `kind: 'effect'`. See `resetOnInitialChange` for
-   * opt-out. Spec §8.4.
+   * (so a user mid-edit isn't clobbered by a background refetch). The first
+   * defined value fills every leaf the user has not edited; an edited leaf
+   * keeps its value and takes the loaded one as its baseline. A throw from
+   * the function reaches the root's `onError` as `kind: 'effect'`. See
+   * `resetOnInitialChange` for opt-out. Spec §8.4.
    */
   initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>
   /**
@@ -102,11 +103,11 @@ export type FormOptions<S extends FormSchema> = {
   /**
    * When `initial` is a function and one of its tracked deps changes:
    *  - `'when-clean'` (default) — re-seat only if the form is not dirty.
-   *  - `'never'` — seat once, from the first defined value that arrives while
-   *    the form is clean, and ignore every later change.
+   *  - `'never'` — seat once, from the first defined value (or a `reset()`
+   *    that seats one), and ignore every later change.
    *  - `'always'` — re-seat unconditionally (dirty state is discarded).
    *
-   * Spec §20.7.
+   * Spec §8.4.
    */
   resetOnInitialChange?: 'when-clean' | 'never' | 'always'
 }

@@ -122,15 +122,18 @@ export function createCache<T>(
     },
     ctx.deps,
   )
-  // `root.waitForIdle()` counts the cache's fetches until the controller lets go.
+  // `root.waitForIdle()` counts the cache's fetches until the cache disposes.
   const untrack = internals.trackLocalCache(cache)
-  internals.register({
-    kind: 'cleanup',
-    dispose: () => {
-      untrack()
-      cache.dispose()
-    },
-  })
+  const release = internals.register({ kind: 'cleanup', dispose: () => cache.dispose() })
+  // A cache disposed early, as the Map pattern of §3.4 does, leaves the root's
+  // set and drops its entry. A controller that churns caches then does not
+  // grow, and its dispose does not dispose every dropped cache again.
+  const disposeCache = cache.dispose.bind(cache)
+  cache.dispose = () => {
+    untrack()
+    release()
+    disposeCache()
+  }
   return cache
 }
 
@@ -188,7 +191,13 @@ export function createMutation<V, R>(
     client.mutationLifecycle(),
     ctx.deps,
   )
-  internals.register({ kind: 'cleanup', dispose: () => mutation.dispose() })
+  const release = internals.register({ kind: 'cleanup', dispose: () => mutation.dispose() })
+  // A mutation disposed early drops its entry, as a cache does.
+  const disposeMutation = mutation.dispose.bind(mutation)
+  mutation.dispose = () => {
+    release()
+    disposeMutation()
+  }
   return mutation
 }
 

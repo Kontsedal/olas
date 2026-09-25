@@ -59,11 +59,25 @@ function holdWhileValidating(
   return computed(() => (isValidating.value ? settled.value : live.value))
 }
 
+/**
+ * What `FormImpl.seatKeepingEdits` needs of a child. Fields and field arrays
+ * built by core have `rebaseInitial`, and forms have `seatKeepingEdits`.
+ */
+type SeatTarget = {
+  readonly isDirty: ReadSignal<boolean>
+  setAsInitial(value: unknown): void
+  seatKeepingEdits?: (value: unknown) => void
+  rebaseInitial?: (value: unknown) => void
+}
+
 const isForm = (x: unknown): x is Form<FormSchema> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FORM_BRAND] === true
 
 const isFieldArray = (x: unknown): x is FieldArray<Field<unknown> | Form<FormSchema>> =>
   typeof x === 'object' && x !== null && (x as Record<symbol, unknown>)[FIELD_ARRAY_BRAND] === true
+
+/** A field, as opposed to a nested form or field array. */
+const isLeaf = (x: unknown): boolean => !isForm(x) && !isFieldArray(x)
 
 /**
  * Any node that can receive parent-form-validator-routed errors (T5.2).
@@ -240,6 +254,11 @@ class FormImpl<S extends FormSchema> implements Form<S> {
   private validatorDispose: (() => void) | null = null
   private validityDispose: (() => void) | null = null
   private initialDispose: (() => void) | null = null
+  /**
+   * Set once a defined `initial()` value has been seated, by the reactive
+   * effect or by `reset()`. The next value is no longer the first (§8.4).
+   */
+  private initialSeated = false
   private currentValidatorRun = 0
   private currentValidatorAbort: AbortController | null = null
   private disposed = false
@@ -276,7 +295,6 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       if (typeof options.initial === 'function') {
         const initialFn = options.initial
         const mode = options.resetOnInitialChange ?? 'when-clean'
-        let seated = false
         this.initialDispose = effect(() => {
           // Track signals read by `initialFn`. A throw routes like a validator
           // throw, to the controller's `onError`. Uncaught, it escaped into
@@ -295,14 +313,22 @@ class FormImpl<S extends FormSchema> implements Form<S> {
           // become a dep and re-seating on user input would cascade.
           untracked(() => {
             if (this.disposed) return
-            if (mode === 'never' && seated) return
-            // The guard covers the first defined value too: data that arrives
-            // after the user started typing must not overwrite the edit (spec
-            // §8.4). `computeBool`, because `isDirty` is not built yet on the
-            // first run.
+            const partial = ini as DeepPartial<FormValue<S>>
+            if (!this.initialSeated) {
+              // The first defined value fills what the user has not edited.
+              // An edit made while the data loaded keeps its value, and only
+              // its baseline moves (spec §8.4). A form-wide guard here left
+              // every other field at its empty seed, for a save to write back.
+              this.initialSeated = true
+              if (mode === 'always') this.applyPartial(partial, true)
+              else this.seatKeepingEdits(partial)
+              return
+            }
+            if (mode === 'never') return
+            // `computeBool` rather than `isDirty`, which the constructor
+            // builds only after this effect's first run.
             if (mode !== 'always' && this.computeBool('isDirty')) return
-            seated = true
-            this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+            this.applyPartial(partial, true)
           })
         })
       } else {
@@ -419,8 +445,10 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       if (!child) continue
       // `partial.someNestedForm === undefined` means "leave this subtree
       // alone", not "reset it with undefined" — which would crash on
-      // `Object.entries(undefined)`.
-      if (val === undefined) continue
+      // `Object.entries(undefined)`. A nested form or field array cannot hold
+      // `null` either, and JSON spells "no nested record" that way, so it
+      // leaves the subtree alone too. A field takes `null` as its value.
+      if (val === undefined || (val === null && !isLeaf(child))) continue
       // Field, Form and FieldArray share `set` and `setAsInitial`, each
       // taking its own value shape.
       const node = child as { set(v: unknown): void; setAsInitial(v: unknown): void }
@@ -434,6 +462,26 @@ class FormImpl<S extends FormSchema> implements Form<S> {
     batch(() => this.applyPartial(partial, true))
   }
 
+  /**
+   * Internal — seat `partial` as the baseline without discarding edits: a
+   * clean child takes it through `setAsInitial`, a dirty nested form recurses,
+   * and a dirty field or field array keeps its value and moves only its
+   * baseline (`rebaseInitial`). The first `initial()` value lands this way
+   * (§8.4).
+   */
+  seatKeepingEdits(partial: DeepPartial<FormValue<S>>): void {
+    if (this.disposed) return
+    for (const [k, val] of Object.entries(partial)) {
+      // Own keys and defined values only, as in `applyPartial`.
+      if (!Object.hasOwn(this.fields, k) || val === undefined) continue
+      const child = (this.fields as Record<string, unknown>)[k] as SeatTarget | undefined
+      if (!child || (val === null && !isLeaf(child))) continue
+      if (!child.isDirty.peek()) child.setAsInitial(val)
+      else if (typeof child.seatKeepingEdits === 'function') child.seatKeepingEdits(val)
+      else child.rebaseInitial?.(val)
+    }
+  }
+
   reset(): void {
     if (this.disposed) return
     batch(() => {
@@ -444,7 +492,7 @@ class FormImpl<S extends FormSchema> implements Form<S> {
           ;(child as Field<unknown>).reset()
         }
       }
-      // `topLevelErrors$` and `parentFormErrors$` stay: this form's validators
+      // `topLevelErrors$` and `parentFormErrors` stay: this form's validators
       // and an ancestor's own them. A reset that changes the value re-runs
       // both, and one that does not leaves their last result standing, so a
       // rule that still fails stays visible (the same as a field's routed
@@ -460,12 +508,29 @@ class FormImpl<S extends FormSchema> implements Form<S> {
       // separate pass would fire a second notification and briefly expose the
       // "reset to construction seed, then re-seat to current initial" tearing
       // (visible with a reactive `initial: () => …` whose deps changed) (T5.3).
-      if (this.options?.initial !== undefined) {
-        const ini =
-          typeof this.options.initial === 'function' ? this.options.initial() : this.options.initial
-        if (ini !== undefined) this.applyPartial(ini as DeepPartial<FormValue<S>>, true)
+      const ini = this.readInitial()
+      if (ini !== undefined) {
+        this.initialSeated = true
+        this.applyPartial(ini, true)
       }
     })
+  }
+
+  /**
+   * `options.initial` as `reset()` reads it. A thunk runs untracked, so a
+   * `reset()` inside an effect does not subscribe that effect to what the
+   * thunk reads. A throw reaches `onError`, as the reactive seat's does, and
+   * reads as no value: the fields keep the baselines they reset to.
+   */
+  private readInitial(): DeepPartial<FormValue<S>> | undefined {
+    const initial = this.options?.initial
+    if (typeof initial !== 'function') return initial
+    try {
+      return untracked(initial)
+    } catch (err) {
+      this.reportError(err)
+      return undefined
+    }
   }
 
   markAllTouched(): void {
@@ -876,8 +941,8 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
    * Structural dirtiness — flipped by `add`/`insert`/`remove`/`move`/`clear`.
    * Item-level `isDirty` alone misses these, so a reactive `initial` + the
    * default `resetOnInitialChange: 'when-clean'` would re-seat the array on a
-   * background refetch and delete rows the user just added (T5.1). Reset by
-   * `reset()` and by an initial-driven re-anchor (`replaceInitialItems`).
+   * background refetch and delete rows the user just added (T5.1). Cleared by
+   * `reset()` and by an initial-driven re-seat (`setAsInitial`).
    */
   private readonly structurallyDirty$: Signal<boolean> = signal(false)
   private readonly topLevelErrors$: Signal<string[]> = signal([])
@@ -1091,6 +1156,18 @@ class FieldArrayImpl<I extends Field<any> | Form<any>> implements FieldArray<I> 
       // not leave the array structurally dirty (T5.1).
       this.structurallyDirty$.set(false)
     })
+  }
+
+  /**
+   * Internal — move `reset()`'s target to `values` and keep the current
+   * items. `Form` calls it for the first `initial()` value on an array the
+   * user already changed (§8.4). The items were not built from the new
+   * baseline, so the array stays dirty until `reset()` or `setAsInitial`.
+   */
+  rebaseInitial(values: ReadonlyArray<ItemInitial<I>>): void {
+    if (this.disposed) return
+    this.initialItems = [...values]
+    this.structurallyDirty$.set(true)
   }
 
   reset(): void {

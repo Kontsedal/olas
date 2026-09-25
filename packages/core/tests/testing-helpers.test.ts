@@ -204,6 +204,12 @@ describe('fakeAsyncState', () => {
     await expect(s.firstValue()).rejects.toBe(boom)
   })
 
+  test('firstValue resolves with the data after a failed refetch, as the real one does', async () => {
+    const s = fakeAsyncState<number>({ data: 3, error: new Error('refetch failed') })
+    expect(s.status.value).toBe('error')
+    await expect(s.firstValue()).resolves.toBe(3)
+  })
+
   test('a pending status with no data reads as loading and fetching', () => {
     const s = fakeAsyncState<number>({ status: 'pending' })
     expect(s.isLoading.value).toBe(true)

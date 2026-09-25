@@ -174,9 +174,10 @@ export function fakeField<T>(
  * The defaults follow a real subscription. `status` is `'error'` when `error`
  * is given, `'success'` when `data` is, and `'idle'` otherwise. A `'pending'`
  * status is fetching, and loading while there is no data. `firstValue()`
- * rejects with the error in the `'error'` status, resolves with the data in
- * the `'success'` status or when there is data, and otherwise stays pending,
- * as a real one waits for data.
+ * resolves with the data when there is data or the status is `'success'`,
+ * even beside an error, as a real one does after a failed refetch. Otherwise
+ * it rejects with the error in the `'error'` status, and stays pending in the
+ * rest, as a real one waits for data.
  */
 export function fakeAsyncState<T>(
   overrides?: Partial<{
@@ -218,10 +219,12 @@ export function fakeAsyncState<T>(
   const firstValue =
     overrides?.firstValue ??
     ((): Promise<T> => {
-      if (status === 'error') return Promise.reject(error$.peek())
-      if (status === 'success' || data$.peek() !== undefined) {
+      // Data first, as `Entry.firstValue()` checks it: data kept through a
+      // failed refetch resolves at once.
+      if (data$.peek() !== undefined || status === 'success') {
         return Promise.resolve(data$.peek() as T)
       }
+      if (status === 'error') return Promise.reject(error$.peek())
       // A real subscription waits for data, and nothing brings data to a fake.
       return new Promise<T>(() => {})
     })

@@ -226,6 +226,190 @@ describe('a late first initial value respects the dirty guard', () => {
   })
 })
 
+describe('the first initial value seats the leaves the user has not edited', () => {
+  type Contact = { name: string; email: string; phone: string }
+
+  test('an edit before the record loads keeps its value, and the other fields fill', () => {
+    const data = signal<Contact | undefined>(undefined)
+    const root = build((ctx) => ({
+      form: createForm(
+        ctx,
+        {
+          name: createField<string>(ctx, ''),
+          email: createField<string>(ctx, ''),
+          phone: createField<string>(ctx, ''),
+        },
+        { initial: () => data.value },
+      ),
+    }))
+    const form = root.api.form
+    form.fields.name.set('typed')
+    data.set({ name: 'Ada', email: 'ada@example.com', phone: '555' })
+    expect(form.value).toEqual({ name: 'typed', email: 'ada@example.com', phone: '555' })
+    expect(form.dirtyFields.value).toEqual(['name'])
+    // The edited field's baseline moved to the loaded value.
+    form.fields.name.set('Ada')
+    expect(form.isDirty.value).toBe(false)
+    form.fields.name.set('typed')
+    form.fields.name.reset()
+    expect(form.fields.name.value).toBe('Ada')
+    root.dispose()
+  })
+
+  test('a later value still respects the whole-form guard', () => {
+    const data = signal<Contact | undefined>(undefined)
+    const root = build((ctx) => ({
+      form: createForm(
+        ctx,
+        {
+          name: createField<string>(ctx, ''),
+          email: createField<string>(ctx, ''),
+          phone: createField<string>(ctx, ''),
+        },
+        { initial: () => data.value },
+      ),
+    }))
+    const form = root.api.form
+    form.fields.name.set('typed')
+    data.set({ name: 'Ada', email: 'ada@example.com', phone: '555' })
+    data.set({ name: 'Ada', email: 'new@example.com', phone: '777' })
+    expect(form.value).toEqual({ name: 'typed', email: 'ada@example.com', phone: '555' })
+    root.dispose()
+  })
+
+  test('a default set in the factory stays, inside a nested form too', () => {
+    type Profile = { name: string; address: { city: string; country: string } }
+    const data = signal<Profile | undefined>(undefined)
+    const root = build((ctx) => {
+      const form = createForm(
+        ctx,
+        {
+          name: createField<string>(ctx, ''),
+          address: createForm(ctx, {
+            city: createField<string>(ctx, ''),
+            country: createField<string>(ctx, ''),
+          }),
+        },
+        { initial: () => data.value },
+      )
+      form.set({ address: { country: 'UA' } })
+      return { form }
+    })
+    const form = root.api.form
+    data.set({ name: 'Ada', address: { city: 'Kyiv', country: 'PL' } })
+    expect(form.value).toEqual({ name: 'Ada', address: { city: 'Kyiv', country: 'UA' } })
+    form.reset()
+    expect(form.value).toEqual({ name: 'Ada', address: { city: 'Kyiv', country: 'PL' } })
+    root.dispose()
+  })
+
+  test('a field array with a row added before createForm keeps its rows', () => {
+    const data = signal<{ name: string; tags: string[] } | undefined>(undefined)
+    const root = build((ctx) => {
+      const tags = createFieldArray(ctx, (initial?: string) =>
+        createField<string>(ctx, initial ?? ''),
+      )
+      tags.add('draft')
+      return {
+        form: createForm(
+          ctx,
+          { name: createField<string>(ctx, ''), tags },
+          { initial: () => data.value },
+        ),
+      }
+    })
+    const form = root.api.form
+    data.set({ name: 'Ada', tags: ['a', 'b'] })
+    expect(form.value).toEqual({ name: 'Ada', tags: ['draft'] })
+    expect(form.fields.tags.isDirty.value).toBe(true)
+    form.fields.tags.reset()
+    expect(form.fields.tags.value).toEqual(['a', 'b'])
+    expect(form.isDirty.value).toBe(false)
+    root.dispose()
+  })
+})
+
+describe("'never' after a reset() that seated the form", () => {
+  test('a later initial value does not re-seat', () => {
+    // `initial()` reads a plain variable, so only `tick` re-runs it.
+    let record: { name: string } | undefined
+    const tick = signal(0)
+    const root = build((ctx) => ({
+      form: createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
+        {
+          initial: () => {
+            void tick.value
+            return record
+          },
+          resetOnInitialChange: 'never',
+        },
+      ),
+    }))
+    const form = root.api.form
+    record = { name: 'first' }
+    form.reset()
+    expect(form.fields.name.value).toBe('first')
+    record = { name: 'second' }
+    tick.set(1)
+    expect(form.fields.name.value).toBe('first')
+    root.dispose()
+  })
+})
+
+describe('reset() reads initial() the way the reactive seat does', () => {
+  test('a throw reaches onError, and the fields still reset to their baselines', () => {
+    let fail = false
+    const onError = vi.fn()
+    const root = build(
+      (ctx) => ({
+        form: createForm(
+          ctx,
+          { name: createField<string>(ctx, '') },
+          {
+            initial: () => {
+              if (fail) throw new Error('reset boom')
+              return { name: 'seed' }
+            },
+          },
+        ),
+      }),
+      onError,
+    )
+    const form = root.api.form
+    form.fields.name.set('typed')
+    fail = true
+    expect(() => form.reset()).not.toThrow()
+    expect(onError.mock.calls.map(([err]) => (err as Error).message)).toEqual(['reset boom'])
+    expect((onError.mock.calls[0]?.[1] as ErrorContext).kind).toBe('effect')
+    expect(form.fields.name.value).toBe('seed')
+    root.dispose()
+  })
+
+  test('a reset() inside an effect does not subscribe the effect to what initial() reads', () => {
+    const data = signal({ name: 'a' })
+    let runs = 0
+    const root = build((ctx) => {
+      const form = createForm(
+        ctx,
+        { name: createField<string>(ctx, '') },
+        { initial: () => data.value },
+      )
+      ctx.effect(() => {
+        runs++
+        form.reset()
+      })
+      return { form }
+    })
+    expect(runs).toBe(1)
+    data.set({ name: 'b' })
+    expect(runs).toBe(1)
+    expect(root.api.form.fields.name.value).toBe('b')
+    root.dispose()
+  })
+})
+
 describe('async validators start only after every sync validator passes', () => {
   test('a field: a failing required() keeps the async check from being called', () => {
     const check = vi.fn(async (_v: string) => null)
@@ -442,6 +626,54 @@ describe('form-level validators that target the same field', () => {
     expect(inner.topLevelErrors.value).toEqual(['middle rule', 'outer rule'])
     root.api.outer.fields.flag.set(false)
     expect(inner.topLevelErrors.value).toEqual(['middle rule'])
+    root.dispose()
+  })
+})
+
+// JSON and API records spell "no nested object" as `null`. A nested form or
+// field array cannot hold `null`, so it treats it as it treats `undefined`.
+describe('a null for a nested form or field array', () => {
+  function profileForm(ctx: Ctx, initial?: () => unknown) {
+    return createForm(
+      ctx,
+      {
+        name: createField<string | null>(ctx, 'n'),
+        address: createForm(ctx, { street: createField<string>(ctx, 's') }),
+        tags: createFieldArray(ctx, (i?: string) => createField<string>(ctx, i ?? ''), {
+          initial: ['t'],
+        }),
+      },
+      initial === undefined ? undefined : { initial: initial as never },
+    )
+  }
+
+  test('set() leaves the subtree alone, and a field still takes null', () => {
+    const root = build((ctx) => ({ form: profileForm(ctx) }))
+    const { form } = root.api
+    expect(() => form.set({ name: null, address: null, tags: null } as never)).not.toThrow()
+    expect(form.peek()).toEqual({ name: null, address: { street: 's' }, tags: ['t'] })
+    root.dispose()
+  })
+
+  test('setAsInitial() does the same', () => {
+    const root = build((ctx) => ({ form: profileForm(ctx) }))
+    const { form } = root.api
+    expect(() => form.setAsInitial({ address: null, tags: null } as never)).not.toThrow()
+    expect(form.peek()).toEqual({ name: 'n', address: { street: 's' }, tags: ['t'] })
+    root.dispose()
+  })
+
+  test('a reactive initial() with a null nested record seats the rest', () => {
+    const onError = vi.fn()
+    const record = signal<unknown>(undefined)
+    const root = build((ctx) => ({ form: profileForm(ctx, () => record.value) }), onError)
+    record.set({ name: 'Ada', address: null, tags: null })
+    expect(root.api.form.peek()).toEqual({
+      name: 'Ada',
+      address: { street: 's' },
+      tags: ['t'],
+    })
+    expect(onError).not.toHaveBeenCalled()
     root.dispose()
   })
 })

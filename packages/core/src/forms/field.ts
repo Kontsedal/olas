@@ -420,6 +420,18 @@ class FieldImpl<T> implements Field<T> {
     })
   }
 
+  /**
+   * Internal — move `reset()`'s target to `value` and keep the current value.
+   * `isDirty` then compares against the new baseline. `Form` calls it for the
+   * first `initial()` value on a field the user already edited (§8.4), so the
+   * edit stays and a later `reset()` returns to the loaded data.
+   */
+  rebaseInitial(value: T): void {
+    if (this.disposed) return
+    this.initial = value
+    this.dirty$.set(!isStructurallyEqual(this.value$.peek(), value))
+  }
+
   reset(): void {
     if (this.disposed) return
     this.currentAbort?.abort()

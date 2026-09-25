@@ -223,6 +223,16 @@ describe('selection — handleClick', () => {
     s.handleClick('c', { shift: true }, items)
     expect([...s.selectedIds.value].sort()).toEqual(['a', 'b', 'c'])
   })
+
+  test('a deselect of an id that is not selected ends the shift run too', () => {
+    const s = createSelection<string>()
+    s.handleClick('a', {}, items)
+    s.handleClick('c', { shift: true }, items) // snapshot {a}, selection {a,b,c}
+    s.deselect('zz')
+    // The next range starts from {a,b,c}, not from the snapshot, so it keeps c.
+    s.handleClick('b', { shift: true }, items)
+    expect([...s.selectedIds.value].sort()).toEqual(['a', 'b', 'c'])
+  })
 })
 
 describe('selection — read-only projection', () => {
