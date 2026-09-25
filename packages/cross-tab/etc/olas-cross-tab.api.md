@@ -38,7 +38,7 @@ export function crossTabPlugin(options: CrossTabOptions): OlasPlugin;
 // @public
 export function defaultChannelFactory(name: string): ChannelLike | undefined;
 
-// @public (undocumented)
+// @public
 export type InvalidateMessage = {
     v: typeof PROTOCOL_VERSION;
     type: 'invalidate';
@@ -48,13 +48,13 @@ export type InvalidateMessage = {
     keyArgs: readonly unknown[];
 };
 
-// @public (undocumented)
+// @public
 export type Message = SetDataMessage | InvalidateMessage;
 
 // @public
 export const PROTOCOL_VERSION = 1;
 
-// @public (undocumented)
+// @public
 export type SetDataMessage = {
     v: typeof PROTOCOL_VERSION;
     type: 'setData';

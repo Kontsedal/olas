@@ -52,6 +52,12 @@ export type RealtimeService = {
   onConnectionChange?(handler: (state: ConnectionState) => void): () => void
 }
 
+/**
+ * A realtime transport's connection state, as `createConnectionState` reports
+ * it. `'unknown'` means the transport has no `onConnectionChange`, so the
+ * state cannot be observed. `RealtimeService.onConnectionChange` describes the
+ * other three.
+ */
 export type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown'
 
 /** Slice of `ctx.deps` consumed by this package. */

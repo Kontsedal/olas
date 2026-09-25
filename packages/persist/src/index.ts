@@ -24,6 +24,7 @@ export type PersistErrorOp =
   | 'migrate'
   | 'remoteChange'
 
+/** Options for `createPersisted(ctx, key, source, options?)`. */
 export type PersistOptions<T> = {
   /**
    * Storage backend. When omitted *or explicitly `undefined`* (handy for app
@@ -32,8 +33,14 @@ export type PersistOptions<T> = {
    * when `localStorage` isn't defined.
    */
   storage?: StorageAdapter | undefined
+  /** Turns a value into the stored string. Default `JSON.stringify`. */
   serialize?: (value: T) => string
+  /** Turns a stored string back into a value. Default `JSON.parse`. */
   deserialize?: (raw: string) => T
+  /**
+   * Apply another tab's write to the same key. Needs a storage adapter with
+   * `onChange`. Default `false`.
+   */
   crossTab?: boolean
   /**
    * Schema version. When the value loaded from storage carries a different
@@ -78,10 +85,20 @@ export type PersistOptions<T> = {
   onError?: (err: unknown, op: PersistErrorOp, key: string) => void
 }
 
+/** What `createPersisted` returns. */
 export type Persisted = {
+  /**
+   * `true` once the stored value has loaded: at once for `localStorage`, and
+   * after the read resolves for an async adapter.
+   */
   ready: ReadSignal<boolean>
 }
 
+/**
+ * What `createPersisted` can persist: anything with `value`, `set` and
+ * `subscribe`, such as a `Signal<T>` or a `Field<T>`. `subscribe` may call the
+ * handler at once with the current value, or only on a change.
+ */
 export type PersistableSource<T> = {
   readonly value: T
   set(value: T): void
@@ -627,6 +644,10 @@ export function createPersisted<T>(
   return { ready: ready$ }
 }
 
+/**
+ * Options for `clearPersisted(storage?, options)`. Pass a non-empty `prefix`,
+ * or `all: true`. With neither, the call throws.
+ */
 export type ClearPersistedOptions = {
   /** Delete only keys starting with this. Must be non-empty. */
   prefix?: string
@@ -638,6 +659,7 @@ export type ClearPersistedOptions = {
    * put there.
    */
   all?: boolean
+  /** Receives each failed delete with its key, and a failed enumeration under `'<keys>'`. */
   onError?: (err: unknown, key: string) => void
 }
 

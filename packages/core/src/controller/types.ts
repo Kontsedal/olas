@@ -25,6 +25,7 @@ import type { CTX_INTERNALS, CtxInternals } from './internals'
  * ```
  */
 export interface AmbientDeps {
+  /** A key the app has not declared still reads, typed `unknown`. */
   [key: string]: unknown
 }
 

@@ -97,9 +97,10 @@ for (const e of entries()) {
           default: { logLevel: 'warning' },
           // Olas marks no release stages (@public/@beta): everything exported is public.
           'ae-missing-release-tag': { logLevel: 'none' },
-          // TSDoc coverage is tracked in BACKLOG, not enforced here. Overloaded
-          // hooks carry their docs on the overloads, which this rule misses.
-          'ae-undocumented': { logLevel: 'none' },
+          // Every export carries a TSDoc comment, so an IDE hover explains it.
+          // A new undocumented export fails `api:check`. api-extractor reads
+          // each overload signature on its own, so each one needs a comment.
+          'ae-undocumented': { logLevel: 'warning' },
           // A third-party package's own declarations (eslint's `.cts` types)
           // are read to resolve references, not analysed as an entry.
           'ae-wrong-input-file-type': { logLevel: 'none' },

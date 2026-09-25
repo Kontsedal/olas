@@ -9,6 +9,10 @@ import { noReactHooksInControllers } from './rules/no-react-hooks-in-controllers
 import { noTestingOutsideTests } from './rules/no-testing-outside-tests'
 import { optimisticReturnsSnapshot } from './rules/optimistic-returns-snapshot'
 
+/**
+ * Every rule the plugin ships, keyed by name. A flat config turns one on as
+ * `'olas/<name>'`.
+ */
 export const rules = {
   'cancel-before-optimistic': cancelBeforeOptimistic,
   'define-at-module-scope': defineAtModuleScope,
@@ -30,6 +34,10 @@ export type OlasEslintPlugin = ESLint.Plugin & {
   configs: { recommended: Linter.Config; strict: Linter.Config }
 }
 
+/**
+ * The plugin, the package's default export: `rules`, plus the `recommended`
+ * and `strict` flat configs. Each config registers the plugin under `olas`.
+ */
 const plugin: OlasEslintPlugin = {
   meta: { name: '@kontsedal/olas-eslint-plugin' },
   rules: rules as unknown as NonNullable<ESLint.Plugin['rules']>,

@@ -13,10 +13,10 @@ import { ReadSignal } from '@kontsedal/olas-core';
 // @public
 export function clearPersisted(storage?: StorageAdapter, options?: ClearPersistedOptions): Promise<void>;
 
-// @public (undocumented)
+// @public
 export type ClearPersistedOptions = {
     prefix?: string;
-    all?: boolean;
+    all?: boolean; /** Receives each failed delete with its key, and a failed enumeration under `'<keys>'`. */
     onError?: (err: unknown, key: string) => void;
 };
 
@@ -41,14 +41,14 @@ export function localStorageAdapter(): StorageAdapter;
 // @public
 export const PERSIST_QUERY_CACHE_PLUGIN_NAME = "olas-persist-query-cache";
 
-// @public (undocumented)
+// @public
 export type PersistableSource<T> = {
     readonly value: T;
     set(value: T): void;
     subscribe(handler: (value: T) => void): () => void;
 };
 
-// @public (undocumented)
+// @public
 export type Persisted = {
     ready: ReadSignal<boolean>;
 };
@@ -56,10 +56,10 @@ export type Persisted = {
 // @public
 export type PersistErrorOp = 'load' | 'deserialize' | 'serialize' | 'write' | 'migrate' | 'remoteChange';
 
-// @public (undocumented)
+// @public
 export type PersistOptions<T> = {
-    storage?: StorageAdapter | undefined;
-    serialize?: (value: T) => string;
+    storage?: StorageAdapter | undefined; /** Turns a value into the stored string. Default `JSON.stringify`. */
+    serialize?: (value: T) => string; /** Turns a stored string back into a value. Default `JSON.parse`. */
     deserialize?: (raw: string) => T;
     crossTab?: boolean;
     version?: number;

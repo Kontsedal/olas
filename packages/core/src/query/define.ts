@@ -18,7 +18,19 @@ function assertId(id: unknown, caller: string): asserts id is string {
   }
 }
 
-/** Define a shared query, cached per root and named by its `id`. Spec §5.2. */
+/**
+ * Define a shared query, cached per root and named by its `id`. Spec §5.2.
+ *
+ * @example
+ * ```ts
+ * export const userQuery = defineQuery({
+ *   id: 'users/detail',
+ *   key: (id: string) => [id],
+ *   fetcher: ({ signal, deps }, id) => deps.api.getUser(id, { signal }),
+ *   staleTime: 30_000,
+ * })
+ * ```
+ */
 export function defineQuery<Args extends unknown[], T>(spec: QuerySpec<Args, T>): Query<Args, T> {
   assertId(spec.id, 'defineQuery')
   const clients = new Set<QueryClient>()

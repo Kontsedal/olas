@@ -17,7 +17,12 @@ import { type ReactElement, useCallback, useEffect, useRef, useState } from 'rea
 import { DevtoolsPanel, type DevtoolsTab } from './DevtoolsPanel'
 import { DEVTOOLS_CSS } from './styles'
 
+/**
+ * Props of `<DevtoolsLauncher>`: the panel's props, plus where the window
+ * keeps its state and where it first opens.
+ */
 export type DevtoolsLauncherProps = {
+  /** The root to inspect. The panel subscribes to `root.debug` on mount. */
   root: Pick<Root<unknown>, 'debug'>
   /** Default panel tab. */
   defaultTab?: DevtoolsTab
@@ -49,6 +54,13 @@ const DEFAULT_W = 520
 const DEFAULT_H = 520
 const MARGIN = 16
 
+/**
+ * A floating devtools window for one root, behind a launcher button in the
+ * bottom-right corner. The window's header drags it and its corner grip
+ * resizes it. Position, size, and open and minimized state persist to
+ * `localStorage` under `storageKey`. Render `<DevtoolsLauncher root={root} />`
+ * once, near the app's root, typically only in development builds.
+ */
 export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement {
   const storageKey = props.storageKey ?? 'olas-devtools-window'
   const [state, setState] = useState<WindowState>(() => loadState(storageKey, props.initial))

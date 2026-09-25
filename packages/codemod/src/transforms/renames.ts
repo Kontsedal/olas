@@ -5,6 +5,11 @@ import { localReferences, prop, removeImportSpecifier, renameKey } from '../util
 import { visibleBinding } from '../util/imports'
 import { localNameOf, namespacePackage, packageOf, specifierRef } from '../util/olas'
 
+/**
+ * One rename the `renames` transform applies: the export `from` becomes `to`.
+ * `pkg` is the package name without its `@kontsedal/olas-` prefix, such as
+ * `'react'`.
+ */
 export type Rename = { readonly pkg: string; readonly from: string; readonly to: string }
 
 /** Every export 1.0 renames without changing what it does. */

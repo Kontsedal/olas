@@ -138,6 +138,7 @@ export const DEFAULT_MAX_TIMELINE_ENTRIES = 10_000
  */
 export const DEFAULT_MAX_DISPOSED_NODES = 200
 
+/** Options for `new DevtoolsStore(options?)`. Every field is optional. */
 export type DevtoolsStoreOptions = {
   /** Cap on each event log (cache, mutation, field). Oldest entries drop first. */
   maxEntries?: number
@@ -310,8 +311,17 @@ function freezeDebug(debug: Record<string, unknown>): Record<string, unknown> {
 export class DevtoolsStore {
   /** The live controller tree. Unchanged subtrees keep their object identity. */
   readonly tree$: ReadSignal<ControllerNode>
+  /**
+   * The cache log: subscriptions, fetches, invalidations and gc, oldest first.
+   * Capped at `maxEntries`.
+   */
   readonly cache$: ReadSignal<CacheEntry[]>
+  /**
+   * The mutation log: runs, successes, errors and rollbacks, oldest first.
+   * Capped at `maxEntries`.
+   */
   readonly mutations$: ReadSignal<MutationEntry[]>
+  /** The field validation log, oldest first. Capped at `maxEntries`. */
   readonly fields$: ReadSignal<FieldEntry[]>
   /** Unified causal timeline — every event, ordered by seq. A ring buffer. */
   readonly events$: ReadSignal<TimelineEvent[]>

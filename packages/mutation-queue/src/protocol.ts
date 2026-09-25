@@ -34,4 +34,8 @@ export type QueueEntry = {
   readonly idempotencyKey?: string
 }
 
+/**
+ * The version written into each queue entry as `v`. An entry with another
+ * version goes to `migrate`, and without a migrator it is dropped.
+ */
 export const PROTOCOL_VERSION = 1

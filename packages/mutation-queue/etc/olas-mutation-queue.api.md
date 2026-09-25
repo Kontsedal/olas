@@ -41,7 +41,7 @@ export type MutationQueueService = {
     replayNow(): Promise<void>;
 };
 
-// @public (undocumented)
+// @public
 export const PROTOCOL_VERSION = 1;
 
 // @public

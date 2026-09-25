@@ -14,14 +14,25 @@ import { installStreamingIntake } from './streaming'
 const OlasContext = createContext<Root<unknown> | null>(null)
 OlasContext.displayName = 'OlasContext'
 
+/** Props of `<OlasProvider>`. */
+export type OlasProviderProps = { root: Root<unknown>; children: ReactNode }
+
 /**
  * Provides an Olas root to descendant components. The root is created once
  * (typically in `main.tsx`) and passed through here so React doesn't own the
  * controller's lifetime — the adapter only reads. See spec §16.
+ *
+ * @example
+ * ```tsx
+ * const root = createRoot(app, { deps, queries: queryEngine() })
+ *
+ * export const Main = () => (
+ *   <OlasProvider root={root}>
+ *     <App />
+ *   </OlasProvider>
+ * )
+ * ```
  */
-/** Props of `<OlasProvider>`. */
-export type OlasProviderProps = { root: Root<unknown>; children: ReactNode }
-
 export function OlasProvider(props: OlasProviderProps) {
   return createElement(OlasContext.Provider, { value: props.root }, props.children)
 }
@@ -64,6 +75,13 @@ export function useRoot<Api = RegisteredApi>(): Api {
   return root.api as Api
 }
 
+/** What `createOlasContext<Api>()` returns: a provider and `useRoot` typed to one root. */
+export type OlasContext<Api> = {
+  Provider: (props: { root: Root<Api>; children: ReactNode }) => ReactNode
+  useRoot: () => Api
+  Context: Context<Root<Api> | null>
+}
+
 /**
  * Mint an independent context bound to a specific `Api` type. Use when:
  *
@@ -87,13 +105,6 @@ export function useRoot<Api = RegisteredApi>(): Api {
  * Each call returns a *new* React context. The default `<OlasProvider>` /
  * `useRoot()` remain available for single-root apps.
  */
-/** What `createOlasContext<Api>()` returns: a provider and `useRoot` typed to one root. */
-export type OlasContext<Api> = {
-  Provider: (props: { root: Root<Api>; children: ReactNode }) => ReactNode
-  useRoot: () => Api
-  Context: Context<Root<Api> | null>
-}
-
 export function createOlasContext<Api>(displayName?: string): OlasContext<Api> {
   const Context = createContext<Root<Api> | null>(null)
   if (displayName !== undefined) Context.displayName = displayName
@@ -115,45 +126,6 @@ export function createOlasContext<Api>(displayName?: string): OlasContext<Api> {
   return { Provider, useRoot: useTypedRoot, Context }
 }
 
-/**
- * Hydration boundary for SSR: constructs a `Root<Api>` once on the client
- * with the supplied `DehydratedState` (typically serialized into the HTML
- * by `root.dehydrate()` on the server), then provides it to descendants.
- *
- * Usage:
- *
- * ```tsx
- * // server: render -> root.dehydrate() -> serialize into HTML. Query data
- * // is untrusted text: `serializeForScript` escapes it for the script, so a
- * // `</script>` inside it cannot end the tag.
- * import { serializeForScript } from '@kontsedal/olas-core'
- * const html = `<script>window.__OLAS_STATE__ = ${serializeForScript(root.dehydrate())}</script>`
- *
- * // client entry:
- * <HydrationBoundary
- *   def={appController}
- *   options={{ deps, hydrate: window.__OLAS_STATE__ }}
- * >
- *   <App />
- * </HydrationBoundary>
- * ```
- *
- * The boundary **owns** the root: it is created lazily during the first render
- * (in a ref, so `createRoot`'s side effects don't run twice under StrictMode)
- * and **disposed on unmount**. `options` is read **once** on mount — a new
- * inline `options={{...}}` on a parent re-render is intentionally ignored (so
- * the example above doesn't discard cache state every render). The root is
- * recreated only when the `def` identity changes; to swap it on navigation,
- * pass a different `def` (or re-key the component).
- *
- * **SSR contract.** During server rendering, callers construct a per-request
- * root and pass it to `<OlasProvider root={...} />`, then dispose it after the
- * response. The `HydrationBoundary` shape is the *client-side* mirror — it
- * accepts a controller def + the dehydrated state and produces a root that
- * matches what the server rendered. Rendered on the server, it builds a root
- * that nothing disposes, because a server render runs no effects; a
- * development build warns once when that happens.
- */
 /** Props of `<HydrationBoundary>`. */
 export type HydrationBoundaryProps<Api> = {
   def: import('@kontsedal/olas-core').ControllerDef<void, Api>
@@ -189,6 +161,45 @@ function warnServerBoundary(): void {
   )
 }
 
+/**
+ * Hydration boundary for SSR: constructs a `Root<Api>` once on the client
+ * with the supplied `DehydratedState` (typically serialized into the HTML
+ * by `root.dehydrate()` on the server), then provides it to descendants.
+ *
+ * Usage:
+ *
+ * ```tsx
+ * // server: render -> root.dehydrate() -> serialize into HTML. Query data
+ * // is untrusted text: `serializeForScript` escapes it for the script, so a
+ * // `</script>` inside it cannot end the tag.
+ * import { serializeForScript } from '@kontsedal/olas-core'
+ * const html = `<script>window.__OLAS_STATE__ = ${serializeForScript(root.dehydrate())}</script>`
+ *
+ * // client entry: `hydrate` needs a query engine to land in.
+ * <HydrationBoundary
+ *   def={appController}
+ *   options={{ deps, queries: queryEngine(), hydrate: window.__OLAS_STATE__ }}
+ * >
+ *   <App />
+ * </HydrationBoundary>
+ * ```
+ *
+ * The boundary **owns** the root: it is created lazily during the first render
+ * (in a ref, so `createRoot`'s side effects don't run twice under StrictMode)
+ * and **disposed on unmount**. `options` is read **once** on mount — a new
+ * inline `options={{...}}` on a parent re-render is intentionally ignored (so
+ * the example above doesn't discard cache state every render). The root is
+ * recreated only when the `def` identity changes; to swap it on navigation,
+ * pass a different `def` (or re-key the component).
+ *
+ * **SSR contract.** During server rendering, callers construct a per-request
+ * root and pass it to `<OlasProvider root={...} />`, then dispose it after the
+ * response. The `HydrationBoundary` shape is the *client-side* mirror — it
+ * accepts a controller def + the dehydrated state and produces a root that
+ * matches what the server rendered. Rendered on the server, it builds a root
+ * that nothing disposes, because a server render runs no effects; a
+ * development build warns once when that happens.
+ */
 export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): ReactNode {
   const { def, options, children, streaming = true } = props
   if (__DEV__ && typeof window === 'undefined') warnServerBoundary()

@@ -66,6 +66,18 @@ export type QueryEngineInternals = {
   create(host: QueryEngineHost): QueryClient
 }
 
+/**
+ * Build a query engine, the value `createRoot` takes as `queries` to give a
+ * root a query cache. `options.defaults` sets root-wide query defaults (§5.9).
+ * Each root that adopts the engine builds its own client, so one engine at
+ * module scope can serve several roots.
+ *
+ * @example
+ * ```ts
+ * const queries = queryEngine({ defaults: { staleTime: 30_000, retry: 1 } })
+ * const root = createRoot(app, { deps, queries })
+ * ```
+ */
 export function queryEngine(options: QueryEngineOptions = {}): QueryEngine {
   return {
     [BRAND]: 'queryEngine',

@@ -79,6 +79,19 @@ export type UseValueSelectOptions<T, U> = {
  * ```
  */
 export function useValue<T, U>(signal: ReadSignal<T>, options: UseValueSelectOptions<T, U>): U
+/**
+ * Subscribe to a single read-signal and return its current value: a `signal`,
+ * a `computed`, a `Field`, a `Form` or a `FieldArray`. The component
+ * re-renders when the value changes, as `options.isEqual` (default
+ * `Object.is`) decides. Built on `useSyncExternalStore`.
+ *
+ * @example
+ * ```tsx
+ * function Count({ count }: { count: ReadSignal<number> }) {
+ *   return <span>{useValue(count)}</span>
+ * }
+ * ```
+ */
 export function useValue<T>(signal: ReadSignal<T>, options?: UseValueOptions<T>): T
 export function useValue<T, U = T>(
   signal: ReadSignal<T>,
@@ -326,8 +339,24 @@ function suspendUntilData(subscription: AsyncState<unknown>, snap: QueryState<un
  *  throws. `reset()` does NOT re-suspend either: it clears `error`/`status` but
  *  keeps `data`, so `status` returns to `'success'` (spec §5). There is no
  *  built-in way to force re-suspension short of a fresh subscription.
+ *
+ * @example
+ * ```tsx
+ * function UserCard({ user }: { user: AsyncState<User> }) {
+ *   const { data, error, isLoading } = useQuery(user)
+ *   if (isLoading) return <p>Loading…</p>
+ *   if (error) return <p role="alert">Could not load the user.</p>
+ *   return <h1>{data?.name}</h1>
+ * }
+ * ```
  */
 export function useQuery<T>(subscription: AsyncState<T>): UseQueryResult<T>
+/**
+ * Subscribe a component to an `AsyncState<T>` with Suspense. The hook throws
+ * `subscription.firstValue()` while there is no data, for the nearest
+ * `<Suspense>`, and throws the error of a first load that fails. On success
+ * `data` is `T`. Refetches after the first success do not re-suspend.
+ */
 export function useQuery<T>(
   subscription: AsyncState<T>,
   options: { suspense: true },
@@ -428,6 +457,11 @@ export type UseSuspenseInfiniteQueryResult<TPage, TItem> = Omit<
 export function useInfiniteQuery<TPage, TItem>(
   subscription: InfiniteQuerySubscription<TPage, TItem>,
 ): UseInfiniteQueryResult<TPage, TItem>
+/**
+ * Subscribe a component to an infinite query subscription with Suspense. The
+ * hook suspends until the first page lands, with `useQuery`'s rules, and then
+ * `data` is `TPage[]`.
+ */
 export function useInfiniteQuery<TPage, TItem>(
   subscription: InfiniteQuerySubscription<TPage, TItem>,
   options: { suspense: true },
@@ -488,6 +522,19 @@ export type UseFieldResult<T> = {
  * Subscribe to all signals on a `Field<T>` with a single useSyncExternalStore
  * call. Returns the plain values plus the action methods so a binding to an
  * `<input>` is one destructure. See spec §20.10.
+ *
+ * @example
+ * ```tsx
+ * function NameInput({ field }: { field: Field<string> }) {
+ *   const f = useField(field)
+ *   return (
+ *     <label>
+ *       <input value={f.value} onChange={(e) => f.set(e.target.value)} onBlur={f.markTouched} />
+ *       {f.touched && f.errors[0] && <em>{f.errors[0]}</em>}
+ *     </label>
+ *   )
+ * }
+ * ```
  */
 export function useField<T>(field: Field<T>): UseFieldResult<T> {
   // Memoized `computed` snapshot — see `useQuery` for why this replaces the
@@ -576,6 +623,15 @@ export function useFieldInput<T extends string>(
   field: Field<T>,
   options?: UseFieldInputOptions<T>,
 ): UseFieldInputResult
+/**
+ * JSX-ready spread for a `Field<T>` whose value is not a string. `transform`
+ * converts between the field's value and the input's string: `format` for
+ * `value`, `parse` for each change.
+ *
+ * ```tsx
+ * <input type="number" {...useFieldInput(age, { transform: { parse: Number, format: String } })} />
+ * ```
+ */
 export function useFieldInput<T>(
   field: Field<T>,
   options: UseFieldInputOptions<T> & { transform: FieldTransform<T> },
@@ -689,6 +745,18 @@ export type UseMutationResult<V, R> = {
  *
  * The hook is a subscription layer: concurrency (`latest-wins`, `serial`, …)
  * is configured on the mutation in the controller.
+ *
+ * @example
+ * ```tsx
+ * function SaveButton({ save, draft }: { save: Mutation<string, void>; draft: string }) {
+ *   const { mutate, isPending, isError } = useMutation(save)
+ *   return (
+ *     <button type="button" disabled={isPending} onClick={() => mutate(draft)}>
+ *       {isError ? 'Retry' : 'Save'}
+ *     </button>
+ *   )
+ * }
+ * ```
  */
 export function useMutation<V, R>(
   mutation: Mutation<V, R>,

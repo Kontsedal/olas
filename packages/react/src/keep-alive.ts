@@ -1,5 +1,10 @@
 import { type ReactElement, type ReactNode, useEffect, useLayoutEffect } from 'react'
 
+/**
+ * What `<SuspendOnUnmount>` and `useSuspendOnHidden` pause: an object with
+ * `suspend()` and `resume()`. The handle `ctx.attach(...)` returns fits, and
+ * so does a `Root`.
+ */
 export type SuspendableController = {
   suspend(): void
   resume(): void
@@ -19,6 +24,9 @@ const useIsomorphicLayoutEffect = typeof window !== 'undefined' ? useLayoutEffec
  */
 const refCounts = new WeakMap<SuspendableController, number>()
 
+/** Props of `<SuspendOnUnmount>`. */
+export type SuspendOnUnmountProps = { controller: SuspendableController; children: ReactNode }
+
 /**
  * Wrap a sub-tree so unmount calls `controller.suspend()` and re-mount
  * calls `controller.resume()` instead of disposing. The React tree is
@@ -36,9 +44,6 @@ const refCounts = new WeakMap<SuspendableController, number>()
  * screen's unmount can't suspend a controller the entering screen still uses
  * (T4.6). `suspend()` should still be idempotent for safety.
  */
-/** Props of `<SuspendOnUnmount>`. */
-export type SuspendOnUnmountProps = { controller: SuspendableController; children: ReactNode }
-
 export function SuspendOnUnmount(props: SuspendOnUnmountProps): ReactElement {
   const { controller, children } = props
   useIsomorphicLayoutEffect(() => {

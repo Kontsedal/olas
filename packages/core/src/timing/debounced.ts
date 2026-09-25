@@ -2,6 +2,16 @@ import { effect, signal } from '../signals'
 import { readOnly } from '../signals/readonly'
 import type { ReadSignal } from '../signals/types'
 
+/** Options for `debounced` and `throttled`. */
+export type TimingOptions = {
+  /** Aborting it stops the timer and releases the source subscription. */
+  signal?: AbortSignal
+  /** Emit on the leading edge of a window. */
+  leading?: boolean
+  /** Emit on the trailing edge of a window. */
+  trailing?: boolean
+}
+
 /**
  * A `ReadSignal<T>` returned by `debounced` / `throttled`. Extends the
  * subscription surface with manual `cancel()` and `flush()`.
@@ -15,16 +25,6 @@ import type { ReadSignal } from '../signals/types'
  *
  * Both are no-ops when nothing is pending.
  */
-/** Options for `debounced` and `throttled`. */
-export type TimingOptions = {
-  /** Aborting it stops the timer and releases the source subscription. */
-  signal?: AbortSignal
-  /** Emit on the leading edge of a window. */
-  leading?: boolean
-  /** Emit on the trailing edge of a window. */
-  trailing?: boolean
-}
-
 export type TimingSignal<T> = ReadSignal<T> & {
   cancel(): void
   flush(): void

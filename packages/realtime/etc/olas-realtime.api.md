@@ -7,7 +7,7 @@
 import { Ctx } from '@kontsedal/olas-core';
 import { ReadSignal } from '@kontsedal/olas-core';
 
-// @public (undocumented)
+// @public
 export type ConnectionState = 'connected' | 'reconnecting' | 'offline' | 'unknown';
 
 // @public

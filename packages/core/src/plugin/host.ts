@@ -273,7 +273,26 @@ function compose<C>(
   return next()
 }
 
-/** Identity helper that types an object literal as an `OlasPlugin`. */
+/**
+ * Identity helper that types an object literal as an `OlasPlugin`.
+ *
+ * @example
+ * ```ts
+ * export const fetchTimer = definePlugin({
+ *   name: 'fetch-timer',
+ *   setup: () => ({
+ *     wrapFetch: async (context, next) => {
+ *       const start = performance.now()
+ *       try {
+ *         return await next()
+ *       } finally {
+ *         console.log(context.query.id, performance.now() - start)
+ *       }
+ *     },
+ *   }),
+ * })
+ * ```
+ */
 export function definePlugin(plugin: OlasPlugin): OlasPlugin {
   return plugin
 }

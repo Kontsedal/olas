@@ -237,6 +237,13 @@ function buildRootHandle<Api>(
  * `api: ApiClient`, a root whose `deps` has no `api` does not compile. Extra
  * members are allowed. `createTestController` does not check, so a test can
  * pass only the fakes the controller under test reads.
+ *
+ * @example
+ * ```ts
+ * const root = createRoot(counter, { deps, queries: queryEngine() })
+ * root.api.increment()
+ * root.dispose()
+ * ```
  */
 export function createRoot<Api, TDeps extends AmbientDeps = AmbientDeps>(
   def: ControllerDef<void, Api>,

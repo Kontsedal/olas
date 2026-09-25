@@ -25,6 +25,17 @@ export type DefineControllerOptions = {
  *
  * `Props` defaults to `void` so a factory written as `(ctx) => ...` is typed
  * as `ControllerDef<void, Api>` — the form `createRoot` requires.
+ *
+ * @example
+ * ```ts
+ * export const counter = defineController(
+ *   (ctx) => {
+ *     const count = signal(0)
+ *     return { count, increment: () => count.update((n) => n + 1) }
+ *   },
+ *   { name: 'counter' },
+ * )
+ * ```
  */
 export function defineController<Props = void, Api = unknown>(
   factory: (ctx: Ctx, props: Props) => Api,

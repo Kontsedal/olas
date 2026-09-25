@@ -53,7 +53,7 @@ export const reactMutation: Transform;
 // @public
 export const removedApis: Transform;
 
-// @public (undocumented)
+// @public
 export type Rename = {
     readonly pkg: string;
     readonly from: string;
@@ -72,13 +72,13 @@ export const rootOptions: Transform;
 // @public
 export function runCodemod(files: readonly SourceFile[], options: RunOptions): RunResult;
 
-// @public (undocumented)
+// @public
 export type RunOptions = {
     readonly rootDir: string; /** The transforms to run, in order. Defaults to every 1.0 transform. */
     readonly transforms?: readonly Transform[];
 };
 
-// @public (undocumented)
+// @public
 export type RunResult = {
     readonly summaries: readonly TransformSummary[]; /** Every TODO, sorted by file and line, without duplicates. */
     readonly todos: readonly Todo[]; /** The files whose text differs from before the run. Nothing is saved. */

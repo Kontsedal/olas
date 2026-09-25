@@ -17,8 +17,14 @@ export type Scope<T> = {
   readonly [PHANTOM]?: T
 }
 
+/** Options for `defineScope`. */
 export type ScopeOptions<T> = {
+  /**
+   * What `ctx.inject` returns when no ancestor provided the scope. Without
+   * one, `inject` throws.
+   */
   default?: T
+  /** Labels the scope in error messages. */
   name?: string
 }
 

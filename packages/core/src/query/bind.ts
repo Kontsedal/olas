@@ -32,17 +32,34 @@ import { createInfiniteUse, createUse } from './use'
  *
  * Needs a query engine on the root:
  * `createRoot(def, { deps, queries: queryEngine() })`.
+ *
+ * With `options.select`, the subscription reports `select(data)`. The
+ * projection runs per subscriber, and the cache keeps the raw value.
  */
 export function createQuery<Args extends unknown[], T, U>(
   ctx: Ctx,
   source: Query<Args, T>,
   options: QuerySelectOptions<readonly [...Args], T, U>,
 ): QuerySubscription<U>
+/**
+ * Subscribe this controller to a shared cache entry (§5.2). The third argument
+ * is a key thunk, or `{ key, enabled, keepDataWhileDisabled }`. A key thunk
+ * that reads signals re-keys the subscription when they change.
+ *
+ * Needs a query engine on the root.
+ */
 export function createQuery<Args extends unknown[], T>(
   ctx: Ctx,
   source: Query<Args, T>,
   keyOrOptions?: (() => readonly [...Args]) | QuerySubscriptionOptions<Args>,
 ): QuerySubscription<T>
+/**
+ * Subscribe this controller to an infinite query (§5.11). The subscription
+ * adds `pages`, `flat` and the paging state and actions to the
+ * `AsyncState<TPage[]>` surface.
+ *
+ * Needs a query engine on the root.
+ */
 export function createQuery<Args extends unknown[], TPage, TItem>(
   ctx: Ctx,
   source: InfiniteQuery<Args, TPage, TItem>,
@@ -141,6 +158,13 @@ export function createMutation<V, R>(
   def: MutationDef<V, R>,
   hooks?: MutationHooks<V, R>,
 ): Mutation<V, R>
+/**
+ * A write owned by this controller's lifetime, from an inline spec (§6): the
+ * write, its policy and its lifecycle hooks in one object. `id` is optional
+ * here. Devtools, error contexts and plugins name the mutation by it.
+ *
+ * Needs a query engine on the root.
+ */
 export function createMutation<V, R>(ctx: Ctx, spec: MutationSpec<V, R>): Mutation<V, R>
 export function createMutation<V, R>(
   ctx: Ctx,
@@ -172,12 +196,28 @@ export function createMutation<V, R>(
  * Bind a query value to this controller's root, for imperative reads and
  * writes outside a subscription (§5.5, §6.4). `options.origin` tags the
  * handle's writes for plugins.
+ *
+ * @example
+ * ```ts
+ * const userMenu = defineController((ctx) => {
+ *   const users = bindQuery(ctx, userQuery)
+ *   return {
+ *     prefetchUser: (id: string) => users.prefetch(id),
+ *     refreshUser: (id: string) => users.invalidate(id),
+ *   }
+ * })
+ * ```
  */
 export function bindQuery<Args extends unknown[], T>(
   ctx: Ctx,
   query: Query<Args, T>,
   options?: BindQueryOptions,
 ): QueryActions<Args, T>
+/**
+ * Bind an infinite query to this controller's root (§5.11). The handle's
+ * methods act on the entry's pages array. `options.origin` tags the handle's
+ * writes for plugins.
+ */
 export function bindQuery<Args extends unknown[], TPage, TItem>(
   ctx: Ctx,
   query: InfiniteQuery<Args, TPage, TItem>,

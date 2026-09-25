@@ -22,8 +22,11 @@ import type {
  * A reactive form field owned by this controller's lifetime (§8.1).
  *
  * ```ts
- * const email = createField(ctx, '', { validators: [required('Required')] })
+ * const email = createField<string>(ctx, '', { validators: [required('Required')] })
  * ```
+ *
+ * `T` is inferred from `initial`. With `validators`, a literal such as `''`
+ * stays literal (`Field<''>`), so name the type as above.
  *
  * A free function rather than a `ctx` method, so a controller that never builds
  * a field does not ship the forms subsystem.
@@ -86,8 +89,11 @@ export function createForm<S extends FormSchema>(
  * A dynamic list of fields or forms (§8.5).
  *
  * ```ts
- * const lines = createFieldArray(ctx, () => createField(ctx, ''))
+ * const lines = createFieldArray(ctx, (initial?: string) => createField(ctx, initial ?? ''))
  * ```
+ *
+ * `add(value)` and `insert(index, value)` pass `value` to the factory, so a
+ * factory that ignores its argument builds every item from its own default.
  */
 export function createFieldArray<I extends Field<any> | Form<any>>(
   ctx: Ctx,

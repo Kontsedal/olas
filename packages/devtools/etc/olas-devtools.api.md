@@ -61,10 +61,10 @@ export type ControllerNode = {
 // @public
 export const DEFAULT_MAX_TIMELINE_ENTRIES = 10000;
 
-// @public (undocumented)
+// @public
 export function DevtoolsLauncher(props: DevtoolsLauncherProps): ReactElement;
 
-// @public (undocumented)
+// @public
 export type DevtoolsLauncherProps = {
     root: Pick<Root<unknown>, 'debug'>; /** Default panel tab. */
     defaultTab?: DevtoolsTab; /** Cap on each event log. */
@@ -83,7 +83,7 @@ export type DevtoolsLauncherProps = {
 // @public
 export function DevtoolsPanel(props: DevtoolsPanelProps): ReactElement;
 
-// @public (undocumented)
+// @public
 export type DevtoolsPanelProps = {
     root: Pick<Root<unknown>, 'debug'>; /** Initial tab. Default: `'timeline'`. */
     defaultTab?: DevtoolsTab; /** Cap on each event log. Default: 100. */
@@ -96,19 +96,16 @@ export type DevtoolsPanelProps = {
 export class DevtoolsStore {
     constructor(options?: DevtoolsStoreOptions);
     attach(root: Pick<Root<unknown>, 'debug'>): () => void;
-    // (undocumented)
     readonly cache$: ReadSignal<CacheEntry[]>;
     readonly cacheState$: Signal<DebugCacheEntry[]>;
     clearLogs(): void;
     readonly droppedEvents$: ReadSignal<number>;
     readonly events$: ReadSignal<TimelineEvent[]>;
-    // (undocumented)
     readonly fields$: ReadSignal<FieldEntry[]>;
     flushPending(): void;
     handle(event: DebugEvent): void;
     isPaused(): boolean;
     readonly maxTimelineEntries: number;
-    // (undocumented)
     readonly mutations$: ReadSignal<MutationEntry[]>;
     pause(): void;
     resume(): void;
@@ -118,7 +115,7 @@ export class DevtoolsStore {
     readonly tree$: ReadSignal<ControllerNode>;
 }
 
-// @public (undocumented)
+// @public
 export type DevtoolsStoreOptions = {
     maxEntries?: number; /** Ring-buffer capacity of the unified timeline (`events$`). Default 10,000. */
     maxTimelineEntries?: number; /** Cap on retained disposed controller nodes. Earliest-disposed subtrees drop first. */
@@ -128,7 +125,7 @@ export type DevtoolsStoreOptions = {
     cancelSchedule?: (handle: number) => void;
 };
 
-// @public (undocumented)
+// @public
 export type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields';
 
 // @public

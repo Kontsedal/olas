@@ -19,6 +19,10 @@
 
 export const PROTOCOL_VERSION = 1
 
+/**
+ * What a tab posts when the app writes a synced query's data outside a fetch
+ * or hydration. A receiving tab writes `data` into the same entry.
+ */
 export type SetDataMessage = {
   v: typeof PROTOCOL_VERSION
   type: 'setData'
@@ -31,6 +35,10 @@ export type SetDataMessage = {
   pageParams?: readonly unknown[]
 }
 
+/**
+ * What a tab posts when the app invalidates a synced query entry. A receiving
+ * tab invalidates the same entry.
+ */
 export type InvalidateMessage = {
   v: typeof PROTOCOL_VERSION
   type: 'invalidate'
@@ -40,4 +48,5 @@ export type InvalidateMessage = {
   keyArgs: readonly unknown[]
 }
 
+/** A message on the channel, told apart by `type`. */
 export type Message = SetDataMessage | InvalidateMessage

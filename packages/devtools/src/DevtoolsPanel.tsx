@@ -34,6 +34,7 @@ import {
 } from './util'
 import { type Toggles, useToggles, VirtualList } from './virtual'
 
+/** A panel tab, by id. `defaultTab` takes one. */
 export type DevtoolsTab = 'timeline' | 'tree' | 'cache' | 'inspector' | 'mutations' | 'fields'
 
 /** Each tab: its id, its label, and the short label a narrow panel shows. */
@@ -47,6 +48,7 @@ const TAB_LABELS: ReadonlyArray<readonly [DevtoolsTab, string, string]> = [
 ]
 const TABS: readonly DevtoolsTab[] = TAB_LABELS.map(([name]) => name)
 
+/** Props of `<DevtoolsPanel>`. */
 export type DevtoolsPanelProps = {
   /** The root to inspect. The panel subscribes to `root.debug` on mount. */
   root: Pick<Root<unknown>, 'debug'>

@@ -24,7 +24,7 @@ import { ReadSignal } from '@kontsedal/olas-core';
 import { Root } from '@kontsedal/olas-core';
 import { RootOptions } from '@kontsedal/olas-core';
 
-// @public (undocumented)
+// @public
 export function createOlasContext<Api>(displayName?: string): OlasContext<Api>;
 
 // @public
@@ -33,7 +33,7 @@ export function createStreamingHydrator(options?: StreamingHydratorOptions): Str
 // @public
 export function createStreamingTransform(flush: () => string): TransformStream<Uint8Array, Uint8Array>;
 
-// @public (undocumented)
+// @public
 export function HydrationBoundary<Api>(props: HydrationBoundaryProps<Api>): ReactNode;
 
 // @public
@@ -63,7 +63,7 @@ export type OlasContext<Api> = {
     Context: Context<Root<Api> | null>;
 };
 
-// @public (undocumented)
+// @public
 export function OlasProvider(props: OlasProviderProps): FunctionComponentElement<ProviderProps<Root<unknown> | null>>;
 
 // @public
@@ -95,13 +95,13 @@ export type StreamingHydratorOptions = {
     nonce?: string;
 };
 
-// @public (undocumented)
+// @public
 export type SuspendableController = {
     suspend(): void;
     resume(): void;
 };
 
-// @public (undocumented)
+// @public
 export function SuspendOnUnmount(props: SuspendOnUnmountProps): ReactElement;
 
 // @public
@@ -116,7 +116,7 @@ export function useField<T>(field: Field<T>): UseFieldResult<T>;
 // @public
 export function useFieldInput<T extends string>(field: Field<T>, options?: UseFieldInputOptions<T>): UseFieldInputResult;
 
-// @public (undocumented)
+// @public
 export function useFieldInput<T>(field: Field<T>, options: UseFieldInputOptions<T> & {
     transform: FieldTransform<T>;
 }): UseFieldInputResult;
@@ -157,7 +157,7 @@ export type UseFieldResult<T> = {
 // @public
 export function useInfiniteQuery<TPage, TItem>(subscription: InfiniteQuerySubscription<TPage, TItem>): UseInfiniteQueryResult<TPage, TItem>;
 
-// @public (undocumented)
+// @public
 export function useInfiniteQuery<TPage, TItem>(subscription: InfiniteQuerySubscription<TPage, TItem>, options: {
     suspense: true;
 }): UseSuspenseInfiniteQueryResult<TPage, TItem>;
@@ -202,7 +202,7 @@ export type UseMutationResult<V, R> = {
 // @public
 export function useQuery<T>(subscription: AsyncState<T>): UseQueryResult<T>;
 
-// @public (undocumented)
+// @public
 export function useQuery<T>(subscription: AsyncState<T>, options: {
     suspense: true;
 }): UseSuspenseQueryResult<T>;
@@ -246,7 +246,7 @@ export type UseSuspenseQueryResult<T> = Omit<UseQueryResult<T>, 'data'> & {
 // @public
 export function useValue<T, U>(signal: ReadSignal<T>, options: UseValueSelectOptions<T, U>): U;
 
-// @public (undocumented)
+// @public
 export function useValue<T>(signal: ReadSignal<T>, options?: UseValueOptions<T>): T;
 
 // @public

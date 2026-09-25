@@ -14,6 +14,7 @@ export type TransformSummary = {
   readonly todos: number
 }
 
+/** Options for `runCodemod(files, options)`. */
 export type RunOptions = {
   /** Directory that placeholder ids are relative to: the project root. */
   readonly rootDir: string
@@ -21,7 +22,12 @@ export type RunOptions = {
   readonly transforms?: readonly Transform[]
 }
 
+/**
+ * What `runCodemod` returns. The run edits the files in memory only, so the
+ * caller saves `changed` and prints `todos`.
+ */
 export type RunResult = {
+  /** One per transform, in the order they ran. */
   readonly summaries: readonly TransformSummary[]
   /** Every TODO, sorted by file and line, without duplicates. */
   readonly todos: readonly Todo[]

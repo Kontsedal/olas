@@ -1,20 +1,26 @@
 /**
- * Standard Schema v1 — the cross-library validation contract adopted by
- * Zod 4, Valibot 1, ArkType 2, and others. See https://standardschema.dev.
- *
- * We type-only-import the shape so consumers don't take a new runtime dep:
- * any object with a `~standard.validate(value)` method conforming to this
- * structure works.
+ * One failure a Standard Schema reports: its message, and the path to the
+ * value that failed. `validator(schema)` turns each into a `FormIssue`.
  */
 export type StandardSchemaV1Issue = {
   readonly message: string
   readonly path?: ReadonlyArray<PropertyKey | { readonly key: PropertyKey }>
 }
 
+/** What a Standard Schema's `validate` returns: the parsed `value`, or the `issues`. */
 export type StandardSchemaV1Result<O> =
   | { readonly value: O; readonly issues?: undefined }
   | { readonly issues: ReadonlyArray<StandardSchemaV1Issue> }
 
+/**
+ * Standard Schema v1 — the cross-library validation contract adopted by
+ * Zod 4, Valibot 1, ArkType 2, and others. See https://standardschema.dev.
+ * `I` is the schema's input type and `O` its output type.
+ *
+ * We type-only-import the shape so consumers don't take a new runtime dep:
+ * any object with a `~standard.validate(value)` method conforming to this
+ * structure works. `validator(schema)` wraps one as a `Validator`.
+ */
 export type StandardSchemaV1<I = unknown, O = I> = {
   readonly '~standard': {
     readonly version: 1

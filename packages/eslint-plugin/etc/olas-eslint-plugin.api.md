@@ -16,11 +16,11 @@ export type OlasEslintPlugin = ESLint.Plugin & {
     };
 };
 
-// @public (undocumented)
+// @public
 const plugin: OlasEslintPlugin;
 export default plugin;
 
-// @public (undocumented)
+// @public
 export const rules: {
     'cancel-before-optimistic': TSESLint.RuleModule<"missing", [], unknown, TSESLint.RuleListener> & {
         name: string;

@@ -12,7 +12,6 @@ export type ActivityEvent = {
 
 // @public
 export interface AmbientDeps {
-    // (undocumented)
     [key: string]: unknown;
 }
 
@@ -43,7 +42,7 @@ export function batch<T>(fn: () => T): T;
 // @public
 export function bindQuery<Args extends unknown[], T>(ctx: Ctx, query: Query<Args, T>, options?: BindQueryOptions): QueryActions<Args, T>;
 
-// @public (undocumented)
+// @public
 export function bindQuery<Args extends unknown[], TPage, TItem>(ctx: Ctx, query: InfiniteQuery<Args, TPage, TItem>, options?: BindQueryOptions): InfiniteQueryActions<Args, TPage, TItem>;
 
 // @public
@@ -132,16 +131,16 @@ export function createForm<S extends FormSchema>(ctx: Ctx, schema: S, options?: 
 // @public
 export function createMutation<V, R>(ctx: Ctx, def: MutationDef<V, R>, hooks?: MutationHooks<V, R>): Mutation<V, R>;
 
-// @public (undocumented)
+// @public
 export function createMutation<V, R>(ctx: Ctx, spec: MutationSpec<V, R>): Mutation<V, R>;
 
 // @public
 export function createQuery<Args extends unknown[], T, U>(ctx: Ctx, source: Query<Args, T>, options: QuerySelectOptions<readonly [...Args], T, U>): QuerySubscription<U>;
 
-// @public (undocumented)
+// @public
 export function createQuery<Args extends unknown[], T>(ctx: Ctx, source: Query<Args, T>, keyOrOptions?: (() => readonly [...Args]) | QuerySubscriptionOptions<Args>): QuerySubscription<T>;
 
-// @public (undocumented)
+// @public
 export function createQuery<Args extends unknown[], TPage, TItem>(ctx: Ctx, source: InfiniteQuery<Args, TPage, TItem>, keyOrOptions?: (() => readonly [...Args]) | QuerySubscriptionOptions<Args>): InfiniteQuerySubscription<TPage, TItem>;
 
 // @public
@@ -352,7 +351,7 @@ export type DebugEventMeta = {
     causeId?: string;
 };
 
-// @public (undocumented)
+// @public
 export type DeepPartial<T> = T extends object ? T extends ReadonlyArray<infer U> ? ReadonlyArray<DeepPartial<U>> : { [K in keyof T]?: DeepPartial<T[K]> } : T;
 
 // @public
@@ -482,19 +481,19 @@ export type FieldArray<I extends Field<any> | Form<any>> = ReadSignal<FieldArray
     dispose(): void;
 };
 
-// @public (undocumented)
+// @public
 export type FieldArrayItemErrors<I> = I extends Field<any> ? string[] : I extends Form<infer S> ? FormErrors<S> : never;
 
-// @public (undocumented)
+// @public
 export type FieldArrayOptions<I> = {
-    initial?: Array<ItemInitial<I>>;
+    initial?: Array<ItemInitial<I>>; /** Array-level validators, which see every item's value. */
     validators?: FieldArrayValidator<I>[];
 };
 
-// @public (undocumented)
+// @public
 export type FieldArrayValidator<I> = Validator<FieldArrayValue<I>>;
 
-// @public (undocumented)
+// @public
 export type FieldArrayValue<I> = I extends Field<infer T> ? T[] : I extends Form<infer S> ? FormValue<S>[] : never;
 
 // @public
@@ -537,7 +536,7 @@ export type Form<S extends FormSchema> = ReadSignal<FormValue<S>> & {
     dispose(): void;
 };
 
-// @public (undocumented)
+// @public
 export type FormErrors<S extends FormSchema> = { [K in keyof S]?: S[K] extends Field<any> ? string[] | undefined : S[K] extends Form<infer SS> ? FormErrors<SS> : S[K] extends FieldArray<infer I> ? Array<FieldArrayItemErrors<I> | undefined> : never };
 
 // @public
@@ -546,22 +545,22 @@ export type FormIssue = {
     message: string;
 };
 
-// @public (undocumented)
+// @public
 export type FormOptions<S extends FormSchema> = {
-    initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>;
+    initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>; /** Form-level validators, which see the whole value. */
     validators?: FormValidator<S>[];
     resetOnInitialChange?: 'when-clean' | 'never' | 'always';
 };
 
-// @public (undocumented)
+// @public
 export type FormSchema = {
     [key: string]: Field<any> | Form<any> | FieldArray<any>;
 };
 
-// @public (undocumented)
+// @public
 export type FormValidator<S extends FormSchema> = Validator<FormValue<S>>;
 
-// @public (undocumented)
+// @public
 export type FormValue<S extends FormSchema> = { [K in keyof S]: S[K] extends Field<infer T> ? T : S[K] extends Form<infer SS> ? FormValue<SS> : S[K] extends FieldArray<infer I> ? FieldArrayValue<I> : never };
 
 // @public
@@ -632,7 +631,7 @@ export type InvalidateEvent = {
 // @public
 export function isAbortError(err: unknown): boolean;
 
-// @public (undocumented)
+// @public
 export type ItemInitial<I> = I extends Field<infer T> ? T : I extends Form<infer S> ? DeepPartial<FormValue<S>> : never;
 
 // @public
@@ -848,7 +847,7 @@ export type QueryEngine = {
     readonly [BRAND]: 'queryEngine';
 };
 
-// @public (undocumented)
+// @public
 export function queryEngine(options?: QueryEngineOptions): QueryEngine;
 
 // @public
@@ -973,9 +972,9 @@ export type Scope<T> = {
     readonly [PHANTOM]?: T;
 };
 
-// @public (undocumented)
+// @public
 export type ScopeOptions<T> = {
-    default?: T;
+    default?: T; /** Labels the scope in error messages. */
     name?: string;
 };
 
@@ -1015,7 +1014,7 @@ export type Snapshot = {
     finalize: () => void;
 };
 
-// @public (undocumented)
+// @public
 export type StandardSchemaV1<I = unknown, O = I> = {
     readonly '~standard': {
         readonly version: 1;
@@ -1036,7 +1035,7 @@ export type StandardSchemaV1Issue = {
     }>;
 };
 
-// @public (undocumented)
+// @public
 export type StandardSchemaV1Result<O> = {
     readonly value: O;
     readonly issues?: undefined;
@@ -1079,7 +1078,7 @@ export type TimingOptions = {
     trailing?: boolean;
 };
 
-// @public (undocumented)
+// @public
 export type TimingSignal<T> = ReadSignal<T> & {
     cancel(): void;
     flush(): void;
@@ -1092,7 +1091,7 @@ export function untracked<T>(fn: () => T): T;
 // @public
 export type ValidateOn = 'change' | 'blur' | 'submit';
 
-// @public (undocumented)
+// @public
 export type Validator<T> = (value: T, signal: AbortSignal) => ValidatorResult | Promise<ValidatorResult>;
 
 // @public

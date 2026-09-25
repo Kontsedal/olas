@@ -3,10 +3,18 @@ import type { ReadSignal } from '../signals/types'
 import type { ValidateOn } from './field'
 import type { Validator } from './types'
 
+/**
+ * What `createForm` takes: an object of fields, nested forms and field arrays.
+ * Its keys name the form's value, its errors and the paths `setErrors` takes.
+ */
 export type FormSchema = {
   [key: string]: Field<any> | Form<any> | FieldArray<any>
 }
 
+/**
+ * The plain value of a `Form<S>`, under the schema's keys: a field's `T`, a
+ * nested form's `FormValue` and a field array's array of item values.
+ */
 export type FormValue<S extends FormSchema> = {
   [K in keyof S]: S[K] extends Field<infer T>
     ? T
@@ -17,6 +25,11 @@ export type FormValue<S extends FormSchema> = {
         : never
 }
 
+/**
+ * The errors of a `Form<S>`, in the schema's shape: `string[] | undefined` for
+ * a field, a nested `FormErrors` for a nested form, and one entry per item for
+ * a field array. Every key is optional.
+ */
 export type FormErrors<S extends FormSchema> = {
   [K in keyof S]?: S[K] extends Field<any>
     ? string[] | undefined
@@ -27,24 +40,50 @@ export type FormErrors<S extends FormSchema> = {
         : never
 }
 
+/**
+ * The value of a `FieldArray<I>`: `T[]` for `Field<T>` items, and
+ * `FormValue<S>[]` for `Form<S>` items.
+ */
 export type FieldArrayValue<I> =
   I extends Field<infer T> ? T[] : I extends Form<infer S> ? FormValue<S>[] : never
 
+/** The errors of one field-array item: `string[]` for a field, `FormErrors<S>` for a form. */
 export type FieldArrayItemErrors<I> =
   I extends Field<any> ? string[] : I extends Form<infer S> ? FormErrors<S> : never
 
+/**
+ * What seeds one field-array item: the field's `T`, or a `DeepPartial` of the
+ * form's value. `add` and `insert` pass it to the item factory.
+ */
 export type ItemInitial<I> =
   I extends Field<infer T> ? T : I extends Form<infer S> ? DeepPartial<FormValue<S>> : never
 
+/**
+ * `T` with every property optional, at every depth. An array becomes a
+ * `ReadonlyArray` of deep-partial items. `Form.set` and a form's `initial` take
+ * it, so a caller names only the leaves it writes.
+ */
 export type DeepPartial<T> = T extends object
   ? T extends ReadonlyArray<infer U>
     ? ReadonlyArray<DeepPartial<U>>
     : { [K in keyof T]?: DeepPartial<T[K]> }
   : T
 
+/**
+ * A form-level validator, for rules across fields. It sees the whole
+ * `FormValue<S>`. A `string` result lands in the form's `topLevelErrors`, and
+ * a `FormIssue[]` routes each message to the field its `path` names.
+ */
 export type FormValidator<S extends FormSchema> = Validator<FormValue<S>>
+
+/**
+ * An array-level validator, for rules such as "at least one item". It sees
+ * every item's value. A `string` result lands in the array's `topLevelErrors`,
+ * and a `FormIssue[]` routes each message by its `path`, item index first.
+ */
 export type FieldArrayValidator<I> = Validator<FieldArrayValue<I>>
 
+/** Options for `createForm(ctx, schema, options?)`. */
 export type FormOptions<S extends FormSchema> = {
   /**
    * Initial values for the form. A function form is **tracked** — if the
@@ -54,6 +93,7 @@ export type FormOptions<S extends FormSchema> = {
    * `resetOnInitialChange` for opt-out. Spec §8.4.
    */
   initial?: (() => DeepPartial<FormValue<S>> | undefined) | DeepPartial<FormValue<S>>
+  /** Form-level validators, which see the whole value. */
   validators?: FormValidator<S>[]
   /**
    * When `initial` is a function and one of its tracked deps changes:
@@ -77,8 +117,11 @@ export type FieldOptions<T> = {
   validateOn?: ValidateOn
 }
 
+/** Options for `createFieldArray(ctx, itemFactory, options?)`. */
 export type FieldArrayOptions<I> = {
+  /** One item per entry, each built by the item factory from its value. */
   initial?: Array<ItemInitial<I>>
+  /** Array-level validators, which see every item's value. */
   validators?: FieldArrayValidator<I>[]
 }
 
