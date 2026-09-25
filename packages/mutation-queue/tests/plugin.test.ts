@@ -583,6 +583,63 @@ describe('mutationQueuePlugin — dedupe + cancel contract (T6.2)', () => {
     expect(adapter.store.size).toBe(1) // NOT two entries
     hooks.dispose()
   })
+
+  test('a replay that drops an entry releases its dedupe key', async () => {
+    // A failed run keeps its entry and its key for a replay. When the replay
+    // drops the entry, the key must go too: left pointing at a runId that is
+    // gone, it made the next run with that key collapse onto nothing, write
+    // no entry, and vanish on a reload.
+    const id = 'mq-test/replay-releases-key'
+    _unregisterMutationById(id)
+    const adapter = memoryAdapter()
+    const outcomes: Array<'fail' | 'ok' | 'hang'> = ['fail', 'ok', 'hang']
+    const save = defineMutation({
+      id,
+      meta: { persist: true },
+      mutate: (_vars: { key: string; n: number }) => {
+        const outcome = outcomes.shift()
+        if (outcome === 'fail') return Promise.reject(new Error('server 500'))
+        if (outcome === 'ok') return Promise.resolve('ok')
+        return new Promise<string>(() => {})
+      },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ save: createMutation(ctx, save) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        onError: () => {},
+        plugins: [
+          mutationQueuePlugin({
+            storage: adapter,
+            keyPrefix: 'test/mq/replay-key',
+            dedupeBy: (_id, vars) => (vars as { key: string }).key,
+          }),
+        ],
+      },
+    )
+    try {
+      await settle()
+
+      await root.api.save.run({ key: 'K', n: 1 }).catch(() => {})
+      await settle()
+      expect(adapter.store.size).toBe(1) // retained for a replay, key still held
+
+      await root.inject(MutationQueue).replayNow()
+      await settle()
+      expect(adapter.store.size).toBe(0) // the replay landed it
+
+      void root.api.save.run({ key: 'K', n: 2 }).catch(() => {})
+      await settle()
+      // A new operation under the released key: it is durable while in flight.
+      expect(adapter.store.size).toBe(1)
+      const [stored] = [...adapter.store.values()]
+      expect((JSON.parse(stored as string) as QueueEntry).variables).toEqual({ key: 'K', n: 2 })
+    } finally {
+      // The last run never settles; the root's dispose cancels it.
+      root.dispose()
+    }
+  })
 })
 
 describe('mutationQueuePlugin — replay reconciliation + manual/online drive (T6.2)', () => {

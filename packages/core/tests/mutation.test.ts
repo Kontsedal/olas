@@ -4,7 +4,7 @@ import { createRoot, defineController } from '../src/controller'
 import { defineQuery } from '../src/query/define'
 import { queryEngine } from '../src/query/engine'
 import { MutationDisposedError } from '../src/query/mutation'
-import type { Snapshot } from '../src/query/types'
+import type { RetryPolicy, Snapshot } from '../src/query/types'
 import { isAbortError } from '../src/utils'
 
 const emptyDeps = {}
@@ -443,6 +443,30 @@ describe('ctx.mutation — retry', () => {
     const err = await p
     expect(attempts).toBe(3)
     expect(err.message).toBe('fail-3')
+    root.dispose()
+  })
+
+  test('retry: false never retries, and the error mutate threw reaches the caller (§5.2)', async () => {
+    let attempts = 0
+    const def = defineController((ctx) => ({
+      save: createMutation(ctx, {
+        mutate: async () => {
+          attempts++
+          throw new Error('save failed')
+        },
+        // `false` is a `RetryPolicy` per SPEC §5.2; the cast covers a
+        // `RetryPolicy` type that does not list it yet.
+        retry: false as unknown as RetryPolicy,
+      }),
+    }))
+    const root = createRoot(def, { queries: queryEngine(), deps: emptyDeps })
+    const p = root.api.save.run().catch((e) => e as Error)
+    await vi.advanceTimersByTimeAsync(0)
+    const err = await p
+    expect(attempts).toBe(1)
+    // Not "retry is not a function": the loop must not call `false`.
+    expect(err.message).toBe('save failed')
+    expect((root.api.save.error.value as Error).message).toBe('save failed')
     root.dispose()
   })
 })

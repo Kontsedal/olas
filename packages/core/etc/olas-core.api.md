@@ -728,9 +728,10 @@ export type MutationEvent = {
     readonly mutation: MutationRef;
     readonly runId: string;
     readonly variables: unknown;
-    readonly phase: 'start' | 'success' | 'error' | 'cancel';
+    readonly phase: 'queued' | 'start' | 'success' | 'error' | 'cancel';
     readonly result?: unknown;
     readonly error?: unknown;
+    readonly reason?: 'superseded' | 'reset' | 'dispose';
     readonly origin: string | undefined;
 };
 
@@ -936,7 +937,7 @@ export const required: <T>(message?: string) => Validator<T>;
 export type RetryDelay = number | ((attempt: number) => number);
 
 // @public
-export type RetryPolicy = number | ((attempt: number, error: unknown) => boolean);
+export type RetryPolicy = false | number | ((attempt: number, error: unknown) => boolean);
 
 // @public
 export type Root<Api> = {

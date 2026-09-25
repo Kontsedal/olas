@@ -262,7 +262,13 @@ export type MutationRef = {
  * One step of a mutation run. Every run emits `'start'` (after `onMutate`,
  * before the first `mutate` call) and then exactly one of `'success'`,
  * `'error'` (retries exhausted) or `'cancel'` (a supersede, `reset()`, or
- * the owner's disposal).
+ * the owner's disposal; `reason` says which).
+ *
+ * A `serial` run that has to wait behind another emits `'queued'` first, when
+ * `run(...)` is called, under the `runId` it keeps. It then emits `'start'`
+ * when its turn comes. A queued run that never starts still emits exactly one
+ * outcome: `'cancel'` when `reset()` or the owner's disposal drops it, or
+ * `'error'` when its `onMutate` throws.
  */
 export type MutationEvent = {
   readonly mutation: MutationRef
@@ -271,7 +277,7 @@ export type MutationEvent = {
    */
   readonly runId: string
   readonly variables: unknown
-  readonly phase: 'start' | 'success' | 'error' | 'cancel'
+  readonly phase: 'queued' | 'start' | 'success' | 'error' | 'cancel'
   /**
    * The resolved value, on `'success'`.
    */
@@ -280,6 +286,14 @@ export type MutationEvent = {
    * The final thrown value, on `'error'`.
    */
   readonly error?: unknown
+  /**
+   * Why the run was cancelled, on `'cancel'`. `'superseded'` means a newer
+   * `latest-wins` run replaced it, and `'reset'` means `mutation.reset()`
+   * dropped it. Both are the app discarding the run on purpose. `'dispose'`
+   * means the controller that owned the run was disposed: the screen is
+   * gone, and the write it asked for may still be wanted.
+   */
+  readonly reason?: 'superseded' | 'reset' | 'dispose'
   /**
    * The plugin that started the run through `host.mutations.run`, else `undefined`.
    */

@@ -343,12 +343,28 @@ async function runScenario(
   }
   expect(runIds.size, 'one runId per run').toBe(byRun.size)
   let optimisticCommitted = false
+  for (const e of events) {
+    // A cancellation says why, and nothing else carries a reason (§13.1).
+    if (e.phase === 'cancel') expect(e.reason, 'cancel reason').toBeDefined()
+    else expect(e.reason, `${e.phase} reason`).toBeUndefined()
+  }
   for (const [i, r] of runs.entries()) {
-    const phases = (byRun.get(i) ?? []).map((e) => e.phase)
+    const reported = (byRun.get(i) ?? []).map((e) => e.phase)
+    // Only a `serial` run that waited behind another reports `'queued'`, and
+    // it reports it first.
+    const queued = reported[0] === 'queued'
+    if (queued) expect(mode, `run ${i} queued`).toBe('serial')
+    const phases = queued ? reported.slice(1) : reported
     if (!r.onMutateCalled || r.vars.throwInOnMutate) {
       // Never reached `mutate`: rejected after dispose, dropped from a serial
-      // queue by reset/dispose, or its onMutate threw. No plugin events.
-      expect(phases, `run ${i} never started`).toEqual([])
+      // queue by reset/dispose, or its onMutate threw. A run that never waited
+      // reports nothing. A queued one owes its `'queued'` one outcome: a
+      // cancel when it was dropped, an error when its onMutate threw.
+      if (queued) {
+        expect(phases, `run ${i} queued, never started`).toEqual([
+          r.onMutateCalled ? 'error' : 'cancel',
+        ])
+      } else expect(phases, `run ${i} never started`).toEqual([])
       expect(r.promise.state, `run ${i}`).toBe('rejected')
       if (r.afterDispose) expect(r.promise.error).toBeInstanceOf(MutationDisposedError)
       else if (!r.onMutateCalled) expect(isAbortError(r.promise.error), `run ${i}`).toBe(true)

@@ -201,8 +201,15 @@ createMutation(ctx, def).run(vars)  →  onMutation 'start': record the entry
               ↓                                   ↓
        onMutation 'success'            onMutation 'error' / 'cancel'
               ↓                                   ↓
-       plugin: delete entry                plugin: keep entry (replay next load)
+       plugin: delete entry           plugin: keep the entry for a replay when
+                                      the error is retryable or the owner was
+                                      disposed; delete it on a supersede or
+                                      reset()
 ```
+
+A `'cancel'` says why the run stopped. A `latest-wins` supersede and `reset()` are your app discarding the run, so the queue deletes its entry: replaying an autosave's superseded draft would land it over the newer one. The controller that owned the run being disposed only means the screen is gone, so the entry stays and a replay sends the write. A reload is not a cancel. It emits nothing, and every entry of a run still in flight stays on disk for the next load.
+
+A `serial` run that waits behind another is written to storage when you call `run(...)`, not when its turn comes. If the first request hangs or backs off and the tab reloads, every run queued behind it is still on disk, and the next load replays them in the order you called them.
 
 When the root starts, the plugin lists every entry under `keyPrefix` and checks each one (see [Stored entries](#stored-entries)). It groups them by `id`, sorts each group by the monotonic `seq` with a fallback to `enqueuedAt`, waits until the tab is online, then replays serially per group. Two tabs that open in the same millisecond can give unrelated entries the same `seq`, and `runId` breaks that tie. So every tab replays the same entries in the same order, whatever order its storage lists them in. Different `id` buckets run in parallel. A replay pass also runs on every reconnect, so an in-session failure retries on reconnect and not only on reload. `ctx.inject(MutationQueue).replayNow()` starts one by hand. All three paths funnel through one guarded runner, which prevents overlapping replays, wrapped in the cross-tab lock described below. After each successful replay, `onReplaySettle` fires so the app can invalidate affected queries.
 
@@ -222,11 +229,11 @@ A run that fails leaves its entry on disk, because the next page load should try
 
 The queue closes that window with three rules.
 
-**A successful run supersedes the failed runs it retries.** When a run succeeds, the queue also drops the entries left by earlier runs of the same logical operation that settled in error. Identity is what `dedupeBy(mutationId, variables)` returns when you supply it, and the `id` plus the JSON form of the variables when you do not — a retry re-submits the same variables, while a new operation carries different ones. Only runs that have already settled are eligible, so a second submit that is still in flight keeps its own entry. A run that settled as `cancel` also keeps its entry: a reload mid-flight is indistinguishable from a cancel, and that entry is the whole reason the queue exists.
+**A successful run supersedes the failed runs it retries.** When a run succeeds, the queue also drops the entries left by earlier runs of the same logical operation that settled in error. Identity is what `dedupeBy(mutationId, variables)` returns when you supply it, and the `id` plus the JSON form of the variables when you do not — a retry re-submits the same variables, while a new operation carries different ones. Only runs that have already settled in error are eligible, so a second submit that is still in flight keeps its own entry. A run cancelled because its controller was disposed also keeps its entry, and a replay sends it.
 
-**A `dedupeBy` collapse settles the entry it collapsed onto.** The second enqueue under a live idempotency key writes no entry of its own. Its settle therefore acts on the owner's entry — dropping it on success, counting its attempts on error.
+**A `dedupeBy` collapse settles the entry it collapsed onto.** The second enqueue under a live idempotency key writes no entry of its own. Its settle therefore acts on the owner's entry — dropping it on success, counting its attempts on error. The key is released whenever its entry is deleted, a replay's success included, so the next run with that key writes an entry of its own.
 
-**A replay never touches a run this tab is executing.** A reconnect or a `replayNow()` that lands between a run's start and its settle sees that run's entry on disk and would fire the same request again. The queue skips those entries; the live run's own settle disposes of them. This guard is per-tab, so a second tab replaying during your in-flight run remains possible — see [Cross-tab replay coordination](#cross-tab-replay-coordination), and keep the server-side `idempotencyKey` gate.
+**A replay never touches a run this tab is executing.** A reconnect or a `replayNow()` that lands between a run's start and its settle sees that run's entry on disk and would fire the same request again. The queue skips those entries; the live run's own settle disposes of them. A `serial` run still waiting its turn counts as executing, so the live queue sends it, not the replay. This guard is per-tab, so a second tab replaying during your in-flight run remains possible — see [Cross-tab replay coordination](#cross-tab-replay-coordination), and keep the server-side `idempotencyKey` gate.
 
 ### Stored entries
 
