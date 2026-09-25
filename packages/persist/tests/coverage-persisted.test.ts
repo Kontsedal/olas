@@ -172,9 +172,23 @@ describe('createPersisted — cross-tab payloads that need migrating', () => {
     })
     storage.emitChange('prefs', marked(1, { theme: 'dark' }))
     expect(root.api.s.value).toEqual({ theme: { mode: 'dark' } })
-    storage.emitChange('prefs', marked(3, { theme: { mode: 'newer' }, extra: true }))
+    storage.emitChange('prefs', JSON.stringify({ theme: 'sepia' }))
     expect(root.api.s.value).toEqual({ theme: { mode: 'dark' } })
-    expect(seen).toEqual([1, 3])
+    expect(seen).toEqual([1, undefined])
+    root.dispose()
+  })
+
+  test('a payload from a newer build never reaches the migrator', () => {
+    const storage = memoryStorage()
+    const seen: Array<number | undefined> = []
+    // A step migrator passes through a version it has no step for.
+    const { root } = mountV2(storage, (raw, from) => {
+      seen.push(from)
+      return JSON.parse(raw) as V2
+    })
+    storage.emitChange('prefs', marked(3, { theme: { mode: 'newer' }, extra: true }))
+    expect(root.api.s.value).toEqual({ theme: { mode: 'light' } })
+    expect(seen).toEqual([])
     root.dispose()
   })
 
@@ -268,6 +282,23 @@ describe('createPersisted — migrating a legacy payload', () => {
     root.dispose()
   })
 
+  test('a payload from a newer build is not migrated at load, and storage keeps it', async () => {
+    const storage = memoryStorage({ k: marked(3, 'v3-shape') })
+    const migrate = vi.fn((raw: string) => JSON.parse(raw) as string)
+    const def = defineController((ctx) => {
+      const s = signal<string>('default')
+      const p = createPersisted(ctx, 'k', s, { storage, version: 2, migrate })
+      return { s, ready: p.ready }
+    })
+    const root = createRoot(def, { queries: queryEngine(), deps: {} })
+    await flush()
+    expect(root.api.ready.value).toBe(true)
+    expect(root.api.s.value).toBe('default')
+    expect(migrate).not.toHaveBeenCalled()
+    expect(storage.store.get('k')).toBe(marked(3, 'v3-shape'))
+    root.dispose()
+  })
+
   test('a user write during an async migrate wins over the migrated value', async () => {
     const storage = memoryStorage({ k: envelope(1, 'old') })
     let finishMigrate: (value: string) => void = () => {}
@@ -299,7 +330,7 @@ describe('createPersisted — migrating a legacy payload', () => {
 describe('createPersisted — rewriting a migrated value', () => {
   const mountMigrating = (
     storage: StorageAdapter,
-    extra: { serialize?: (v: string) => string },
+    extra: { serialize?: (v: string) => string; crossTab?: boolean },
   ) => {
     const errors: Array<[unknown, PersistErrorOp]> = []
     const def = defineController((ctx) => {
@@ -352,6 +383,21 @@ describe('createPersisted — rewriting a migrated value', () => {
     await flush()
     expect(root.api.s.value).toBe('up:old')
     expect(errors).toEqual([[quota, 'write']])
+    root.dispose()
+  })
+
+  test('a peer change that raced the load is not overwritten by the rewrite', async () => {
+    const storage = memoryStorage({ k: envelope(1, 'old') })
+    const read = storage.get
+    storage.get = (key) => Promise.resolve(read(key))
+    const { root } = mountMigrating(storage, { crossTab: true })
+    // Another tab writes the current version while this one is still loading.
+    storage.store.set('k', marked(2, 'peer'))
+    storage.emitChange('k', marked(2, 'peer'))
+    await flush()
+    expect(root.api.s.value).toBe('peer')
+    // The migrated load is older than the peer's value, so it is not written.
+    expect(storage.store.get('k')).toBe(marked(2, 'peer'))
     root.dispose()
   })
 })

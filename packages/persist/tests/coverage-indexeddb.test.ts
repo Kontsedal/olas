@@ -296,4 +296,41 @@ describe('indexedDbAdapter — BroadcastChannel availability', () => {
     expect(await reader.get('k')).toBe('v')
     off?.()
   })
+
+  // Node, Bun and Deno define `BroadcastChannel`, and there it reaches every
+  // adapter in the process: a server building a root per request would pass
+  // one request's writes to another's `onChange`.
+  const siblings = async () => {
+    const idb = makeFakeIdb()
+    const writer = indexedDbAdapter({ indexedDB: idb.factory, channelName: 'coverage-idb/server' })
+    const reader = indexedDbAdapter({ indexedDB: idb.factory, channelName: 'coverage-idb/server' })
+    const handler = vi.fn()
+    const off = reader.onChange?.(handler)
+    await writer.set('k', 'v')
+    await new Promise((r) => setTimeout(r, 20))
+    off?.()
+    return handler
+  }
+
+  /** A stand-in `WorkerGlobalScope` that the global object is an instance of. */
+  const workerScope = (): unknown =>
+    Object.defineProperty(() => {}, Symbol.hasInstance, { value: (v: unknown) => v === globalThis })
+
+  test.each([
+    ['Node', {}],
+    ['a Deno worker', { WorkerGlobalScope: workerScope(), Deno: {} }],
+  ])('on a server (%s), the global BroadcastChannel is not used', async (_label, globals) => {
+    expect(typeof BroadcastChannel).toBe('function')
+    for (const [name, value] of Object.entries(globals)) vi.stubGlobal(name, value)
+    expect(await siblings()).not.toHaveBeenCalled()
+  })
+
+  test.each([
+    // HTML named access: an element with the id `Bun` is the global `Bun`.
+    ['a tab', { document: {}, Bun: {} }],
+    ['a web worker', { WorkerGlobalScope: workerScope() }],
+  ])('in %s, the global BroadcastChannel carries changes', async (_label, globals) => {
+    for (const [name, value] of Object.entries(globals)) vi.stubGlobal(name, value)
+    expect(await siblings()).toHaveBeenCalledWith('k', 'v')
+  })
 })

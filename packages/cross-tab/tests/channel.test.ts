@@ -55,6 +55,23 @@ describe('defaultChannelFactory', () => {
     a.close()
     b.close()
   })
+
+  test.each(['Bun', 'Deno'])('a page element named "%s" does not turn the channel off', (name) => {
+    // HTML named access makes `window[id]` the element, so a tab can define
+    // either global without being that runtime.
+    const el = document.createElement('div')
+    el.id = name
+    document.body.append(el)
+    vi.stubGlobal(name, el)
+    try {
+      const ch = defaultChannelFactory('olas-test-named')
+      expect(ch).toBeDefined()
+      ch?.close()
+    } finally {
+      vi.unstubAllGlobals()
+      el.remove()
+    }
+  })
 })
 
 describe('crossTabPlugin — default channel factory', () => {

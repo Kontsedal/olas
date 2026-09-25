@@ -379,6 +379,128 @@ describe('persistQueryCachePlugin — restore: false keeps what this session nev
   })
 })
 
+describe('persistQueryCachePlugin — a read that fails', () => {
+  // Storage holds page A. This session's first read fails, as WebKit's
+  // IndexedDB does when its connection is lost, and it visits only page B.
+  const pageA = () =>
+    JSON.stringify({
+      v: 1,
+      buster: '',
+      entries: [{ id: 'qc/page-a', key: [], data: 'A', lastUpdatedAt: Date.now() }],
+    })
+  const pageB = () =>
+    defineQuery({
+      id: 'qc/page-b',
+      key: () => [],
+      fetcher: async () => 'B',
+      staleTime: 60_000,
+      meta: { persist: true },
+    })
+  const flaky = (async: boolean) => {
+    const store = new Map([[KEY, pageA()]])
+    const failure = new Error('Connection to Indexed Database server lost')
+    let reads = 0
+    const storage: StorageAdapter = {
+      get: (k) => {
+        reads += 1
+        if (reads === 1) {
+          if (async) return Promise.reject(failure)
+          throw failure
+        }
+        const value = store.get(k) ?? null
+        return async ? Promise.resolve(value) : value
+      },
+      set: (k, v) => {
+        store.set(k, v)
+      },
+      delete: (k) => {
+        store.delete(k)
+      },
+    }
+    const ids = () =>
+      (JSON.parse(store.get(KEY) as string) as { entries: Array<{ id: string }> }).entries
+        .map((e) => e.id)
+        .sort()
+    return { storage, failure, ids }
+  }
+  const mount = (storage: StorageAdapter, onError: () => void) => {
+    const b = pageB()
+    return createRoot(
+      defineController((ctx) => ({ b: createQuery(ctx, b) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0, restore: false, onError })],
+      },
+    )
+  }
+
+  test('async storage: the write waits, and the next flush reads storage again', async () => {
+    const { storage, failure, ids } = flaky(true)
+    const onError = vi.fn()
+    const root = mount(storage, onError)
+    await root.waitForIdle()
+    expect(root.api.b.data.value).toBe('B')
+    expect(onError).toHaveBeenCalledWith(failure, 'restore')
+    // Nothing was read, so nothing was written: page A is still there.
+    expect(ids()).toEqual(['qc/page-a'])
+    // Dispose flushes the held write, and reads first.
+    root.dispose()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(ids()).toEqual(['qc/page-a', 'qc/page-b'])
+  })
+
+  test('sync storage: the first flush reads storage again before it writes', async () => {
+    const { storage, failure, ids } = flaky(false)
+    const onError = vi.fn()
+    const root = mount(storage, onError)
+    await root.waitForIdle()
+    expect(onError).toHaveBeenCalledWith(failure, 'restore')
+    expect(ids()).toEqual(['qc/page-a', 'qc/page-b'])
+    root.dispose()
+  })
+})
+
+describe('persistQueryCachePlugin — a query that opted out since it was stored', () => {
+  test('its stored entries are not written back once the root knows the query', async () => {
+    const storage = memory({ async: true })
+    storage.store.set(
+      KEY,
+      JSON.stringify({
+        v: 1,
+        buster: '',
+        entries: [
+          { id: 'qc/opted-out', key: [], data: 'stale', lastUpdatedAt: Date.now() },
+          { id: 'qc/never-used', key: [], data: 'kept', lastUpdatedAt: Date.now() },
+        ],
+      }),
+    )
+    const optedOut = defineQuery({ id: 'qc/opted-out', key: () => [], fetcher: async () => 'x' })
+    const kept = defineQuery({
+      id: 'qc/kept-too',
+      key: () => [],
+      fetcher: async () => 'k',
+      meta: { persist: true },
+    })
+    const root = createRoot(
+      defineController((ctx) => ({ o: createQuery(ctx, optedOut), k: createQuery(ctx, kept) })),
+      {
+        queries: queryEngine(),
+        deps: {},
+        plugins: [persistQueryCachePlugin({ storage, throttleMs: 0, restore: false })],
+      },
+    )
+    await root.waitForIdle()
+    // A query this session never used may still opt in: its entry stays.
+    expect(
+      stored(storage)
+        ?.entries.map((e) => e.id)
+        .sort(),
+    ).toEqual(['qc/kept-too', 'qc/never-used'])
+    root.dispose()
+  })
+})
+
 describe('persistQueryCachePlugin — infinite queries and gc', () => {
   test('an infinite query persists its pages with their params and restores them', async () => {
     const storage = memory()

@@ -1192,6 +1192,67 @@ describe('entitiesPlugin', () => {
     root.dispose()
   })
 
+  test('a subscription holds its slot after the caller drops the handle and it is collected', async () => {
+    // Real collection: `--expose-gc` set at runtime, and `gc` read from a fresh
+    // context. The package's types leave Node out, hence the cast.
+    const { process } = globalThis as unknown as {
+      process: { getBuiltinModule(id: string): any }
+    }
+    process.getBuiltinModule('node:v8').setFlagsFromString('--expose-gc')
+    const gc = process.getBuiltinModule('node:vm').runInNewContext('gc') as () => void
+    const tick = () => new Promise((r) => setTimeout(r, 0))
+    // A task between collections, so `deref` no longer keeps the target alive.
+    const collect = async (ref: WeakRef<object>) => {
+      for (let i = 0; i < 10 && ref.deref() !== undefined; i += 1) {
+        await tick()
+        gc()
+      }
+      await tick() // the registry's cleanup runs in a later task
+    }
+    type Item = { id: string; title: string }
+    const Item = defineEntity<Item>({
+      name: 'LRUItemCollected',
+      idOf: (v) =>
+        v !== null && typeof v === 'object' && 'id' in v && typeof v.id === 'string' && 'title' in v
+          ? v.id
+          : null,
+      maxSlots: 2,
+    })
+    const root = createRoot(
+      defineController(() => ({})),
+      { queries: queryEngine(), deps: {}, plugins: [entitiesPlugin({ entities: [Item] })] },
+    )
+    const entities = root.inject(Entities)
+    entities.upsert(Item, { id: 'p1', title: 'A' })
+
+    // Two callers keep only their unsubscribes and let the handle go.
+    const seen: Array<string | undefined> = []
+    const { off, offChanges, ref } = (() => {
+      const handle = entities.signal(Item, 'p1')
+      return {
+        off: handle.subscribe((v) => seen.push(v?.title)),
+        offChanges: handle.subscribeChanges(() => {}),
+        ref: new WeakRef(handle),
+      }
+    })()
+    await collect(ref)
+
+    entities.upsert(Item, { id: 'p2', title: 'B' })
+    entities.upsert(Item, { id: 'p3', title: 'C' })
+    expect(entities.get(Item, 'p1')).toEqual({ id: 'p1', title: 'A' })
+    expect(seen).toEqual(['A'])
+
+    // One subscription still holds the handle.
+    offChanges()
+    await collect(ref)
+    expect(ref.deref()).toBeDefined()
+    // With none open, the handle is collectable again: the store pins nothing.
+    off()
+    await collect(ref)
+    expect(ref.deref()).toBeUndefined()
+    root.dispose()
+  })
+
   test('walks infinite-query pages and backpropagates through setEntryData', async () => {
     type FeedItem = { id: string; title: string; likes: number }
     const FeedItem = defineEntity<FeedItem>({

@@ -44,16 +44,18 @@ export type PersistOptions<T> = {
   /**
    * Apply another tab's write to the same key. Needs a storage adapter with
    * `onChange`. Default `false`. Another tab's value is read as a load is: a
-   * payload of another version goes through `migrate`, and is dropped without
-   * one. A migrated value is not written back, because the tab that wrote it
-   * still reads that key. A throttled write still waiting here is dropped,
+   * payload of an older version goes through `migrate`, and is dropped without
+   * one. A payload of a newer version is dropped. A migrated value is not
+   * written back, because the tab that wrote it still reads that key. A throttled write still waiting here is dropped,
    * since the other tab's value is newer.
    */
   crossTab?: boolean
   /**
-   * Schema version. When the value loaded from storage carries a different
+   * Schema version. When the value loaded from storage carries an older
    * `version`, `migrate(raw, fromVersion)` is invoked to bring it forward;
-   * the migrated value is written back. When omitted, no version gate runs:
+   * the migrated value is written back, unless another tab's change arrived
+   * during the load. A newer `version`, which a later build wrote, is
+   * ignored and left in storage. When omitted, no version gate runs:
    * payloads are written raw, and a versioned payload that a newer build
    * wrote is unwrapped and read.
    *
@@ -70,9 +72,9 @@ export type PersistOptions<T> = {
    * version stamp existed, i.e. the legacy raw shape). Return the migrated
    * payload AS A `T` value (post-deserialize); `createPersisted` re-serializes
    * it before writing. Return `undefined` to drop the entry (the source
-   * keeps its current value). A cross-tab change of another version goes
+   * keeps its current value). A cross-tab change of an older version goes
    * through it too, and an async result applies only if no newer change or
-   * local write came first.
+   * local write came first. A payload of a newer version never reaches it.
    */
   migrate?: (raw: string, fromVersion: number | undefined) => T | undefined | Promise<T | undefined>
   /**
@@ -144,18 +146,20 @@ export type IndexedDbAdapterOptions = {
    */
   indexedDB?: IDBFactory
   /**
-   * Override the `BroadcastChannel` constructor. Defaults to
-   * `globalThis.BroadcastChannel`. When undefined and no global, `onChange`
-   * subscriptions still register but never fire.
+   * Override the `BroadcastChannel` constructor. Defaults to the global one
+   * in a browser tab or web worker, and to none on a server (Node, Bun,
+   * Deno), where a channel reaches every adapter in the process. Pass one to
+   * opt in anywhere. Without a channel, `onChange` subscriptions still
+   * register but never fire.
    */
   broadcastChannel?: typeof BroadcastChannel
 }
 
 /**
  * IndexedDB-backed `StorageAdapter`. Async on every operation; cross-tab
- * change notifications layered via `BroadcastChannel` (IDB has no native
- * change event, so external IDB writes by code that doesn't go through
- * this adapter are *not* observed). When no `IDBFactory` is available
+ * change notifications layered via `BroadcastChannel` in a browser (IDB has
+ * no native change event, so external IDB writes by code that doesn't go
+ * through this adapter are *not* observed). When no `IDBFactory` is available
  * (SSR, restricted environments), every method resolves to a no-op.
  *
  * Storage is a single key/value object store inside a single database;
@@ -309,8 +313,23 @@ function getGlobalIndexedDb(): IDBFactory | undefined {
   return typeof indexedDB === 'undefined' ? undefined : indexedDB
 }
 
+/**
+ * The platform `BroadcastChannel`, in a browser scope only: a document (a tab
+ * or an iframe), or a web worker. Node, Bun and Deno define one too, but there
+ * it reaches every adapter in the process, so per-request server roots would
+ * read each other's writes. The same rule as `@kontsedal/olas-cross-tab`'s
+ * default factory. The document check comes first, since in a tab HTML named
+ * access makes an element with the id `Bun` the global `Bun`.
+ */
 function getGlobalBroadcastChannel(): typeof BroadcastChannel | undefined {
-  return typeof BroadcastChannel === 'undefined' ? undefined : BroadcastChannel
+  const g = globalThis as { Deno?: unknown; Bun?: unknown; WorkerGlobalScope?: unknown }
+  const browser =
+    (typeof document === 'object' && document !== null) ||
+    (g.Deno === undefined &&
+      g.Bun === undefined &&
+      typeof g.WorkerGlobalScope === 'function' &&
+      globalThis instanceof g.WorkerGlobalScope)
+  return typeof BroadcastChannel === 'undefined' || !browser ? undefined : BroadcastChannel
 }
 
 /**
@@ -410,6 +429,12 @@ export function createPersisted<T>(
       ? [env[0], env[1]]
       : [raw, undefined]
   }
+
+  // A payload a newer build wrote. `migrate` brings values forward only, and a
+  // step migrator would pass the newer shape through unchanged, so both the
+  // load and the cross-tab path drop it.
+  const isNewer = (from: number | undefined): boolean =>
+    from !== undefined && version !== undefined && from > version
 
   // Optional throttled writer. State is captured per-`createPersisted` call so
   // multiple persisted signals in the same controller don't interfere.
@@ -514,7 +539,7 @@ export function createPersisted<T>(
       setFromRemote(value)
       return
     }
-    if (migrate === undefined) return
+    if (migrate === undefined || isNewer(from)) return
     const settle = (migrated: T | undefined): void => {
       if (migrated === undefined || change !== lastChange) return
       setFromRemote(migrated)
@@ -573,7 +598,7 @@ export function createPersisted<T>(
         (from === undefined && migrate === undefined)
       ) {
         value = deserialize(payload) as T
-      } else if (migrate !== undefined) {
+      } else if (migrate !== undefined && !isNewer(from)) {
         // An older envelope, or a raw payload now that we require versioning
         // (`fromVersion: undefined`).
         try {
@@ -590,7 +615,8 @@ export function createPersisted<T>(
           return
         }
       } else {
-        // Version mismatch with no migrator — discard.
+        // No migrator, or a newer build's payload: discard, and leave storage
+        // to the build that wrote it.
         settleReady()
         return
       }
@@ -616,8 +642,11 @@ export function createPersisted<T>(
     } finally {
       writingFromLoad = false
     }
+    const change = lastChange
     settleReady()
-    if (needsRewrite) {
+    // A peer's change that raced the load was just applied. Storage holds it,
+    // and it is newer than the migrated value, so the rewrite is skipped.
+    if (needsRewrite && change === lastChange) {
       // Persist the migrated value so the next load doesn't re-migrate. Split
       // serialize vs write so a storage-quota throw isn't mislabeled (T6.1).
       let encoded: string

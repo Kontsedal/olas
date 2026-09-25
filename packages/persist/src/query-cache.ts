@@ -1,10 +1,4 @@
-import type {
-  DehydratedEntry,
-  DehydratedState,
-  OlasPlugin,
-  QueryHost,
-  QueryRef,
-} from '@kontsedal/olas-core'
+import type { DehydratedEntry, DehydratedState, OlasPlugin, QueryRef } from '@kontsedal/olas-core'
 import { LOCAL_STORAGE, type StorageAdapter } from './storage'
 
 declare module '@kontsedal/olas-core' {
@@ -51,7 +45,9 @@ export type PersistQueryCacheOptions = {
    */
   throttleMs?: number
   /**
-   * Which queries persist. Default: those with `meta: { persist: true }`.
+   * Which queries persist. Default: those with `meta: { persist: true }`. A
+   * stored entry of a query the root has used and `include` rejects is
+   * dropped from storage.
    */
   include?: (query: QueryRef) => boolean
   /**
@@ -63,8 +59,8 @@ export type PersistQueryCacheOptions = {
    */
   restore?: boolean
   /**
-   * A failed read, parse or write. A failed read at startup reports
-   * `'restore'`, with or without `restore`. Default: a warning in development.
+   * A failed read, parse or write. A failed read reports `'restore'`, with or
+   * without `restore`. Default: a warning in development.
    */
   onError?: (error: unknown, op: QueryCacheErrorOp) => void
 }
@@ -175,7 +171,10 @@ export async function restoreQueryCache(
  * Every storage write carries the whole cache, so the plugin reads what
  * storage holds at startup even with `restore: false`, and holds its first
  * write until an asynchronous read lands. An entry this session never binds
- * therefore stays in storage until it passes `maxAgeMs`.
+ * therefore stays in storage until it passes `maxAgeMs`. A read that fails
+ * holds the writes: the next flush reads storage again, and writes once a
+ * read lands. A session whose reads all fail writes nothing, because its
+ * write would delete the entries it could not read.
  */
 export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}): OlasPlugin {
   const storage = options.storage ?? LOCAL_STORAGE
@@ -209,20 +208,29 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
       const slot = (id: string, key: readonly unknown[]): string =>
         `${id}\u0000${queries.hashKey(key)}`
       const restoring = options.restore !== false
+      // A stored entry of a query this root has used and `include` now
+      // rejects: the query opted out after the entry was written. An entry of
+      // a query the root has not used is kept, since nothing says it opted out.
+      const kept = (e: DehydratedEntry): boolean => {
+        const query = queries.get(e.id)
+        return query === undefined || include(query)
+      }
       let timer: ReturnType<typeof setTimeout> | null = null
       let disposed = false
-      // While an asynchronous read of storage is in flight, `cache` lacks what
-      // storage holds, and a flush would write over it. The flush waits.
+      // Until a read of storage lands, `cache` lacks what storage holds, and a
+      // flush would delete the entries it could not read. So a flush reads
+      // first, and waits while a read is in flight. A read that fails holds
+      // the write until the next flush, which reads again: one read per flush.
+      let seeded = false
       let reading = false
-      let flushAfterRead = false
+      let held = false
 
       const flush = (): void => {
         timer = null
-        if (reading) {
-          flushAfterRead = true
-          return
-        }
-        const payload: Stored = { v: FORMAT, buster, entries: [...cache.values()] }
+        if (!seeded && !reading) read()
+        held = !seeded
+        if (held) return
+        const payload: Stored = { v: FORMAT, buster, entries: [...cache.values()].filter(kept) }
         let json: string
         try {
           json = JSON.stringify(payload)
@@ -250,62 +258,63 @@ export function persistQueryCachePlugin(options: PersistQueryCacheOptions = {}):
 
       /**
        * Seed `cache` with what storage holds and, with `restore`, hydrate the
-       * root with it. `bound` is the host to ask which entries a subscriber
-       * bound already, or `null` when nothing can be bound yet.
+       * root with it. An entry a subscriber bound already is not hydrated.
        */
-      const load = (entries: DehydratedEntry[] | undefined, bound: QueryHost | null): void => {
+      const load = (entries: DehydratedEntry[] | undefined): void => {
         if (entries === undefined) return
         const fresh: DehydratedEntry[] = []
         for (const e of entries) {
+          if (!kept(e)) continue
           const k = slot(e.id, e.key)
           // A write that landed before the read is newer than storage.
           if (!cache.has(k)) cache.set(k, e)
           if (!restoring) continue
           // Never fill an entry that exists already: a subscriber bound it, and
           // its fetch is newer than anything storage holds.
-          if (bound?.keys(e.id).some((key) => slot(e.id, key) === k)) continue
+          if (queries.keys(e.id).some((key) => slot(e.id, key) === k)) continue
           fresh.push(e)
         }
         // A root disposed while the read was in flight takes no hydration.
         if (fresh.length > 0 && !disposed) queries.hydrate({ version: 1, entries: fresh })
       }
-      const readSettled = (): void => {
-        reading = false
-        if (flushAfterRead) {
-          flushAfterRead = false
-          flush()
+      // A payload that fails to parse counts as read: writing over it loses
+      // nothing. A parse or restore that throws is reported on both paths.
+      const seed = (raw: string | null): void => {
+        seeded = true
+        try {
+          load(parse(raw, buster, maxAgeMs))
+        } catch (error) {
+          onError(error, 'restore')
         }
       }
-
-      try {
-        const raw = storage.get(storageKey)
-        if (raw instanceof Promise) {
-          reading = true
-          // `.catch` after `.then`, so a parse or restore that throws is
-          // reported too, as it is on the synchronous path. A failed read
-          // releases the held flush all the same.
-          host.track(
-            raw
-              .then((value) => load(parse(value, buster, maxAgeMs), queries))
-              .catch((error: unknown) => onError(error, 'restore'))
-              .finally(readSettled),
-          )
-        } else {
-          // Synchronous: setup runs before any controller binds, so nothing
-          // is bound to protect.
-          load(parse(raw, buster, maxAgeMs), null)
+      const read = (): void => {
+        try {
+          const raw = storage.get(storageKey)
+          if (raw instanceof Promise) {
+            reading = true
+            host.track(
+              raw
+                .then(seed, (error: unknown) => onError(error, 'restore'))
+                .finally(() => {
+                  reading = false
+                  if (seeded && held) flush()
+                }),
+            )
+          } else {
+            seed(raw)
+          }
+        } catch (error) {
+          onError(error, 'restore')
         }
-      } catch (error) {
-        onError(error, 'restore')
       }
+      read()
 
       host.onDispose(() => {
         disposed = true
-        if (timer !== null) {
-          clearTimeout(timer)
-          // During a read this waits for it, and writes once it lands.
-          flush()
-        }
+        if (timer !== null) clearTimeout(timer)
+        // A pending or held write. During a read it waits for the read, and a
+        // held write reads storage once more first.
+        if (timer !== null || held) flush()
       })
 
       return {

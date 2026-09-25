@@ -57,7 +57,8 @@ export type EntityDef<T> = {
    * partition. When set and the partition exceeds the cap, the plugin
    * evicts **orphans** in LRU order on the next slot insertion: ids no query
    * holds and no `subscribe` on their `entities.signal(...)` handle holds, so
-   * a mounted view keeps its entity. If every slot is held the cap is
+   * a mounted view keeps its entity. An open `subscribe` holds even when the
+   * caller kept only its unsubscribe. If every slot is held the cap is
    * exceeded silently (no other safe option).
    *
    * A handle read through `.value` in a `computed` or an `effect` does not
@@ -160,8 +161,16 @@ export type EntityBinding = {
   readonly paths: ReadonlyArray<ReadonlyArray<string | number>>
 }
 
-/** A handle `signal(entity, id)` gave out, and the `subscribe` calls open on it. */
-type HandleEntry = { ref: WeakRef<ReadSignal<unknown>>; watchers: number }
+/**
+ * A handle `signal(entity, id)` gave out, and the `subscribe` calls open on it.
+ * `held` pins the handle while one is open: a caller may keep only the
+ * unsubscribe, and a collected handle would take the count with it.
+ */
+type HandleEntry = {
+  ref: WeakRef<ReadSignal<unknown>>
+  watchers: number
+  held?: ReadSignal<unknown> | undefined
+}
 
 /**
  * What a slot holds once it has left its partition. Setting it notifies the
@@ -869,12 +878,14 @@ function createEntityStore(
     })
     const entry = { watchers: 0 } as HandleEntry
     const watch = (off: () => void): (() => void) => {
-      entry.watchers += 1
+      // Through the weak ref: a closure naming `handle` would let the
+      // unsubscribe it returns pin the handle after it closes.
+      if (entry.watchers++ === 0) entry.held = entry.ref.deref()
       let open = true
       return () => {
         if (!open) return
         open = false
-        entry.watchers -= 1
+        if (--entry.watchers === 0) entry.held = undefined
         off()
       }
     }

@@ -19,7 +19,8 @@ export type ChannelLike = {
  * process, and other worker threads or isolates as well. A server that builds
  * a root per request would render one user's writes into another user's page.
  * A Deno or Bun worker has a `WorkerGlobalScope` like a browser worker, so
- * those runtimes are ruled out by name.
+ * those runtimes are ruled out by name. The document check comes first: in a
+ * tab, HTML named access makes an element with the id `Bun` the global `Bun`.
  */
 function isBrowserScope(): boolean {
   const g = globalThis as {
@@ -28,8 +29,8 @@ function isBrowserScope(): boolean {
     document?: unknown
     WorkerGlobalScope?: unknown
   }
-  if (g.Deno !== undefined || g.Bun !== undefined) return false
   if (typeof g.document === 'object' && g.document !== null) return true
+  if (g.Deno !== undefined || g.Bun !== undefined) return false
   const Scope = g.WorkerGlobalScope
   return typeof Scope === 'function' && globalThis instanceof Scope
 }
