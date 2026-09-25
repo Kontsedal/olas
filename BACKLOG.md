@@ -20,15 +20,11 @@ The grab-bag for future work, ideas-in-progress, and post-v1 proposals.
 - Cite `SPEC.md §X.Y` when an item amends the spec; that signals "spec change required, not only an implementation."
 - If a backlog item is implied by an existing spec line, quote the line.
 
-**The 1.0 BACKLOG pass emptied the backlog of open work.** That pass (2026-09-25, `.wiki/log.md`) implemented every item worth doing and dropped the rest, with the reasons below. What remains planned is the release itself: merging `release/1.0` to `main` and reviewing the Version Packages PR.
+**The 1.0 BACKLOG pass emptied the backlog of open work.** That pass (2026-09-25, `.wiki/log.md`) implemented every item worth doing and dropped the rest, with the reasons below. The release followed on the same day: 1.0.0, then core 1.1.0 and eight 1.0.1 patches with the post-1.0 review fixes.
 
 ---
 
-## Release
-
-### [planned] Move the docs site to the Actions deploy once release/1.0 is on main
-
-[from W14] The site is live at https://kontsedal.github.io/olas/, served from the `gh-pages` branch ("Deploy from a branch"). `docs.yml` could not deploy it: GitHub dispatches only workflows that exist on the default branch, and the `github-pages` environment allows only `main`. Once `docs.yml` is on `main`, switch Pages to GitHub Actions (`gh api -X PUT repos/Kontsedal/olas/pages -f build_type=workflow`), run the Docs workflow with `deploy` ticked, and delete the `gh-pages` branch. Until then, a docs change goes live only by rebuilding the site and pushing it to `gh-pages` by hand.
+## Docs
 
 ### [idea] Put the framework picker on the other guides' view code
 

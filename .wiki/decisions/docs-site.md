@@ -95,4 +95,6 @@ Two things bit during the work:
 
 ## Where the site is served from today
 
-The site went live on 2026-09-25 at https://kontsedal.github.io/olas/, from the `gh-pages` branch ("Deploy from a branch"). The Actions route could not work yet: GitHub dispatches only a workflow that exists on the default branch, `docs.yml` is only on `release/1.0`, and the `github-pages` environment lets only `main` deploy. `gh-pages` holds the output of `pnpm docs:build` plus a `.nojekyll`. BACKLOG has the switch back to the Actions deploy once `docs.yml` reaches `main`.
+The site is at https://kontsedal.github.io/olas/, deployed by `docs.yml` from `main`. Pages uses the GitHub Actions source, and the `github-pages` environment lets only `main` deploy.
+
+The first deploy, on 2026-09-24, came from a `gh-pages` branch pushed by hand, because GitHub dispatches only a workflow that exists on the default branch, and `docs.yml` was then only on `release/1.0`. The first Actions deploy followed on 2026-09-25, from `main` at `06044e7`. It went live while the Pages setting still named `gh-pages`, because an Actions deployment takes precedence over the branch source. The setting was then switched to Actions and the branch deleted, so a push to it cannot bring the old build back.

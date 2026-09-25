@@ -32,6 +32,10 @@ Edit a generated page at its source. The sync rewrites the source's relative lin
 
 ## Deploying
 
-`.github/workflows/docs.yml` builds the site on every pull request. It deploys to GitHub Pages only when someone runs it by hand with `deploy` ticked, which needs the workflow on `main` and Pages set to the GitHub Actions source. The site is served under `/olas/`, which is `base` in `.vitepress/config.mts`.
+`.github/workflows/docs.yml` builds the site on every pull request. It deploys to GitHub Pages only when someone runs it by hand on `main` with `deploy` ticked:
 
-Until `docs.yml` reaches `main`, Pages serves the `gh-pages` branch, and a docs change goes live when the built site is pushed there by hand. `BACKLOG.md` has the switch back to the Actions deploy.
+```bash
+gh workflow run docs.yml --ref main -f deploy=true
+```
+
+The site is served under `/olas/`, which is `base` in `.vitepress/config.mts`.

@@ -2429,3 +2429,9 @@ Not deployed. The site still goes live only by pushing the built output to `gh-p
 **Fixes.** `publish.yml` now refuses to run while a changeset is on `main`, since `changeset version` deletes the ones it applies; `main` held 110 at the first run. `version.yml` counts pending changesets and skips its remaining steps at zero. CLAUDE.md's Releasing section says both.
 
 **Left open.** The four `0.0.0` versions and their tags are still published. The working tree's uncommitted fixes, with 25 patch and minor changesets, were not on `main`, so 1.0.0 shipped without them; they release as core 1.1.0 and 1.0.x patches once committed.
+
+## [2026-09-25 20:45] ingest | the docs site deploys from main through Actions
+
+The Docs workflow deployed `main` at `06044e7` at 20:32 UTC, the first Actions deploy. It went live while the Pages setting still named the `gh-pages` branch, since an Actions deployment takes precedence. The setting moves to Actions and the `gh-pages` branch goes, so a push to it cannot restore the old build. The live site was checked at 1440px and 390px in both themes: both fonts load, no request fails, nothing scrolls sideways.
+
+BACKLOG loses its last planned item, the switch to the Actions deploy, and its header now records the release. `decisions/docs-site.md` ("Where the site is served from today") and `docs/README.md` ("Deploying") describe the Actions deploy.
