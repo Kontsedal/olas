@@ -1,6 +1,45 @@
-# Olas
+<!-- The mark is the docs site's, so one file change updates both. -->
+<p align="center">
+  <a href="https://kontsedal.github.io/olas/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="./docs/public/logo-dark.svg">
+      <img src="./docs/public/logo.svg" alt="Olas" width="96" height="96">
+    </picture>
+  </a>
+</p>
 
-**State and logic that lives outside the UI tree.**
+<h1 align="center">Olas</h1>
+
+<p align="center">
+  <strong>State and logic that lives outside the UI tree.</strong>
+  <br>
+  Controllers, queries, mutations and forms with explicit lifetimes, on signals.
+  <br>
+  For <a href="./packages/react">React</a>, <a href="./packages/react#preact">Preact</a>, <a href="./packages/vue">Vue</a> and <a href="./packages/svelte">Svelte</a>.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@kontsedal/olas-core"><img src="https://img.shields.io/npm/v/@kontsedal/olas-core?color=026f70&label=npm" alt="npm version"></a>
+  <a href="https://github.com/Kontsedal/olas/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Kontsedal/olas/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://github.com/Kontsedal/olas/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FKontsedal%2Folas%2Fbadges%2Fbadge.json" alt="test coverage of lines and branches"></a>
+  <a href="https://bundlejs.com/?q=%40kontsedal%2Folas-core&treeshake=%5B%7BcreateRoot%2CdefineController%2Csignal%2Ccomputed%7D%5D"><img src="https://img.shields.io/bundlejs/size/@kontsedal/olas-core?exports=createRoot,defineController,signal,computed&color=026f70&label=core%20gzip" alt="gzipped size of the controllers-only core"></a>
+  <a href="https://www.npmjs.com/package/@kontsedal/olas-core"><img src="https://img.shields.io/npm/types/@kontsedal/olas-core?color=026f70" alt="TypeScript types included"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@kontsedal/olas-core?color=026f70" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <a href="https://kontsedal.github.io/olas/"><b>Documentation</b></a>
+  ·
+  <a href="https://kontsedal.github.io/olas/guide/getting-started">Getting started</a>
+  ·
+  <a href="https://kontsedal.github.io/olas/reference/">API reference</a>
+  ·
+  <a href="./examples">Examples</a>
+  ·
+  <a href="./packages/core/CHANGELOG.md">Changelog</a>
+</p>
+
+<br>
 
 Olas pulls everything that *isn't* rendering — fetching, mutations, forms, business rules, cross-screen coordination — into a parallel tree of typed controllers. Your components stay thin and your logic becomes plain TypeScript you can read top to bottom and test without spinning up a renderer.
 

@@ -2435,3 +2435,11 @@ Not deployed. The site still goes live only by pushing the built output to `gh-p
 The Docs workflow deployed `main` at `06044e7` at 20:32 UTC, the first Actions deploy. It went live while the Pages setting still named the `gh-pages` branch, since an Actions deployment takes precedence. The setting moves to Actions and the `gh-pages` branch goes, so a push to it cannot restore the old build. The live site was checked at 1440px and 390px in both themes: both fonts load, no request fails, nothing scrolls sideways.
 
 BACKLOG loses its last planned item, the switch to the Actions deploy, and its header now records the release. `decisions/docs-site.md` ("Where the site is served from today") and `docs/README.md` ("Deploying") describe the Actions deploy.
+
+## [2026-09-28 11:30] ingest | the README header, the waterline mark and a coverage badge
+
+**Header.** The root README opens with a centred `<picture>` of the mark, the name, the tagline, the frameworks, a row of badges and the main links. The root README is GitHub-only, since `docs-sync.mjs` does not copy it, so relative image paths are safe there.
+
+**Mark.** A ring half-filled with water under one sine period replaces the two strokes on a teal tile. Four candidates were rendered with headless Chrome at 16 to 128px on light and dark grounds, and five proportions of the winner after that. `decisions/docs-site.md` ("The mark") has the geometry and why only `favicon.svg` carries a colour-scheme query. `config.mts` now reads `logo.svg` for the light navbar logo.
+
+**Coverage badge.** The `json-summary` reporter, `scripts/coverage-badge.mjs` and a `coverage-badge` job in `ci.yml` publish lines and branches to the `badges` branch. `ci.yml` is now read-only at the top level, and that job alone writes. `decisions/engine-assurance.md` ("The README badge") has the flow. The local run: 195 files, 2,780 tests, 99.4% lines, 95.7% branches. The badge has no data until the first push to `main` after this merges.

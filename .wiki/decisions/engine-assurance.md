@@ -5,6 +5,8 @@ type: decision
 covers:
   - vitest.config.ts
   - vitest.stryker.config.ts
+  - scripts/coverage-badge.mjs
+  - .github/workflows/ci.yml
   - stryker.config.json
   - packages/core/tests/property/helpers.ts
   - packages/core/tests/property/entry.property.test.ts
@@ -58,6 +60,8 @@ The 1.0 coverage pass took core to 99.4% lines / 94.9% branches and every satell
 - `catch` blocks around calls that cannot throw.
 
 The coverage agents' reports listed each such branch with its reason. Dead code they found was removed: `isField`, `LifecycleList.size` and `QueryClient.inflightCount`.
+
+**The README badge.** The `json-summary` reporter writes `coverage/coverage-summary.json`, and `scripts/coverage-badge.mjs` turns its totals into a shields.io endpoint file. The file shows lines and branches, each rounded down. On a push to `main`, the `ci` job builds the file after its last check and uploads it. The `coverage-badge` job then force-pushes it as the only commit on the `badges` branch. That job is the only one in `ci.yml` with `contents: write`, and it runs no repo code. A push that fails any check leaves the badge at the last green run.
 
 ## Mutation testing (`pnpm mutation`)
 
