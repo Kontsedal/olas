@@ -21,6 +21,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@kontsedal/olas-core"><img src="https://img.shields.io/npm/v/@kontsedal/olas-core?color=026f70&label=npm" alt="npm version"></a>
   <a href="https://github.com/Kontsedal/olas/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Kontsedal/olas/ci.yml?branch=main&label=CI" alt="CI status"></a>
+  <a href="https://github.com/Kontsedal/olas/actions/workflows/ci.yml?query=branch%3Amain"><img src="https://img.shields.io/endpoint?url=https%3A%2F%2Fraw.githubusercontent.com%2FKontsedal%2Folas%2Fbadges%2Fbadge.json" alt="test coverage of lines and branches"></a>
   <a href="https://bundlejs.com/?q=%40kontsedal%2Folas-core&treeshake=%5B%7BcreateRoot%2CdefineController%2Csignal%2Ccomputed%7D%5D"><img src="https://img.shields.io/bundlejs/size/@kontsedal/olas-core?exports=createRoot,defineController,signal,computed&color=026f70&label=core%20gzip" alt="gzipped size of the controllers-only core"></a>
   <a href="https://www.npmjs.com/package/@kontsedal/olas-core"><img src="https://img.shields.io/npm/types/@kontsedal/olas-core?color=026f70" alt="TypeScript types included"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/npm/l/@kontsedal/olas-core?color=026f70" alt="MIT license"></a>

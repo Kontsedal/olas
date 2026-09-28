@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# Read-only by default. Only `coverage-badge` writes, and only to its branch.
+permissions:
+  contents: read
+
 jobs:
   ci:
     name: typecheck + lint + test + build
@@ -72,6 +76,46 @@ jobs:
 
       # Bundle-size budgets, per entry, against the built dist (.size-limit.json).
       - run: pnpm size
+
+      # The README's coverage badge, from this run's totals. It is built last, so
+      # a push to main that fails any check above leaves the badge as it was.
+      - if: github.event_name == 'push'
+        run: node scripts/coverage-badge.mjs
+      - if: github.event_name == 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-badge
+          path: coverage/badge.json
+          retention-days: 1
+
+  # Publishes the badge to the `badges` branch, which holds one file in one
+  # commit, force-pushed each time. The README reads it through shields.io.
+  # This job runs no repo code, so the write token never meets a build step.
+  coverage-badge:
+    name: publish the coverage badge
+    needs: ci
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: coverage-badge
+      cancel-in-progress: true
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: coverage-badge
+
+      - name: Push badge.json to the badges branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git init -q -b badges
+          git add badge.json
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "coverage badge for ${GITHUB_SHA::7}"
+          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" badges
 
   # The packages are ESM-only and promise that a CommonJS consumer can still
   # require() them on Node >= 20.19. Check that on the oldest supported Node and

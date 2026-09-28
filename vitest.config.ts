@@ -83,6 +83,9 @@ export default defineConfig({
       provider: 'v8',
       include: ['packages/*/src/**/*.{ts,tsx}'],
       exclude: ['packages/*/src/**/*.test.ts', 'packages/*/src/**/*.d.ts'],
+      // vitest's defaults, plus `json-summary`: CI reads its totals into the
+      // README's coverage badge (scripts/coverage-badge.mjs).
+      reporter: ['text', 'html', 'clover', 'json', 'json-summary'],
       // Gates, set a little below the levels the 1.0 coverage pass reached
       // (2026-09-25: core 99.4 lines / 94.9 branches; every satellite >= 99
       // lines, >= 90 branches), so CI fails on a real regression without

@@ -40,7 +40,7 @@ pnpm wiki:lint                                     # check .wiki/ for broken cit
 pnpm prose:lint                                    # check the writing rules in every .md (opt-in, not in CI)
 ```
 
-CI = `install → build → typecheck → lint → check:peer-ranges → check:peer-bumps → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `program=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
+CI = `install → build → typecheck → lint → check:peer-ranges → check:peer-bumps → check:doc-snippets → test → examples → publint → attw → smoke:dist → check:public-types → api:check → size`. On a push to `main`, a second job publishes the README's coverage badge to the `badges` branch (`.wiki/decisions/engine-assurance.md`). The satellites typecheck against core's built `dist`, so build runs first. The dist checks are explained in `.wiki/decisions/esm-only-build.md`. The doc-snippet annotations (`snippet-prelude`, `file=`, `program=`, `nocheck`) are explained at the top of `scripts/check-doc-snippets.ts`. The docs site builds in its own workflow (`docs.yml`), which deploys only by hand; `.wiki/decisions/docs-site.md` explains it.
 
 ## Releasing
 
