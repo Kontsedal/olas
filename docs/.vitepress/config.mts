@@ -91,7 +91,7 @@ export default defineConfig({
     },
   },
   themeConfig: {
-    logo: { light: '/favicon.svg', dark: '/logo-dark.svg', alt: '' },
+    logo: { light: '/logo.svg', dark: '/logo-dark.svg', alt: '' },
     nav: [
       { text: 'Guide', link: '/guide/what-is-olas', activeMatch: '^/(guide|adapters)/' },
       { text: 'Packages', link: '/packages/core', activeMatch: '^/packages/' },
